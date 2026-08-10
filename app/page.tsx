@@ -4,13 +4,16 @@ import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import styles from './page.module.css';
 import { VoiceIndicator } from '@/components/VoiceIndicator';
+import { useAuthSession } from '@/lib/auth/useAuthSession';
 import { useVoiceSession } from '@/lib/hooks/useVoiceSession';
 
 export default function HomePage() {
   const router = useRouter();
   const [mode, setMode] = useState<'idle' | 'quick' | 'cook'>('idle');
   const [input, setInput] = useState('');
-  const voice = useVoiceSession();
+  // /api/agent requires a Bearer ID token — the anonymous session supplies it.
+  const auth = useAuthSession();
+  const voice = useVoiceSession({ getToken: auth.getToken });
 
   return (
     <main className={styles.main}>
