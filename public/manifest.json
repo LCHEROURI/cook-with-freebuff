@@ -1,0 +1,11 @@
+{
+  "name": "Kitchen Agent — Cook with Freebuff",
+  "short_name": "Kitchen Agent",
+  "description": "Voice-first intelligent cooking companion",
+  "start_url": "/cook",
+  "display": "standalone",
+  "background_color": "#fff7ed",
+  "theme_color": "#e85d2c",
+  "orientation": "portrait",
+  "icons": []
+}

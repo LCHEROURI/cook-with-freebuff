@@ -14,6 +14,7 @@ import { defaultToolRegistry } from '@/lib/server/tools';
 import { buildProductionContext } from '@/lib/server/stores';
 import { getConversationAgent } from '@/lib/ai/provider';
 import { ConversationOrchestrator } from '@/lib/agent';
+import { logError } from '@/lib/server/logger';
 
 export async function POST(req: Request) {
   const auth = req.headers.get('authorization');
@@ -51,7 +52,22 @@ export async function POST(req: Request) {
   const provider = getConversationAgent();
 
   const orchestrator = new ConversationOrchestrator({ registry: defaultToolRegistry, context: ctx, provider });
-  const turn = await orchestrator.process(parsed.utterance, sessionId);
+  let turn;
+  try {
+    turn = await orchestrator.process(parsed.utterance, sessionId);
+  } catch (e) {
+    // Observability (K9 Part C): an unexpected orchestrator failure is logged
+    // structurally with the correlation id, never as a raw stack to the user.
+    logError('api.agent.error', {
+      userId,
+      correlationId,
+      sessionId,
+      message: e instanceof Error ? e.message.slice(0, 300) : String(e).slice(0, 300),
+    });
+    return NextResponse.json(
+      { utterance: parsed.utterance, response: 'I had trouble with that. Please try again.', toolCalls: [], status: 'ERROR' },
+    );
+  }
 
   return NextResponse.json(turn);
 }

@@ -194,6 +194,12 @@ export class GuidedCookingService {
     if (!recipe) {
       throw new GuideError(`Recipe ${recipeId} not found`, 'RECIPE_NOT_FOUND', true);
     }
+    // Object-level authorization (K9 Part B): a recipe is owner-scoped — one
+    // user must never launch (and thereby read) another user's recipe. The
+    // admin SDK read bypasses Firestore rules, so this check is the gate.
+    if (recipe.userId && recipe.userId !== userId) {
+      throw new GuideError('Recipe belongs to another user', 'FORBIDDEN', false);
+    }
 
     let session: CookingSession | null = null;
     if (sessionId) {
@@ -1075,6 +1081,11 @@ export class GuidedCookingService {
     const recipe = await this.loadRecipe(session.recipeId);
     if (!recipe) {
       throw new GuideError(`Recipe ${session.recipeId} not found`, 'RECIPE_NOT_FOUND', true);
+    }
+    // The session's owner must also own the recipe (defense in depth for any
+    // session created before the launch-time check existed).
+    if (recipe.userId && recipe.userId !== session.userId) {
+      throw new GuideError('Recipe belongs to another user', 'FORBIDDEN', false);
     }
     return recipe;
   }

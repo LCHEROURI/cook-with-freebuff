@@ -11,6 +11,7 @@
 
 import { matchCommand, HELP_TEXT, type CommandMatch } from './commands';
 import { extractIngredients } from './extract';
+import { logError } from '../server/logger';
 import type { AgentTurn, ExecutedToolCall } from './types';
 import { ToolRegistry, executeTool } from '../server/tools/registry';
 import type { ToolContext } from '../server/tools/types';
@@ -201,7 +202,16 @@ export class ConversationOrchestrator {
         utterance,
         context,
       });
-    } catch {
+    } catch (err) {
+      // Observability (K9 Part C): the model failure is logged structurally
+      // with the correlation id — never the raw key or PII — while the user
+      // still gets a plain, non-alarming response.
+      logError('agent.provider.error', {
+        correlationId: this.opts.context.correlationId,
+        userId: this.opts.context.userId,
+        sessionId,
+        message: err instanceof Error ? err.message.slice(0, 300) : String(err).slice(0, 300),
+      });
       return 'I had trouble with that. Please try again.';
     }
 

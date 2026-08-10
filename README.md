@@ -58,16 +58,32 @@ All data is structured as typed objects (no prose-only storage). The core domain
 - **Dietary Profile** — long-term preferences, allergies, dislikes
 - **Agent Tool Log** — observability for every AI tool call
 
-## Verification gates (coming in CI)
+## Verification gates (live in CI)
 
-The app will follow the same contract-locked verification discipline as Freebuff's portfolio app:
+Every push to `main` runs the same contract-locked discipline as Freebuff's portfolio app:
 
-1. TypeScript strict mode
-2. Full test suite (unit + integration)
-3. Production build
-4. Zod input validation (every API route + tool)
-5. Firestore rules isolation
-6. Lints + dead-word sweeps
+1. **TypeScript strict mode** — `npm run typecheck`
+2. **Full test suite** — `npm test` (284 tests, unit + integration)
+3. **ESLint** — `npm run lint` (configured for CI, `root: true`)
+4. **Production build** — `npm run build`
+5. **Live E2E after every deploy** — `verify-deployed` job runs `npm run verify:live`
+   against the deployed app: seed owner recipe → guided flow → safety gate →
+   timer auto-start → pantry add + confirm → Gemini turn → cleanup
+6. **Secret-gated loud guards** — a missing secret on a main push fails the
+   run with a targeted message instead of silently skipping
+
+See [`DEPLOYMENT.md`](./DEPLOYMENT.md) for the full operational story.
+
+## Documentation
+
+- [`ARCHITECTURE.md`](./ARCHITECTURE.md) — system architecture (Mermaid)
+- [`DATA_MODEL.md`](./DATA_MODEL.md) — collections, shapes, ownership
+- [`AGENT_TOOLS.md`](./AGENT_TOOLS.md) — the tool surface the AI can call
+- [`STATE_MACHINE.md`](./STATE_MACHINE.md) — session phases + transitions
+- [`VOICE_ARCHITECTURE.md`](./VOICE_ARCHITECTURE.md) — voice pipeline + provider boundary
+- [`SECURITY.md`](./SECURITY.md) — isolation model, audit findings
+- [`TESTING.md`](./TESTING.md) — test layout, E2E scenarios, mobile QA matrix
+- [`DEPLOYMENT.md`](./DEPLOYMENT.md) — env stores, deploy flow, verify:live contract, rollback
 
 ## K1 — Foundation complete
 

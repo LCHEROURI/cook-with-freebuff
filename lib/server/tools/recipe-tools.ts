@@ -40,7 +40,17 @@ export const generateRecipeTool: ToolDefinition = {
         );
       }
       if (ctx.recipeStore) {
-        await ctx.recipeStore.createRecipe(parsed.data);
+        // Object-level ownership (K9 Part B): stamp the recipe with the
+        // generating user before persisting — without userId the recipe is
+        // ownerless (Firestore rules would block even its owner from reading
+        // it client-side) and no isolation exists.
+        const owned = {
+          ...parsed.data,
+          userId: ctx.userId,
+          updatedAt: parsed.data.updatedAt,
+        };
+        await ctx.recipeStore.createRecipe(owned);
+        return ok({ recipe: owned });
       }
       return ok({ recipe: parsed.data });
     } catch (e) {

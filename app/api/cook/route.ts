@@ -15,6 +15,7 @@ import { NextResponse } from 'next/server';
 import { resolveUserId } from '@/lib/server/admin';
 import { buildProductionContext } from '@/lib/server/stores';
 import { createGuideService } from '@/lib/server/tools/guide-tools';
+import { logError } from '@/lib/server/logger';
 
 const ACTIONS = [
   'launch', 'status', 'done', 'repeat', 'back', 'pause', 'resume', 'timers',
@@ -189,6 +190,11 @@ export async function POST(req: Request) {
     const code = typeof err.code === 'string' ? err.code : 'INTERNAL_ERROR';
     const message = typeof err.message === 'string' ? err.message : 'Guided cooking request failed';
     const recoverable = typeof err.recoverable === 'boolean' ? err.recoverable : true;
+    logError('api.cook.error', {
+      userId,
+      code,
+      message: message.slice(0, 300),
+    });
     return NextResponse.json({ success: false, error: { code, message, recoverable } }, { status: 400 });
   }
 }
