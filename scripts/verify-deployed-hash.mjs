@@ -223,8 +223,19 @@ async function main() {
       console.error('✗ FAIL: could not resolve the Vercel team id from the token (needed to list production deployments).');
       process.exit(1);
     }
+    // The v6 list endpoint's `project` filter is a PROJECT ID, not a name —
+    // passing the name is SILENTLY IGNORED and the API returns the team's
+    // latest deployment regardless of project (so this report could show the
+    // OTHER app's commit). Resolve the id from the `vercel link` file; the
+    // name fallback only applies before the repo is linked (CI never uses
+    // this list branch — the post-deploy gates always pass --url).
+    let projectId = null;
+    try {
+      projectId = JSON.parse(readFileSync(resolve(process.cwd(), '.vercel/project.json'), 'utf8'))?.projectId ?? null;
+    } catch { /* not linked yet */ }
+    const projectFilter = projectId ? `projectId=${encodeURIComponent(projectId)}` : `project=${PROJECT}`;
     const res = await fetch(
-      `https://api.vercel.com/v6/deployments?project=${PROJECT}&teamId=${teamId}&target=production&state=READY&limit=1`,
+      `https://api.vercel.com/v6/deployments?${projectFilter}&teamId=${teamId}&target=production&state=READY&limit=1`,
       { headers: { authorization: `Bearer ${token}` } },
     );
     const body = typeof res.json === 'function' ? await res.json().catch(() => null) : null;
