@@ -1,0 +1,78 @@
+// ─────────────────────────────────────────────────────────────────────────────
+// Firestore security rules — Kitchen Agent
+//
+// Every document is owner-scoped via the `userId` field. The app reads/writes
+// only documents where userId == request.auth.uid.
+// ─────────────────────────────────────────────────────────────────────────────
+
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ── Helper: check that the requesting user owns the document ──────────
+    function isOwner(userId) {
+      return request.auth != null && request.auth.uid == userId;
+    }
+
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    // ── Users collection (per-user profiles) ─────────────────────────────
+    match /users/{userId} {
+      allow read, write: if isOwner(userId);
+    }
+
+    // ── Dietary profiles ─────────────────────────────────────────────────
+    match /dietary_profiles/{userId} {
+      allow read, write: if isOwner(userId);
+    }
+
+    // ── Recipes ──────────────────────────────────────────────────────────
+    match /recipes/{recipeId} {
+      allow read: if resource.data.userId == request.auth.uid;
+      allow create: if isAuthenticated()
+        && request.resource.data.userId == request.auth.uid;
+      allow update, delete: if resource.data.userId == request.auth.uid;
+    }
+
+    // ── Cooking sessions ─────────────────────────────────────────────────
+    match /cooking_sessions/{sessionId} {
+      allow read: if resource.data.userId == request.auth.uid;
+      allow create: if isAuthenticated()
+        && request.resource.data.userId == request.auth.uid;
+      allow update, delete: if resource.data.userId == request.auth.uid;
+    }
+
+    // ── Cooking session events ───────────────────────────────────────────
+    match /cooking_session_events/{eventId} {
+      allow read: if resource.data.userId == request.auth.uid;
+      allow create: if isAuthenticated()
+        && request.resource.data.userId == request.auth.uid;
+    }
+
+    // ── Timers ───────────────────────────────────────────────────────────
+    match /timers/{timerId} {
+      allow read: if resource.data.userId == request.auth.uid;
+      allow create: if isAuthenticated()
+        && request.resource.data.userId == request.auth.uid;
+      allow update, delete: if resource.data.userId == request.auth.uid;
+    }
+
+    // ── Pantry items ─────────────────────────────────────────────────────
+    match /pantry_items/{itemId} {
+      allow read: if resource.data.userId == request.auth.uid;
+      allow create: if isAuthenticated()
+        && request.resource.data.userId == request.auth.uid;
+      allow update, delete: if resource.data.userId == request.auth.uid;
+    }
+
+    // ── Agent tool logs ──────────────────────────────────────────────────
+    match /agent_tool_logs/{logId} {
+      allow read: if resource.data.userId == request.auth.uid;
+      allow create: if isAuthenticated()
+        && request.resource.data.userId == request.auth.uid;
+    }
+  }
+}
