@@ -80,8 +80,22 @@ The app will follow the same contract-locked verification discipline as Freebuff
 - [x] AI provider boundary (swappable RecipeGenerator/Validator/Substitution/Conversation)
 - [x] Firestore security rules (owner-scoped)
 - [x] Firestore composite indexes
-- [x] 30-state-machine unit tests
+- [x] 30 state-machine unit tests
 - [x] Production build passes
+
+## K2 — Persistent cooking session service
+
+- [x] Operational `SessionService` with `createSession`, `transitionTo`, `pauseSession`, `resumeSession`, `handleError`, `recoverFromError`, `completeCurrentStep`, `repeatCurrentStep`, `previousStep`, `endSession`
+- [x] Event sourcing: every transition logs a `CookingSessionEvent` with type, data, correlationId
+- [x] Optimistic concurrency via version-gated updates (stale request rejection)
+- [x] Idempotency via correlationId (duplicate commands are no-ops)
+- [x] Error recovery: transitions to `ERROR_RECOVERY` preserving state, restores on recovery
+- [x] Correction flow: `USER_CORRECTION` from guidance phases with resume
+- [x] Safety warning system: `SAFETY_WARNING` with resume
+- [x] Step navigation: `completeCurrentStep`, `repeatCurrentStep`, `previousStep`
+- [x] `InMemorySessionStore` for deterministic testing
+- [x] 37 integration tests (happy path, invalid transitions, pause/resume, substitution, timer, step nav, error recovery, double-submit, stale requests, recovery scenarios, event sourcing)
+- [x] All 61 tests green + production build passes
 
 ## Development
 
