@@ -388,3 +388,4 @@ so the ancestry decision is real, never a missing-object accident.
 8. Voice-first does not mean voice-only.
 9. Recovery is designed, not improvised.
 10. Build the core before advanced intelligence.
+<!-- pr-stale-proof marker v2 -->
