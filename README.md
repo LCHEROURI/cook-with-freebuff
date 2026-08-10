@@ -268,6 +268,11 @@ npm run verify:live
 # warms the routes, runs the full check, and tears the server down, all in
 # one command (port override: VERIFY_LOCAL_PORT=3105)
 npm run verify:live:local
+
+# Diff the local stack against the deployed stack on the FULL lifecycle —
+# runs both checks, normalizes ephemeral content (ids, timings, Gemini text),
+# and fails on any status-line divergence
+npm run verify:live:compare
 ```
 
 ## Project principles
