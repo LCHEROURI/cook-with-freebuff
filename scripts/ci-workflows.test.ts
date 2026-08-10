@@ -170,8 +170,14 @@ describe('.github/workflows/verify-deployed.yml · deployment_status post-deploy
   it('wires VERCEL_TOKEN into the job env, the loud guard, and BOTH hash steps (4 wirings)', () => {
     // Counting (not a bare toContain) catches a wiring dropped on any ONE of
     // the four places that need it: job env (feeds step `if`s), loud-guard
-    // env, and the two hash steps' envs.
-    expect(POST_DEPLOY.match(new RegExp(SECRET_WIRING('VERCEL_TOKEN').replace(/[$\{\}]/g, '\\$&'), 'g'))).toHaveLength(4);
+    // env, and the two hash steps' envs. Scoped to the PRODUCTION job block
+    // (the PR preview gate has its own VERCEL_TOKEN wirings, counted by its
+    // own test below).
+    const productionBlock = POST_DEPLOY.slice(
+      POST_DEPLOY.indexOf('\n  verify-deployed-live:'),
+      POST_DEPLOY.indexOf('\n  verify-preview-deploy:'),
+    );
+    expect(productionBlock.match(new RegExp(SECRET_WIRING('VERCEL_TOKEN').replace(/[$\{\}]/g, '\\$&'), 'g'))).toHaveLength(4);
   });
 
   it('targets the public canonical production URL (deployment subdomains are Vercel-protected)', () => {
@@ -190,5 +196,72 @@ describe('.github/workflows/verify-deployed.yml · deployment_status post-deploy
     expect(POST_DEPLOY).toContain('cancel-in-progress: false');
     expect(POST_DEPLOY).toContain('timeout-minutes: 10');
     expect(POST_DEPLOY).toMatch(/node-version: 22/);
+  });
+});
+
+describe('.github/workflows/verify-deployed.yml · PR preview gate (branch-protection-required post-deploy check)', () => {
+  // Branch protection requires a real post-deploy check on PRs, and GitHub
+  // blocks merges forever on a required check that never reports. The
+  // production job only fires on Production deployment_status events, so PRs
+  // need their own: the preview gate below fires on successful PREVIEW
+  // deployments (which Vercel posts for every PR head) and asserts the
+  // preview serves the PR head commit. Locking it here keeps the exact job
+  // name — which branch protection references verbatim — from drifting.
+  const previewBlock = POST_DEPLOY.slice(POST_DEPLOY.indexOf('\n  verify-preview-deploy:'));
+
+  it('keeps the job with the exact name branch protection requires', () => {
+    expect(previewBlock.length).toBeGreaterThan(0);
+    expect(previewBlock).toContain('name: Verify PR preview deploy (hash gate)');
+  });
+
+  it('fires only on successful Preview deployments with a URL (never Production)', () => {
+    // Production deployments are the production job's job (verify:live +
+    // hash + alias drift). The preview gate must not double-run them — the
+    // environment filter is the load-bearing half.
+    expect(previewBlock).toContain("github.event.deployment_status.state == 'success'");
+    expect(previewBlock).toContain("github.event.deployment_status.environment == 'Preview'");
+    expect(previewBlock).toContain("github.event.deployment_status.target_url != ''");
+    expect(previewBlock).not.toContain("environment == 'Production'");
+  });
+
+  it('still runs the exact-deployment hash assertion against the PR head', () => {
+    // The same inference-vs-verify closure the production job has: the
+    // preview Vercel just built (target_url) must record the PR head commit
+    // (deployment.sha). Dropping the step — or the --expect wiring — would
+    // let a preview that isn't the PR head go green.
+    expect(previewBlock).toContain('name: Verify the preview serves the PR head commit');
+    expect(previewBlock).toContain('node scripts/verify-deployed-hash.mjs');
+    expect(previewBlock).toContain('--url "${{ github.event.deployment_status.target_url }}"');
+    expect(previewBlock).toContain('--expect "${{ github.event.deployment.sha }}"');
+    expect(previewBlock).toContain("if: ${{ env.VERCEL_TOKEN != '' }}");
+    expect(previewBlock).toContain('run: |');
+  });
+
+  it('wires VERCEL_TOKEN into the job env AND the verify step env, with a loud guard on the canonical repo', () => {
+    // Job env (feeds the step `if`) + the verify step's own env — dropping
+    // either silently disables the gate. The loud guard is the fork-safe
+    // half: skip-not-fail on forks (no secrets), hard fail on the canonical
+    // repo so a missing token can't masquerade as a green preview check.
+    const tokenWiring = SECRET_WIRING('VERCEL_TOKEN').replace(/[$\\{\\}]/g, '\\$&');
+    expect(previewBlock.match(new RegExp(tokenWiring, 'g'))).toHaveLength(2);
+    expect(previewBlock).toContain('name: Fail loudly if VERCEL_TOKEN is missing (preview deploy)');
+    expect(previewBlock).toContain("github.repository == 'LCHEROURI/cook-with-freebuff'");
+    expect(previewBlock).toContain('exit 1');
+  });
+
+  it('stays lightweight — no verify:live, no Firestore secrets, no Firestore writes in the preview gate', () => {
+    // The preview gate exists to give branch protection a real check WITHOUT
+    // burning the owner-verify write budget on every PR (the reason the
+    // write-heavy verify:live stays Production-only). Reintroducing
+    // verify:live — or the four Firestore secrets — into the preview job
+    // fails here.
+    expect(previewBlock).not.toContain('npm run verify:live');
+    expect(previewBlock).not.toContain('FIREBASE_SERVICE_ACCOUNT');
+    expect(previewBlock).not.toContain('APP_OWNER_UID');
+  });
+
+  it('keeps the run-safety envelope (10-minute budget, Node 22)', () => {
+    expect(previewBlock).toContain('timeout-minutes: 10');
+    expect(previewBlock).toMatch(/node-version: 22/);
   });
 });

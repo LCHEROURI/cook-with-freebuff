@@ -339,6 +339,23 @@ git worktree add --detach /tmp/cook-hook-block HEAD~1 && mkdir -p /tmp/cook-hook
 All three are read-only against git and Vercel — nothing is pushed, deployed, or
 modified; only a temporary worktree is created and removed.
 
+### PR preview gate — the post-deploy check PRs report
+
+Branch protection on `main` requires two checks before a PR can merge:
+
+- **`Typecheck · Lint · Test · Build`** — the CI validate job (runs on every
+  PR already).
+- **`Verify PR preview deploy (hash gate)`** — a job in
+  `.github/workflows/verify-deployed.yml` that fires on Vercel's successful
+  **Preview** deployment of the PR head and asserts the preview serves the PR
+  head commit (the same `verify-deployed-hash.mjs --url … --expect …`
+  assertion the production post-deploy gate runs).
+
+It is deliberately lightweight — `VERCEL_TOKEN` only, zero Firestore traffic —
+so verifying every PR costs no owner-verify write budget (that is why the
+write-heavy `verify:live` stays Production-only). Fork PRs (no secrets) get a
+skipped-but-green check; a missing token on the canonical repo fails loudly.
+
 ## Project principles
 
 1. The backend is the source of truth — LLM conversation history is never authoritative.

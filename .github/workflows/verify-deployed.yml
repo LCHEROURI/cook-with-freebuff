@@ -11,9 +11,12 @@ name: Verify deployed (post-deploy)
 # Event-shape notes:
 #   - `secrets` is not a valid context in job-level `if`, so secret presence is
 #     checked on a step via job env (same pattern as ci.yml).
-#   - Only Production deployments are verified. Previews share the same
-#     Firestore backend and would consume the owner-verify write budget for no
-#     gate value; they can be driven manually via workflow_dispatch if needed.
+#   - The write-heavy verify:live gate stays Production-only (previews share
+#     the same Firestore backend and would consume the owner-verify write
+#     budget for no gate value). Preview deployments get their OWN lightweight
+#     hash-gate job below (VERCEL_TOKEN only, zero Firestore reads/writes): it
+#     proves the PR preview serves the PR head commit, so branch protection can
+#     require a real post-deploy check on every PR.
 #   - The verify step targets the CANONICAL production URL, not the
 #     deployment-specific target_url: Vercel's Deployment Protection 401s the
 #     deployment subdomain ("Protected deployment") and the canonical alias is
@@ -148,3 +151,66 @@ jobs:
           FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
           APP_OWNER_UID: ${{ secrets.APP_OWNER_UID }}
           GOOGLE_AI_API_KEY: ${{ secrets.GOOGLE_AI_API_KEY }}
+
+  # PR preview gate — the post-deploy check PRs can report. Vercel posts a
+  # deployment_status event for EVERY deployment, including the previews it
+  # builds for pull-request branches. This job fires on successful PREVIEW
+  # deployments and proves the preview serves the PR head commit (the same
+  # exact-deployment hash assertion the production job runs, minus the
+  # write-heavy verify:live) — so branch protection can require a real
+  # post-deploy check on PRs, not just the push-time validate job. It is
+  # deliberately lightweight: VERCEL_TOKEN only, zero Firestore traffic.
+  #
+  # Fork handling: fork PRs have no secrets, so the verify step is
+  # skip-not-fail there; the loud guard only fires on the canonical repo.
+  verify-preview-deploy:
+    name: Verify PR preview deploy (hash gate)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    if: >-
+      github.event.deployment_status.state == 'success' &&
+      github.event.deployment_status.environment == 'Preview' &&
+      github.event.deployment_status.target_url != ''
+
+    env:
+      VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v5
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: 22
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Echo the preview deployment being verified
+        run: |
+          echo "state:       ${{ github.event.deployment_status.state }}"
+          echo "environment: ${{ github.event.deployment_status.environment }}"
+          echo "target_url:  ${{ github.event.deployment_status.target_url }}"
+          echo "sha:         ${{ github.event.deployment.sha }}"
+
+      # Exact-deployment assertion for the preview: the deployment Vercel just
+      # built (target_url) must record the PR head commit (deployment.sha).
+      # Gated on VERCEL_TOKEN (skip-not-fail on forks where secrets are
+      # unavailable); the loud guard below turns a missing token on the
+      # canonical repo into a failure instead of a silently green skip.
+      - name: Verify the preview serves the PR head commit
+        if: ${{ env.VERCEL_TOKEN != '' }}
+        run: |
+          node scripts/verify-deployed-hash.mjs \
+            --url "${{ github.event.deployment_status.target_url }}" \
+            --expect "${{ github.event.deployment.sha }}"
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+
+      - name: Fail loudly if VERCEL_TOKEN is missing (preview deploy)
+        if: ${{ env.VERCEL_TOKEN == '' && github.repository == 'LCHEROURI/cook-with-freebuff' }}
+        run: |
+          echo "::error::VERCEL_TOKEN secret missing — the PR preview hash gate cannot run."
+          echo "Add it under GitHub -> Settings -> Secrets and variables -> Actions, then re-run."
+          exit 1
