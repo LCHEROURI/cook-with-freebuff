@@ -285,6 +285,20 @@ if (pantryItemId) {
   }
 }
 
+// K8 pantry query: "what's in my pantry?" must route to the get_pantry tool
+// and list the just-confirmed item back (PANTRY_GET intent → tool → store).
+const queryTurn = await agent("what's in my pantry?");
+const queryTool = queryTurn.body?.toolCalls?.find((c) => c.tool === 'get_pantry');
+if (queryTurn.status === 200 && queryTool?.result?.success) {
+  ok(`"what's in my pantry?" → get_pantry succeeded live`);
+  const items = queryTool.result.data?.items ?? [];
+  items.some((i) => i.name === 'olive oil')
+    ? ok('pantry query lists the confirmed “olive oil” item')
+    : fail(`get_pantry did not list olive oil (${JSON.stringify(items.map((i) => i.name).slice(0, 5)).slice(0, 160)})`);
+} else {
+  fail(`pantry query turn → ${queryTurn.status} ${JSON.stringify(queryTurn.body).slice(0, 200)}`);
+}
+
 // Free-form turn: the Gemini provider must answer. A greeting is the clean
 // model-only path — food-phrase questions can be caught by the deterministic
 // ingredient extractor ("I heard: …") and never reach the model.
