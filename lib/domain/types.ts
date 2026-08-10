@@ -36,6 +36,7 @@ export interface PrepStep {
   estimatedSeconds: number;
   ingredientsUsed: string[];
   equipmentUsed: string[];
+  safetyNote?: string;
 }
 
 export interface CookingStep {

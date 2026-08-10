@@ -70,6 +70,12 @@ export interface GuideAction {
   instruction?: string;
   stepId?: string;
   safetyNote?: string;
+  /**
+   * Set while the session is in SAFETY_WARNING: the step's safety note is a
+   * confirmation gate — the step is NOT completed until the cook acknowledges
+   * it. The same step is shown (progress is preserved).
+   */
+  safetyGate?: { note: string };
   /** Auto-started when the current cooking step carries timerSeconds. */
   timerStarted?: TimerStartedInfo;
   activeTimers: ActiveTimerInfo[];
@@ -254,6 +260,8 @@ export class GuidedCookingService {
    * - Exhausted prep steps → PREP_GUIDANCE → COOKING_GUIDANCE.
    * - Exhausted cooking steps → COOKING_GUIDANCE → PLATING → (next call) COMPLETED.
    * - A new step with timerSeconds auto-starts a backend timer (WAITING_FOR_TIMER).
+   * - A step with a safetyNote first surfaces a SAFETY_WARNING gate (progress
+   *   preserved); the step completes only on the acknowledgment call.
    */
   async completeCurrentAction(
     userId: string,
@@ -264,47 +272,32 @@ export class GuidedCookingService {
     if (!session) throw new GuideError('No cooking session found for this user', 'SESSION_NOT_FOUND', true);
     const recipe = await this.requireRecipe(session);
 
+    // Safety confirmation gate: when the current step carries a safetyNote,
+    // "done" does NOT complete it — it surfaces the note as a gate and keeps
+    // progress. The step completes only after the cook acknowledges the gate
+    // (a second "done" while in SAFETY_WARNING).
+    if (session.currentPhase === 'PREP_GUIDANCE' || session.currentPhase === 'COOKING_GUIDANCE') {
+      const step =
+        session.currentPhase === 'PREP_GUIDANCE'
+          ? recipe.prepSteps[session.currentPrepStepIndex]
+          : recipe.cookingSteps[session.currentCookingStepIndex];
+      if (step?.safetyNote) {
+        const gated = await this.sessionService.transitionTo(
+          session.id,
+          session.version,
+          'SAFETY_WARNING',
+          'SYSTEM',
+          { correlationId: options?.correlationId },
+        );
+        return this.buildSnapshot(userId, gated, recipe);
+      }
+    }
+
     switch (session.currentPhase) {
-      case 'PREP_GUIDANCE': {
-        const nextIndex = session.currentPrepStepIndex + 1;
-        let updated = await this.sessionService.completeCurrentStep(session.id, session.version, {
-          correlationId: options?.correlationId,
-        });
-        if (nextIndex >= recipe.prepSteps.length) {
-          updated = await this.sessionService.transitionTo(
-            updated.id,
-            updated.version,
-            'COOKING_GUIDANCE',
-            'AGENT_TOOL',
-            { correlationId: options?.correlationId },
-          );
-        }
-        // The first cooking step may carry a timer — auto-start it.
-        const afterTimer = await this.maybeAutoStart(updated, recipe, options);
-        const snap = await this.buildSnapshot(userId, afterTimer.session, recipe);
-        if (afterTimer.timerStarted) snap.timerStarted = afterTimer.timerStarted;
-        return snap;
-      }
-      case 'COOKING_GUIDANCE': {
-        const nextIndex = session.currentCookingStepIndex + 1;
-        let updated = await this.sessionService.completeCurrentStep(session.id, session.version, {
-          correlationId: options?.correlationId,
-        });
-        if (nextIndex >= recipe.cookingSteps.length) {
-          updated = await this.sessionService.transitionTo(
-            updated.id,
-            updated.version,
-            'PLATING',
-            'AGENT_TOOL',
-            { correlationId: options?.correlationId },
-          );
-          return this.buildSnapshot(userId, updated, recipe);
-        }
-        const afterTimer = await this.maybeAutoStart(updated, recipe, options);
-        const snap = await this.buildSnapshot(userId, afterTimer.session, recipe);
-        if (afterTimer.timerStarted) snap.timerStarted = afterTimer.timerStarted;
-        return snap;
-      }
+      case 'PREP_GUIDANCE':
+        return this.advancePrep(userId, session, recipe, options);
+      case 'COOKING_GUIDANCE':
+        return this.advanceCooking(userId, session, recipe, options);
       case 'PLATING': {
         const updated = await this.sessionService.transitionTo(
           session.id,
@@ -315,6 +308,29 @@ export class GuidedCookingService {
         );
         return this.buildSnapshot(userId, updated, recipe);
       }
+      case 'SAFETY_WARNING': {
+        // The cook acknowledged the gate — complete the gated step exactly as a
+        // normal completion would (same phase boundaries, timer auto-start).
+        // The advance helpers are called directly (not via this method) so the
+        // gate cannot re-trigger on the same step.
+        const resumable = session.resumableState;
+        if (
+          !resumable ||
+          (resumable.phase !== 'PREP_GUIDANCE' && resumable.phase !== 'COOKING_GUIDANCE')
+        ) {
+          throw new GuideError('Safety state lost — cannot resume safely', 'NO_RESUMABLE_STATE', false);
+        }
+        const restored = await this.sessionService.transitionTo(
+          session.id,
+          session.version,
+          resumable.phase,
+          'RECOVERY',
+          { correlationId: options?.correlationId },
+        );
+        return resumable.phase === 'PREP_GUIDANCE'
+          ? this.advancePrep(userId, restored, recipe, options)
+          : this.advanceCooking(userId, restored, recipe, options);
+      }
       case 'WAITING_FOR_TIMER':
         throw new GuideError('A timer is still running — wait for it to finish first', 'WAITING_FOR_TIMER', true);
       default:
@@ -324,6 +340,60 @@ export class GuidedCookingService {
           true,
         );
     }
+  }
+
+  /** Complete a prep step and advance (with the prep → cooking boundary). */
+  private async advancePrep(
+    userId: string,
+    session: CookingSession,
+    recipe: Recipe,
+    options?: { correlationId?: string },
+  ): Promise<GuideSnapshot> {
+    const nextIndex = session.currentPrepStepIndex + 1;
+    let updated = await this.sessionService.completeCurrentStep(session.id, session.version, {
+      correlationId: options?.correlationId,
+    });
+    if (nextIndex >= recipe.prepSteps.length) {
+      updated = await this.sessionService.transitionTo(
+        updated.id,
+        updated.version,
+        'COOKING_GUIDANCE',
+        'AGENT_TOOL',
+        { correlationId: options?.correlationId },
+      );
+    }
+    // The first cooking step may carry a timer — auto-start it.
+    const afterTimer = await this.maybeAutoStart(updated, recipe, options);
+    const snap = await this.buildSnapshot(userId, afterTimer.session, recipe);
+    if (afterTimer.timerStarted) snap.timerStarted = afterTimer.timerStarted;
+    return snap;
+  }
+
+  /** Complete a cooking step and advance (with the cooking → plating boundary). */
+  private async advanceCooking(
+    userId: string,
+    session: CookingSession,
+    recipe: Recipe,
+    options?: { correlationId?: string },
+  ): Promise<GuideSnapshot> {
+    const nextIndex = session.currentCookingStepIndex + 1;
+    let updated = await this.sessionService.completeCurrentStep(session.id, session.version, {
+      correlationId: options?.correlationId,
+    });
+    if (nextIndex >= recipe.cookingSteps.length) {
+      updated = await this.sessionService.transitionTo(
+        updated.id,
+        updated.version,
+        'PLATING',
+        'AGENT_TOOL',
+        { correlationId: options?.correlationId },
+      );
+      return this.buildSnapshot(userId, updated, recipe);
+    }
+    const afterTimer = await this.maybeAutoStart(updated, recipe, options);
+    const snap = await this.buildSnapshot(userId, afterTimer.session, recipe);
+    if (afterTimer.timerStarted) snap.timerStarted = afterTimer.timerStarted;
+    return snap;
   }
 
   /** Repeat the current action — progress is never altered. */
@@ -812,6 +882,7 @@ export class GuidedCookingService {
           totalSteps: recipe.prepSteps.length,
           instruction: step.spokenInstruction || step.instruction,
           stepId: step.id,
+          safetyNote: step.safetyNote,
         };
       }
       case 'COOKING_GUIDANCE': {
@@ -844,6 +915,7 @@ export class GuidedCookingService {
         return { instruction: 'Enjoy your meal!' };
       case 'SUBSTITUTION_REQUIRED':
       case 'USER_CORRECTION':
+      case 'SAFETY_WARNING':
       case 'PAUSED': {
         // Show the step the cook will return to after the interruption.
         const resumable = session.resumableState;
@@ -856,6 +928,9 @@ export class GuidedCookingService {
                 totalSteps: recipe.prepSteps.length,
                 instruction: step.spokenInstruction || step.instruction,
                 stepId: step.id,
+                ...(session.currentPhase === 'SAFETY_WARNING' && step.safetyNote
+                  ? { safetyNote: step.safetyNote, safetyGate: { note: step.safetyNote } }
+                  : {}),
               };
             }
           }
@@ -867,6 +942,9 @@ export class GuidedCookingService {
                 totalSteps: recipe.cookingSteps.length,
                 instruction: step.spokenInstruction || step.instruction,
                 stepId: step.id,
+                ...(session.currentPhase === 'SAFETY_WARNING' && step.safetyNote
+                  ? { safetyNote: step.safetyNote, safetyGate: { note: step.safetyNote } }
+                  : {}),
               };
             }
           }

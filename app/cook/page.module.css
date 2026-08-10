@@ -174,6 +174,52 @@
   color: #a34a10;
 }
 
+.safetyGate {
+  margin-top: 1.5rem;
+  padding: 1.5rem 1.25rem;
+  background: #fff1f0;
+  border: 3px solid #d92d20;
+  border-radius: var(--radius-md);
+  text-align: center;
+}
+
+.safetyGateTitle {
+  margin: 0 0 0.5rem;
+  font-size: 1.3rem;
+  font-weight: 800;
+  color: #b42318;
+}
+
+.safetyGateNote {
+  margin: 0;
+  font-size: clamp(1.3rem, 5vw, 1.9rem);
+  font-weight: 700;
+  color: #b42318;
+  line-height: 1.3;
+}
+
+.safetyGateHint {
+  margin: 0.75rem 0 0;
+  font-size: 0.95rem;
+  color: #6b6b6b;
+}
+
+.safetyGateConfirm {
+  margin-top: 1.25rem;
+  width: 100%;
+  background: #d92d20;
+  border-color: #d92d20;
+  color: #fff;
+}
+
+.safetyGateWaiting {
+  grid-column: 1 / -1;
+  margin: 0;
+  font-size: 1rem;
+  color: #6b6b6b;
+  text-align: center;
+}
+
 .timers {
   display: flex;
   flex-direction: column;

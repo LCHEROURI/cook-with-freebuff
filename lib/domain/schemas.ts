@@ -32,6 +32,7 @@ export const prepStepSchema = z.object({
   estimatedSeconds: z.number().int().positive(),
   ingredientsUsed: z.array(z.string()).default([]),
   equipmentUsed: z.array(z.string()).default([]),
+  safetyNote: z.string().optional(),
 });
 
 // ── Cooking step ─────────────────────────────────────────────────────────────

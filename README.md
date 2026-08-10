@@ -144,6 +144,7 @@ The app will follow the same contract-locked verification discipline as Freebuff
 - [x] Auto phase transitions: every prep step completed → `PREP_GUIDANCE → COOKING_GUIDANCE`; cooking exhausted → `PLATING → COMPLETED`
 - [x] Timer auto-start: a cooking step with `timerSeconds` starts a backend timer and enters `WAITING_FOR_TIMER` — announced only after backend success; multi-timer safe
 - [x] Timer completion surfacing: `check_timers` alerts ("Your four-minute timer is finished.") and recovers the session to the exact step
+- [x] Safety confirmation gate: a step carrying a `safetyNote` (prep or cooking) is NOT completed on "done" — the session enters `SAFETY_WARNING` with the note surfaced and progress preserved; the step completes only after the cook acknowledges the gate (a second "done"). The gate is durable (survives refresh) and surfaced by the API, the tools, and the voice agent
 - [x] Navigation: `previous_step` (clamped at 0), `repeat_current_step` (no progress change), `pause` / `resume` (exact-step restore)
 - [x] New tools: `cook_with_me`, `check_timers`; `complete/repeat/previous/get_current_step` now return the guided snapshot
 - [x] New `POST /api/cook` route (auth-gated) — launch / status / done / repeat / back / pause / resume / timers

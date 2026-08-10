@@ -39,6 +39,18 @@ function makeRecipe(): Recipe {
   };
 }
 
+/** Recipe whose FIRST prep step carries a safetyNote — for gate tests. */
+function makeSafetyPrepRecipe(): Recipe {
+  const base = makeRecipe();
+  return {
+    ...base,
+    prepSteps: [
+      { id: 'p1', stepNumber: 1, instruction: 'Heat the oil on high', spokenInstruction: 'Heat the oil on high', estimatedSeconds: 60, ingredientsUsed: [], equipmentUsed: ['pan'], safetyNote: 'Hot oil — keep children away' },
+      { id: 'p2', stepNumber: 2, instruction: 'Dice the onion', spokenInstruction: 'Dice the onion', estimatedSeconds: 120, ingredientsUsed: ['onion'], equipmentUsed: ['knife'] },
+    ],
+  };
+}
+
 function makeContext(userId = 'user-1') {
   const store = new InMemorySessionStore();
   const timers = new InMemoryTimerStore();
@@ -179,7 +191,13 @@ describe('completeCurrentAction', () => {
     expect(alerts).toHaveLength(1);
     expect(recovered.phase).toBe('COOKING_GUIDANCE');
 
-    // Complete cooking step 1 → step 2 (no timer) → cooking step 2 → PLATING → COMPLETED.
+    // Cooking step 1 carries a safetyNote — "done" first surfaces the gate.
+    const gated = await guide.completeCurrentAction('user-1');
+    expect(gated.phase).toBe('SAFETY_WARNING');
+    expect(gated.safetyGate?.note).toBe('Hot oil');
+    expect(gated.stepNumber).toBe(1); // progress preserved
+
+    // Acknowledging the gate completes step 1 → step 2 (no timer) → PLATING → COMPLETED.
     const step2 = await guide.completeCurrentAction('user-1');
     expect(step2.phase).toBe('COOKING_GUIDANCE');
     expect(step2.instruction).toBe('Simmer the rice');
@@ -200,6 +218,79 @@ describe('completeCurrentAction', () => {
     const snap = await guide.completeCurrentAction('user-1');
     expect(snap.phase).toBe('WAITING_FOR_TIMER');
     expect(snap.timerStarted?.label).toBe('four-minute timer');
+  });
+});
+
+// ── Safety confirmation gate ───────────────────────────────────────────────
+
+describe('safety confirmation gate', () => {
+  async function launchSafetyPrep(userId = 'user-1') {
+    const ctx = makeContext(userId);
+    await ctx.recipes.createRecipe(makeSafetyPrepRecipe());
+    const snap = await ctx.guide.launchCookWithMe(userId, 'recipe-1');
+    return { ...ctx, snap };
+  }
+
+  it('"done" on a step with a safetyNote surfaces the gate without completing', async () => {
+    const { guide, snap } = await launchSafetyPrep();
+
+    // First prep step carries the note — "done" must NOT advance.
+    const gated = await guide.completeCurrentAction('user-1', snap.sessionId);
+    expect(gated.phase).toBe('SAFETY_WARNING');
+    expect(gated.stepNumber).toBe(1); // same step — progress preserved
+    expect(gated.instruction).toBe('Heat the oil on high');
+    expect(gated.safetyNote).toBe('Hot oil — keep children away');
+    expect(gated.safetyGate).toEqual({ note: 'Hot oil — keep children away' });
+
+    const session = await guide.getCurrentAction('user-1', snap.sessionId);
+    expect(session.phase).toBe('SAFETY_WARNING');
+    expect(session.safetyGate).toEqual({ note: 'Hot oil — keep children away' });
+  });
+
+  it('a second "done" acknowledges the gate and completes the step', async () => {
+    const { guide, snap } = await launchSafetyPrep();
+    await guide.completeCurrentAction('user-1', snap.sessionId); // → gate
+
+    const next = await guide.completeCurrentAction('user-1', snap.sessionId); // acknowledge
+    expect(next.phase).toBe('PREP_GUIDANCE');
+    expect(next.stepNumber).toBe(2);
+    expect(next.instruction).toBe('Dice the onion');
+    expect(next.safetyGate).toBeUndefined();
+  });
+
+  it('a step without a safetyNote completes directly — no gate', async () => {
+    const { guide, snap } = await launchSafetyPrep();
+    await guide.completeCurrentAction('user-1', snap.sessionId); // gate
+    await guide.completeCurrentAction('user-1', snap.sessionId); // acknowledge → prep 2
+
+    // Prep 2 has no note → completes straight through to the timed cooking step.
+    const direct = await guide.completeCurrentAction('user-1', snap.sessionId);
+    expect(direct.phase).toBe('WAITING_FOR_TIMER');
+    expect(direct.safetyGate).toBeUndefined();
+  });
+
+  it('the gate applies to cooking steps too and survives refresh', async () => {
+    const { guide, timers } = await launch();
+    await guide.completeCurrentAction('user-1'); // prep 1 → prep 2
+    await guide.completeCurrentAction('user-1'); // prep 2 → cooking 1 (timer)
+    // Recover from the timer back to COOKING_GUIDANCE at step 1 (has the note).
+    const sessionId = (await guide.getCurrentAction('user-1')).sessionId!;
+    const [timer] = await timers.listActiveTimers(sessionId);
+    await timers.updateTimer(timer.id, {
+      startedAt: Date.now() - 250_000,
+      endsAt: Date.now() - 10_000,
+    });
+    await guide.checkTimers('user-1');
+
+    const gated = await guide.completeCurrentAction('user-1');
+    expect(gated.phase).toBe('SAFETY_WARNING');
+    expect(gated.stepNumber).toBe(1);
+    expect(gated.safetyGate?.note).toBe('Hot oil');
+
+    // Refresh — the gate is durable, not a one-shot UI state.
+    const refreshed = await guide.getCurrentAction('user-1');
+    expect(refreshed.phase).toBe('SAFETY_WARNING');
+    expect(refreshed.safetyGate?.note).toBe('Hot oil');
   });
 });
 

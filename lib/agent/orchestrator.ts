@@ -214,12 +214,18 @@ export class ConversationOrchestrator {
           regenerating?: boolean;
           from?: string;
           to?: string;
+          safetyGate?: { note: string };
         }
       | undefined;
     switch (intent) {
       case 'COOK':
         return d?.instruction ? `Let's cook! ${d.instruction}` : "Let's cook!";
       case 'NEXT':
+        // A safety note gates the step — ask for explicit confirmation before
+        // the step is completed (a second "done" acknowledges the gate).
+        if (d?.safetyGate) {
+          return `Before you continue: ${d.safetyGate.note}. Say "done" to confirm you understand.`;
+        }
         if (d?.timerStarted) return `Done. I've started a ${d.timerStarted.label}.`;
         if (d?.instruction) return `Done — next: ${d.instruction}`;
         return 'Done — moving to the next step.';

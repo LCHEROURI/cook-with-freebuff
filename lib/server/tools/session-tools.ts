@@ -96,7 +96,7 @@ export const getCurrentStepTool: ToolDefinition = {
 
 export const completeCurrentStepTool: ToolDefinition = {
   name: 'complete_current_step',
-  description: 'Advance to the next step after the user says "done". Auto-transitions prep → cooking → plating and auto-starts timers on timed steps. Only advances on backend success.',
+  description: 'Advance to the next step after the user says "done". Auto-transitions prep → cooking → plating and auto-starts timers on timed steps. A step with a safetyNote first returns a safety gate (SAFETY_WARNING) — the step completes only after the user confirms the note. Only advances on backend success.',
   inputSchema: z.object({ sessionId: z.string().optional() }),
   async handler(ctx, args) {
     try {

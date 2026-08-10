@@ -107,6 +107,32 @@ describe('complete_current_step (guided)', () => {
     expect(data.timerStarted?.label).toBe('four-minute timer');
     expect(data.activeTimers).toHaveLength(1);
   });
+
+  it('complete_current_step surfaces a safety gate before completing a noted step', async () => {
+    const { ctx, recipes } = makeContext();
+    await recipes.createRecipe({
+      ...makeRecipe(),
+      prepSteps: [
+        { id: 'p1', stepNumber: 1, instruction: 'Heat the oil on high', spokenInstruction: 'Heat the oil on high', estimatedSeconds: 60, ingredientsUsed: [], equipmentUsed: ['pan'], safetyNote: 'Hot oil — keep children away' },
+        { id: 'p2', stepNumber: 2, instruction: 'Dice the onion', spokenInstruction: 'Dice the onion', estimatedSeconds: 120, ingredientsUsed: ['onion'], equipmentUsed: ['knife'] },
+      ],
+    });
+    await executeTool(registry, ctx, 'cook_with_me', { recipeId: 'recipe-1' });
+
+    const gated = await executeTool(registry, ctx, 'complete_current_step', {});
+    expect(gated.success).toBe(true);
+    const gatedData = gated.data as { phase: string; stepNumber: number; safetyGate?: { note: string } };
+    expect(gatedData.phase).toBe('SAFETY_WARNING');
+    expect(gatedData.stepNumber).toBe(1); // progress preserved
+    expect(gatedData.safetyGate).toEqual({ note: 'Hot oil — keep children away' });
+
+    // The acknowledgment call completes the step and advances.
+    const ack = await executeTool(registry, ctx, 'complete_current_step', {});
+    expect(ack.success).toBe(true);
+    const ackData = ack.data as { phase: string; stepNumber: number };
+    expect(ackData.phase).toBe('PREP_GUIDANCE');
+    expect(ackData.stepNumber).toBe(2);
+  });
 });
 
 describe('request_substitution / apply_substitution', () => {

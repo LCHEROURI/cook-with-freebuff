@@ -113,6 +113,33 @@ describe('/api/cook', () => {
     expect(body.data.timerStarted?.label).toBe('four-minute timer');
   });
 
+  it('done surfaces a safety gate before completing a step with a safetyNote', async () => {
+    const recipes = ctx.recipeStore as InMemoryRecipeStore;
+    await recipes.createRecipe({
+      ...makeRecipe(),
+      prepSteps: [
+        { id: 'p1', stepNumber: 1, instruction: 'Heat the oil on high', spokenInstruction: 'Heat the oil on high', estimatedSeconds: 60, ingredientsUsed: [], equipmentUsed: ['pan'], safetyNote: 'Hot oil — keep children away' },
+        { id: 'p2', stepNumber: 2, instruction: 'Dice the onion', spokenInstruction: 'Dice the onion', estimatedSeconds: 120, ingredientsUsed: ['onion'], equipmentUsed: ['knife'] },
+      ],
+    });
+
+    await post({ action: 'launch', recipeId: 'recipe-1' });
+    const gated = await post({ action: 'done' });
+    const gatedBody = await gated.json();
+    expect(gatedBody.success).toBe(true);
+    expect(gatedBody.data.phase).toBe('SAFETY_WARNING');
+    expect(gatedBody.data.safetyGate.note).toBe('Hot oil — keep children away');
+    expect(gatedBody.data.stepNumber).toBe(1); // progress preserved
+
+    // The acknowledgment "done" completes the step and advances.
+    const ack = await post({ action: 'done' });
+    const ackBody = await ack.json();
+    expect(ackBody.success).toBe(true);
+    expect(ackBody.data.phase).toBe('PREP_GUIDANCE');
+    expect(ackBody.data.stepNumber).toBe(2);
+    expect(ackBody.data.instruction).toBe('Dice the onion');
+  });
+
   it('status returns found:false with no session', async () => {
     const res = await post({ action: 'status' });
     const body = await res.json();

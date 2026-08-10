@@ -72,7 +72,9 @@ export function CookScreen({
           ? 'Plating'
           : snap.phase === 'COMPLETED'
             ? 'Done'
-            : snap.phase;
+            : snap.phase === 'SAFETY_WARNING'
+              ? 'Safety'
+              : snap.phase;
 
   const isPaused = snap.paused || snap.phase === 'PAUSED';
   const doneDisabled =
@@ -117,7 +119,7 @@ export function CookScreen({
 
       <section className={styles.action} aria-live="polite" aria-atomic="true">
         <p className={styles.instruction}>{snap.instruction ?? 'One moment…'}</p>
-        {snap.safetyNote && <p className={styles.safetyNote}>⚠ {snap.safetyNote}</p>}
+        {snap.safetyNote && !snap.safetyGate && <p className={styles.safetyNote}>⚠ {snap.safetyNote}</p>}
       </section>
 
       {snap.activeTimers.length > 0 && (
@@ -134,11 +136,30 @@ export function CookScreen({
         </section>
       )}
 
+      {snap.safetyGate && (
+        <section className={styles.safetyGate} role="alertdialog" aria-label="Safety warning" aria-live="assertive">
+          <p className={styles.safetyGateTitle}>⚠ Safety first</p>
+          <p className={styles.safetyGateNote}>{snap.safetyGate.note}</p>
+          <p className={styles.safetyGateHint}>The step is not marked done until you confirm you understand.</p>
+          <button
+            className={`${styles.control} ${styles.primary} ${styles.safetyGateConfirm}`}
+            onClick={onDone}
+            aria-label="I understand the safety warning, continue"
+          >
+            ✓ I understand — continue
+          </button>
+        </section>
+      )}
+
       <section className={styles.controls}>
         {isPaused ? (
           <button className={`${styles.control} ${styles.primary}`} onClick={onResume} aria-label="Resume cooking">
             ▶ Resume
           </button>
+        ) : snap.safetyGate ? (
+          // During the safety gate the only action is the explicit confirmation
+          // above — the step is not completed until it is acknowledged.
+          <p className={styles.safetyGateWaiting}>Confirm the safety note to continue.</p>
         ) : (
           <>
             <button className={styles.control} onClick={onBack} aria-label="Previous step" disabled={snap.stepNumber === 1}>

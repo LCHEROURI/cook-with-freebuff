@@ -4,8 +4,38 @@ import { createDefaultToolRegistry } from '../server/tools';
 import { ToolRegistry, executeTool } from '../server/tools/registry';
 import { SessionService, InMemorySessionStore } from '../server/session-service';
 import { InMemoryTimerStore, InMemoryLogStore, InMemoryRecipeStore } from '../server/tools/registry';
+import { GuidedCookingService } from '../server/guide-service';
 import type { ToolContext } from '../server/tools/types';
 import type { ConversationAgent } from '../ai/provider';
+import type { Recipe } from '../domain/types';
+
+function makeRecipe(): Recipe {
+  const t = Date.now();
+  return {
+    id: 'recipe-1',
+    userId: 'user-1',
+    title: 'Chicken Rice',
+    description: 'Simple one-pan dinner',
+    servings: 2,
+    estimatedPrepMinutes: 10,
+    estimatedCookMinutes: 25,
+    totalMinutes: 35,
+    ingredients: [{ id: 'i1', name: 'chicken thighs', quantity: 4, unit: 'pieces', optional: false }],
+    equipment: ['pan', 'knife'],
+    prepSteps: [
+      { id: 'p1', stepNumber: 1, instruction: 'Heat the oil on high', spokenInstruction: 'Heat the oil on high', estimatedSeconds: 60, ingredientsUsed: [], equipmentUsed: ['pan'], safetyNote: 'Hot oil — keep children away' },
+      { id: 'p2', stepNumber: 2, instruction: 'Dice the onion', spokenInstruction: 'Dice the onion', estimatedSeconds: 120, ingredientsUsed: ['onion'], equipmentUsed: ['knife'] },
+    ],
+    cookingSteps: [
+      { id: 'c1', stepNumber: 1, instruction: 'Sear the chicken 4 minutes', spokenInstruction: 'Sear the chicken four minutes', estimatedSeconds: 240, timerSeconds: 240, ingredientsUsed: ['chicken thighs'], equipmentUsed: ['pan'] },
+    ],
+    dietaryTags: [],
+    allergens: [],
+    safetyNotes: ['Hot oil — keep children away'],
+    generatedAt: t,
+    updatedAt: t,
+  };
+}
 
 function makeContext(userId = 'user-1'): { ctx: ToolContext; store: InMemorySessionStore } {
   const store = new InMemorySessionStore();
@@ -140,6 +170,30 @@ describe('ConversationOrchestrator', () => {
     const orch = new ConversationOrchestrator({ registry, context: ctx });
     const turn = await orch.process('what do I do now?');
     expect(turn.toolCalls[0]?.tool).toBe('get_current_step');
+  });
+
+  it('asks for explicit confirmation when "done" hits a safety gate, then completes', async () => {
+    const { ctx } = makeContext();
+    const recipes = ctx.recipeStore as InMemoryRecipeStore;
+    await recipes.createRecipe(makeRecipe());
+
+    // Land the session at the safety-note prep step.
+    const guide = new GuidedCookingService(ctx.sessionService, ctx.timerStore, ctx.recipeStore);
+    await guide.launchCookWithMe('user-1', 'recipe-1');
+
+    const orch = new ConversationOrchestrator({ registry, context: ctx });
+    const turn = await orch.process('done');
+    expect(turn.toolCalls[0]?.tool).toBe('complete_current_step');
+    expect(turn.toolCalls[0]?.result.success).toBe(true); // the gate IS a success
+    expect(turn.response).toContain('Before you continue');
+    expect(turn.response).toContain('Hot oil');
+    expect(turn.response).toContain('confirm');
+
+    // Acknowledging with a second "done" completes the step.
+    const ack = await orch.process('done');
+    expect(ack.toolCalls[0]?.result.success).toBe(true);
+    expect(ack.response).toContain('Done — next');
+    expect(ack.response).toContain('Dice the onion');
   });
 });
 

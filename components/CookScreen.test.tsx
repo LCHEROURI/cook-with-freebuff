@@ -100,6 +100,35 @@ describe('CookScreen', () => {
     expect(html).not.toContain('Done with this step');
   });
 
+  it('renders a safety gate that must be acknowledged before continuing', () => {
+    const onDone = vi.fn();
+    const html = render(
+      snapshot({
+        phase: 'SAFETY_WARNING',
+        instruction: 'Sear the chicken four minutes',
+        safetyNote: 'Hot oil',
+        safetyGate: { note: 'Hot oil' },
+      }),
+      { onDone },
+    );
+    expect(html).toContain('Safety first');
+    expect(html).toContain('Hot oil');
+    expect(html).toContain('I understand — continue');
+    expect(html).toContain('Safety'); // phase chip
+    // Normal step controls are hidden during the gate — the only action is the
+    // explicit confirmation.
+    expect(html).not.toContain('Done with this step');
+    expect(html).not.toContain('Repeat this step');
+    expect(html).not.toContain('Previous step');
+  });
+
+  it('renders the passive safety note outside the gate phase', () => {
+    const html = render(snapshot({ safetyNote: 'Hot oil' }));
+    expect(html).toContain('Hot oil');
+    expect(html).not.toContain('Safety first');
+    expect(html).toContain('Done with this step');
+  });
+
   it('includes the expandable ingredients and full recipe sections', () => {
     const html = render(snapshot());
     expect(html).toContain('Ingredients');
