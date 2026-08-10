@@ -3,22 +3,27 @@
 # .githooks/pre-push — surface the live-vs-local-HEAD delta before a
 # production push goes out.
 #
-# On any push that lands on refs/heads/main (the branch that triggers the
-# Vercel production deploy), this runs the shared verify:deployed-hash gate
-# (scripts/verify-deployed-hash-gate.mjs) and shows the operator exactly what
-# the push will change relative to what Vercel is currently serving:
+# On any push that lands on refs/heads/main, this runs the shared
+# verify:deployed-hash gate in --stale-guard mode
+# (scripts/verify-deployed-hash-gate.mjs) and mirrors its exit code — the
+# SAME direction-aware verdict the CI validate job uses, so the local hook
+# and CI can never disagree about what is safe to push. The driver prints the
+# full report (live commit, forward-deploy note, or STALE-HEAD BLOCK) and its
+# exit code IS the verdict:
 #
-#   live == HEAD      → "live is already at your HEAD" (no-op deploy)
-#   live behind HEAD  → "you are about to deploy X → Y" — the normal forward
-#                       case: WARN and continue (deploying IS the point)
-#   live ahead/other  → the push is BLOCKED: pushing would roll the site back
-#                       or clobber history — pull/rebase first
-#   gate exit 2       → invalid/revoked token — cannot verify: WARN + continue
-#   no live sha       → offline / API error — WARN + continue
+#   exit 0 → PASS — live is exactly your HEAD, or live is behind your HEAD
+#            (a forward deploy; the post-deploy gate verifies after Vercel
+#            finishes)
+#   exit 1 → BLOCK — the driver printed STALE-HEAD BLOCK (live is not an
+#            ancestor of HEAD: pushing would roll the site back or clobber
+#            history), or could not determine the live commit at all — a
+#            push that cannot be verified is not verified, and must not go
+#            out silently
+#   exit 2 → invalid/revoked token — cannot verify: WARN + continue (a bad
+#            local token must not block a deploy; CI has its own token and
+#            the post-deploy gate will verify there)
 #
-# The check never blocks the normal forward deploy; it only blocks the
-# dangerous direction and ALWAYS surfaces the delta first. Escape hatch:
-#   SKIP_VERIFY_DEPLOYED_HASH=1 git push ...
+# Escape hatch: SKIP_VERIFY_DEPLOYED_HASH=1 bypasses entirely.
 # ============================================================================
 
 set -u
@@ -46,16 +51,14 @@ fi
 
 echo "pre-push: verifying deployed hash before production push..." >&2
 
-OUTPUT="$(node scripts/verify-deployed-hash-gate.mjs 2>&1)"
+# ONE verdict implementation: the same --stale-guard gate CI runs. No bash
+# reimplementation of the direction logic here — the driver's exit code IS
+# the verdict and its output IS the report.
+node scripts/verify-deployed-hash-gate.mjs --stale-guard >&2
 CODE=$?
 
-echo "$OUTPUT" >&2
-
-LOCAL_HEAD="$(git rev-parse HEAD)"
-LIVE="$(printf '%s\n' "$OUTPUT" | sed -n 's/^  commit  \([0-9a-f]\{40\}\)$/\1/p' | head -1)"
-
 if [ "$CODE" -eq 0 ]; then
-  echo "pre-push: ✓ live is already at your local HEAD ($LOCAL_HEAD) — push is a no-op deploy" >&2
+  echo "pre-push: ✓ live-vs-HEAD check passed — safe to push" >&2
   exit 0
 fi
 
@@ -64,18 +67,5 @@ if [ "$CODE" -eq 2 ]; then
   exit 0
 fi
 
-# CODE 1: live != local HEAD. The direction decides warn-vs-block.
-if [ -z "$LIVE" ]; then
-  echo "pre-push: ⚠ could not determine the live commit (offline or Vercel API error) — continuing" >&2
-  exit 0
-fi
-
-if git merge-base --is-ancestor "$LIVE" HEAD 2>/dev/null; then
-  echo "pre-push: ⚠ you are about to deploy $LOCAL_HEAD while live is at $LIVE (forward deploy)" >&2
-  exit 0
-fi
-
-echo "pre-push: ✗ BLOCKED — live is at $LIVE and your local HEAD ($LOCAL_HEAD) is not ahead of it." >&2
-echo "pre-push:   Pushing would roll the site back or clobber history — pull/rebase first." >&2
-echo "pre-push:   To override, re-run with SKIP_VERIFY_DEPLOYED_HASH=1." >&2
+echo "pre-push: ✗ BLOCKED — see the verdict above; to override, re-run with SKIP_VERIFY_DEPLOYED_HASH=1" >&2
 exit 1

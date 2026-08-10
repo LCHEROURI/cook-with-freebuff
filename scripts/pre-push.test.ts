@@ -12,23 +12,26 @@ import { describe, expect, it } from 'vitest';
 // flattening the exit-2 credential path, or removing the rollback block —
 // fails here instead of at the next `git push`.
 //
-// The hook's contracts:
-//   1. Only production pushes (remote ref refs/heads/main) run the gate —
-//      feature-branch pushes never pay the Vercel round-trip.
-//   2. SKIP_VERIFY_DEPLOYED_HASH=1 bypasses entirely.
-//   3. The shared gate driver (scripts/verify-deployed-hash-gate.mjs) is
-//      spawned, not reimplemented — one source of truth with `npm run
-//      verify:deployed-hash` and the CI post-deploy gate.
-//   4. Exit routing: 0 → no-op note; 2 → invalid token, warn + continue;
-//      1 + live behind HEAD (ancestor) → forward-deploy warn + continue;
-//      1 + live NOT behind → BLOCKED with exit 1 (rollback protection).
+// Architecture this locks: the hook's verdict is FULLY delegated to the
+// shared driver in --stale-guard mode (scripts/verify-deployed-hash-gate.mjs)
+// — the SAME direction-aware verdict the CI validate job runs. The hook
+// contains no bash reimplementation of the direction logic (no merge-base
+// ancestry code): the driver's exit code IS the verdict (0 = safe, 1 = block,
+// 2 = bad token). The direction logic itself is locked by
+// verify-deployed-hash-gate.test.ts; here we lock that the hook delegates and
+// mirrors the codes.
 // ============================================================================
 
 const HOOK = readFileSync('.githooks/pre-push', 'utf8');
 
 describe('.githooks/pre-push · gate invocation', () => {
-  it('runs the shared verify:deployed-hash gate driver, not a reimplementation', () => {
-    expect(HOOK).toContain('node scripts/verify-deployed-hash-gate.mjs');
+  it('runs the shared gate driver in --stale-guard mode, not a reimplementation', () => {
+    expect(HOOK).toContain('node scripts/verify-deployed-hash-gate.mjs --stale-guard');
+    // The whole point of the unification: the hook must NOT reimplement the
+    // direction logic in bash. If merge-base ancestry code sneaks back in,
+    // the two surfaces can drift again — fail here.
+    expect(HOOK).not.toContain('merge-base');
+    expect(HOOK).not.toContain('is-ancestor');
   });
 
   it('cds to the repo root before running (hook can fire from any cwd)', () => {
@@ -36,8 +39,8 @@ describe('.githooks/pre-push · gate invocation', () => {
     expect(HOOK).toContain('cd "$ROOT"');
   });
 
-  it('captures the gate output and exit code so the verdict can be routed', () => {
-    expect(HOOK).toContain('OUTPUT="$(node scripts/verify-deployed-hash-gate.mjs 2>&1)"');
+  it('captures the driver exit code so the verdict can be routed', () => {
+    expect(HOOK).toContain('node scripts/verify-deployed-hash-gate.mjs --stale-guard >&2');
     expect(HOOK).toContain('CODE=$?');
   });
 });
@@ -56,49 +59,30 @@ describe('.githooks/pre-push · production-branch scoping', () => {
   });
 });
 
-describe('.githooks/pre-push · live-sha parsing', () => {
-  it('parses the 40-hex live commit from the gate output', () => {
-    // The gate prints "  commit  <sha>" — the hook must extract it to decide
-    // direction; a broken parse silently loses the rollback protection.
-    expect(HOOK).toContain('LIVE="$(printf');
-    expect(HOOK).toContain("sed -n 's/^  commit");
-    expect(HOOK).toContain('head -1');
-  });
-});
-
-describe('.githooks/pre-push · exit-code routing', () => {
-  it('exit 0 (live == HEAD) → no-op note and continue', () => {
-    expect(HOOK).toContain('live is already at your local HEAD');
+describe('.githooks/pre-push · exit-code routing (the driver verdict)', () => {
+  it('exit 0 (safe: live == HEAD or forward deploy) → proceed', () => {
     expect(HOOK).toContain('[ "$CODE" -eq 0 ]');
+    expect(HOOK).toContain('safe to push');
     expect(HOOK).toContain('exit 0');
   });
 
   it('exit 2 (invalid/revoked token) → warn and continue, never blocks', () => {
     expect(HOOK).toContain('[ "$CODE" -eq 2 ]');
     expect(HOOK).toContain('invalid/revoked token');
+    expect(HOOK).toContain('exit 0');
   });
 
-  it('exit 1 with no live sha (offline/API error) → warn and continue', () => {
-    expect(HOOK).toContain('[ -z "$LIVE" ]');
-    expect(HOOK).toContain('offline or Vercel API error');
-  });
-
-  it('forward deploy (live is an ancestor of HEAD) → warn and continue', () => {
-    expect(HOOK).toContain('git merge-base --is-ancestor "$LIVE" HEAD');
-    expect(HOOK).toContain('forward deploy');
-  });
-
-  it('live NOT an ancestor of HEAD → BLOCKS the push with exit 1', () => {
+  it('exit 1 (stale head OR unverifiable) → BLOCKS the push with exit 1', () => {
     expect(HOOK).toContain('✗ BLOCKED');
-    expect(HOOK).toContain('roll the site back');
+    expect(HOOK).toContain('SKIP_VERIFY_DEPLOYED_HASH=1');
     expect(HOOK).toContain('exit 1');
-    // The block must come AFTER the forward-deploy warn in the routing body
-    // (anchored to body-only strings — the header comment also says BLOCKED,
-    // which would make a naive indexOf comparison meaningless). A reorder
-    // that lets a forward push fall into the block fails here.
-    const forward = HOOK.indexOf('(forward deploy)');
+    // The block must come AFTER the exit-0 and exit-2 branches — a reorder
+    // that lets a blocked push fall through to a proceed branch fails here.
+    const proceed = HOOK.indexOf('safe to push');
+    const warn = HOOK.indexOf('invalid/revoked token');
     const blocked = HOOK.indexOf('✗ BLOCKED');
-    expect(forward).toBeGreaterThan(-1);
-    expect(blocked).toBeGreaterThan(forward);
+    expect(proceed).toBeGreaterThan(-1);
+    expect(warn).toBeGreaterThan(proceed);
+    expect(blocked).toBeGreaterThan(warn);
   });
 });

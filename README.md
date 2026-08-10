@@ -284,16 +284,19 @@ npm run verify:deployed-hash
 
 `.githooks/pre-push` runs the `verify:deployed-hash` gate on any push that
 lands on `refs/heads/main` and shows the operator exactly what the push will
-change relative to what Vercel is currently serving. It never blocks the
-normal forward deploy — it surfaces the delta first and only **blocks** the
-dangerous direction:
+change relative to what Vercel is currently serving. The hook **delegates its
+entire verdict to the gate driver's `--stale-guard` mode** — the same
+implementation the CI validate job runs — so the local hook and CI can never
+disagree about what is safe to push:
 
-- live == HEAD → no-op deploy note
-- live behind HEAD → "you are about to deploy X → Y" (forward deploy) —
-  warn and continue
-- live **not** an ancestor of HEAD → push **blocked** (rollback/clobber
-  risk — pull/rebase first)
-- invalid/revoked token (exit 2) or offline → warn and continue
+- exit 0 → PASS (live == HEAD, or a forward deploy — live is behind HEAD;
+  the post-deploy gate verifies after Vercel finishes)
+- exit 1 → **blocked** — live is **not** an ancestor of HEAD (rollback /
+  clobber risk, pull/rebase first), or the live commit could not be
+  determined at all (a push that cannot be verified must not go out
+  silently)
+- exit 2 → invalid/revoked token — warn and continue (a bad local token
+  must not block a deploy; CI has its own token and verifies there)
 
 Wire it in a fresh clone:
 
@@ -310,8 +313,9 @@ throwaway detached worktree at an older commit — the live site is always
 at (or ahead of) your recent commits, so the comparison necessarily
 mismatches. Each one-liner creates the worktree, runs the check, prints the
 verdict, and always cleans up. The worktree commit must be recent enough to
-include the gate driver (any commit at or after `597286a`); `HEAD~1`
-normally is.
+include the gate driver with `--stale-guard` support (any commit at or
+after `067b313` — required by the hook's BLOCK one-liner, since the hook
+now delegates to that mode); `HEAD~1` normally is.
 
 **Gate FAIL path** (expect `RESULT: FAIL` and `gate exit=1`):
 
