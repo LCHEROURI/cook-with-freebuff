@@ -218,6 +218,11 @@ npm test
 
 # Production build
 npm run build
+
+# End-to-end verification of the DEPLOYED app (seed recipe + owner token +
+# guided flow + safety gate + timer + Gemini turn, with cleanup)
+npm run verify:live
+# → https://cook-with-freebuff.vercel.app (override: npm run verify:live -- --app URL)
 ```
 
 ## Project principles
