@@ -1,62 +1,87 @@
 import { describe, expect, it, vi } from 'vitest';
 
 vi.mock('firebase/auth', () => ({
-  signInAnonymously: vi.fn(),
+  GoogleAuthProvider: class GoogleAuthProvider {},
+  signInWithPopup: vi.fn(),
+  signOut: vi.fn(),
 }));
 
-import { signInAnonymously } from 'firebase/auth';
+import { signInWithPopup, signOut } from 'firebase/auth';
 import {
-  ANON_DISABLED,
   AUTH_CONFIG_MISSING,
+  PROVIDER_DISABLED,
+  SIGN_IN_BLOCKED,
+  SIGN_IN_CANCELLED,
   SIGN_IN_FAILED,
   authErrorMessage,
-  ensureAnonSession,
+  signInWithGoogle,
+  signOutFirebase,
 } from './session';
 
-const mockSignIn = vi.mocked(signInAnonymously);
+const mockPopup = vi.mocked(signInWithPopup);
+const mockSignOut = vi.mocked(signOut);
 
 describe('authErrorMessage · Firebase auth error → honest copy', () => {
-  it('maps a disabled anonymous provider to the enable guidance', () => {
-    // auth/operation-not-allowed is the code signInAnonymously rejects with
-    // when the Anonymous provider is turned off in the console — the exact
-    // state the live app is in. The message must tell the operator WHAT to
-    // click, not just "could not sign in".
-    expect(authErrorMessage('auth/operation-not-allowed')).toBe(ANON_DISABLED);
-    expect(authErrorMessage('auth/admin-restricted-operation')).toBe(ANON_DISABLED);
-    expect(ANON_DISABLED).toContain('Anonymous');
-    expect(ANON_DISABLED).toContain('Sign-in method');
+  it('maps a user-closed popup to the cancelled message', () => {
+    expect(authErrorMessage('auth/popup-closed-by-user')).toBe(SIGN_IN_CANCELLED);
+    expect(authErrorMessage('auth/cancelled-popup-request')).toBe(SIGN_IN_CANCELLED);
+    expect(authErrorMessage('auth/popup-blocked')).toBe(SIGN_IN_CANCELLED);
+  });
+
+  it('maps an unauthorized domain to the authorized-domains guidance', () => {
+    // The classic failure for a fresh Vercel URL: the domain is not in the
+    // project's Authorized domains — the message must point at the fix.
+    expect(authErrorMessage('auth/unauthorized-domain')).toBe(SIGN_IN_BLOCKED);
+    expect(SIGN_IN_BLOCKED).toContain('Authorized domains');
+  });
+
+  it('maps a disabled provider to the enable-Google guidance', () => {
+    expect(authErrorMessage('auth/operation-not-allowed')).toBe(PROVIDER_DISABLED);
+    expect(authErrorMessage('auth/admin-restricted-operation')).toBe(PROVIDER_DISABLED);
+    expect(PROVIDER_DISABLED).toContain('Google');
   });
 
   it('maps the synthetic config-missing code to the env guidance', () => {
     expect(authErrorMessage('config-missing')).toBe(AUTH_CONFIG_MISSING);
-    expect(AUTH_CONFIG_MISSING).toContain('NEXT_PUBLIC_FIREBASE_');
   });
 
   it('falls back to the generic message for unknown codes', () => {
     expect(authErrorMessage(undefined)).toBe(SIGN_IN_FAILED);
     expect(authErrorMessage('auth/network-request-failed')).toBe(SIGN_IN_FAILED);
-    expect(authErrorMessage('auth/invalid-api-key')).toBe(SIGN_IN_FAILED);
   });
 });
 
-describe('ensureAnonSession · never throws, returns a verdict', () => {
-  it('returns { ok: true, user } on a successful anonymous sign-in', async () => {
-    const user = { uid: 'anon-abc' } as never;
-    mockSignIn.mockResolvedValue({ user } as never);
-    const res = await ensureAnonSession({} as never);
-    expect(res).toEqual({ ok: true, user });
-    expect(mockSignIn).toHaveBeenCalledTimes(1);
+describe('signInWithGoogle · Google popup wrapper', () => {
+  it('resolves when the popup succeeds', async () => {
+    mockPopup.mockResolvedValue({} as never);
+    await expect(signInWithGoogle({} as never)).resolves.toBeUndefined();
+    expect(mockPopup).toHaveBeenCalledTimes(1);
   });
 
-  it('maps a disabled-provider rejection to the enable guidance (ok: false)', async () => {
-    mockSignIn.mockRejectedValue({ code: 'auth/operation-not-allowed' });
-    const res = await ensureAnonSession({} as never);
-    expect(res).toEqual({ ok: false, error: ANON_DISABLED });
+  it('throws the mapped message when the popup is closed by the user', async () => {
+    mockPopup.mockRejectedValue({ code: 'auth/popup-closed-by-user' });
+    await expect(signInWithGoogle({} as never)).rejects.toThrow(SIGN_IN_CANCELLED);
   });
 
-  it('maps unknown rejections to the generic message (ok: false)', async () => {
-    mockSignIn.mockRejectedValue(new Error('boom'));
-    const res = await ensureAnonSession({} as never);
-    expect(res).toEqual({ ok: false, error: SIGN_IN_FAILED });
+  it('throws the blocked-domain guidance on auth/unauthorized-domain', async () => {
+    mockPopup.mockRejectedValue({ code: 'auth/unauthorized-domain' });
+    await expect(signInWithGoogle({} as never)).rejects.toThrow(SIGN_IN_BLOCKED);
+  });
+
+  it('throws the generic message for unknown rejections', async () => {
+    mockPopup.mockRejectedValue(new Error('boom'));
+    await expect(signInWithGoogle({} as never)).rejects.toThrow(SIGN_IN_FAILED);
+  });
+});
+
+describe('signOutFirebase · best-effort sign-out', () => {
+  it('resolves on success', async () => {
+    mockSignOut.mockResolvedValue(undefined);
+    await expect(signOutFirebase({} as never)).resolves.toBeUndefined();
+  });
+
+  it('never rejects (sign-out failure is not actionable)', async () => {
+    mockSignOut.mockRejectedValue(new Error('offline'));
+    await expect(signOutFirebase({} as never)).resolves.toBeUndefined();
   });
 });

@@ -2,48 +2,73 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
 // ============================================================================
-// lib/auth/pages-auth-wiring.test.ts — lock the anonymous-auth wiring in the
-// two voice-first pages.
+// lib/auth/pages-auth-wiring.test.ts — lock the auth architecture across the
+// three pages.
 //
-// The API routes (api/cook, api/agent, api/tools) reject with 401
-// "Authentication required" unless the request carries a valid Bearer ID
-// token. The pages therefore MUST wire useAuthSession().getToken into every
-// data hook — if a future edit drops the wiring (or a new hook is added
-// without it), the deployed /cook screen silently regresses to the broken
-// "Authentication required" empty state this test exists to prevent.
+// The API routes (api/cook, api/agent, api/tools) reject with 401 unless the
+// request carries a valid Bearer ID token, and the app now has a real login
+// page. If a future edit drops the wiring — a data hook without getToken, a
+// protected route that stops redirecting, a login page that stops calling
+// signIn — the deployed app silently regresses to the broken "Authentication
+// required" state this test exists to prevent.
 // ============================================================================
 
 const COOK = readFileSync('app/cook/page.tsx', 'utf8');
+const LOGIN = readFileSync('app/login/page.tsx', 'utf8');
 const HOME = readFileSync('app/page.tsx', 'utf8');
 
-describe('app/cook/page.tsx · auth wiring', () => {
-  it('creates the anonymous session and wires getToken into BOTH data hooks', () => {
+describe('app/cook/page.tsx · protected route', () => {
+  it('wires getToken into BOTH data hooks', () => {
     expect(COOK).toContain('const auth = useAuthSession();');
     expect(COOK).toContain('useCookingSession({ getToken: auth.getToken });');
     expect(COOK).toContain('useVoiceSession({ getToken: auth.getToken });');
   });
 
+  it('redirects to /login once auth settles with no user', () => {
+    expect(COOK).toContain("router.replace('/login')");
+    expect(COOK).toContain("if (auth.state === 'ready' && !auth.user)");
+  });
+
+  it('never renders cooking UI while signed out', () => {
+    // The signed-out branch renders only a "Signing you in…" gate, never the
+    // CookScreen or the session empty state.
+    expect(COOK).toContain("if (auth.state === 'ready' && !auth.user)");
+    expect(COOK).toContain('Signing you in…');
+  });
+
   it('waits for the auth settle before showing the session state', () => {
-    // Without the gate, the initial status call 401s before the anonymous
-    // session exists and the screen flashes the misleading error.
     expect(COOK).toContain("if (auth.state === 'loading') {");
-  });
-
-  it('surfaces the auth error before the API 401 message', () => {
-    // When the Anonymous provider is disabled, the actionable enable-guidance
-    // must win over the API's generic "Authentication required".
-    expect(COOK).toContain('auth.error ??\n              cook.error');
-  });
-
-  it('offers a Retry sign-in when auth failed', () => {
-    expect(COOK).toContain('auth.retry');
-    expect(COOK).toContain('↻ Retry sign-in');
   });
 });
 
-describe('app/page.tsx · auth wiring', () => {
-  it('wires getToken into the home voice session', () => {
+describe('app/login/page.tsx · login page', () => {
+  it('renders the Google sign-in button wired to auth.signIn', () => {
+    expect(LOGIN).toContain('const auth = useAuthSession();');
+    expect(LOGIN).toContain('auth.signIn()');
+    expect(LOGIN).toContain('Continue with Google');
+  });
+
+  it('redirects to /cook when already signed in', () => {
+    expect(LOGIN).toContain("router.replace('/cook')");
+    expect(LOGIN).toContain("if (auth.state === 'ready' && auth.user)");
+  });
+
+  it('displays sign-in errors inline', () => {
+    expect(LOGIN).toContain('signInError');
+    expect(LOGIN).toContain('role="alert"');
+  });
+});
+
+describe('app/page.tsx · landing page', () => {
+  it('shows Sign in to start when signed out, Start cooking when signed in', () => {
+    expect(HOME).toContain('auth.user ?');
+    expect(HOME).toContain('href="/login"');
+    expect(HOME).toContain('Sign in to start');
+    expect(HOME).toContain('Start cooking');
+  });
+
+  it('wires the auth session and sign-out', () => {
     expect(HOME).toContain('const auth = useAuthSession();');
-    expect(HOME).toContain('useVoiceSession({ getToken: auth.getToken });');
+    expect(HOME).toContain('auth.signOut()');
   });
 });

@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import styles from './page.module.css';
 import { CookScreen } from '@/components/CookScreen';
 import { useAuthSession } from '@/lib/auth/useAuthSession';
@@ -9,15 +10,21 @@ import { useVoiceSession } from '@/lib/hooks/useVoiceSession';
 import { useCookingSession } from '@/lib/hooks/useCookingSession';
 
 export default function CookPage() {
-  // The API routes require a Bearer Firebase ID token; the voice-first
-  // screens establish an anonymous session automatically (see useAuthSession)
-  // and both data hooks receive the stable getToken — without it every call
-  // 401s and the screen falsely claims "Authentication required".
+  const router = useRouter();
+  // The API routes require a Bearer Firebase ID token. Real sign-in happens
+  // on /login; /cook is protected — signed-out visitors are sent there.
   const auth = useAuthSession();
   const cook = useCookingSession({ getToken: auth.getToken });
   const voice = useVoiceSession({ getToken: auth.getToken });
   const [input, setInput] = useState('');
   const snap = cook.snapshot;
+
+  // Protect the route: once auth settles with no user, go sign in.
+  useEffect(() => {
+    if (auth.state === 'ready' && !auth.user) {
+      router.replace('/login');
+    }
+  }, [auth.state, auth.user, router]);
 
   // Keep the screen in sync with voice-driven changes (e.g. "done" spoken).
   useEffect(() => {
@@ -27,13 +34,35 @@ export default function CookPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [voice.transcript.length]);
 
-  // Wait for the auth settle first, so the initial status call (which waits
-  // for the session inside getToken) never 401s and the screen never flashes
-  // a misleading "Authentication required".
+  // Wait for the auth settle first, so the screen never flashes content for
+  // a signed-out visitor before the redirect to /login fires.
   if (auth.state === 'loading') {
     return (
       <main className={styles.main}>
         <p className={styles.centered}>Loading your cooking session…</p>
+      </main>
+    );
+  }
+
+  if (auth.state === 'ready' && !auth.user) {
+    // Redirecting to the login page — never render cooking UI signed out.
+    return (
+      <main className={styles.main}>
+        <p className={styles.centered}>Signing you in…</p>
+      </main>
+    );
+  }
+
+  if (auth.error) {
+    return (
+      <main className={styles.main}>
+        <section className={styles.empty}>
+          <h1 className={styles.title}>Cook With Me</h1>
+          <p className={styles.emptyText}>{auth.error}</p>
+          <Link href="/" className={styles.primaryBtn}>
+            ← Back to start
+          </Link>
+        </section>
       </main>
     );
   }
@@ -52,15 +81,9 @@ export default function CookPage() {
         <section className={styles.empty}>
           <h1 className={styles.title}>Cook With Me</h1>
           <p className={styles.emptyText}>
-            {auth.error ??
-              cook.error ??
+            {cook.error ??
               'No active cooking session. Generate a validated recipe first, then come back to cook it step by step.'}
           </p>
-          {auth.error ? (
-            <button className={styles.secondaryBtn} onClick={auth.retry}>
-              ↻ Retry sign-in
-            </button>
-          ) : null}
           <Link href="/" className={styles.primaryBtn}>
             ← Back to start
           </Link>

@@ -1,104 +1,76 @@
 'use client';
 
-import { useState } from 'react';
-import { useRouter } from 'next/navigation';
+import Link from 'next/link';
 import styles from './page.module.css';
-import { VoiceIndicator } from '@/components/VoiceIndicator';
 import { useAuthSession } from '@/lib/auth/useAuthSession';
-import { useVoiceSession } from '@/lib/hooks/useVoiceSession';
+
+const FEATURES = [
+  {
+    icon: '🎙️',
+    title: 'Voice-first',
+    text: 'Say “done”, “repeat”, “go back” — or type it. One action at a time, hands free while you cook.',
+  },
+  {
+    icon: '👨‍🍳',
+    title: 'Step-by-step guidance',
+    text: 'Prep and cooking steps with timers, plating and an explicit safety gate on every risky step.',
+  },
+  {
+    icon: '🧺',
+    title: 'Pantry intelligence',
+    text: 'Tell it what you have; it tracks the pantry, flags expiring items and builds your grocery list.',
+  },
+  {
+    icon: '🍲',
+    title: 'Leftovers, handled',
+    text: 'Finished a meal? It logs the leftovers and suggests what to cook next from what is actually in the kitchen.',
+  },
+];
 
 export default function HomePage() {
-  const router = useRouter();
-  const [mode, setMode] = useState<'idle' | 'quick' | 'cook'>('idle');
-  const [input, setInput] = useState('');
-  // /api/agent requires a Bearer ID token — the anonymous session supplies it.
   const auth = useAuthSession();
-  const voice = useVoiceSession({ getToken: auth.getToken });
+
+  const cta = auth.state === 'loading' ? null : auth.user ? (
+    <Link href="/cook" className={styles.primaryBtn}>👨‍🍳 Start cooking</Link>
+  ) : (
+    <Link href="/login" className={styles.primaryBtn}>Sign in to start</Link>
+  );
 
   return (
     <main className={styles.main}>
+      <header className={styles.topbar}>
+        <span className={styles.brand}>Cook With Me</span>
+        {auth.user ? (
+          <button className={styles.signOutBtn} onClick={() => void auth.signOut()} aria-label="Sign out">
+            Sign out
+          </button>
+        ) : (
+          <Link href="/login" className={styles.signInLink}>Sign in</Link>
+        )}
+      </header>
+
       <section className={styles.hero}>
-        <h1 className={styles.title}>Kitchen Agent</h1>
+        <h1 className={styles.title}>Cook With Me</h1>
         <p className={styles.subtitle}>
-          Voice-first intelligent cooking companion
+          A voice-first cooking companion that guides you step by step — from
+          “what do I have?” to a plated dinner.
         </p>
+        {cta && <div className={styles.heroCta}>{cta}</div>}
       </section>
 
-      {mode === 'idle' && (
-        <section className={styles.choices}>
-          <button
-            className={styles.card}
-            onClick={() => setMode('quick')}
-          >
-            <span className={styles.cardIcon}>📝</span>
-            <span className={styles.cardLabel}>Quick Recipe</span>
-            <span className={styles.cardDesc}>
-              Tell me what you have — I&apos;ll generate a recipe
-            </span>
-          </button>
+      <section className={styles.features} aria-label="Features">
+        {FEATURES.map((f) => (
+          <article key={f.title} className={styles.featureCard}>
+            <span className={styles.featureIcon} aria-hidden="true">{f.icon}</span>
+            <h2 className={styles.featureTitle}>{f.title}</h2>
+            <p className={styles.featureText}>{f.text}</p>
+          </article>
+        ))}
+      </section>
 
-          <button
-            className={styles.card}
-            onClick={() => router.push('/cook')}
-          >
-            <span className={styles.cardIcon}>👨‍🍳</span>
-            <span className={styles.cardLabel}>Cook With Me</span>
-            <span className={styles.cardDesc}>
-              Step-by-step guided cooking with voice
-            </span>
-          </button>
-        </section>
-      )}
-
-      {mode === 'quick' && (
-        <section className={styles.placeholder}>
-          <p>Quick Recipe — coming in K4</p>
-          <button className={styles.backBtn} onClick={() => setMode('idle')}>
-            ← Back
-          </button>
-        </section>
-      )}
-
-      {mode === 'cook' && (
-        <section className={styles.voicePanel}>
-          <VoiceIndicator status={voice.status} />
-          <div className={styles.transcript}>
-            {voice.transcript.map((turn, i) => (
-              <div key={i} className={styles.turn}>
-                <p className={styles.userLine}>You: {turn.utterance}</p>
-                <p className={styles.agentLine}>{turn.response}</p>
-              </div>
-            ))}
-            {voice.transcript.length === 0 && (
-              <p className={styles.hint}>
-                Try: &ldquo;I have some chicken thighs, three tomatoes and rice.&rdquo;
-              </p>
-            )}
-          </div>
-          <form
-            className={styles.voiceForm}
-            onSubmit={(e) => {
-              e.preventDefault();
-              void voice.send(input);
-              setInput('');
-            }}
-          >
-            <input
-              className={styles.voiceInput}
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              placeholder="Say it, or type it…"
-              aria-label="Speak or type a message"
-            />
-            <button className={styles.sendBtn} type="submit">
-              Send
-            </button>
-          </form>
-          <button className={styles.backBtn} onClick={() => setMode('idle')}>
-            ← Back
-          </button>
-        </section>
-      )}
+      <footer className={styles.footer}>
+        <p>Cook With Me · sign in with Google to start</p>
+      </footer>
     </main>
   );
 }
