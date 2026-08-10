@@ -242,6 +242,46 @@ if (pantryTurn.status === 200 && pantryTool?.result?.success) {
   fail(`pantry agent turn → ${pantryTurn.status} ${JSON.stringify(pantryTurn.body).slice(0, 200)}`);
 }
 
+// K8 confirmation: "yes" must confirm the pending pantry item (CONFIRM chain →
+// confirm_pending_pantry_items), raise its confidence to 1, and clear the
+// session's pending list — the persisted state read back from Firestore.
+const confirmTurn = await agent('yes');
+const confirmTool = confirmTurn.body?.toolCalls?.find((c) => c.tool === 'confirm_pending_pantry_items');
+if (confirmTurn.status === 200 && confirmTool?.result?.success) {
+  ok(`“yes” → confirm_pending_pantry_items succeeded live`);
+  const confirmed = confirmTool.result.data?.confirmed ?? [];
+  confirmed.some((c) => c.name === 'olive oil')
+    ? ok(`pending pantry item “olive oil” confirmed`)
+    : fail(`confirm_pending_pantry_items did not include olive oil (${JSON.stringify(confirmed).slice(0, 120)})`);
+} else {
+  fail(`confirm turn → ${confirmTurn.status} ${JSON.stringify(confirmTurn.body).slice(0, 200)}`);
+}
+
+// Persisted-state proof: the session's pending list must be empty and the
+// pantry doc must carry full confidence (the confirm contract, read back).
+if (sid) {
+  try {
+    const sessionSnap = await db.collection('cooking_sessions').doc(sid).get();
+    const pending = sessionSnap.data()?.pendingPantryItems ?? [];
+    pending.length === 0
+      ? ok('session pendingPantryItems cleared in Firestore')
+      : fail(`pendingPantryItems still has ${pending.length} item(s) after confirm`);
+  } catch (e) {
+    fail(`could not read session pending state back: ${e.message}`);
+  }
+}
+if (pantryItemId) {
+  try {
+    const itemSnap = await db.collection('pantry_items').doc(pantryItemId).get();
+    const confidence = itemSnap.data()?.confidence;
+    confidence === 1
+      ? ok('pantry item confidence raised to 1 in Firestore')
+      : fail(`pantry item confidence is ${confidence} (expected 1)`);
+  } catch (e) {
+    fail(`could not read pantry item back: ${e.message}`);
+  }
+}
+
 // Free-form turn: the Gemini provider must answer. A greeting is the clean
 // model-only path — food-phrase questions can be caught by the deterministic
 // ingredient extractor ("I heard: …") and never reach the model.
