@@ -3,8 +3,8 @@ import {
   canTransition,
   transitionSessionState,
   isResumable,
-  type SessionPhase,
 } from './session';
+import type { SessionPhase } from './types';
 
 describe('state machine — canTransition', () => {
   it('allows the happy path from IDLE to COMPLETED', () => {

@@ -121,6 +121,7 @@ export const cookingSessionSchema = z.object({
   previousState: sessionStateSchema.optional(),
   resumableState: sessionStateSchema.optional(),
   activeTimerIds: z.array(z.string()).default([]),
+  availableIngredients: z.array(ingredientSchema).default([]),
   startedAt: z.number().int().positive(),
   lastActivityAt: z.number().int().positive(),
   pausedAt: z.number().int().positive().optional(),
@@ -237,6 +238,22 @@ export const agentToolLogSchema = z.object({
   at: z.number().int().positive(),
   correlationId: z.string().optional(),
 });
+
+// ── Recipe request (K3 ingredient collection → K4 generation) ────────────────
+
+export const recipeRequestSchema = z.object({
+  ingredientsAvailable: z.array(ingredientSchema).min(1),
+  servings: z.number().int().positive().optional(),
+  maxTimeMinutes: z.number().int().positive().optional(),
+  dietaryRestrictions: z.array(z.string()).default([]),
+  allergies: z.array(z.string()).default([]),
+  cuisinePreferences: z.array(z.string()).default([]),
+  dislikedIngredients: z.array(z.string()).default([]),
+  availableEquipment: z.array(z.string()).default([]),
+  skillLevel: z.enum(['beginner', 'intermediate', 'advanced']).optional(),
+});
+
+export type RecipeRequestInput = z.input<typeof recipeRequestSchema>;
 
 // ── Tool result envelope ─────────────────────────────────────────────────────
 

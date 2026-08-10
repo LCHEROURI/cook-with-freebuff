@@ -97,6 +97,21 @@ The app will follow the same contract-locked verification discipline as Freebuff
 - [x] 37 integration tests (happy path, invalid transitions, pause/resume, substitution, timer, step nav, error recovery, double-submit, stale requests, recovery scenarios, event sourcing)
 - [x] All 61 tests green + production build passes
 
+## K3 — Secure agent tool/API layer
+
+- [x] Tool executor (`executeTool`) — validate → authenticate → execute → persist → audit-log → structured envelope
+- [x] Result envelope: `{ success, data?, error?: { code, message, recoverable } }` — never false success
+- [x] `agent_tool_logs` with sanitized args (secret keys dropped), result, latency, correlationId
+- [x] **Ingredient tools**: `save_available_ingredients`, `update_available_ingredients`, `confirm_available_ingredients`
+- [x] **Session tools**: `start/get_cooking_session`, `get_current_step`, `complete_current_step`, `repeat_current_step`, `previous_step`, `pause/resume/end_cooking_session`
+- [x] **Timer tools**: `start_timer`, `get_active_timers`, `cancel_timer`, `complete_timer` (backend `timers` state, never conversation-only)
+- [x] **Recipe tools**: `generate_recipe`, `validate_recipe` (provider boundary), `resize_recipe`, `find_substitution`, `replace_ingredient`
+- [x] `POST /api/tools` — Firebase ID-token auth, userId from verified token, per-tool zod validation
+- [x] Object-level authorization: every session/timer read enforces `userId` ownership (FORBIDDEN)
+- [x] Session ingredient collection persisted on the session (`availableIngredients`) with INGREDIENT_ADDED/REMOVED/CORRECTED events
+- [x] Timers transition the state machine: COOKING_GUIDANCE → WAITING_FOR_TIMER → COOKING_GUIDANCE
+- [x] 28 tool tests + 4 route tests (93 total green) + production build passes
+
 ## Development
 
 ```bash

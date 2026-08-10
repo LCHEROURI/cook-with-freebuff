@@ -112,6 +112,8 @@ export interface CookingSession {
   previousState?: SessionState;
   resumableState?: SessionState;
   activeTimerIds: string[];
+  /** Ingredients the user has told us they have (collected via voice/tools). */
+  availableIngredients: Ingredient[];
   startedAt: EpochMs;
   lastActivityAt: EpochMs;
   pausedAt?: EpochMs;

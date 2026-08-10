@@ -101,6 +101,16 @@ export function registerConversationAgent(name: string, impl: ConversationAgent)
   conversationProviders.set(name, impl);
 }
 
+/**
+ * Clear all registered providers (tests).
+ */
+export function resetProviders(): void {
+  generators.clear();
+  validators.clear();
+  substitutionProviders.clear();
+  conversationProviders.clear();
+}
+
 export function getRecipeGenerator(name = 'default'): RecipeGenerator | undefined {
   return generators.get(name) ?? generators.get('default');
 }

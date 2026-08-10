@@ -17,7 +17,7 @@ import type {
   SessionState,
   SessionPhase,
   SessionEventType,
-  UserId,
+  Ingredient,
   EpochMs,
 } from '../domain/types';
 
@@ -122,6 +122,7 @@ export class SessionService {
       currentPrepStepIndex: 0,
       currentCookingStepIndex: 0,
       activeTimerIds: [],
+      availableIngredients: [],
       startedAt: t,
       lastActivityAt: t,
       version: 1,
@@ -487,7 +488,7 @@ export class SessionService {
 
     // ERROR_RECOVERY is reachable from any operational phase
     const currentState = sessionStateFromSession(session);
-    const { state, resumableState } = transitionSessionState(currentState, from, 'ERROR_RECOVERY');
+    const { resumableState } = transitionSessionState(currentState, from, 'ERROR_RECOVERY');
 
     const partial: Partial<CookingSession> = {
       currentPhase: 'ERROR_RECOVERY',
@@ -645,6 +646,177 @@ export class SessionService {
 
     markProcessed(options?.correlationId);
     return updated;
+  }
+
+  /**
+   * Update the session's available-ingredient list (K3 ingredient tools).
+   *
+   * REPLACE overwrites the whole list; UPSERT merges by normalized name
+   * (new entries win). Emits INGREDIENT_ADDED / INGREDIENT_REMOVED /
+   * INGREDIENT_CORRECTED events describing the diff.
+   */
+  async updateAvailableIngredients(
+    sessionId: string,
+    expectedVersion: number,
+    ingredients: Ingredient[],
+    mode: 'REPLACE' | 'UPSERT',
+    options?: { correlationId?: string },
+  ): Promise<CookingSession> {
+    if (hasBeenProcessed(options?.correlationId)) {
+      const session = await this.store.getSession(sessionId);
+      if (!session) throw new SessionError('Session not found', 'NOT_FOUND', false);
+      return session;
+    }
+
+    const session = await this.store.getSession(sessionId);
+    if (!session) throw new SessionError('Session not found', 'NOT_FOUND', false);
+
+    if (session.version !== expectedVersion) {
+      throw new VersionConflictError(sessionId, expectedVersion, session.version);
+    }
+
+    const phase = session.currentPhase;
+    if (phase !== 'COLLECTING_INGREDIENTS' && phase !== 'CONFIRMING_INGREDIENTS') {
+      throw new SessionError(
+        `Cannot edit ingredients in phase ${phase}`,
+        'INVALID_PHASE',
+        true,
+      );
+    }
+
+    const normalize = (name: string) => name.toLowerCase().trim();
+    let next: Ingredient[];
+
+    if (mode === 'REPLACE') {
+      next = ingredients;
+    } else {
+      const merged = new Map<string, Ingredient>();
+      for (const ing of session.availableIngredients) {
+        merged.set(normalize(ing.name), ing);
+      }
+      for (const ing of ingredients) {
+        merged.set(normalize(ing.name), ing);
+      }
+      next = Array.from(merged.values());
+    }
+
+    const updated = await this.store.updateSession(sessionId, { availableIngredients: next }, expectedVersion);
+
+    const prev = new Map(session.availableIngredients.map((i) => [normalize(i.name), i]));
+    const nextNames = new Set(next.map((i) => normalize(i.name)));
+
+    if (mode === 'REPLACE') {
+      await this.store.createEvent({
+        id: newId(),
+        sessionId,
+        userId: session.userId,
+        type: 'INGREDIENT_CORRECTED',
+        data: { action: 'replace', count: next.length, names: next.map((i) => i.name) },
+        at: now(),
+        correlationId: options?.correlationId,
+      });
+    } else {
+      const added = next.filter((i) => !prev.has(normalize(i.name)));
+      const removed = session.availableIngredients.filter((i) => !nextNames.has(normalize(i.name)));
+      const changed = next.filter((i) => {
+        const p = prev.get(normalize(i.name));
+        return p && (p.quantity !== i.quantity || p.unit !== i.unit);
+      });
+      if (added.length > 0) {
+        await this.store.createEvent({
+          id: newId(), sessionId, userId: session.userId, type: 'INGREDIENT_ADDED',
+          data: { names: added.map((i) => i.name) }, at: now(), correlationId: options?.correlationId,
+        });
+      }
+      if (removed.length > 0) {
+        await this.store.createEvent({
+          id: newId(), sessionId, userId: session.userId, type: 'INGREDIENT_REMOVED',
+          data: { names: removed.map((i) => i.name) }, at: now(), correlationId: options?.correlationId,
+        });
+      }
+      if (changed.length > 0) {
+        await this.store.createEvent({
+          id: newId(), sessionId, userId: session.userId, type: 'INGREDIENT_CORRECTED',
+          data: { names: changed.map((i) => i.name) }, at: now(), correlationId: options?.correlationId,
+        });
+      }
+    }
+
+    markProcessed(options?.correlationId);
+    return updated;
+  }
+
+  /**
+   * Attach a running timer id to the session (logs TIMER_STARTED).
+   */
+  async attachTimer(
+    sessionId: string,
+    expectedVersion: number,
+    timerId: string,
+    options?: { correlationId?: string },
+  ): Promise<CookingSession> {
+    if (hasBeenProcessed(options?.correlationId)) {
+      const session = await this.store.getSession(sessionId);
+      if (!session) throw new SessionError('Session not found', 'NOT_FOUND', false);
+      return session;
+    }
+
+    const session = await this.store.getSession(sessionId);
+    if (!session) throw new SessionError('Session not found', 'NOT_FOUND', false);
+    if (session.version !== expectedVersion) {
+      throw new VersionConflictError(sessionId, expectedVersion, session.version);
+    }
+
+    const active = session.activeTimerIds.includes(timerId)
+      ? session.activeTimerIds
+      : [...session.activeTimerIds, timerId];
+
+    const updated = await this.store.updateSession(sessionId, { activeTimerIds: active }, expectedVersion);
+
+    await this.store.createEvent({
+      id: newId(), sessionId, userId: session.userId, type: 'TIMER_STARTED',
+      data: { timerId }, at: now(), correlationId: options?.correlationId,
+    });
+
+    markProcessed(options?.correlationId);
+    return updated;
+  }
+
+  /**
+   * Detach a timer id from the session (no event — the caller logs the outcome).
+   */
+  async detachTimer(
+    sessionId: string,
+    expectedVersion: number,
+    timerId: string,
+  ): Promise<CookingSession> {
+    const session = await this.store.getSession(sessionId);
+    if (!session) throw new SessionError('Session not found', 'NOT_FOUND', false);
+    if (session.version !== expectedVersion) {
+      throw new VersionConflictError(sessionId, expectedVersion, session.version);
+    }
+
+    const active = session.activeTimerIds.filter((id) => id !== timerId);
+    return this.store.updateSession(sessionId, { activeTimerIds: active }, expectedVersion);
+  }
+
+  /**
+   * Append a session event without mutating session state.
+   * Used by timer completion/cancellation and other tool-level audit writes.
+   */
+  async logSessionEvent(
+    sessionId: string,
+    type: SessionEventType,
+    data: Record<string, unknown>,
+    options?: { correlationId?: string },
+  ): Promise<void> {
+    const session = await this.store.getSession(sessionId);
+    if (!session) throw new SessionError('Session not found', 'NOT_FOUND', false);
+    await this.store.createEvent({
+      id: newId(), sessionId, userId: session.userId, type, data,
+      at: now(), correlationId: options?.correlationId,
+    });
+    markProcessed(options?.correlationId);
   }
 
   // ── Private helpers ──────────────────────────────────────────────────────────
