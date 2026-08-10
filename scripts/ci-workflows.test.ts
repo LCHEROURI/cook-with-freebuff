@@ -102,16 +102,52 @@ describe('.github/workflows/verify-deployed.yml · deployment_status post-deploy
   });
 
   it('keeps the loud-secret guard so a missing secret fails instead of silently skipping', () => {
-    // The gated verify step skips-not-fails when a secret is absent; the loud
-    // guard is what stops that skip from masquerading as a green post-deploy
-    // check on a real production deploy. Manual workflow_dispatch re-runs stay
-    // exempt (operator-initiated, skipped steps are visible to the operator).
+    // The gated steps skip-not-fail when a secret is absent; the loud guard
+    // is what stops that skip from masquerading as a green post-deploy check
+    // on a real production deploy. It must cover ALL five secrets (the four
+    // verify credentials + VERCEL_TOKEN for the hash gate). Manual
+    // workflow_dispatch re-runs stay exempt (operator-initiated, skipped steps
+    // are visible to the operator).
     expect(POST_DEPLOY).toContain('name: Fail loudly if a verify secret is missing (production deploy)');
     expect(POST_DEPLOY).toContain('::error::Required GitHub Actions secret(s) missing on production deploy:');
     expect(POST_DEPLOY).toContain("github.event_name != 'workflow_dispatch'");
     expect(POST_DEPLOY).toContain("github.repository == 'LCHEROURI/cook-with-freebuff'");
     expect(POST_DEPLOY).toContain("env.APP_OWNER_UID == ''");
+    expect(POST_DEPLOY).toContain("env.VERCEL_TOKEN == ''");
     expect(POST_DEPLOY).toContain('exit 1');
+  });
+
+  it('still resolves the deployment commit and matches it to the pushed head (hash gate)', () => {
+    // The exact-deployment assertion: the deployment the event describes
+    // (target_url) must record the commit the push recorded (deployment.sha —
+    // a TOP-level event field). Dropping the step — or the --expect wiring —
+    // would let a build Vercel serves that isn't the pushed head go green.
+    expect(POST_DEPLOY).toContain('name: Verify deployed commit matches the pushed head');
+    expect(POST_DEPLOY).toContain('node scripts/verify-deployed-hash.mjs');
+    expect(POST_DEPLOY).toContain('--url "${{ github.event.deployment_status.target_url }}"');
+    expect(POST_DEPLOY).toContain('--expect "${{ github.event.deployment.sha }}"');
+    // Gated on VERCEL_TOKEN and only meaningful on real deploy events (no
+    // deployment_status context exists for a manual dispatch).
+    expect(POST_DEPLOY).toContain("if: ${{ env.VERCEL_TOKEN != '' && github.event_name != 'workflow_dispatch' }}");
+    // Block-scalar run: a plain scalar would fold the trailing backslash-newline
+    // into a literal backslash-space and the script would never parse --url.
+    expect(POST_DEPLOY).toContain('run: |');
+  });
+
+  it('keeps the alias-routing drift watch proving the canonical URL serves the same commit', () => {
+    // The user-facing contract: "the canonical URL serves the commit the
+    // deployment_status event describes" — proven by comparing the canonical
+    // alias's deployment against the deployment-specific target_url.
+    expect(POST_DEPLOY).toContain('name: Alias-routing drift watch (production)');
+    expect(POST_DEPLOY).toContain('--compare-url "https://cook-with-freebuff.vercel.app"');
+    expect(POST_DEPLOY).toContain("if: ${{ env.VERCEL_TOKEN != '' && github.event_name != 'workflow_dispatch' }}");
+  });
+
+  it('wires VERCEL_TOKEN into the job env, the loud guard, and BOTH hash steps (4 wirings)', () => {
+    // Counting (not a bare toContain) catches a wiring dropped on any ONE of
+    // the four places that need it: job env (feeds step `if`s), loud-guard
+    // env, and the two hash steps' envs.
+    expect(POST_DEPLOY.match(new RegExp(SECRET_WIRING('VERCEL_TOKEN').replace(/[$\{\}]/g, '\\$&'), 'g'))).toHaveLength(4);
   });
 
   it('targets the public canonical production URL (deployment subdomains are Vercel-protected)', () => {

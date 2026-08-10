@@ -23,6 +23,13 @@ name: Verify deployed (post-deploy)
 #     one. The target_url is echoed for transparency.
 #   - workflow_dispatch re-runs verify the same canonical URL (no
 #     deployment_status context exists for them) — identical credential set.
+#   - Exact-deployment hash gate: the workflow ALSO resolves the deployment
+#     the event describes (--url target_url) and asserts its commit sha
+#     matches the pushed head (--expect deployment.sha, TOP-level field) and
+#     that the canonical alias serves the SAME commit (--compare-url) — so
+#     "the canonical URL serves the new commit" is proven, not inferred.
+#     Gated on VERCEL_TOKEN (skip-not-fail; loud guard fails a missing token
+#     on production deploys).
 
 on:
   deployment_status:
@@ -48,6 +55,7 @@ jobs:
       FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
       APP_OWNER_UID: ${{ secrets.APP_OWNER_UID }}
       GOOGLE_AI_API_KEY: ${{ secrets.GOOGLE_AI_API_KEY }}
+      VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
 
     steps:
       - name: Check out repository
@@ -74,13 +82,14 @@ jobs:
       # check. Manual workflow_dispatch re-runs stay exempt (operator-initiated,
       # skipped steps are visible to the operator).
       - name: Fail loudly if a verify secret is missing (production deploy)
-        if: ${{ github.event_name != 'workflow_dispatch' && github.repository == 'LCHEROURI/cook-with-freebuff' && (env.NEXT_PUBLIC_FIREBASE_API_KEY == '' || env.FIREBASE_SERVICE_ACCOUNT == '' || env.APP_OWNER_UID == '' || env.GOOGLE_AI_API_KEY == '') }}
+        if: ${{ github.event_name != 'workflow_dispatch' && github.repository == 'LCHEROURI/cook-with-freebuff' && (env.NEXT_PUBLIC_FIREBASE_API_KEY == '' || env.FIREBASE_SERVICE_ACCOUNT == '' || env.APP_OWNER_UID == '' || env.GOOGLE_AI_API_KEY == '' || env.VERCEL_TOKEN == '') }}
         run: |
           echo "::error::Required GitHub Actions secret(s) missing on production deploy:"
           [ -z "$NEXT_PUBLIC_FIREBASE_API_KEY" ] && echo "  - NEXT_PUBLIC_FIREBASE_API_KEY (mints the owner ID token for verify:live)"
           [ -z "$FIREBASE_SERVICE_ACCOUNT" ] && echo "  - FIREBASE_SERVICE_ACCOUNT (seeds the owner recipe + mints the owner custom token)"
           [ -z "$APP_OWNER_UID" ] && echo "  - APP_OWNER_UID (the owner Firebase Auth uid verify:live signs in as)"
           [ -z "$GOOGLE_AI_API_KEY" ] && echo "  - GOOGLE_AI_API_KEY (the Gemini provider the agent turn must answer with)"
+          [ -z "$VERCEL_TOKEN" ] && echo "  - VERCEL_TOKEN (resolves the deployment commit for the exact-deployment hash gate)"
           echo "Add them under GitHub -> Settings -> Secrets and variables -> Actions, then re-run this job."
           exit 1
         env:
@@ -88,6 +97,40 @@ jobs:
           FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
           APP_OWNER_UID: ${{ secrets.APP_OWNER_UID }}
           GOOGLE_AI_API_KEY: ${{ secrets.GOOGLE_AI_API_KEY }}
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+
+      # Exact-deployment hash assertion: resolve the deployment Vercel just
+      # deployed (the event's target_url) and assert its recorded commit sha
+      # matches the commit the push recorded (github.event.deployment.sha — at
+      # the TOP level, not under deployment_status). This closes the
+      # infer-vs-verify gap: verify:live proves the app WORKS; this proves the
+      # build Vercel is serving is the build the push recorded. Gated on the
+      # VERCEL_TOKEN secret (skip-not-fail for forks/unconfigured repos; the
+      # loud guard above turns a missing token into a hard failure on
+      # production deploys). workflow_dispatch has no deployment_status event
+      # context, so the hash steps only run on real deploy events.
+      - name: Verify deployed commit matches the pushed head
+        if: ${{ env.VERCEL_TOKEN != '' && github.event_name != 'workflow_dispatch' }}
+        run: |
+          node scripts/verify-deployed-hash.mjs \
+            --url "${{ github.event.deployment_status.target_url }}" \
+            --expect "${{ github.event.deployment.sha }}"  # 
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+
+      # Alias-routing drift watch: for the same deployment, assert the
+      # canonical production alias (cook-with-freebuff.vercel.app) serves the
+      # SAME commit as the deployment-specific target_url just verified above
+      # — so "the canonical URL serves the commit the event describes" is
+      # proven directly, not inferred.
+      - name: Alias-routing drift watch (production)
+        if: ${{ env.VERCEL_TOKEN != '' && github.event_name != 'workflow_dispatch' }}
+        run: |
+          node scripts/verify-deployed-hash.mjs \
+            --url "${{ github.event.deployment_status.target_url }}" \
+            --compare-url "https://cook-with-freebuff.vercel.app"
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
 
       # End-to-end verification of the freshly deployed app. Gated on the full
       # credential set so forks / unconfigured repos stay green, and the Gemini
