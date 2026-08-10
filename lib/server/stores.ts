@@ -10,6 +10,10 @@ import * as repo from './repositories';
 import { SessionService } from './session-service';
 import type { SessionStore } from './session-service';
 import type { ToolContext, TimerStore, LogStore, RecipeStore } from './tools/types';
+import { registerGeminiProviders } from '../ai/register';
+
+// Register concrete AI providers (no-op when GOOGLE_AI_API_KEY is missing).
+registerGeminiProviders();
 
 export const firestoreSessionStore: SessionStore = {
   getSession: (id) => repo.getSession(id),

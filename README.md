@@ -112,6 +112,17 @@ The app will follow the same contract-locked verification discipline as Freebuff
 - [x] Timers transition the state machine: COOKING_GUIDANCE → WAITING_FOR_TIMER → COOKING_GUIDANCE
 - [x] 28 tool tests + 4 route tests (93 total green) + production build passes
 
+## K4 — Recipe generation + validation engine
+
+- [x] Deterministic validation engine (`lib/recipe/validate.ts`) — all 10 checks: schema validity, ingredient consistency, quantity consistency, resource validation, dietary constraints, logical order, actionability, timing plausibility, safety, one-action suitability
+- [x] Controlled pipeline (`lib/recipe/pipeline.ts`) — USER INPUT → GENERATE → VALIDATE → CORRECT/CLARIFY → RECIPE READY, driving the session state machine (GENERATING_RECIPE → VALIDATING_RECIPE → RECIPE_READY / COLLECTING_REQUIREMENTS)
+- [x] Concrete Gemini providers (`lib/ai/gemini.ts`) — structured JSON output, zod-validated before entering the system; registered via `lib/ai/register.ts` when `GOOGLE_AI_API_KEY` is set
+- [x] `validate_recipe` tool now runs the deterministic engine always, merging AI semantic findings when configured
+- [x] Missing-confirmation flow: never silently assumes the user has an ingredient/equipment
+- [x] Dietary + allergen constraints block incompatible recipes (vegetarian + chicken = error)
+- [x] One-action-suitability heuristic: verb-counting catches multi-action steps, tolerates "add salt and pepper"
+- [x] 30 new tests (21 validation + 9 pipeline) — 123 total green + production build passes
+
 ## Development
 
 ```bash

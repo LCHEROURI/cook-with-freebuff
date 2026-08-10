@@ -10,6 +10,7 @@
 import { z } from 'zod';
 import { recipeSchema, recipeRequestSchema } from '../../domain/schemas';
 import { scaleRecipe, replaceIngredientInRecipe } from '../../recipe/transform';
+import { validateRecipe } from '../../recipe/validate';
 import {
   getRecipeGenerator,
   getRecipeValidator,
@@ -50,19 +51,38 @@ export const generateRecipeTool: ToolDefinition = {
 
 export const validateRecipeTool: ToolDefinition = {
   name: 'validate_recipe',
-  description: 'Validate a generated recipe (schema, consistency, safety, actionability).',
-  inputSchema: z.object({ recipe: recipeSchema }),
-  async handler(ctx, args) {
-    const validator = getRecipeValidator();
-    if (!validator) {
-      return fail('VALIDATION_UNAVAILABLE', 'No recipe validator provider is configured', true);
+  description: 'Validate a recipe against the full K4 check list (deterministic engine, AI findings merged when configured).',
+  inputSchema: z.object({
+    recipe: recipeSchema,
+    availableIngredients: z.array(z.string()).optional(),
+    availableEquipment: z.array(z.string()).optional(),
+    allergies: z.array(z.string()).optional(),
+    dietaryRestrictions: z.array(z.string()).optional(),
+  }),
+  async handler(_ctx, args) {
+    const engine = validateRecipe(args.recipe, {
+      availableIngredients: args.availableIngredients,
+      availableEquipment: args.availableEquipment,
+      allergies: args.allergies,
+      dietaryRestrictions: args.dietaryRestrictions,
+    });
+
+    // Layer AI semantic findings on top when a validator provider is configured.
+    const aiValidator = getRecipeValidator();
+    if (aiValidator) {
+      try {
+        const aiResult = await aiValidator.validate(args.recipe);
+        engine.errors.push(...aiResult.errors);
+        engine.warnings.push(...aiResult.warnings);
+        engine.missingConfirmations.push(...aiResult.missingConfirmations);
+        engine.valid = engine.errors.length === 0;
+        if (aiResult.correctedRecipe) engine.correctedRecipe = aiResult.correctedRecipe;
+      } catch {
+        // Deterministic result stands if the AI validator fails.
+      }
     }
-    try {
-      const result = await validator.validate(args.recipe);
-      return ok(result);
-    } catch (e) {
-      return toToolError(e);
-    }
+
+    return ok(engine);
   },
 };
 
