@@ -1,0 +1,98 @@
+name: Verify deployed (post-deploy)
+
+# Vercel's GitHub integration posts a deployment_status event when it finishes
+# building each deployment. The push-triggered verify:live gate used to live in
+# ci.yml, where it RACED the Vercel build — it often hit the previous build (or
+# a 502 mid-deploy), so its verdict was about the old commit, not the one just
+# pushed. This workflow closes that gap: it runs verify:live ONLY after Vercel
+# reports a successful PRODUCTION deploy, targeting the deployment's own URL
+# (target_url), so the check exercises the exact build the event describes.
+#
+# Event-shape notes:
+#   - `secrets` is not a valid context in job-level `if`, so secret presence is
+#     checked on a step via job env (same pattern as ci.yml).
+#   - Only Production deployments are verified. Previews share the same
+#     Firestore backend and would consume the owner-verify write budget for no
+#     gate value; they can be driven manually via workflow_dispatch if needed.
+#   - workflow_dispatch re-runs verify the canonical production URL (no
+#     deployment_status context exists for them) — same credential set.
+
+on:
+  deployment_status:
+  workflow_dispatch:
+
+concurrency:
+  group: verify-deployed-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  verify-deployed-live:
+    name: Verify deployed app after deploy (verify:live)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.deployment_status.state == 'success' &&
+       github.event.deployment_status.environment == 'Production' &&
+       github.event.deployment_status.target_url != '')
+
+    env:
+      NEXT_PUBLIC_FIREBASE_API_KEY: ${{ secrets.NEXT_PUBLIC_FIREBASE_API_KEY }}
+      FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+      APP_OWNER_UID: ${{ secrets.APP_OWNER_UID }}
+      GOOGLE_AI_API_KEY: ${{ secrets.GOOGLE_AI_API_KEY }}
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v5
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: 22
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Echo the deployment being verified
+        run: |
+          echo "event:       ${{ github.event_name }}"
+          echo "state:       ${{ github.event.deployment_status.state }}"
+          echo "environment: ${{ github.event.deployment_status.environment }}"
+          echo "target_url:  ${{ github.event.deployment_status.target_url }}"
+
+      # Loud guard: on a real production deploy of the canonical repo, a
+      # missing secret fails the run instead of silently skipping the verify
+      # step below — a skipped gate would masquerade as a green post-deploy
+      # check. Manual workflow_dispatch re-runs stay exempt (operator-initiated,
+      # skipped steps are visible to the operator).
+      - name: Fail loudly if a verify secret is missing (production deploy)
+        if: ${{ github.event_name != 'workflow_dispatch' && github.repository == 'LCHEROURI/cook-with-freebuff' && (env.NEXT_PUBLIC_FIREBASE_API_KEY == '' || env.FIREBASE_SERVICE_ACCOUNT == '' || env.APP_OWNER_UID == '' || env.GOOGLE_AI_API_KEY == '') }}
+        run: |
+          echo "::error::Required GitHub Actions secret(s) missing on production deploy:"
+          [ -z "$NEXT_PUBLIC_FIREBASE_API_KEY" ] && echo "  - NEXT_PUBLIC_FIREBASE_API_KEY (mints the owner ID token for verify:live)"
+          [ -z "$FIREBASE_SERVICE_ACCOUNT" ] && echo "  - FIREBASE_SERVICE_ACCOUNT (seeds the owner recipe + mints the owner custom token)"
+          [ -z "$APP_OWNER_UID" ] && echo "  - APP_OWNER_UID (the owner Firebase Auth uid verify:live signs in as)"
+          [ -z "$GOOGLE_AI_API_KEY" ] && echo "  - GOOGLE_AI_API_KEY (the Gemini provider the agent turn must answer with)"
+          echo "Add them under GitHub -> Settings -> Secrets and variables -> Actions, then re-run this job."
+          exit 1
+        env:
+          NEXT_PUBLIC_FIREBASE_API_KEY: ${{ secrets.NEXT_PUBLIC_FIREBASE_API_KEY }}
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+          APP_OWNER_UID: ${{ secrets.APP_OWNER_UID }}
+          GOOGLE_AI_API_KEY: ${{ secrets.GOOGLE_AI_API_KEY }}
+
+      # End-to-end verification of the exact deployment the event describes.
+      # Gated on the full credential set so forks / unconfigured repos stay
+      # green, and the Gemini turn is always enforced here (locally it SKIPs
+      # when the key is absent). VERIFY_BASE_URL is the deployment's own
+      # target_url (canonical production URL for a manual dispatch).
+      - name: Verify deployed app end to end (verify:live)
+        if: ${{ env.NEXT_PUBLIC_FIREBASE_API_KEY != '' && env.FIREBASE_SERVICE_ACCOUNT != '' && env.APP_OWNER_UID != '' && env.GOOGLE_AI_API_KEY != '' }}
+        run: npm run verify:live
+        env:
+          VERIFY_BASE_URL: ${{ github.event_name == 'workflow_dispatch' && 'https://cook-with-freebuff.vercel.app' || github.event.deployment_status.target_url }}
+          NEXT_PUBLIC_FIREBASE_API_KEY: ${{ secrets.NEXT_PUBLIC_FIREBASE_API_KEY }}
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+          APP_OWNER_UID: ${{ secrets.APP_OWNER_UID }}
+          GOOGLE_AI_API_KEY: ${{ secrets.GOOGLE_AI_API_KEY }}
