@@ -1,0 +1,81 @@
+#!/usr/bin/env bash
+# ============================================================================
+# .githooks/pre-push — surface the live-vs-local-HEAD delta before a
+# production push goes out.
+#
+# On any push that lands on refs/heads/main (the branch that triggers the
+# Vercel production deploy), this runs the shared verify:deployed-hash gate
+# (scripts/verify-deployed-hash-gate.mjs) and shows the operator exactly what
+# the push will change relative to what Vercel is currently serving:
+#
+#   live == HEAD      → "live is already at your HEAD" (no-op deploy)
+#   live behind HEAD  → "you are about to deploy X → Y" — the normal forward
+#                       case: WARN and continue (deploying IS the point)
+#   live ahead/other  → the push is BLOCKED: pushing would roll the site back
+#                       or clobber history — pull/rebase first
+#   gate exit 2       → invalid/revoked token — cannot verify: WARN + continue
+#   no live sha       → offline / API error — WARN + continue
+#
+# The check never blocks the normal forward deploy; it only blocks the
+# dangerous direction and ALWAYS surfaces the delta first. Escape hatch:
+#   SKIP_VERIFY_DEPLOYED_HASH=1 git push ...
+# ============================================================================
+
+set -u
+
+ROOT="$(git rev-parse --show-toplevel 2>/dev/null)" || {
+  echo "pre-push (verify:deployed-hash): could not find the repo root" >&2
+  exit 1
+}
+cd "$ROOT"
+
+# Only production pushes (remote ref refs/heads/main) trigger the check.
+MAIN_PUSH=0
+while read -r _local_ref _local_sha _remote_ref _remote_sha; do
+  case "$_remote_ref" in
+    refs/heads/main) MAIN_PUSH=1 ;;
+  esac
+done
+
+[ "$MAIN_PUSH" -eq 1 ] || exit 0
+
+if [ "${SKIP_VERIFY_DEPLOYED_HASH:-0}" = "1" ]; then
+  echo "pre-push: SKIP_VERIFY_DEPLOYED_HASH=1 — skipping the live-vs-HEAD comparison" >&2
+  exit 0
+fi
+
+echo "pre-push: verifying deployed hash before production push..." >&2
+
+OUTPUT="$(node scripts/verify-deployed-hash-gate.mjs 2>&1)"
+CODE=$?
+
+echo "$OUTPUT" >&2
+
+LOCAL_HEAD="$(git rev-parse HEAD)"
+LIVE="$(printf '%s\n' "$OUTPUT" | sed -n 's/^  commit  \([0-9a-f]\{40\}\)$/\1/p' | head -1)"
+
+if [ "$CODE" -eq 0 ]; then
+  echo "pre-push: ✓ live is already at your local HEAD ($LOCAL_HEAD) — push is a no-op deploy" >&2
+  exit 0
+fi
+
+if [ "$CODE" -eq 2 ]; then
+  echo "pre-push: ⚠ cannot verify the deployed hash (invalid/revoked token) — continuing without the comparison" >&2
+  exit 0
+fi
+
+# CODE 1: live != local HEAD. The direction decides warn-vs-block.
+if [ -z "$LIVE" ]; then
+  echo "pre-push: ⚠ could not determine the live commit (offline or Vercel API error) — continuing" >&2
+  exit 0
+fi
+
+if git merge-base --is-ancestor "$LIVE" HEAD 2>/dev/null; then
+  echo "pre-push: ⚠ you are about to deploy $LOCAL_HEAD while live is at $LIVE (forward deploy)" >&2
+  exit 0
+fi
+
+echo "pre-push: ✗ BLOCKED — live is at $LIVE and your local HEAD ($LOCAL_HEAD) is not ahead of it." >&2
+echo "pre-push:   Pushing would roll the site back or clobber history — pull/rebase first." >&2
+echo "pre-push:   To override, re-run with SKIP_VERIFY_DEPLOYED_HASH=1." >&2
+exit 1

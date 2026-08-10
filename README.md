@@ -280,6 +280,29 @@ npm run verify:live:compare
 npm run verify:deployed-hash
 ```
 
+## Pre-push hook — live-vs-HEAD surfacing before production pushes
+
+`.githooks/pre-push` runs the `verify:deployed-hash` gate on any push that
+lands on `refs/heads/main` and shows the operator exactly what the push will
+change relative to what Vercel is currently serving. It never blocks the
+normal forward deploy — it surfaces the delta first and only **blocks** the
+dangerous direction:
+
+- live == HEAD → no-op deploy note
+- live behind HEAD → "you are about to deploy X → Y" (forward deploy) —
+  warn and continue
+- live **not** an ancestor of HEAD → push **blocked** (rollback/clobber
+  risk — pull/rebase first)
+- invalid/revoked token (exit 2) or offline → warn and continue
+
+Wire it in a fresh clone:
+
+```bash
+git config core.hooksPath .githooks
+```
+
+Escape hatch: `SKIP_VERIFY_DEPLOYED_HASH=1 git push ...`
+
 ## Project principles
 
 1. The backend is the source of truth — LLM conversation history is never authoritative.
