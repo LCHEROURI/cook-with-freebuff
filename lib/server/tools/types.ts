@@ -13,6 +13,8 @@ import type {
   AgentToolLog,
   PantryItem,
   DietaryProfile,
+  Leftover,
+  GroceryItem,
 } from '../../domain/types';
 import type { SessionService } from '../session-service';
 
@@ -92,6 +94,21 @@ export interface DietaryProfileStore {
   upsertProfile(profile: DietaryProfile): Promise<void>;
 }
 
+export interface LeftoverStore {
+  createLeftover(leftover: Leftover): Promise<void>;
+  getLeftover(id: string): Promise<Leftover | null>;
+  listLeftovers(userId: string): Promise<Leftover[]>;
+  updateLeftover(id: string, partial: Partial<Leftover>): Promise<void>;
+}
+
+export interface GroceryStore {
+  createGroceryItem(item: GroceryItem): Promise<void>;
+  getGroceryItem(id: string): Promise<GroceryItem | null>;
+  listGroceryItems(userId: string): Promise<GroceryItem[]>;
+  updateGroceryItem(id: string, partial: Partial<GroceryItem>): Promise<void>;
+  deleteGroceryItem(id: string): Promise<void>;
+}
+
 // ── Tool context ─────────────────────────────────────────────────────────────
 
 export interface ToolContext {
@@ -104,6 +121,8 @@ export interface ToolContext {
   recipeStore?: RecipeStore;
   pantryStore?: PantryStore;
   dietaryProfileStore?: DietaryProfileStore;
+  leftoverStore?: LeftoverStore;
+  groceryStore?: GroceryStore;
 }
 
 // ── Tool definition ──────────────────────────────────────────────────────────

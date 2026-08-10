@@ -16,7 +16,9 @@
 
 import type { SessionService } from './session-service';
 import type { TimerStore, RecipeStore } from './tools/types';
-import type { PantryService } from './pantry-service';
+import type { PantryService, ConsumptionResult } from './pantry-service';
+import type { LeftoverService } from './leftover-service';
+import type { GroceryService } from './grocery-service';
 import type {
   CookingSession,
   CookingStep,
@@ -169,6 +171,10 @@ export class GuidedCookingService {
     private readonly recipeStore?: RecipeStore,
     /** Optional pantry (K8) — adjusts inventory when a recipe is completed. */
     private readonly pantryService?: PantryService,
+    /** Optional leftover tracking (K10) — logs a leftover when a meal completes. */
+    private readonly leftoverService?: LeftoverService,
+    /** Optional grocery list (K10) — auto-adds depleted + expired items. */
+    private readonly groceryService?: GroceryService,
   ) {}
 
   // ── Launch ────────────────────────────────────────────────────────────────
@@ -315,9 +321,13 @@ export class GuidedCookingService {
           'AGENT_TOOL',
           { correlationId: options?.correlationId },
         );
-        // K8 recipe consumption: adjust pantry inventory for the finished
-        // recipe. Uncertain quantities are never reduced (service contract).
-        await this.consumePantryForCompleted(userId, updated, recipe);
+        // K8/K10 completion hooks: adjust pantry inventory for the finished
+        // recipe (uncertain quantities never reduced), log the meal as a
+        // leftover, and auto-generate grocery lines for depleted + expired
+        // items. All best-effort and non-fatal — the completion is durable.
+        const consumed = await this.consumePantryForCompleted(userId, updated, recipe);
+        await this.logLeftoverForCompleted(userId, updated, recipe);
+        await this.syncGroceryForCompleted(userId, consumed);
         return this.buildSnapshot(userId, updated, recipe);
       }
       case 'SAFETY_WARNING': {
@@ -1040,7 +1050,7 @@ export class GuidedCookingService {
     return { session: fresh ?? session, timerStarted };
   }
 
-  // ── Recipe consumption (K8) ────────────────────────────────────────────────
+  // ── Completion hooks (K8 pantry + K10 leftovers/grocery) ───────────────────
 
   /**
    * Adjust pantry inventory for a completed recipe. Best-effort and
@@ -1051,13 +1061,61 @@ export class GuidedCookingService {
     userId: string,
     session: CookingSession,
     recipe: Recipe,
-  ): Promise<void> {
-    if (!this.pantryService) return;
+  ): Promise<ConsumptionResult | null> {
+    if (!this.pantryService) return null;
     try {
-      await this.pantryService.consumeForRecipe(userId, recipe, { sessionId: session.id });
+      return await this.pantryService.consumeForRecipe(userId, recipe, { sessionId: session.id });
     } catch {
       // Logged by the pantry service on the session when possible; the
       // completion is already durable — do not roll it back.
+      return null;
+    }
+  }
+
+  /**
+   * K10 leftovers: log the finished meal as a leftover (ACTIVE), so "what's
+   * in the fridge?" can answer from real memory. Best-effort, non-fatal.
+   */
+  private async logLeftoverForCompleted(
+    userId: string,
+    session: CookingSession,
+    recipe: Recipe,
+  ): Promise<void> {
+    if (!this.leftoverService) return;
+    try {
+      await this.leftoverService.createLeftover(
+        userId,
+        { recipeId: recipe.id, title: recipe.title, servings: recipe.servings },
+        { sessionId: session.id },
+      );
+    } catch {
+      // Non-fatal — the completion is durable.
+    }
+  }
+
+  /**
+   * K10 grocery generation: items the recipe exhausted (action 'removed')
+   * and pantry items past their expirationDate land on the grocery list
+   * automatically. Best-effort, non-fatal.
+   */
+  private async syncGroceryForCompleted(
+    userId: string,
+    consumed: ConsumptionResult | null,
+  ): Promise<void> {
+    if (!this.groceryService || !this.pantryService) return;
+    try {
+      const depleted = (consumed?.adjusted ?? [])
+        .filter((a) => a.action === 'removed')
+        .map((a) => ({ name: a.name }));
+      if (depleted.length > 0) {
+        await this.groceryService.syncDepleted(userId, depleted);
+      }
+      const expired = await this.pantryService.expiredItems(userId);
+      if (expired.length > 0) {
+        await this.groceryService.syncExpired(userId, expired);
+      }
+    } catch {
+      // Non-fatal — the completion is durable.
     }
   }
 

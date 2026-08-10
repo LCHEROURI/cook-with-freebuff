@@ -231,6 +231,40 @@ export const pantryItemSchema = z.object({
   notes: z.string().optional(),
 });
 
+// ── Leftovers (K10) ──────────────────────────────────────────────────────────
+
+export const leftoverStatusSchema = z.enum(['ACTIVE', 'CONSUMED']);
+
+export const leftoverSchema = z.object({
+  id: z.string().min(1),
+  userId: z.string().min(1),
+  recipeId: z.string().optional(),
+  title: z.string().min(1),
+  servings: z.number().int().positive(),
+  completedAt: z.number().int().positive(),
+  storedAt: z.number().int().positive(),
+  status: leftoverStatusSchema,
+  notes: z.string().optional(),
+});
+
+// ── Grocery list (K10) ───────────────────────────────────────────────────────
+
+export const groceryItemSourceSchema = z.enum(['MANUAL', 'PANTRY_DEPLETION', 'EXPIRATION']);
+export const groceryItemStatusSchema = z.enum(['OPEN', 'BOUGHT', 'DISMISSED']);
+
+export const groceryItemSchema = z.object({
+  id: z.string().min(1),
+  userId: z.string().min(1),
+  name: z.string().min(1),
+  quantity: z.number().positive().optional(),
+  unit: z.string().optional(),
+  source: groceryItemSourceSchema,
+  status: groceryItemStatusSchema,
+  pantryItemId: z.string().optional(),
+  createdAt: z.number().int().positive(),
+  updatedAt: z.number().int().positive(),
+});
+
 // ── Dietary profile ──────────────────────────────────────────────────────────
 
 export const dietaryProfileSchema = z.object({

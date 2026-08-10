@@ -182,7 +182,13 @@ export type SessionEventType =
   | 'PANTRY_ITEM_CONFIRMED'
   | 'ERROR_OCCURRED'
   | 'ERROR_RECOVERED'
-  | 'SESSION_COMPLETED';
+  | 'SESSION_COMPLETED'
+  // K10 — leftovers + grocery intelligence
+  | 'LEFTOVER_LOGGED'
+  | 'GROCERY_ITEM_ADDED'
+  | 'GROCERY_ITEM_REMOVED'
+  | 'GROCERY_ITEM_BOUGHT'
+  | 'PANTRY_ITEM_EXPIRED';
 
 export interface CookingSessionEvent {
   id: string;
@@ -244,6 +250,50 @@ export interface PantryItem {
   lastConfirmedAt: EpochMs;
   expirationDate?: EpochMs;
   notes?: string;
+}
+
+// ── Leftovers (K10) ─────────────────────────────────────────────────────────
+
+/** What happened to the leftover since it was logged. */
+export type LeftoverStatus = 'ACTIVE' | 'CONSUMED';
+
+export interface Leftover {
+  id: string;
+  userId: string;
+  /** The recipe this came from, when a guided session produced it. */
+  recipeId?: string;
+  title: string;
+  servings: number;
+  /** When the session completed (the meal was made). */
+  completedAt: EpochMs;
+  /** When it was logged as a leftover (usually the same moment). */
+  storedAt: EpochMs;
+  status: LeftoverStatus;
+  notes?: string;
+}
+
+// ── Grocery list (K10) ───────────────────────────────────────────────────────
+
+/** Why the item landed on the grocery list. */
+export type GroceryItemSource =
+  | 'MANUAL'
+  | 'PANTRY_DEPLETION'
+  | 'EXPIRATION';
+
+export type GroceryItemStatus = 'OPEN' | 'BOUGHT' | 'DISMISSED';
+
+export interface GroceryItem {
+  id: string;
+  userId: string;
+  name: string;
+  quantity?: number;
+  unit?: string;
+  source: GroceryItemSource;
+  status: GroceryItemStatus;
+  /** The pantry item that depleted/expired and triggered this entry. */
+  pantryItemId?: string;
+  createdAt: EpochMs;
+  updatedAt: EpochMs;
 }
 
 // ── Dietary profile ──────────────────────────────────────────────────────────

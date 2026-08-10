@@ -1,8 +1,17 @@
 import { describe, it, expect } from 'vitest';
 import { SessionService, InMemorySessionStore } from './session-service';
-import { InMemoryTimerStore, InMemoryLogStore, InMemoryRecipeStore, InMemoryPantryStore } from './tools';
+import {
+  InMemoryTimerStore,
+  InMemoryLogStore,
+  InMemoryRecipeStore,
+  InMemoryPantryStore,
+  InMemoryLeftoverStore,
+  InMemoryGroceryStore,
+} from './tools';
 import { GuidedCookingService, secondsToLabel } from './guide-service';
 import { PantryService } from './pantry-service';
+import { LeftoverService } from './leftover-service';
+import { GroceryService } from './grocery-service';
 import type { CookingTimer, Ingredient, Recipe } from '../domain/types';
 
 // ── Fixtures ─────────────────────────────────────────────────────────────────
@@ -477,5 +486,80 @@ describe('recipe consumption on completion (K8)', () => {
     const chicken = items.find((i) => i.name === 'chicken thighs')!;
     // Reduced, not removed (2 left).
     expect(chicken.quantity).toBe(2);
+  });
+});
+
+describe('K10 completion hooks — leftovers, grocery depletion & expiration (K10)', () => {
+  /** Seed the pantry + grocery/leftover stores and drive the journey to COMPLETED. */
+  async function cookToCompletion() {
+    const store = new InMemorySessionStore();
+    const timers = new InMemoryTimerStore();
+    const recipes = new InMemoryRecipeStore();
+    const pantry = new InMemoryPantryStore();
+    const leftovers = new InMemoryLeftoverStore();
+    const groceries = new InMemoryGroceryStore();
+    const sessionService = new SessionService(store);
+    const pantryService = new PantryService(pantry, sessionService);
+    const guide = new GuidedCookingService(
+      sessionService,
+      timers,
+      recipes,
+      pantryService,
+      new LeftoverService(leftovers, sessionService),
+      new GroceryService(groceries),
+    );
+
+    await recipes.createRecipe(makeRecipe());
+    // Recipe needs exactly 4 thighs → exhausted on completion (PANTRY_DEPLETION).
+    const chicken = await pantryService.addItem('user-1', { name: 'chicken thighs', quantity: 4, unit: 'pieces', source: 'MANUAL' });
+    // Recipe needs 1 of 2 cups of rice → reduced, NOT depleted.
+    await pantryService.addItem('user-1', { name: 'rice', quantity: 2, unit: 'cup', source: 'MANUAL' });
+    // An expired item unrelated to the recipe → grocery EXPIRATION line.
+    await pantryService.addItem('user-1', { name: 'sour cream', source: 'MANUAL' });
+    await pantryService.confirmItem('user-1', chicken.id);
+    // Record an expiration on sour cream via the store directly (the pantry
+    // service has no expiry setter — the update tool does).
+    const items = await pantry.listItems('user-1');
+    const sourCream = items.find((i) => i.name === 'sour cream')!;
+    await pantry.upsertItem({ ...sourCream, expirationDate: Date.now() - 1000 });
+
+    const snap = await guide.launchCookWithMe('user-1', 'recipe-1');
+    await guide.completeCurrentAction('user-1', snap.sessionId);
+    await guide.completeCurrentAction('user-1', snap.sessionId); // → WAITING_FOR_TIMER
+    const sessionId = (await guide.getCurrentAction('user-1', snap.sessionId)).sessionId!;
+    const [timer] = await timers.listActiveTimers(sessionId);
+    await timers.updateTimer(timer.id, { startedAt: Date.now() - 250_000, endsAt: Date.now() - 10_000 });
+    await guide.checkTimers('user-1', sessionId); // → COOKING_GUIDANCE
+    await guide.completeCurrentAction('user-1', sessionId); // gate
+    await guide.completeCurrentAction('user-1', sessionId); // ack → step 2
+    await guide.completeCurrentAction('user-1', sessionId); // → PLATING
+    const done = await guide.completeCurrentAction('user-1', sessionId);
+    expect(done.phase).toBe('COMPLETED');
+    return { pantry, leftovers, groceries };
+  }
+
+  it('logs the finished meal as an ACTIVE leftover', async () => {
+    const { leftovers } = await cookToCompletion();
+    const active = await leftovers.listLeftovers('user-1');
+    expect(active.filter((l) => l.status === 'ACTIVE')).toHaveLength(1);
+    expect(active[0].title).toBe('Chicken Rice');
+    expect(active[0].servings).toBe(2);
+  });
+
+  it('auto-adds the exhausted ingredient (PANTRY_DEPLETION) but not a merely-reduced one', async () => {
+    const { groceries } = await cookToCompletion();
+    const open = await groceries.listGroceryItems('user-1');
+    const openItems = open.filter((i) => i.status === 'OPEN');
+    const chicken = openItems.find((i) => i.name === 'chicken thighs');
+    expect(chicken?.source).toBe('PANTRY_DEPLETION');
+    // Rice still has 1 cup left — no grocery line.
+    expect(openItems.find((i) => i.name === 'rice')).toBeUndefined();
+  });
+
+  it('auto-adds expired pantry items (EXPIRATION) on completion', async () => {
+    const { groceries } = await cookToCompletion();
+    const open = await groceries.listGroceryItems('user-1');
+    const sourCream = open.find((i) => i.name === 'sour cream');
+    expect(sourCream?.source).toBe('EXPIRATION');
   });
 });

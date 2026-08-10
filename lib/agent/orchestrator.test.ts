@@ -3,7 +3,15 @@ import { ConversationOrchestrator } from './orchestrator';
 import { createDefaultToolRegistry } from '../server/tools';
 import { ToolRegistry, executeTool } from '../server/tools/registry';
 import { SessionService, InMemorySessionStore } from '../server/session-service';
-import { InMemoryTimerStore, InMemoryLogStore, InMemoryRecipeStore, InMemoryPantryStore, InMemoryDietaryProfileStore } from '../server/tools/registry';
+import {
+  InMemoryTimerStore,
+  InMemoryLogStore,
+  InMemoryRecipeStore,
+  InMemoryPantryStore,
+  InMemoryDietaryProfileStore,
+  InMemoryLeftoverStore,
+  InMemoryGroceryStore,
+} from '../server/tools/registry';
 import { GuidedCookingService } from '../server/guide-service';
 import type { ToolContext } from '../server/tools/types';
 import type { ConversationAgent } from '../ai/provider';
@@ -265,5 +273,79 @@ describe('executeTool remains the single execution path', () => {
     const names = new ToolRegistry().list().map((t) => t.name);
     expect(names).toHaveLength(0); // empty registry has no tools
     expect(registry.list().length).toBeGreaterThan(15);
+  });
+});
+
+describe('ConversationOrchestrator · K10 leftovers + grocery', () => {
+  function makeK10Context() {
+    const store = new InMemorySessionStore();
+    const leftovers = new InMemoryLeftoverStore();
+    const groceries = new InMemoryGroceryStore();
+    return {
+      leftovers,
+      groceries,
+      ctx: {
+        userId: 'user-1',
+        sessionService: new SessionService(store),
+        timerStore: new InMemoryTimerStore(),
+        logStore: new InMemoryLogStore(),
+        recipeStore: new InMemoryRecipeStore(),
+        pantryStore: new InMemoryPantryStore(),
+        dietaryProfileStore: new InMemoryDietaryProfileStore(),
+        leftoverStore: leftovers,
+        groceryStore: groceries,
+      },
+    };
+  }
+
+  it('adds items to the grocery list from "I need …"', async () => {
+    const { ctx } = makeK10Context();
+    const orch = new ConversationOrchestrator({ registry, context: ctx });
+    const turn = await orch.process('I need milk and eggs');
+    expect(turn.toolCalls.map((c) => c.tool)).toEqual(['add_grocery_item', 'add_grocery_item']);
+    expect(turn.toolCalls.every((c) => c.result.success)).toBe(true);
+    expect(turn.response).toContain('milk, eggs');
+  });
+
+  it('lists the grocery list and answers with the open items', async () => {
+    const { ctx } = makeK10Context();
+    const orch = new ConversationOrchestrator({ registry, context: ctx });
+    await orch.process('I need milk');
+    const turn = await orch.process("what's on my grocery list?");
+    expect(turn.toolCalls[0]?.tool).toBe('get_grocery_list');
+    expect(turn.response).toContain('milk');
+  });
+
+  it('removes a grocery item by name from a conversation', async () => {
+    const { ctx } = makeK10Context();
+    const orch = new ConversationOrchestrator({ registry, context: ctx });
+    await orch.process('I need milk');
+    const turn = await orch.process('remove milk from my grocery list');
+    expect(turn.toolCalls[0]?.tool).toBe('remove_grocery_item');
+    expect(turn.toolCalls[0]?.result.success).toBe(true);
+    expect(turn.response).toContain('removed milk');
+  });
+
+  it('reports the fridge (leftovers) when asked', async () => {
+    const { ctx, leftovers } = makeK10Context();
+    await leftovers.createLeftover({ id: 'l1', userId: 'user-1', title: 'Chicken Rice', servings: 2, completedAt: Date.now(), storedAt: Date.now(), status: 'ACTIVE' });
+    const orch = new ConversationOrchestrator({ registry, context: ctx });
+    const turn = await orch.process("what's in my fridge?");
+    expect(turn.toolCalls[0]?.tool).toBe('get_leftovers');
+    expect(turn.toolCalls[0]?.result.success).toBe(true);
+    expect(turn.response).toContain('Chicken Rice');
+  });
+
+  it('surfaces expiring items in the pantry answer (K10 awareness)', async () => {
+    const { ctx } = makeK10Context();
+    const pantryService = new (await import('../server/pantry-service')).PantryService(ctx.pantryStore!);
+    const day = 24 * 60 * 60 * 1000;
+    await pantryService.addItem('user-1', { name: 'milk', quantity: 1, unit: 'gallon', source: 'MANUAL' });
+    const milk = (await pantryService.listPantry('user-1'))[0];
+    await ctx.pantryStore!.upsertItem({ ...milk, expirationDate: Date.now() + day });
+
+    const orch = new ConversationOrchestrator({ registry, context: ctx });
+    const turn = await orch.process("what's in my pantry?");
+    expect(turn.response).toContain('expire soon');
   });
 });

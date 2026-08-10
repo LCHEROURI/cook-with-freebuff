@@ -12,11 +12,15 @@ import { ok, toToolError } from './types';
 import type { ToolDefinition, ToolContext } from './types';
 import { GuidedCookingService } from '../guide-service';
 import { PantryService } from '../pantry-service';
+import { LeftoverService } from '../leftover-service';
+import { GroceryService } from '../grocery-service';
 import type { Ingredient } from '../../domain/types';
 
 /**
- * Guided-cooking service bound to the tool context. When a pantry store is
- * wired, the service also adjusts pantry inventory on recipe completion (K8).
+ * Guided-cooking service bound to the tool context. When the pantry store is
+ * wired, the service also adjusts pantry inventory on recipe completion (K8);
+ * with leftover + grocery stores it logs the finished meal as a leftover and
+ * auto-generates grocery lines for depleted + expired items (K10).
  */
 export function createGuideService(ctx: ToolContext): GuidedCookingService {
   return new GuidedCookingService(
@@ -24,6 +28,8 @@ export function createGuideService(ctx: ToolContext): GuidedCookingService {
     ctx.timerStore,
     ctx.recipeStore,
     ctx.pantryStore ? new PantryService(ctx.pantryStore, ctx.sessionService) : undefined,
+    ctx.leftoverStore ? new LeftoverService(ctx.leftoverStore, ctx.sessionService) : undefined,
+    ctx.groceryStore ? new GroceryService(ctx.groceryStore) : undefined,
   );
 }
 

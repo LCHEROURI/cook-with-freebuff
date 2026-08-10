@@ -11,7 +11,8 @@ rules_version = '2';
 //       deployments, tasks, model_evaluations, activity, reports
 //   - Kitchen Agent "Cook With Me" (cook-with-freebuff)
 //       collections: users, dietary_profiles, recipes, cooking_sessions,
-//       cooking_session_events, timers, pantry_items, agent_tool_logs
+//       cooking_session_events, timers, pantry_items, leftovers,
+//       grocery_list, agent_tool_logs
 //
 // Both apps are per-user isolated: `profiles`, `users` and
 // `dietary_profiles` are keyed by the authenticated uid; every other
@@ -137,6 +138,19 @@ service cloud.firestore {
       allow update, delete: if resource.data.userId == request.auth.uid;
     }
     match /pantry_items/{itemId} {
+      allow read: if resource.data.userId == request.auth.uid;
+      allow create: if isAuthenticated()
+        && request.resource.data.userId == request.auth.uid;
+      allow update, delete: if resource.data.userId == request.auth.uid;
+    }
+    // K10 — leftovers + grocery list (userId field isolation).
+    match /leftovers/{leftoverId} {
+      allow read: if resource.data.userId == request.auth.uid;
+      allow create: if isAuthenticated()
+        && request.resource.data.userId == request.auth.uid;
+      allow update, delete: if resource.data.userId == request.auth.uid;
+    }
+    match /grocery_list/{groceryItemId} {
       allow read: if resource.data.userId == request.auth.uid;
       allow create: if isAuthenticated()
         && request.resource.data.userId == request.auth.uid;

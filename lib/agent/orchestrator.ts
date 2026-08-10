@@ -80,6 +80,10 @@ export class ConversationOrchestrator {
       // Multiple items per turn — one add_pantry_item call each.
       return this.handlePantryAdd(command.arguments?.names, sessionId, turn);
     }
+    if (command.intent === 'GROCERY_ADD') {
+      // Multiple items per turn — one add_grocery_item call each (K10).
+      return this.handleGroceryAdd(command.arguments?.names, turn);
+    }
     if (!command.tool) {
       // HELP
       return HELP_TEXT;
@@ -146,6 +150,28 @@ export class ConversationOrchestrator {
     }
     const list = items.join(', ');
     return `Got it — I have added ${list} to your pantry. Say "yes" to confirm, or tell me what to fix.`;
+  }
+
+  // ── Grocery handling (K10) ──────────────────────────────────────────────────
+
+  /** "add milk and eggs to my grocery list" → one add_grocery_item call each. */
+  private async handleGroceryAdd(
+    names: unknown,
+    turn: AgentTurn,
+  ): Promise<string> {
+    const items = Array.isArray(names) ? (names as string[]) : [];
+    if (items.length === 0) {
+      return 'What should I add to your grocery list?';
+    }
+    for (const name of items) {
+      await this.runTool('add_grocery_item', { name }, undefined, turn);
+    }
+    const last = turn.toolCalls[turn.toolCalls.length - 1];
+    if (!last.result.success) {
+      return `Sorry, I could not add that to your grocery list: ${this.errorMessage(last.result)}`;
+    }
+    const list = items.join(', ');
+    return `Got it — I have added ${list} to your grocery list.`;
   }
 
   // ── Ingredient handling ─────────────────────────────────────────────────────
@@ -267,10 +293,17 @@ export class ConversationOrchestrator {
           from?: string;
           to?: string;
           safetyGate?: { note: string };
-          items?: { id: string; name: string; stale: boolean }[];
+          items?: (
+            | { id: string; name: string; stale: boolean; expiresSoon?: boolean; expired?: boolean }
+            | { title: string; servings: number; storedDays: number }
+            | { name: string; source: string }
+          )[];
           stale?: string[];
+          expiringSoon?: string[];
+          expired?: string[];
           query?: string | null;
-          removed?: { name: string };
+          removed?: { name: string } | boolean;
+          name?: string;
           confirmed?: { name: string }[];
         }
       | undefined;
@@ -324,8 +357,10 @@ export class ConversationOrchestrator {
         return 'Confirmed — moving on.';
       }
       case 'PANTRY_GET': {
-        const items = d?.items ?? [];
+        const items = (d?.items ?? []) as { name: string }[];
         const stale = d?.stale ?? [];
+        const expiring = d?.expiringSoon ?? [];
+        const expired = d?.expired ?? [];
         if (items.length === 0) {
           return d?.query
             ? `You do not have ${d.query} in your pantry.`
@@ -339,11 +374,47 @@ export class ConversationOrchestrator {
         if (stale.length > 0) {
           out += ` Some of those are older than 30 days — say "yes" if you still have them.`;
         }
+        // K10 expiration awareness — surface what to use up or replenish.
+        if (expiring.length > 0) {
+          out += ` Heads up: ${expiring.join(', ')} expire soon — use ${expiring.length === 1 ? 'it' : 'them'} up.`;
+        }
+        if (expired.length > 0) {
+          out += ` ${expired.join(', ')} ${expired.length === 1 ? 'has' : 'have'} expired — say "add ${expired.length === 1 ? 'it' : 'them'} to my grocery list" and I will.`;
+        }
         return out;
       }
+      case 'LEFTOVERS_GET': {
+        const items = (d?.items ?? []) as { title: string; servings: number; storedDays: number }[];
+        if (items.length === 0) return 'No leftovers right now — cook something tasty!';
+        const labels = items.map(
+          (i) =>
+            `${i.title} (${i.servings} serving${i.servings === 1 ? '' : 's'}, ${
+              i.storedDays === 0 ? 'made today' : i.storedDays === 1 ? 'stored 1 day' : `stored ${i.storedDays} days`
+            })`,
+        );
+        return labels.length === 1
+          ? `In the fridge: ${labels[0]}.`
+          : `In the fridge: ${labels.slice(0, -1).join(', ')} and ${labels[labels.length - 1]}.`;
+      }
+      case 'GROCERY_GET': {
+        const items = (d?.items ?? []) as { name: string }[];
+        if (items.length === 0) return 'Your grocery list is empty — nothing to buy.';
+        const names = items.map((i) => i.name);
+        return names.length === 1
+          ? `On your grocery list: ${names[0]}.`
+          : `On your grocery list: ${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}.`;
+      }
+      case 'GROCERY_REMOVE':
+        return d?.name
+          ? `Done — removed ${d.name} from your grocery list.`
+          : 'Done — removed from your grocery list.';
+      case 'GROCERY_BOUGHT':
+        return d?.name
+          ? `Nice — marked ${d.name} as bought.`
+          : 'Marked as bought.';
       case 'PANTRY_REMOVE':
-        return d?.removed
-          ? `Done — removed ${d.removed.name} from your pantry.`
+        return d?.removed && typeof d.removed === 'object' && 'name' in d.removed
+          ? `Done — removed ${(d.removed as { name: string }).name} from your pantry.`
           : 'Done — removed from your pantry.';
       case 'TIMER_STATUS': {
         const timers = d?.timers ?? [];

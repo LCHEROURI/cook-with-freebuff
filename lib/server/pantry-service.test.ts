@@ -169,3 +169,44 @@ describe('PantryService', () => {
     expect(types).toContain('PANTRY_ITEM_CONFIRMED');
   });
 });
+
+describe('PantryService expiration awareness (K10)', () => {
+  it('flags nothing for items without an expirationDate', async () => {
+    const store = new InMemoryPantryStore();
+    const service = new PantryService(store);
+    await service.addItem('user-1', { name: 'salt', source: 'MANUAL' });
+    const [item] = await service.listPantry('user-1');
+    expect(item.expiresSoon).toBe(false);
+    expect(item.expired).toBe(false);
+    expect(item.daysUntilExpiration).toBeNull();
+  });
+
+  it('flags expiring-soon (within 2 days) and expired entries with day counts', async () => {
+    const store = new InMemoryPantryStore();
+    const service = new PantryService(store);
+    const day = 24 * 60 * 60 * 1000;
+    seedItem(store, { id: 'soon-milk', userId: 'user-1', name: 'milk', confidence: 1, source: 'MANUAL', lastConfirmedAt: Date.now(), expirationDate: Date.now() + day });
+    seedItem(store, { id: 'dead-yogurt', userId: 'user-1', name: 'yogurt', confidence: 1, source: 'MANUAL', lastConfirmedAt: Date.now(), expirationDate: Date.now() - day });
+    seedItem(store, { id: 'fine-cheese', userId: 'user-1', name: 'cheese', confidence: 1, source: 'MANUAL', lastConfirmedAt: Date.now(), expirationDate: Date.now() + 5 * day });
+    const items = await service.listPantry('user-1');
+    const byName = Object.fromEntries(items.map((i) => [i.name, i]));
+    expect(byName.milk.expiresSoon).toBe(true);
+    expect(byName.milk.expired).toBe(false);
+    expect(byName.milk.daysUntilExpiration).toBe(1);
+    expect(byName.yogurt.expired).toBe(true);
+    expect(byName.yogurt.expiresSoon).toBe(false);
+    expect(byName.yogurt.daysUntilExpiration).toBeLessThanOrEqual(0);
+    expect(byName.cheese.expiresSoon).toBe(false);
+    expect(byName.cheese.expired).toBe(false);
+  });
+
+  it('expiredItems returns only entries past their expirationDate', async () => {
+    const store = new InMemoryPantryStore();
+    const service = new PantryService(store);
+    const day = 24 * 60 * 60 * 1000;
+    seedItem(store, { id: 'a', userId: 'user-1', name: 'sour cream', confidence: 1, source: 'MANUAL', lastConfirmedAt: Date.now(), expirationDate: Date.now() - day });
+    seedItem(store, { id: 'b', userId: 'user-1', name: 'fresh eggs', confidence: 1, source: 'MANUAL', lastConfirmedAt: Date.now(), expirationDate: Date.now() + 5 * day });
+    const expired = await service.expiredItems('user-1');
+    expect(expired.map((i) => i.name)).toEqual(['sour cream']);
+  });
+});

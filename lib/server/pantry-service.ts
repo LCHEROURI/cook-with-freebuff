@@ -30,10 +30,19 @@ export const STALE_AFTER_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
 /** Confidence below which a match is never auto-consumed. */
 export const CONSUME_CONFIDENCE_THRESHOLD = 0.8;
 
-/** A pantry entry with its live re-confirmation flag. */
+/** An item is flagged "expiring soon" within this window (K10). */
+export const EXPIRE_SOON_MS = 2 * 24 * 60 * 60 * 1000; // 2 days
+
+/** A pantry entry with its live re-confirmation + expiration flags. */
 export interface PantryItemView extends PantryItem {
   /** True when the entry is old enough that we should ask before trusting it. */
   stale: boolean;
+  /** True when expirationDate is within EXPIRE_SOON_MS. */
+  expiresSoon: boolean;
+  /** True when expirationDate is in the past. */
+  expired: boolean;
+  /** Whole days until expiration (negative when already expired), null when unset. */
+  daysUntilExpiration: number | null;
 }
 
 export interface PantryItemInput {
@@ -84,12 +93,18 @@ export class PantryService {
     private readonly sessionService?: SessionService,
   ) {}
 
-  /** All pantry entries for the user, newest first, with live stale flags. */
+  /** All pantry entries for the user, newest first, with live stale + expiry flags. */
   async listPantry(userId: string): Promise<PantryItemView[]> {
     const items = await this.pantryStore.listItems(userId);
     return items
-      .map((item) => ({ ...item, stale: this.isStale(item) }))
+      .map((item) => ({ ...item, ...this.expiryFlags(item) }))
       .sort((a, b) => b.lastConfirmedAt - a.lastConfirmedAt);
+  }
+
+  /** Entries whose expirationDate has already passed (K10 expiration sync). */
+  async expiredItems(userId: string): Promise<PantryItem[]> {
+    const items = await this.pantryStore.listItems(userId);
+    return items.filter((i) => this.expiryFlags(i).expired);
   }
 
   /** Add a new pantry entry (source decides starting confidence). */
@@ -117,11 +132,16 @@ export class PantryService {
     return item;
   }
 
-  /** Correct an entry's quantity/unit/notes (null clears the field). */
+  /** Correct an entry's quantity/unit/notes/expiration (null clears the field). */
   async updateItem(
     userId: string,
     itemId: string,
-    patch: { quantity?: number | null; unit?: string | null; notes?: string | null },
+    patch: {
+      quantity?: number | null;
+      unit?: string | null;
+      notes?: string | null;
+      expirationDate?: number | null;
+    },
     options?: { sessionId?: string },
   ): Promise<PantryItem> {
     const current = await this.requireOwned(userId, itemId);
@@ -130,6 +150,9 @@ export class PantryService {
       ...(patch.quantity !== undefined ? { quantity: patch.quantity ?? undefined } : {}),
       ...(patch.unit !== undefined ? { unit: patch.unit ?? undefined } : {}),
       ...(patch.notes !== undefined ? { notes: patch.notes ?? undefined } : {}),
+      ...(patch.expirationDate !== undefined
+        ? { expirationDate: patch.expirationDate ?? undefined }
+        : {}),
     };
     await this.pantryStore.upsertItem(updated);
     await this.logEvent(options?.sessionId, 'INGREDIENT_CORRECTED', {
@@ -241,6 +264,26 @@ export class PantryService {
   /** Age-based staleness — entries older than STALE_AFTER_MS need re-confirmation. */
   private isStale(item: PantryItem): boolean {
     return Date.now() - item.lastConfirmedAt > STALE_AFTER_MS;
+  }
+
+  /** Live expiration flags for an entry (K10 expiration awareness). */
+  private expiryFlags(item: PantryItem): {
+    stale: boolean;
+    expiresSoon: boolean;
+    expired: boolean;
+    daysUntilExpiration: number | null;
+  } {
+    const stale = this.isStale(item);
+    if (!item.expirationDate) {
+      return { stale, expiresSoon: false, expired: false, daysUntilExpiration: null };
+    }
+    const days = Math.ceil((item.expirationDate - Date.now()) / (24 * 60 * 60 * 1000));
+    return {
+      stale,
+      expiresSoon: days > 0 && days <= 2,
+      expired: days <= 0,
+      daysUntilExpiration: days,
+    };
   }
 
   /** Effective confidence for decisions — stale entries cap at 0.5. */

@@ -214,6 +214,30 @@ See [`DEPLOYMENT.md`](./DEPLOYMENT.md) for the full operational story.
 - [x] Session events logged: `INGREDIENT_ADDED` / `INGREDIENT_REMOVED` / `INGREDIENT_CORRECTED` / `PANTRY_ITEM_CONFIRMED`
 - [x] 30 new tests (pantry service, pantry tools, commands, orchestrator flows, guide-service consumption, Gemini declarations) — 284 total green + production build passes
 
+## K10 — Leftovers, grocery list & expiration awareness
+
+### Leftovers tracking
+- [x] `LeftoverService` over a new `leftovers` collection — every guided completion logs the finished meal (recipe title + servings) as an **ACTIVE** leftover
+- [x] `get_leftovers` lists what's still in the fridge (newest first, with how long it's been stored); `log_leftover` covers manual entries (takeout, big batches); `consume_leftover` marks an entry eaten
+
+### Grocery list generation from pantry depletion
+- [x] `GroceryService` over a new `grocery_list` collection — lines carry a `source` (MANUAL / **PANTRY_DEPLETION** / **EXPIRATION**) and an OPEN/BOUGHT status
+- [x] A guided completion that exhausts an item (its quantity ran out) **auto-adds it to the grocery list**; a merely-reduced item never does
+- [x] Open lines are **deduped by normalized name** — repeating the same recipe the same day adds the line once, whatever the source
+- [x] Tools: `get_grocery_list`, `add_grocery_item`, `mark_grocery_bought`, `remove_grocery_item` (all resolvable by name for voice)
+
+### Expiration awareness
+- [x] Pantry entries flag `expiresSoon` (within 2 days) / `expired` / `daysUntilExpiration` live; `update_pantry_item` records `expirationDate` (epoch ms)
+- [x] Expired items are **auto-added to the grocery list** (source EXPIRATION) on completion, and pantry answers surface them ("your milk expires in 2 days — use it up")
+- [x] Session events: `LEFTOVER_LOGGED` / `GROCERY_ITEM_ADDED` / `GROCERY_ITEM_REMOVED` / `GROCERY_ITEM_BOUGHT` / `PANTRY_ITEM_EXPIRED`
+
+### Conversational surface
+- [x] "what's in my fridge?" / "any leftovers?" → `get_leftovers`
+- [x] "add milk to my grocery list" / "I need eggs" / "buy some bread" → `add_grocery_item` (multi-item turns split)
+- [x] "what's on my grocery list?" → `get_grocery_list`; "remove X from my grocery list" → `remove_grocery_item`; "I bought X" → `mark_grocery_bought`
+- [x] All 7 K10 tools declared in Gemini (nullable rule kept); Firestore rules extended (`leftovers` + `grocery_list`, owner-isolated, byte-identical union deployed to both projects)
+- [x] 38 new tests (leftover service, grocery service incl. dedupe/depletion/expiry, tools, guide-completion journey, commands, orchestrator flows, declarations) — 372 total green
+
 ## Development
 
 ```bash

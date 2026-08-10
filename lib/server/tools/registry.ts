@@ -19,9 +19,19 @@ import type {
   RecipeStore,
   PantryStore,
   DietaryProfileStore,
+  LeftoverStore,
+  GroceryStore,
 } from './types';
 import { fail } from './types';
-import type { AgentToolLog, CookingTimer, Recipe, PantryItem, DietaryProfile } from '../../domain/types';
+import type {
+  AgentToolLog,
+  CookingTimer,
+  Recipe,
+  PantryItem,
+  DietaryProfile,
+  Leftover,
+  GroceryItem,
+} from '../../domain/types';
 
 export class ToolRegistry {
   private tools = new Map<string, ToolDefinition>();
@@ -216,6 +226,54 @@ export class InMemoryPantryStore implements PantryStore {
   }
 
   async deleteItem(id: string): Promise<void> {
+    this.items.delete(id);
+  }
+}
+
+export class InMemoryLeftoverStore implements LeftoverStore {
+  private leftovers = new Map<string, Leftover>();
+
+  async createLeftover(leftover: Leftover): Promise<void> {
+    this.leftovers.set(leftover.id, { ...leftover });
+  }
+
+  async getLeftover(id: string): Promise<Leftover | null> {
+    return this.leftovers.get(id) ?? null;
+  }
+
+  async listLeftovers(userId: string): Promise<Leftover[]> {
+    return [...this.leftovers.values()].filter((l) => l.userId === userId);
+  }
+
+  async updateLeftover(id: string, partial: Partial<Leftover>): Promise<void> {
+    const current = this.leftovers.get(id);
+    if (!current) throw new Error(`Leftover ${id} not found`);
+    this.leftovers.set(id, { ...current, ...partial });
+  }
+}
+
+export class InMemoryGroceryStore implements GroceryStore {
+  private items = new Map<string, GroceryItem>();
+
+  async createGroceryItem(item: GroceryItem): Promise<void> {
+    this.items.set(item.id, { ...item });
+  }
+
+  async getGroceryItem(id: string): Promise<GroceryItem | null> {
+    return this.items.get(id) ?? null;
+  }
+
+  async listGroceryItems(userId: string): Promise<GroceryItem[]> {
+    return [...this.items.values()].filter((i) => i.userId === userId);
+  }
+
+  async updateGroceryItem(id: string, partial: Partial<GroceryItem>): Promise<void> {
+    const current = this.items.get(id);
+    if (!current) throw new Error(`Grocery item ${id} not found`);
+    this.items.set(id, { ...current, ...partial });
+  }
+
+  async deleteGroceryItem(id: string): Promise<void> {
     this.items.delete(id);
   }
 }

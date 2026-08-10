@@ -53,11 +53,18 @@ export const getPantryTool: ToolDefinition = {
           unit: i.unit ?? null,
           confidence: i.confidence,
           stale: i.stale,
+          expiresSoon: i.expiresSoon,
+          expired: i.expired,
+          daysUntilExpiration: i.daysUntilExpiration,
           lastConfirmedAt: i.lastConfirmedAt,
           expirationDate: i.expirationDate ?? null,
           notes: i.notes ?? null,
         })),
         stale: filtered.filter((i) => i.stale).map((i) => i.name),
+        // K10 expiration awareness: the reply can surface what to use up or
+        // replenish without the model guessing dates.
+        expiringSoon: filtered.filter((i) => i.expiresSoon).map((i) => i.name),
+        expired: filtered.filter((i) => i.expired).map((i) => i.name),
         query: args.name ?? null,
       });
     } catch (e) {
@@ -113,12 +120,13 @@ export const addPantryItemTool: ToolDefinition = {
 
 export const updatePantryItemTool: ToolDefinition = {
   name: 'update_pantry_item',
-  description: 'Correct a pantry item\'s quantity, unit, or notes (null clears the field).',
+  description: 'Correct a pantry item\'s quantity, unit, notes, or expirationDate (epoch ms; null clears the field).',
   inputSchema: z.object({
     itemId: z.string().min(1),
     quantity: z.number().positive().nullable().optional(),
     unit: z.string().nullable().optional(),
     notes: z.string().nullable().optional(),
+    expirationDate: z.number().int().positive().nullable().optional(),
     sessionId: z.string().optional(),
   }),
   async handler(ctx, args) {
@@ -130,6 +138,7 @@ export const updatePantryItemTool: ToolDefinition = {
         quantity: args.quantity,
         unit: args.unit,
         notes: args.notes,
+        expirationDate: args.expirationDate,
       }, { sessionId });
       return ok({ item });
     } catch (e) {

@@ -338,7 +338,7 @@ export const TOOL_DECLARATIONS = [
   },
   {
     name: 'update_pantry_item',
-    description: 'Correct a pantry item quantity, unit, or notes.',
+    description: 'Correct a pantry item quantity, unit, notes, or expirationDate (epoch ms; null clears it).',
     parameters: {
       type: 'object',
       properties: {
@@ -346,6 +346,7 @@ export const TOOL_DECLARATIONS = [
         quantity: { type: 'number', nullable: true },
         unit: { type: 'string', nullable: true },
         notes: { type: 'string', nullable: true },
+        expirationDate: { type: 'number', nullable: true },
       },
       required: ['itemId'],
     },
@@ -386,6 +387,68 @@ export const TOOL_DECLARATIONS = [
         defaultServings: { type: 'number' },
         preferredEquipment: stringArray,
       },
+    },
+  },
+  // ── Leftovers + grocery list (K10) ─────────────────────────────────────────
+  {
+    name: 'get_leftovers',
+    description: 'List what is still in the fridge — ACTIVE leftovers from completed meals, newest first, with how long each has been stored.',
+    parameters: { type: 'object', properties: {} },
+  },
+  {
+    name: 'log_leftover',
+    description: 'Record a leftover the user is keeping (e.g. takeout) — appears in get_leftovers until consumed.',
+    parameters: {
+      type: 'object',
+      properties: {
+        title: { type: 'string' },
+        servings: { type: 'number' },
+        notes: { type: 'string' },
+      },
+      required: ['title'],
+    },
+  },
+  {
+    name: 'consume_leftover',
+    description: 'Mark a leftover as eaten — removes it from the active fridge list.',
+    parameters: {
+      type: 'object',
+      properties: { leftoverId: { type: 'string' } },
+      required: ['leftoverId'],
+    },
+  },
+  {
+    name: 'get_grocery_list',
+    description: 'List the OPEN grocery list — what still needs buying, oldest first, with each source (MANUAL / PANTRY_DEPLETION / EXPIRATION).',
+    parameters: { type: 'object', properties: {} },
+  },
+  {
+    name: 'add_grocery_item',
+    description: 'Add something to the grocery list (deduped — an already-open line is left alone).',
+    parameters: {
+      type: 'object',
+      properties: {
+        name: { type: 'string' },
+        quantity: { type: 'number', nullable: true },
+        unit: { type: 'string' },
+      },
+      required: ['name'],
+    },
+  },
+  {
+    name: 'mark_grocery_bought',
+    description: 'Mark a grocery list item as bought (by itemId or name) — leaves the open list.',
+    parameters: {
+      type: 'object',
+      properties: { itemId: { type: 'string' }, name: { type: 'string' } },
+    },
+  },
+  {
+    name: 'remove_grocery_item',
+    description: 'Remove a grocery list item entirely (by itemId or name).',
+    parameters: {
+      type: 'object',
+      properties: { itemId: { type: 'string' }, name: { type: 'string' } },
     },
   },
 ] as const;

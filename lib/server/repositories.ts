@@ -16,6 +16,8 @@ import type {
   PantryItem,
   DietaryProfile,
   AgentToolLog,
+  Leftover,
+  GroceryItem,
   EpochMs,
 } from '../domain/types';
 import {
@@ -26,6 +28,8 @@ import {
   pantryItemSchema,
   dietaryProfileSchema,
   agentToolLogSchema,
+  leftoverSchema,
+  groceryItemSchema,
 } from '../domain/schemas';
 
 // ── Base Firestore helpers ───────────────────────────────────────────────────
@@ -277,6 +281,60 @@ export async function updatePantryItem(
 
 export async function deletePantryItem(id: string): Promise<void> {
   await deleteDoc(PANTRY, id);
+}
+
+// ── Leftover repository (K10) ────────────────────────────────────────────────
+
+const LEFTOVERS = 'leftovers';
+
+export async function createLeftover(leftover: Leftover): Promise<void> {
+  leftoverSchema.parse(leftover);
+  await writeDoc(LEFTOVERS, leftover.id, leftover);
+}
+
+export async function getLeftover(id: string): Promise<Leftover | null> {
+  const doc = await readDoc<Leftover>(LEFTOVERS, id);
+  return doc?.data ?? null;
+}
+
+export async function listLeftovers(userId: UserId): Promise<Leftover[]> {
+  const docs = await queryDocs<Leftover>(LEFTOVERS, 'userId', userId);
+  return docs.map((d) => d.data);
+}
+
+export async function updateLeftover(id: string, partial: Partial<Leftover>): Promise<void> {
+  const db = getAdminDb();
+  if (!db) throw new Error('Firestore not initialized');
+  await db.collection(LEFTOVERS).doc(id).update(partial as unknown as Record<string, unknown>);
+}
+
+// ── Grocery list repository (K10) ────────────────────────────────────────────
+
+const GROCERY = 'grocery_list';
+
+export async function createGroceryItem(item: GroceryItem): Promise<void> {
+  groceryItemSchema.parse(item);
+  await writeDoc(GROCERY, item.id, item);
+}
+
+export async function getGroceryItem(id: string): Promise<GroceryItem | null> {
+  const doc = await readDoc<GroceryItem>(GROCERY, id);
+  return doc?.data ?? null;
+}
+
+export async function listGroceryItems(userId: UserId): Promise<GroceryItem[]> {
+  const docs = await queryDocs<GroceryItem>(GROCERY, 'userId', userId);
+  return docs.map((d) => d.data);
+}
+
+export async function updateGroceryItem(id: string, partial: Partial<GroceryItem>): Promise<void> {
+  const db = getAdminDb();
+  if (!db) throw new Error('Firestore not initialized');
+  await db.collection(GROCERY).doc(id).update(partial as unknown as Record<string, unknown>);
+}
+
+export async function deleteGroceryItem(id: string): Promise<void> {
+  await deleteDoc(GROCERY, id);
 }
 
 // ── Dietary profile repository ────────────────────────────────────────────────

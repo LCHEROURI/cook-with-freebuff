@@ -21,12 +21,36 @@ const K8_TOOLS = [
   'update_dietary_profile',
 ];
 
+const K10_TOOLS = [
+  'get_leftovers',
+  'log_leftover',
+  'consume_leftover',
+  'get_grocery_list',
+  'add_grocery_item',
+  'mark_grocery_bought',
+  'remove_grocery_item',
+];
+
 describe('Gemini tool declarations (K8 surface)', () => {
   it('declares every pantry + dietary profile tool', () => {
     const names = TOOL_DECLARATIONS.map((t) => (t as Declaration).name);
     for (const tool of K8_TOOLS) {
       expect(names).toContain(tool);
     }
+  });
+
+  it('declares every K10 leftovers + grocery tool', () => {
+    const names = TOOL_DECLARATIONS.map((t) => (t as Declaration).name);
+    for (const tool of K10_TOOLS) {
+      expect(names).toContain(tool);
+    }
+  });
+
+  it('exposes expirationDate on update_pantry_item (nullable, never union)', () => {
+    const decl = TOOL_DECLARATIONS.find((t) => (t as Declaration).name === 'update_pantry_item') as Declaration;
+    const expiration = decl.parameters?.properties?.['expirationDate'];
+    expect(expiration?.type).toBe('number');
+    expect(expiration?.nullable).toBe(true);
   });
 
   it('never uses union-type arrays in schemas (Gemini 2.5 rejects them)', () => {

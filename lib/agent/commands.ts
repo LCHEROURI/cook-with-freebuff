@@ -24,6 +24,11 @@ export type AgentIntent =
   | 'PANTRY_ADD'
   | 'PANTRY_GET'
   | 'PANTRY_REMOVE'
+  | 'LEFTOVERS_GET'
+  | 'GROCERY_ADD'
+  | 'GROCERY_GET'
+  | 'GROCERY_REMOVE'
+  | 'GROCERY_BOUGHT'
   | 'HELP';
 
 export interface CommandMatch {
@@ -135,6 +140,14 @@ const RULES: Rule[] = [
     },
   },
   {
+    intent: 'LEFTOVERS_GET',
+    // BEFORE PANTRY_GET on purpose: the generic "what do i have" alternative
+    // would swallow "what do I have leftover?" — the fridge question must win.
+    test: (t) =>
+      /\b(what(?:'s| is) in (?:my |the )?fridge|what(?:'s| is) left(?: over)?\b|leftovers?|what leftovers? do i have|what did (?:we|i) (?:cook|make)|anything (?:left|leftover))\b/.test(t),
+    match: { intent: 'LEFTOVERS_GET', tool: 'get_leftovers' },
+  },
+  {
     intent: 'PANTRY_ADD',
     test: (t) =>
       /\b(?:i always have|we always have|i always keep|add .* to (?:my )?pantry|put .* in (?:my )?pantry)\b/.test(t) ||
@@ -150,6 +163,38 @@ const RULES: Rule[] = [
     intent: 'PANTRY_REMOVE',
     test: (t) => /\b(remove .* from (?:my |the )?pantry|take .* out of (?:my |the )?pantry|delete .* from (?:my |the )?pantry)\b/.test(t),
     match: { intent: 'PANTRY_REMOVE' },
+  },
+  {
+    intent: 'GROCERY_ADD',
+    test: (t) =>
+      /\b(add .* to (?:my |the )?grocery (?:list|shopping list)|add .* to (?:my |the )?shopping list)\b/.test(t) ||
+      /\b(i need (?:to )?(?:buy|get)|need (?:to )?(?:buy|get)|buy (?:some|a|an)|pick up .* (?:at|from) (?:the )?store)\b/.test(t) ||
+      /^\s*(?:i need|need)\s+[a-z]/i.test(t),
+    match: { intent: 'GROCERY_ADD' },
+  },
+  {
+    intent: 'GROCERY_GET',
+    // The bare "grocery list" phrase must NOT match a remove/bought sentence
+    // ("remove milk from my grocery list") — only question forms and the
+    // standalone phrase qualify.
+    test: (t) =>
+      /\bwhat(?:'s| is) on (?:my |the )?(?:grocery |shopping )?list\b/.test(t) ||
+      /\bwhat do i need (?:to buy|to get|at the store)\b/.test(t) ||
+      /^(?:grocery|shopping) list$/.test(t),
+    match: { intent: 'GROCERY_GET', tool: 'get_grocery_list' },
+  },
+  {
+    intent: 'GROCERY_REMOVE',
+    test: (t) =>
+      /\b(remove .* from (?:my |the )?grocery (?:list|shopping list)|take .* off (?:my |the )?grocery (?:list|shopping list))\b/.test(t),
+    match: { intent: 'GROCERY_REMOVE' },
+  },
+  {
+    intent: 'GROCERY_BOUGHT',
+    test: (t) =>
+      /\b(bought|got|picked up|found|finished with|done with)\b.*\b(grocery|shopping list)\b/.test(t) ||
+      /\b(already (?:have|bought)|have it already|marked.*bought)\b/.test(t),
+    match: { intent: 'GROCERY_BOUGHT' },
   },
   {
     intent: 'HELP',
@@ -196,6 +241,36 @@ export function parsePantryQuery(text: string): string | null {
 /** "remove olive oil from my pantry" → 'olive oil'. */
 export function parsePantryRemove(text: string): string | null {
   const m = text.match(/\b(?:remove|take|delete)\s+(.+?)\s+(?:from|out of)\s+(?:my |the )?pantry$/);
+  if (!m) return null;
+  const name = m[1].replace(/[.!?]+$/, '').trim();
+  return name.length > 0 ? name : null;
+}
+
+/**
+ * "add milk to my grocery list" → ['milk']; "I need eggs" → ['eggs'];
+ * "buy some bread and butter" → ['bread', 'butter']. Returns null when
+ * nothing listable follows the trigger phrase.
+ */
+export function parseGroceryAdd(text: string): string[] | null {
+  const m =
+    text.match(/\badd\s+(.+?)\s+to\s+(?:my |the )?(?:grocery |shopping )?list$/) ??
+    text.match(/\b(?:i )?need (?:to )?(?:buy|get)\s+(.+)$/) ??
+    text.match(/^\s*(?:i need|need)\s+(.+)$/);
+  if (!m) return null;
+  let clause = m[1].replace(/[.!?]+$/, '').trim();
+  if (!clause) return null;
+  const items = clause
+    .split(/\s*(?:,|and)\s+/)
+    .map((s) => s.replace(/^(?:some|any|a|an|the|a bit of|plenty of|lots of|a few|fresh)\s+/, '').trim())
+    .filter(Boolean);
+  return items.length > 0 ? items : null;
+}
+
+/** "remove milk from my grocery list" → 'milk'. */
+export function parseGroceryName(text: string): string | null {
+  const m = text.match(
+    /\b(?:remove|take|bought|got|picked up|found)\s+(.+?)\s+(?:from|off)\s+(?:my |the )?(?:grocery |shopping )?list$/,
+  );
   if (!m) return null;
   const name = m[1].replace(/[.!?]+$/, '').trim();
   return name.length > 0 ? name : null;
@@ -297,6 +372,24 @@ export function matchCommand(utterance: string): CommandMatch | null {
         return { intent: 'PANTRY_REMOVE', tool: 'remove_pantry_item', arguments: { name } };
       }
       return { intent: 'PANTRY_REMOVE', needsFollowUp: 'Which item should I remove from your pantry?' };
+    }
+    if (rule.intent === 'GROCERY_ADD') {
+      const names = parseGroceryAdd(text);
+      if (names) {
+        return { intent: 'GROCERY_ADD', arguments: { names } };
+      }
+      return { intent: 'GROCERY_ADD', needsFollowUp: 'What should I add to your grocery list?' };
+    }
+    if (rule.intent === 'GROCERY_REMOVE' || rule.intent === 'GROCERY_BOUGHT') {
+      const name = parseGroceryName(text);
+      const tool = rule.intent === 'GROCERY_REMOVE' ? 'remove_grocery_item' : 'mark_grocery_bought';
+      if (name) {
+        return { intent: rule.intent, tool, arguments: { name } };
+      }
+      return {
+        intent: rule.intent,
+        needsFollowUp: rule.intent === 'GROCERY_REMOVE' ? 'Which item should I remove from your grocery list?' : 'Which grocery item did you buy?',
+      };
     }
 
     return { ...rule.match };

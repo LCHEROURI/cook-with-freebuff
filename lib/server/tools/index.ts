@@ -50,6 +50,17 @@ import {
   getDietaryProfileTool,
   updateDietaryProfileTool,
 } from './pantry-tools';
+import {
+  getLeftoversTool,
+  logLeftoverTool,
+  consumeLeftoverTool,
+} from './leftover-tools';
+import {
+  getGroceryListTool,
+  addGroceryItemTool,
+  markGroceryBoughtTool,
+  removeGroceryItemTool,
+} from './grocery-tools';
 
 export * from './types';
 export * from './registry';
@@ -97,7 +108,16 @@ export function createDefaultToolRegistry(): ToolRegistry {
     .register(confirmPantryItemTool)
     .register(confirmPendingPantryItemsTool)
     .register(getDietaryProfileTool)
-    .register(updateDietaryProfileTool);
+    .register(updateDietaryProfileTool)
+    // Leftovers (K10)
+    .register(getLeftoversTool)
+    .register(logLeftoverTool)
+    .register(consumeLeftoverTool)
+    // Grocery list (K10)
+    .register(getGroceryListTool)
+    .register(addGroceryItemTool)
+    .register(markGroceryBoughtTool)
+    .register(removeGroceryItemTool);
 }
 
 /** Singleton used by the API route and the agent (K5). */

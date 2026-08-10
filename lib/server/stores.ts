@@ -16,6 +16,8 @@ import type {
   RecipeStore,
   PantryStore,
   DietaryProfileStore,
+  LeftoverStore,
+  GroceryStore,
 } from './tools/types';
 import { registerGeminiProviders } from '../ai/register';
 
@@ -60,6 +62,21 @@ export const firestoreDietaryProfileStore: DietaryProfileStore = {
   upsertProfile: (profile) => repo.upsertDietaryProfile(profile),
 };
 
+export const firestoreLeftoverStore: LeftoverStore = {
+  createLeftover: (l) => repo.createLeftover(l),
+  getLeftover: (id) => repo.getLeftover(id),
+  listLeftovers: (userId) => repo.listLeftovers(userId),
+  updateLeftover: (id, partial) => repo.updateLeftover(id, partial),
+};
+
+export const firestoreGroceryStore: GroceryStore = {
+  createGroceryItem: (i) => repo.createGroceryItem(i),
+  getGroceryItem: (id) => repo.getGroceryItem(id),
+  listGroceryItems: (userId) => repo.listGroceryItems(userId),
+  updateGroceryItem: (id, partial) => repo.updateGroceryItem(id, partial),
+  deleteGroceryItem: (id) => repo.deleteGroceryItem(id),
+};
+
 /** Singleton session service over Firestore. */
 export const productionSessionService = new SessionService(firestoreSessionStore);
 
@@ -77,5 +94,7 @@ export function buildProductionContext(
     recipeStore: firestoreRecipeStore,
     pantryStore: firestorePantryStore,
     dietaryProfileStore: firestoreDietaryProfileStore,
+    leftoverStore: firestoreLeftoverStore,
+    groceryStore: firestoreGroceryStore,
   };
 }

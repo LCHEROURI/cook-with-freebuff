@@ -137,4 +137,49 @@ describe('matchCommand', () => {
   it('returns null for empty input', () => {
     expect(matchCommand('   ')).toBeNull();
   });
+
+  // ── K10 — leftovers + grocery list ────────────────────────────────────────
+
+  it('maps a fridge question to LEFTOVERS_GET → get_leftovers', () => {
+    expect(matchCommand("what's in my fridge?")?.tool).toBe('get_leftovers');
+    expect(matchCommand('what do I have leftover?')?.tool).toBe('get_leftovers');
+    expect(matchCommand('any leftovers?')?.tool).toBe('get_leftovers');
+  });
+
+  it('maps "add X to my grocery list" to GROCERY_ADD with the parsed names', () => {
+    const m = matchCommand('add milk and eggs to my grocery list');
+    expect(m?.intent).toBe('GROCERY_ADD');
+    expect(m?.arguments).toEqual({ names: ['milk', 'eggs'] });
+  });
+
+  it('maps "I need eggs" and "buy some bread" to GROCERY_ADD', () => {
+    expect(matchCommand('I need eggs')?.intent).toBe('GROCERY_ADD');
+    expect(matchCommand('I need to buy bread')?.intent).toBe('GROCERY_ADD');
+    expect(matchCommand('buy some butter')?.intent).toBe('GROCERY_ADD');
+    expect(matchCommand('I need to get milk')?.arguments).toEqual({ names: ['milk'] });
+  });
+
+  it('maps a grocery list question to GROCERY_GET → get_grocery_list', () => {
+    expect(matchCommand("what's on my grocery list?")?.tool).toBe('get_grocery_list');
+    expect(matchCommand('shopping list?')?.tool).toBe('get_grocery_list');
+  });
+
+  it('maps "remove X from my grocery list" to GROCERY_REMOVE by name', () => {
+    const m = matchCommand('remove milk from my grocery list');
+    expect(m?.intent).toBe('GROCERY_REMOVE');
+    expect(m?.tool).toBe('remove_grocery_item');
+    expect(m?.arguments).toEqual({ name: 'milk' });
+  });
+
+  it('maps a bought confirmation to GROCERY_BOUGHT by name', () => {
+    const m = matchCommand('I bought eggs off my grocery list');
+    expect(m?.intent).toBe('GROCERY_BOUGHT');
+    expect(m?.tool).toBe('mark_grocery_bought');
+    expect(m?.arguments).toEqual({ name: 'eggs' });
+  });
+
+  it('does not confuse a pantry question with a grocery one', () => {
+    expect(matchCommand("what's in my pantry?")?.intent).toBe('PANTRY_GET');
+    expect(matchCommand("what's in my fridge?")?.intent).toBe('LEFTOVERS_GET');
+  });
 });
