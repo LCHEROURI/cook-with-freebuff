@@ -299,6 +299,38 @@ if (queryTurn.status === 200 && queryTool?.result?.success) {
   fail(`pantry query turn → ${queryTurn.status} ${JSON.stringify(queryTurn.body).slice(0, 200)}`);
 }
 
+// K8 pantry remove: "remove olive oil from my pantry" must route to
+// remove_pantry_item (PANTRY_REMOVE intent, name resolution) — the item must
+// vanish from the store AND from the next query.
+const removeTurn = await agent('remove olive oil from my pantry');
+const removeTool = removeTurn.body?.toolCalls?.find((c) => c.tool === 'remove_pantry_item');
+if (removeTurn.status === 200 && removeTool?.result?.success) {
+  ok('“remove olive oil from my pantry” → remove_pantry_item succeeded live');
+} else {
+  fail(`pantry remove turn → ${removeTurn.status} ${JSON.stringify(removeTurn.body).slice(0, 200)}`);
+}
+if (pantryItemId) {
+  try {
+    const goneSnap = await db.collection('pantry_items').doc(pantryItemId).get();
+    !goneSnap.exists
+      ? ok('pantry item doc removed from Firestore')
+      : fail(`pantry item ${pantryItemId} still exists after remove`);
+  } catch (e) {
+    fail(`could not read pantry item after remove: ${e.message}`);
+  }
+}
+// Follow-up query proves the read path reflects the removal, not just the tool.
+const followUpTurn = await agent("what's in my pantry?");
+const followUpTool = followUpTurn.body?.toolCalls?.find((c) => c.tool === 'get_pantry');
+if (followUpTurn.status === 200 && followUpTool?.result?.success) {
+  const items = followUpTool.result.data?.items ?? [];
+  !items.some((i) => i.name === 'olive oil')
+    ? ok('follow-up pantry query no longer lists “olive oil”')
+    : fail(`get_pantry still lists olive oil after remove (${JSON.stringify(items.map((i) => i.name).slice(0, 5)).slice(0, 160)})`);
+} else {
+  fail(`follow-up pantry query → ${followUpTurn.status} ${JSON.stringify(followUpTurn.body).slice(0, 200)}`);
+}
+
 // Free-form turn: the Gemini provider must answer. A greeting is the clean
 // model-only path — food-phrase questions can be caught by the deterministic
 // ingredient extractor ("I heard: …") and never reach the model.
