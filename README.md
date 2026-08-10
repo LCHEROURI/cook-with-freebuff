@@ -341,7 +341,7 @@ modified; only a temporary worktree is created and removed.
 
 ### PR preview gate — the post-deploy check PRs report
 
-Branch protection on `main` requires two checks before a PR can merge:
+Branch protection on `main` (live since 9723ec1) requires two checks before a PR can merge:
 
 - **`Typecheck · Lint · Test · Build`** — the CI validate job (runs on every
   PR already).
