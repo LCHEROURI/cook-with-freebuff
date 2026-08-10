@@ -91,6 +91,47 @@ describe('.github/workflows/ci.yml · push-time validate contract', () => {
     expect(validateBlock).toContain("env.VERCEL_TOKEN == ''");
     expect(validateBlock).toContain('exit 1');
   });
+
+  it('keeps the stale-guard step strictly push-only — it can never fire on pull_request', () => {
+    // The stale-head guard was live-proven on a real runner with a BRANCH
+    // push (the __stale-guard-proof experiment) — it fired red on a stale
+    // head and blocked the push. That experiment was only possible BECAUSE
+    // the step runs on `push`; it can never fire on `pull_request` by design:
+    // a PR head is legitimately behind live main (the push will deploy it
+    // forward), so gating the step on PRs would falsely block every PR. This
+    // test locks the NEGATIVE — the gating must stay exactly push-only, and
+    // the event condition must never be negated (`!= 'pull_request'` would
+    // still fire on pushes but silently broaden to every other event too).
+    //
+    // The contrast that makes the lock meaningful: the workflow DOES trigger
+    // on pull_request (so validate runs on PRs) — but the step specifically
+    // cannot. The single-invocation count guards against a second,
+    // PR-gated copy of the step appearing elsewhere in the job.
+    expect(CI).toContain('pull_request:'); // validate still runs on PRs
+    expect(validateBlock.match(/verify-deployed-hash-gate\.mjs --stale-guard/g)).toHaveLength(1);
+
+    const stepStart = validateBlock.indexOf('name: Verify pushed head is not stale vs live (stale-guard)');
+    // Scope ends at the trailing NOTE comment (prose about the verify:live
+    // move may legitimately mention other event names — the step block must
+    // not include it, or the negative locks below would trip on documentation).
+    const noteStart = validateBlock.indexOf('\n  # NOTE:');
+    const stepBlock = validateBlock.slice(stepStart, noteStart === -1 ? undefined : noteStart);
+    expect(stepBlock).toContain("if: ${{ github.event_name == 'push' && env.VERCEL_TOKEN != '' }}");
+    // Negative locks: no literal pull_request, no negated event gate, and no
+    // other event name — the ONLY event this step can ever run on is push.
+    expect(stepBlock).not.toContain('pull_request');
+    expect(stepBlock).not.toMatch(/github\.event_name\s*!==?\s*'/);
+    expect(stepBlock).not.toContain('workflow_dispatch');
+    expect(stepBlock).not.toContain('deployment_status');
+
+    // The loud guard is the sibling half of the same contract: it too must
+    // stay push-only (a missing token on a PR is not a failure — PRs never
+    // run the gate the guard protects).
+    const loudStart = validateBlock.indexOf('name: Fail loudly if VERCEL_TOKEN is missing (main push)');
+    const loudBlock = validateBlock.slice(loudStart, validateBlock.indexOf('name: Verify pushed head', loudStart));
+    expect(loudBlock).toContain("github.event_name == 'push'");
+    expect(loudBlock).not.toContain('pull_request');
+  });
 });
 
 describe('.github/workflows/verify-deployed.yml · deployment_status post-deploy gate', () => {
