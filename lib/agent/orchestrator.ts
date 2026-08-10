@@ -204,23 +204,30 @@ export class ConversationOrchestrator {
     if (!result.success) {
       return `Sorry, that did not work: ${result.error?.message ?? 'unknown error'}`;
     }
+    const d = result.data as
+      | { instruction?: string; timerStarted?: { label: string }; timers?: unknown[] }
+      | undefined;
     switch (intent) {
+      case 'COOK':
+        return d?.instruction ? `Let's cook! ${d.instruction}` : "Let's cook!";
       case 'NEXT':
+        if (d?.timerStarted) return `Done. I've started a ${d.timerStarted.label}.`;
+        if (d?.instruction) return `Done — next: ${d.instruction}`;
         return 'Done — moving to the next step.';
       case 'REPEAT':
-        return 'Repeating that step for you.';
+        return d?.instruction ? `Here it is again: ${d.instruction}` : 'Repeating that step for you.';
       case 'PREVIOUS':
-        return 'Going back one step.';
+        return d?.instruction ? `Going back: ${d.instruction}` : 'Going back one step.';
       case 'PAUSE':
         return 'Paused. Say "resume" when you are ready.';
       case 'RESUME':
-        return 'Resumed — back to it.';
+        return d?.instruction ? `Resumed — ${d.instruction}` : 'Resumed — back to it.';
       case 'STOP':
         return 'Stopping the session. Great cooking!';
       case 'CONFIRM':
         return 'Confirmed — moving on.';
       case 'TIMER_STATUS': {
-        const timers = (result.data as { timers?: unknown[] } | undefined)?.timers ?? [];
+        const timers = d?.timers ?? [];
         return timers.length === 0
           ? 'You have no running timers.'
           : timers.length === 1
@@ -228,7 +235,7 @@ export class ConversationOrchestrator {
             : `You have ${timers.length} timers running.`;
       }
       case 'CURRENT_STEP':
-        return 'Here is your current step.';
+        return d?.instruction ?? 'Here is your current step.';
       default:
         return 'Done.';
     }

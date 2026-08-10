@@ -135,6 +135,22 @@ The app will follow the same contract-locked verification discipline as Freebuff
 - [x] Voice UI: `VoiceIndicator` component + `useVoiceSession` hook wired into the landing page
 - [x] 46 new tests (commands, extraction + gate, voice status, orchestrator, route) — 169 total green + production build passes
 
+## K6 — "Cook With Me" guided cooking
+
+- [x] `GuidedCookingService` (`lib/server/guide-service.ts`) — one-action-at-a-time delivery; never reads a whole procedure
+- [x] Two user modes: Quick Recipe (generate + display) and Cook With Me (persistent guided cooking)
+- [x] Step retrieval via `get_current_step` — the recipe store, never conversation memory
+- [x] Step completion via `complete_current_step` — advances only on backend success
+- [x] Auto phase transitions: every prep step completed → `PREP_GUIDANCE → COOKING_GUIDANCE`; cooking exhausted → `PLATING → COMPLETED`
+- [x] Timer auto-start: a cooking step with `timerSeconds` starts a backend timer and enters `WAITING_FOR_TIMER` — announced only after backend success; multi-timer safe
+- [x] Timer completion surfacing: `check_timers` alerts ("Your four-minute timer is finished.") and recovers the session to the exact step
+- [x] Navigation: `previous_step` (clamped at 0), `repeat_current_step` (no progress change), `pause` / `resume` (exact-step restore)
+- [x] New tools: `cook_with_me`, `check_timers`; `complete/repeat/previous/get_current_step` now return the guided snapshot
+- [x] New `POST /api/cook` route (auth-gated) — launch / status / done / repeat / back / pause / resume / timers
+- [x] Cooking UI at `/cook` — one large instruction, phase chip, step count, live timer countdown, big Previous/Repeat/Done controls, voice input, expandable Ingredients + Full recipe (secondary); large type, strong contrast, 44px+ targets
+- [x] "start cooking" / "let's cook" / "cook with me" route to the `cook_with_me` tool in the conversational agent
+- [x] 40 new tests (guide service, guide tools, cook route, CookScreen render) — 209 total green + production build passes
+
 ## Development
 
 ```bash

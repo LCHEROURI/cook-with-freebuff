@@ -231,22 +231,31 @@ describe('session tools', () => {
       sessionId: s.id,
     });
     expect(result.success).toBe(true);
-    const data = result.data as { step: { instruction: string } | null };
-    expect(data.step).not.toBeNull();
-    expect(data.step!.instruction).toBe('Dice the onion');
+    const data = result.data as { instruction: string | undefined };
+    expect(data.instruction).toBe('Dice the onion');
   });
 
-  it('complete_current_step advances the step index', async () => {
-    const { ctx } = makeContext();
+  it('complete_current_step advances through prep and auto-starts a step timer (guided)', async () => {
+    const { ctx, recipes } = makeContext();
+    await recipes.createRecipe(makeRecipe());
     const service = ctx.sessionService as SessionService;
-    let s = await service.createSession('user-1');
+    let s = await service.createSession('user-1', { recipeId: 'recipe-1' });
     for (const phase of ['CONFIRMING_INGREDIENTS', 'COLLECTING_REQUIREMENTS', 'GENERATING_RECIPE', 'VALIDATING_RECIPE', 'RECIPE_READY', 'PREP_GUIDANCE'] as const) {
       const reason = phase === 'GENERATING_RECIPE' || phase === 'VALIDATING_RECIPE' ? 'AGENT_TOOL' : 'USER_INPUT';
       s = await service.transitionTo(s.id, s.version, phase, reason as 'AGENT_TOOL' | 'USER_INPUT');
     }
     const result = await executeTool(registry, ctx, 'complete_current_step', { sessionId: s.id });
     expect(result.success).toBe(true);
-    expect((result.data as { prepStepIndex: number }).prepStepIndex).toBe(1);
+    const data = result.data as {
+      phase: string;
+      instruction: string;
+      timerStarted?: { label: string };
+    };
+    // The fixture recipe has 1 prep step and 1 cooking step (240s timer):
+    // completing prep auto-transitions to cooking and starts the timer.
+    expect(data.phase).toBe('WAITING_FOR_TIMER');
+    expect(data.instruction).toBe('Sear the chicken four minutes');
+    expect(data.timerStarted?.label).toBe('four-minute timer');
   });
 
   it('pause/resume round-trip preserves the step', async () => {

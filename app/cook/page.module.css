@@ -1,0 +1,303 @@
+.main {
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+  padding: 1.5rem 1rem 3rem;
+  max-width: var(--max-width);
+  margin: 0 auto;
+  min-height: 100dvh;
+}
+
+.centered {
+  text-align: center;
+  color: var(--color-text-secondary);
+  padding: 4rem 1rem;
+}
+
+.empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1.25rem;
+  padding: 3rem 1rem;
+  text-align: center;
+}
+
+.title {
+  font-size: 2rem;
+  font-weight: 700;
+  color: var(--color-brand);
+}
+
+.emptyText {
+  color: var(--color-text-secondary);
+  line-height: 1.5;
+}
+
+.primaryBtn {
+  display: inline-block;
+  min-height: 44px;
+  padding: 0.75rem 1.5rem;
+  background: var(--color-brand);
+  color: #fff;
+  border: none;
+  border-radius: var(--radius-md);
+  text-decoration: none;
+  font-size: 1.1rem;
+  font-family: inherit;
+}
+
+.header {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.headerRow {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.backLink {
+  font-size: 1.5rem;
+  text-decoration: none;
+  color: var(--color-text);
+  min-width: 44px;
+  min-height: 44px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.recipeTitle {
+  flex: 1;
+  font-size: 1.25rem;
+  font-weight: 700;
+  color: var(--color-text);
+}
+
+.phaseRow {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.phaseChip {
+  padding: 0.35rem 0.9rem;
+  border-radius: 999px;
+  font-size: 0.9rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  background: var(--color-border);
+  color: var(--color-text);
+}
+
+.phase-PREP_GUIDANCE {
+  background: #e3f2e3;
+  color: #1e6b2e;
+}
+
+.phase-COOKING_GUIDANCE,
+.phase-WAITING_FOR_TIMER {
+  background: #ffe9d6;
+  color: #a34a10;
+}
+
+.phase-PLATING {
+  background: #e8e6ff;
+  color: #4338a8;
+}
+
+.phase-COMPLETED {
+  background: #d9f2e2;
+  color: #147a3d;
+}
+
+.stepCount {
+  color: var(--color-text-secondary);
+  font-size: 0.95rem;
+}
+
+.alert {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 1rem 1.25rem;
+  background: #fff4d6;
+  border: 2px solid #e6a817;
+  border-radius: var(--radius-md);
+  font-size: 1.1rem;
+  font-weight: 600;
+  color: #7a5200;
+}
+
+.alertClose {
+  margin-left: auto;
+  background: none;
+  border: none;
+  font-size: 1.5rem;
+  cursor: pointer;
+  color: inherit;
+  min-width: 44px;
+  min-height: 44px;
+}
+
+.errorNote {
+  padding: 0.75rem 1rem;
+  background: #fdecec;
+  border: 1px solid #e0b4b4;
+  border-radius: var(--radius-sm);
+  color: #9b1c1c;
+}
+
+.action {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 1rem;
+  padding: 2rem 0.5rem;
+  text-align: center;
+}
+
+.instruction {
+  font-size: clamp(1.6rem, 7vw, 2.6rem);
+  line-height: 1.25;
+  font-weight: 700;
+  color: var(--color-text);
+}
+
+.safetyNote {
+  font-size: 1.1rem;
+  font-weight: 600;
+  color: #a34a10;
+}
+
+.timers {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.timer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 1rem 1.25rem;
+  background: #fff4d6;
+  border: 2px solid #e6a817;
+  border-radius: var(--radius-md);
+}
+
+.timerLabel {
+  font-size: 1rem;
+  font-weight: 600;
+  color: #7a5200;
+}
+
+.timerCount {
+  font-size: 2rem;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  color: #7a5200;
+}
+
+.completed {
+  text-align: center;
+  padding: 1rem;
+}
+
+.completedText {
+  font-size: 1.5rem;
+  font-weight: 700;
+  color: var(--color-brand);
+}
+
+.controls {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 0.75rem;
+}
+
+.control {
+  min-height: 56px;
+  padding: 0.75rem 0.5rem;
+  font-size: 1.05rem;
+  font-weight: 600;
+  font-family: inherit;
+  color: var(--color-text);
+  background: var(--color-surface);
+  border: 2px solid var(--color-border);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.control:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.control:active:not(:disabled) {
+  transform: scale(0.97);
+}
+
+.primary {
+  background: var(--color-brand);
+  border-color: var(--color-brand);
+  color: #fff;
+}
+
+.details {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+}
+
+.details summary {
+  min-height: 44px;
+  padding: 0.75rem 1rem;
+  font-weight: 600;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+}
+
+.list {
+  padding: 0 1rem 1rem 2.25rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  color: var(--color-text);
+}
+
+.voiceForm {
+  display: flex;
+  gap: 0.5rem;
+  margin-top: 0.5rem;
+}
+
+.voiceInput {
+  flex: 1;
+  min-height: 44px;
+  padding: 0.75rem;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  font-size: 1rem;
+  font-family: inherit;
+  color: var(--color-text);
+  background: var(--color-surface);
+}
+
+.sendBtn {
+  min-width: 72px;
+  padding: 0.75rem 1rem;
+  background: var(--color-brand);
+  color: #fff;
+  border: none;
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  font-size: 1rem;
+  font-family: inherit;
+}

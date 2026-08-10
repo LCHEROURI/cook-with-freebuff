@@ -18,6 +18,7 @@ export type AgentIntent =
   | 'CURRENT_STEP'
   | 'SUBSTITUTE'
   | 'CONFIRM'
+  | 'COOK'
   | 'HELP';
 
 export interface CommandMatch {
@@ -72,6 +73,11 @@ const RULES: Rule[] = [
     match: { intent: 'SUBSTITUTE', needsFollowUp: 'What are you out of? I can find you a substitute.' },
   },
   {
+    intent: 'COOK',
+    test: (t) => /\b(cook with me|let'?s cook|lets cook|start cooking|begin cooking|start the recipe|i want to cook|start cooking now)\b/.test(t),
+    match: { intent: 'COOK', tool: 'cook_with_me' },
+  },
+  {
     intent: 'NEXT',
     test: (t) => /\b(i'?m done|done|next|continue|move on|keep going|ok(ay)? next|all done|finished that)\b/.test(t),
     match: { intent: 'NEXT', tool: 'complete_current_step' },
@@ -124,6 +130,7 @@ export const HELP_TEXT = [
   '- say "done" or "next" to move on',
   '- "repeat that" to hear a step again',
   '- "go back" for the previous step',
+  '- "cook with me" to start guided cooking',
   '- "pause" / "resume" anytime',
   '- "how much time is left?" for timers',
   '- "I don\'t have X, what can I use instead?" for substitutions',

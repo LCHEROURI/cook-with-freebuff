@@ -166,7 +166,21 @@ const TOOL_DECLARATIONS = [
   },
   {
     name: 'get_current_step',
-    description: 'Get the current prep or cooking step.',
+    description: 'Get the ONE current prep or cooking action.',
+    parameters: { type: 'object', properties: { sessionId: { type: 'string' } } },
+  },
+  {
+    name: 'cook_with_me',
+    description: 'Begin guided cooking for a validated recipe — returns the first single action.',
+    parameters: {
+      type: 'object',
+      properties: { recipeId: { type: 'string' }, sessionId: { type: 'string' } },
+      required: ['recipeId'],
+    },
+  },
+  {
+    name: 'check_timers',
+    description: 'Check for finished timers and recover the session.',
     parameters: { type: 'object', properties: { sessionId: { type: 'string' } } },
   },
   {

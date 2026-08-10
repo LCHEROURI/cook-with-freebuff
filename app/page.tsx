@@ -1,11 +1,13 @@
 'use client';
 
 import { useState } from 'react';
+import { useRouter } from 'next/navigation';
 import styles from './page.module.css';
 import { VoiceIndicator } from '@/components/VoiceIndicator';
 import { useVoiceSession } from '@/lib/hooks/useVoiceSession';
 
 export default function HomePage() {
+  const router = useRouter();
   const [mode, setMode] = useState<'idle' | 'quick' | 'cook'>('idle');
   const [input, setInput] = useState('');
   const voice = useVoiceSession();
@@ -34,7 +36,7 @@ export default function HomePage() {
 
           <button
             className={styles.card}
-            onClick={() => setMode('cook')}
+            onClick={() => router.push('/cook')}
           >
             <span className={styles.cardIcon}>👨‍🍳</span>
             <span className={styles.cardLabel}>Cook With Me</span>

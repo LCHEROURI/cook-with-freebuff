@@ -87,7 +87,9 @@ describe('ConversationOrchestrator', () => {
       },
     };
     const orch = new ConversationOrchestrator({ registry, context: ctx, provider });
-    const turn = await orch.process('go ahead and start cooking');
+    // "start cooking" is now a deterministic COOK command — use a free-form
+    // phrase so this exercises the provider fallback path.
+    const turn = await orch.process('go ahead and begin');
 
     expect(turn.toolCalls.some((c) => c.tool === 'start_cooking_session' && c.result.success)).toBe(true);
     // No false success — the provider claimed nothing; response reflects the executed tool.

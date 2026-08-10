@@ -1,0 +1,333 @@
+import { describe, it, expect } from 'vitest';
+import { SessionService, InMemorySessionStore } from './session-service';
+import { InMemoryTimerStore, InMemoryLogStore, InMemoryRecipeStore } from './tools';
+import { GuidedCookingService, secondsToLabel } from './guide-service';
+import type { CookingTimer, Ingredient, Recipe } from '../domain/types';
+
+// ── Fixtures ─────────────────────────────────────────────────────────────────
+
+function makeIngredient(name: string, quantity: number | null = null, unit: string | null = null): Ingredient {
+  return { id: `ing-${name}`, name, quantity, unit, optional: false };
+}
+
+function makeRecipe(): Recipe {
+  const t = Date.now();
+  return {
+    id: 'recipe-1',
+    userId: 'user-1',
+    title: 'Chicken Rice',
+    description: 'Simple one-pan dinner',
+    servings: 2,
+    estimatedPrepMinutes: 10,
+    estimatedCookMinutes: 25,
+    totalMinutes: 35,
+    ingredients: [makeIngredient('chicken thighs', 4, 'pieces'), makeIngredient('rice', 1, 'cup'), makeIngredient('onion')],
+    equipment: ['pan', 'knife'],
+    prepSteps: [
+      { id: 'p1', stepNumber: 1, instruction: 'Dice the onion', spokenInstruction: 'Dice the onion', estimatedSeconds: 120, ingredientsUsed: ['onion'], equipmentUsed: ['knife'] },
+      { id: 'p2', stepNumber: 2, instruction: 'Rinse the rice', spokenInstruction: 'Rinse the rice', estimatedSeconds: 60, ingredientsUsed: ['rice'], equipmentUsed: [] },
+    ],
+    cookingSteps: [
+      { id: 'c1', stepNumber: 1, instruction: 'Sear the chicken 4 minutes', spokenInstruction: 'Sear the chicken four minutes', estimatedSeconds: 240, timerSeconds: 240, ingredientsUsed: ['chicken thighs'], equipmentUsed: ['pan'], safetyNote: 'Hot oil' },
+      { id: 'c2', stepNumber: 2, instruction: 'Simmer the rice', spokenInstruction: 'Simmer the rice', estimatedSeconds: 600, ingredientsUsed: ['rice'], equipmentUsed: [] },
+    ],
+    dietaryTags: [],
+    allergens: [],
+    safetyNotes: ['Hot oil'],
+    generatedAt: t,
+    updatedAt: t,
+  };
+}
+
+function makeContext(userId = 'user-1') {
+  const store = new InMemorySessionStore();
+  const timers = new InMemoryTimerStore();
+  const recipes = new InMemoryRecipeStore();
+  const sessionService = new SessionService(store);
+  const guide = new GuidedCookingService(sessionService, timers, recipes);
+  return { store, timers, recipes, sessionService, guide };
+}
+
+/** Seed a recipe + launch guided cooking, returning the launched snapshot. */
+async function launch(userId = 'user-1') {
+  const ctx = makeContext(userId);
+  await ctx.recipes.createRecipe(makeRecipe());
+  const snap = await ctx.guide.launchCookWithMe(userId, 'recipe-1');
+  return { ...ctx, snap };
+}
+
+// ── Launch + one-action delivery ─────────────────────────────────────────────
+
+describe('launchCookWithMe', () => {
+  it('creates a session, fast-forwards to PREP_GUIDANCE, and returns the FIRST single action', async () => {
+    const { guide, snap, store } = await launch();
+
+    expect(snap.found).toBe(true);
+    expect(snap.phase).toBe('PREP_GUIDANCE');
+    expect(snap.recipeTitle).toBe('Chicken Rice');
+    expect(snap.instruction).toBe('Dice the onion');
+    expect(snap.stepNumber).toBe(1);
+    expect(snap.totalSteps).toBe(2);
+    expect(snap.activeTimers).toEqual([]);
+
+    const session = await store.getActiveSession('user-1');
+    expect(session?.currentPhase).toBe('PREP_GUIDANCE');
+    expect(session?.recipeId).toBe('recipe-1');
+    void guide;
+  });
+
+  it('rejects an unknown recipe', async () => {
+    const { guide } = makeContext();
+    await expect(guide.launchCookWithMe('user-1', 'nope')).rejects.toMatchObject({
+      code: 'RECIPE_NOT_FOUND',
+    });
+  });
+
+  it('enforces ownership of an existing session', async () => {
+    const ctx = makeContext();
+    await ctx.recipes.createRecipe(makeRecipe());
+    const snap = await ctx.guide.launchCookWithMe('user-1', 'recipe-1');
+    await expect(
+      ctx.guide.launchCookWithMe('user-2', 'recipe-1', snap.sessionId),
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+  });
+});
+
+// ── One action at a time ─────────────────────────────────────────────────────
+
+describe('getCurrentAction — one action at a time', () => {
+  it('exposes exactly ONE action as the active instruction', async () => {
+    const { guide, snap } = await launch();
+    expect(snap.instruction).toBe('Dice the onion');
+    expect(snap.stepNumber).toBe(1);
+    // The full recipe lives only in the collapsed (secondary) expansion —
+    // the active action is exactly one step, never a procedure.
+    expect(snap.recipe?.prepSteps).toHaveLength(2);
+    void guide;
+  });
+
+  it('returns the current action for the active session without an id', async () => {
+    const { guide } = await launch();
+    const snap = await guide.getCurrentAction('user-1');
+    expect(snap.found).toBe(true);
+    expect(snap.instruction).toBe('Dice the onion');
+  });
+
+  it('returns found:false when no session exists', async () => {
+    const { guide } = makeContext();
+    const snap = await guide.getCurrentAction('user-1');
+    expect(snap.found).toBe(false);
+  });
+});
+
+// ── Completion: phase transitions + timers ───────────────────────────────────
+
+describe('completeCurrentAction', () => {
+  it('advances within prep, then auto-transitions prep → cooking', async () => {
+    const { guide } = await launch();
+
+    const second = await guide.completeCurrentAction('user-1');
+    expect(second.phase).toBe('PREP_GUIDANCE');
+    expect(second.stepNumber).toBe(2);
+    expect(second.instruction).toBe('Rinse the rice');
+
+    const cooking = await guide.completeCurrentAction('user-1');
+    expect(cooking.phase).toBe('WAITING_FOR_TIMER');
+    expect(cooking.stepNumber).toBe(1);
+    expect(cooking.instruction).toBe('Sear the chicken four minutes');
+    expect(cooking.safetyNote).toBe('Hot oil');
+  });
+
+  it('auto-starts a backend timer when the current cooking step has timerSeconds', async () => {
+    const { guide, timers } = await launch();
+    await guide.completeCurrentAction('user-1'); // prep 1 → prep 2
+    const cooking = await guide.completeCurrentAction('user-1'); // prep 2 → cooking 1 (240s)
+
+    expect(cooking.timerStarted).toBeTruthy();
+    expect(cooking.timerStarted!.durationSeconds).toBe(240);
+    expect(cooking.timerStarted!.label).toBe('four-minute timer');
+    expect(cooking.activeTimers).toHaveLength(1);
+    expect(cooking.activeTimers[0].timerId).toBe(cooking.timerStarted!.timerId);
+
+    const active = await timers.listActiveTimers(cooking.sessionId!);
+    expect(active).toHaveLength(1);
+    expect(active[0].status).toBe('RUNNING');
+    expect(active[0].stepId).toBe('c1');
+  });
+
+  it('refuses to complete a step while waiting on a timer', async () => {
+    const { guide } = await launch();
+    await guide.completeCurrentAction('user-1');
+    await guide.completeCurrentAction('user-1'); // → WAITING_FOR_TIMER
+    await expect(guide.completeCurrentAction('user-1')).rejects.toMatchObject({
+      code: 'WAITING_FOR_TIMER',
+    });
+  });
+
+  it('moves cooking → plating → completed', async () => {
+    const { guide, timers } = await launch();
+    await guide.completeCurrentAction('user-1');
+    await guide.completeCurrentAction('user-1'); // WAITING_FOR_TIMER (240s)
+
+    // Backdate the running timer so it is due; checkTimers marks it complete
+    // and recovers the session to COOKING_GUIDANCE.
+    const sessionId = (await guide.getCurrentAction('user-1')).sessionId!;
+    const [timer] = await timers.listActiveTimers(sessionId);
+    await timers.updateTimer(timer.id, { startedAt: Date.now() - 250_000, endsAt: Date.now() - 10_000 });
+
+    const { snapshot: recovered, alerts } = await guide.checkTimers('user-1');
+    expect(alerts).toHaveLength(1);
+    expect(recovered.phase).toBe('COOKING_GUIDANCE');
+
+    // Complete cooking step 1 → step 2 (no timer) → cooking step 2 → PLATING → COMPLETED.
+    const step2 = await guide.completeCurrentAction('user-1');
+    expect(step2.phase).toBe('COOKING_GUIDANCE');
+    expect(step2.instruction).toBe('Simmer the rice');
+
+    const plating = await guide.completeCurrentAction('user-1');
+    expect(plating.phase).toBe('PLATING');
+    expect(plating.instruction).toContain('Plate and serve');
+
+    const done = await guide.completeCurrentAction('user-1');
+    expect(done.phase).toBe('COMPLETED');
+    expect(done.instruction).toBe('Enjoy your meal!');
+  });
+
+  it('auto-starts a timer for the FIRST cooking step when prep is exhausted', async () => {
+    const { guide } = await launch();
+    // recipe: 2 prep steps → completing prep 2 lands on cooking 1 (240s timer).
+    await guide.completeCurrentAction('user-1');
+    const snap = await guide.completeCurrentAction('user-1');
+    expect(snap.phase).toBe('WAITING_FOR_TIMER');
+    expect(snap.timerStarted?.label).toBe('four-minute timer');
+  });
+});
+
+// ── Timers: completion surfacing + recovery ─────────────────────────────────
+
+describe('checkTimers', () => {
+  it('surfaces an alert for a finished timer and recovers the session to the exact step', async () => {
+    const { guide, timers } = await launch();
+    await guide.completeCurrentAction('user-1');
+    await guide.completeCurrentAction('user-1'); // WAITING_FOR_TIMER
+
+    // Backdate the running timer so it is now due.
+    const sessionId = (await guide.getCurrentAction('user-1')).sessionId!;
+    const [timer] = await timers.listActiveTimers(sessionId);
+    await timers.updateTimer(timer.id, {
+      status: 'RUNNING',
+      startedAt: Date.now() - 250_000,
+      endsAt: Date.now() - 10_000,
+    });
+
+    const { alerts, snapshot } = await guide.checkTimers('user-1');
+    expect(alerts).toHaveLength(1);
+    expect(alerts[0].message).toBe('Your four-minute timer is finished.');
+    expect(snapshot.phase).toBe('COOKING_GUIDANCE');
+    expect(snapshot.instruction).toBe('Sear the chicken four minutes');
+    expect(snapshot.stepNumber).toBe(1);
+    expect(snapshot.activeTimers).toEqual([]);
+  });
+
+  it('returns no alerts when no timer is due', async () => {
+    const { guide } = await launch();
+    await guide.completeCurrentAction('user-1');
+    await guide.completeCurrentAction('user-1');
+    const { alerts } = await guide.checkTimers('user-1');
+    expect(alerts).toEqual([]);
+  });
+
+  it('does not recover when other timers are still running', async () => {
+    const { guide, timers } = await launch();
+    await guide.completeCurrentAction('user-1');
+    await guide.completeCurrentAction('user-1'); // WAITING_FOR_TIMER with 240s timer
+    const sessionId = (await guide.getCurrentAction('user-1')).sessionId!;
+    const [timer] = await timers.listActiveTimers(sessionId);
+
+    // Add a second, still-running timer.
+    const t2: CookingTimer = {
+      id: 'timer-2',
+      userId: 'user-1',
+      sessionId,
+      label: 'two-minute timer',
+      durationSeconds: 120,
+      startedAt: Date.now(),
+      endsAt: Date.now() + 120_000,
+      status: 'RUNNING',
+    };
+    await timers.createTimer(t2);
+
+    // Mark the first due.
+    await timers.updateTimer(timer.id, {
+      startedAt: Date.now() - 250_000,
+      endsAt: Date.now() - 10_000,
+    });
+
+    const { alerts, snapshot } = await guide.checkTimers('user-1');
+    expect(alerts).toHaveLength(1);
+    expect(snapshot.phase).toBe('WAITING_FOR_TIMER'); // still waiting on timer-2
+  });
+});
+
+// ── Navigation ───────────────────────────────────────────────────────────────
+
+describe('navigation', () => {
+  it('repeat keeps progress unchanged', async () => {
+    const { guide } = await launch();
+    const snap = await guide.repeatAction('user-1');
+    expect(snap.instruction).toBe('Dice the onion');
+    expect(snap.stepNumber).toBe(1);
+  });
+
+  it('previous never goes below the first step', async () => {
+    const { guide } = await launch();
+    const snap = await guide.previousAction('user-1');
+    expect(snap.stepNumber).toBe(1);
+    expect(snap.instruction).toBe('Dice the onion');
+  });
+
+  it('previous steps back within a phase', async () => {
+    const { guide } = await launch();
+    await guide.completeCurrentAction('user-1'); // → prep 2
+    const snap = await guide.previousAction('user-1');
+    expect(snap.stepNumber).toBe(1);
+    expect(snap.instruction).toBe('Dice the onion');
+  });
+
+  it('pause + resume restore the exact step', async () => {
+    const { guide } = await launch();
+    const paused = await guide.pause('user-1');
+    expect(paused.phase).toBe('PAUSED');
+    expect(paused.paused).toBe(true);
+    expect(paused.instruction).toBe('Dice the onion');
+
+    const resumed = await guide.resume('user-1');
+    expect(resumed.phase).toBe('PREP_GUIDANCE');
+    expect(resumed.instruction).toBe('Dice the onion');
+  });
+});
+
+// ── Owner + error surface ────────────────────────────────────────────────────
+
+describe('ownership and errors', () => {
+  it('denies another user access to the session', async () => {
+    const { guide, snap } = await launch();
+    await expect(guide.getCurrentAction('user-2', snap.sessionId)).rejects.toMatchObject({
+      code: 'FORBIDDEN',
+    });
+  });
+
+  it('completing without a session fails with SESSION_NOT_FOUND', async () => {
+    const { guide } = makeContext();
+    await expect(guide.completeCurrentAction('user-1')).rejects.toMatchObject({
+      code: 'SESSION_NOT_FOUND',
+    });
+  });
+
+  it('secondsToLabel formats friendly timer labels', () => {
+    expect(secondsToLabel(240)).toBe('four-minute timer');
+    expect(secondsToLabel(30)).toBe('30-second timer');
+    expect(secondsToLabel(90)).toBe('one-and-a-half-minute timer');
+    expect(secondsToLabel(60)).toBe('one-minute timer');
+  });
+});

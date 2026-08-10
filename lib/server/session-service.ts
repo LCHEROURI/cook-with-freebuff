@@ -581,6 +581,35 @@ export class SessionService {
   }
 
   /**
+   * Update session metadata without a phase transition (e.g. attach a
+   * recipeId to an existing session when guided cooking launches).
+   */
+  async updateSessionMetadata(
+    sessionId: string,
+    expectedVersion: number,
+    metadata: { recipeId?: string },
+    options?: { correlationId?: string },
+  ): Promise<CookingSession> {
+    if (hasBeenProcessed(options?.correlationId)) {
+      const session = await this.store.getSession(sessionId);
+      if (!session) throw new SessionError('Session not found', 'NOT_FOUND', false);
+      return session;
+    }
+    const session = await this.store.getSession(sessionId);
+    if (!session) throw new SessionError('Session not found', 'NOT_FOUND', false);
+    if (session.version !== expectedVersion) {
+      throw new VersionConflictError(sessionId, expectedVersion, session.version);
+    }
+
+    const partial: Partial<CookingSession> = {};
+    if (metadata.recipeId !== undefined) partial.recipeId = metadata.recipeId;
+
+    const updated = await this.store.updateSession(sessionId, partial, expectedVersion);
+    markProcessed(options?.correlationId);
+    return updated;
+  }
+
+  /**
    * Get a session by id.
    */
   async getSession(sessionId: string): Promise<CookingSession | null> {

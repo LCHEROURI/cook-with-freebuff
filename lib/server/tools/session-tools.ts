@@ -9,6 +9,12 @@ import { z } from 'zod';
 import { ok, fail, toToolError } from './types';
 import type { ToolDefinition, ToolContext, ToolResult } from './types';
 import type { CookingSession } from '../../domain/types';
+import { GuidedCookingService } from '../guide-service';
+
+/** Guided-cooking service bound to the tool context. */
+function guide(ctx: ToolContext): GuidedCookingService {
+  return new GuidedCookingService(ctx.sessionService, ctx.timerStore, ctx.recipeStore);
+}
 
 type ResolvedSession =
   | { ok: true; session: CookingSession }
@@ -73,54 +79,31 @@ export const getCookingSessionTool: ToolDefinition = {
 
 export const getCurrentStepTool: ToolDefinition = {
   name: 'get_current_step',
-  description: 'Get the current step (prep or cooking) for the active session.',
+  description: 'Get the current step (prep or cooking) for the active session — the ONE action to do now.',
   inputSchema: z.object({ sessionId: z.string().optional() }),
   async handler(ctx, args) {
-    const resolved = await resolveSession(ctx, args.sessionId);
-    if (!resolved.ok) return resolved.result;
-    const s = resolved.session;
-
-    // Step content requires the recipe (wired in K4); until then return position.
-    let step: unknown = null;
-    if (s.recipeId && ctx.recipeStore) {
-      const recipe = await ctx.recipeStore.getRecipe(s.recipeId);
-      if (recipe) {
-        if (s.currentPhase === 'PREP_GUIDANCE') {
-          step = recipe.prepSteps[s.currentPrepStepIndex] ?? null;
-        } else if (s.currentPhase === 'COOKING_GUIDANCE') {
-          step = recipe.cookingSteps[s.currentCookingStepIndex] ?? null;
-        }
+    try {
+      const snapshot = await guide(ctx).getCurrentAction(ctx.userId, args.sessionId);
+      if (!snapshot.found) {
+        return fail('SESSION_NOT_FOUND', 'No cooking session found for this user', true);
       }
+      return ok(snapshot);
+    } catch (e) {
+      return toToolError(e);
     }
-
-    return ok({
-      sessionId: s.id,
-      phase: s.currentPhase,
-      prepStepIndex: s.currentPrepStepIndex,
-      cookingStepIndex: s.currentCookingStepIndex,
-      step,
-    });
   },
 };
 
 export const completeCurrentStepTool: ToolDefinition = {
   name: 'complete_current_step',
-  description: 'Advance to the next step after the user says "done". Only advances on backend success.',
+  description: 'Advance to the next step after the user says "done". Auto-transitions prep → cooking → plating and auto-starts timers on timed steps. Only advances on backend success.',
   inputSchema: z.object({ sessionId: z.string().optional() }),
   async handler(ctx, args) {
-    const resolved = await resolveSession(ctx, args.sessionId);
-    if (!resolved.ok) return resolved.result;
-    const s = resolved.session;
     try {
-      const updated = await ctx.sessionService.completeCurrentStep(s.id, s.version, {
+      const snapshot = await guide(ctx).completeCurrentAction(ctx.userId, args.sessionId, {
         correlationId: ctx.correlationId,
       });
-      return ok({
-        sessionId: updated.id,
-        phase: updated.currentPhase,
-        prepStepIndex: updated.currentPrepStepIndex,
-        cookingStepIndex: updated.currentCookingStepIndex,
-      });
+      return ok(snapshot);
     } catch (e) {
       return toToolError(e);
     }
@@ -132,14 +115,11 @@ export const repeatCurrentStepTool: ToolDefinition = {
   description: 'Repeat the current step (does not change progress).',
   inputSchema: z.object({ sessionId: z.string().optional() }),
   async handler(ctx, args) {
-    const resolved = await resolveSession(ctx, args.sessionId);
-    if (!resolved.ok) return resolved.result;
-    const s = resolved.session;
     try {
-      const updated = await ctx.sessionService.repeatCurrentStep(s.id, s.version, {
+      const snapshot = await guide(ctx).repeatAction(ctx.userId, args.sessionId, {
         correlationId: ctx.correlationId,
       });
-      return ok({ sessionId: updated.id, phase: updated.currentPhase });
+      return ok(snapshot);
     } catch (e) {
       return toToolError(e);
     }
@@ -151,18 +131,11 @@ export const previousStepTool: ToolDefinition = {
   description: 'Go back to the previous step (never below step 0).',
   inputSchema: z.object({ sessionId: z.string().optional() }),
   async handler(ctx, args) {
-    const resolved = await resolveSession(ctx, args.sessionId);
-    if (!resolved.ok) return resolved.result;
-    const s = resolved.session;
     try {
-      const updated = await ctx.sessionService.previousStep(s.id, s.version, {
+      const snapshot = await guide(ctx).previousAction(ctx.userId, args.sessionId, {
         correlationId: ctx.correlationId,
       });
-      return ok({
-        sessionId: updated.id,
-        prepStepIndex: updated.currentPrepStepIndex,
-        cookingStepIndex: updated.currentCookingStepIndex,
-      });
+      return ok(snapshot);
     } catch (e) {
       return toToolError(e);
     }
