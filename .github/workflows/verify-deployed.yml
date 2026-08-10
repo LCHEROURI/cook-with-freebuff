@@ -135,6 +135,26 @@ jobs:
         env:
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
 
+      # Machine-reproven teeth: after a successful production deploy, re-run
+      # the gate-stale proof (gate FAIL path + stale-guard) against live from
+      # the pushed commit's PARENT, so the stale-guard teeth are proven on the
+      # real runner after every deploy — not just via the npm one-liners. By
+      # construction, live == the pushed commit right after the deploy, so
+      # both verdicts reproduce from the parent (live ≠ parent → FAIL;
+      # live not an ancestor of parent → STALE-HEAD BLOCK). Skip-not-fail on
+      # the transient edge: right after a deploy the canonical alias can still
+      # serve the previous commit (alias promotion lag) or the API can hiccup
+      # — in those states the verdicts cannot reproduce, so the wrapper prints
+      # a loud SKIP instead of failing the run. Only a proof that CAN
+      # reproduce is allowed to fail. Gated on VERCEL_TOKEN (the probe and
+      # proof resolve live via the Vercel API); the loud guard above already
+      # turns a missing token on production deploys into a failure.
+      - name: Verify gate-stale proof after deploy (teeth)
+        if: ${{ env.VERCEL_TOKEN != '' }}
+        run: node scripts/verify-gate-stale-ci.mjs
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+
       # End-to-end verification of the freshly deployed app. Gated on the full
       # credential set so forks / unconfigured repos stay green, and the Gemini
       # turn is always enforced here (locally it SKIPs when the key is absent).

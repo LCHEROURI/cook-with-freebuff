@@ -247,17 +247,34 @@ describe('.github/workflows/verify-deployed.yml · deployment_status post-deploy
     expect(POST_DEPLOY).toContain("if: ${{ env.VERCEL_TOKEN != '' && github.event_name != 'workflow_dispatch' }}");
   });
 
-  it('wires VERCEL_TOKEN into the job env, the loud guard, and BOTH hash steps (4 wirings)', () => {
+  it('wires VERCEL_TOKEN into the job env, the loud guard, BOTH hash steps, AND the teeth-proof step (5 wirings)', () => {
     // Counting (not a bare toContain) catches a wiring dropped on any ONE of
-    // the four places that need it: job env (feeds step `if`s), loud-guard
-    // env, and the two hash steps' envs. Scoped to the PRODUCTION job block
-    // (the PR preview gate has its own VERCEL_TOKEN wirings, counted by its
-    // own test below).
+    // the five places that need it: job env (feeds step `if`s), loud-guard
+    // env, the two hash steps' envs, and the gate-stale teeth step's env.
+    // Scoped to the PRODUCTION job block (the PR preview gate has its own
+    // VERCEL_TOKEN wirings, counted by its own test below).
     const productionBlock = POST_DEPLOY.slice(
       POST_DEPLOY.indexOf('\n  verify-deployed-live:'),
       POST_DEPLOY.indexOf('\n  verify-preview-deploy:'),
     );
-    expect(productionBlock.match(new RegExp(SECRET_WIRING('VERCEL_TOKEN').replace(/[$\{\}]/g, '\\$&'), 'g'))).toHaveLength(4);
+    expect(productionBlock.match(new RegExp(SECRET_WIRING('VERCEL_TOKEN').replace(/[$\{\}]/g, '\\$&'), 'g'))).toHaveLength(5);
+  });
+
+  it('machine-reproves the gate-stale teeth after every deploy (verify-gate-stale-ci.mjs)', () => {
+    // The wrapper runs the gate-stale proof (FAIL path + stale-guard) against
+    // live from the pushed commit's PARENT after a successful production
+    // deploy, so the stale-guard teeth are proven on the real runner — not
+    // just via the npm one-liners. Gated on VERCEL_TOKEN like the hash steps;
+    // the wrapper itself is skip-not-fail on the transient edge (alias
+    // promotion lag / API hiccup — states where the verdicts cannot
+    // reproduce), so only a proof that CAN reproduce is allowed to fail.
+    expect(POST_DEPLOY).toContain('name: Verify gate-stale proof after deploy (teeth)');
+    expect(POST_DEPLOY).toContain('run: node scripts/verify-gate-stale-ci.mjs');
+    expect(POST_DEPLOY).toContain("if: ${{ env.VERCEL_TOKEN != '' }}");
+    // The skip-not-fail contract must stay documented in the workflow so a
+    // future edit that hardens the step back into a plain failure (which
+    // would red-flag every deploy-lag transient) fails here.
+    expect(POST_DEPLOY).toContain('loud SKIP');
   });
 
   it('targets the public canonical production URL (deployment subdomains are Vercel-protected)', () => {
