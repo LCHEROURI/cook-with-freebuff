@@ -26,16 +26,27 @@
 //            surface it as a credential problem, never a generic failure
 //
 //   --stale-guard (the CI push-time mode): on the exit-1 mismatch the
-//   DIRECTION decides. If live is an ancestor of local HEAD the push is a
-//   forward deploy — pass (exit 0) and leave the after-deploy proof to the
-//   post-deploy workflow. If live is NOT an ancestor (a stale/rollback push
-//   would clobber production) — fail with a STALE-HEAD BLOCK. A normal
+//   DIRECTION decides. If live is an ancestor of the expected head the push
+//   is a forward deploy — pass (exit 0) and leave the after-deploy proof to
+//   the post-deploy workflow. If live is NOT an ancestor (a stale/rollback
+//   push would clobber production) — fail with a STALE-HEAD BLOCK. A normal
 //   forward push is live-behind-HEAD by construction, so without the
 //   direction check a push-time gate would fail every healthy push.
+//
+//   --head <sha> (the CI PR-time variant): pins the compared-against commit
+//   to the PR head (github.event.pull_request.head.sha) instead of the local
+//   checkout's HEAD. That matters on PRs because the checkout is the MERGE
+//   ref — which always contains current base main, so comparing against it
+//   would make every stale PR pass. The direction rule is the same, applied
+//   to the PR head: FAIL iff live is NOT an ancestor of the PR head (the PR
+//   was cut before live's current state — stale, update the branch); PASS if
+//   the PR head already contains the entire live state.
 //
 // Usage:
 //   npm run verify:deployed-hash                      # plain report + expect
 //   node scripts/verify-deployed-hash-gate.mjs --stale-guard   # CI push gate
+//   node scripts/verify-deployed-hash-gate.mjs --stale-guard --head <pr-sha>
+//                                                      # CI PR gate
 //
 // Read-only against Vercel and git; no source changes.
 // ============================================================================
@@ -45,17 +56,27 @@ import { resolve } from 'node:path';
 
 export const CANONICAL_URL = 'https://cook-with-freebuff.vercel.app';
 export const STALE_GUARD = process.argv.includes('--stale-guard');
+const headArgIdx = process.argv.indexOf('--head');
+export const HEAD_ARG = headArgIdx !== -1 ? (process.argv[headArgIdx + 1] ?? '').trim() : '';
 
-// ── 1. Local HEAD ───────────────────────────────────────────────────────────
-const head = spawnSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' });
-if (head.status !== 0 || !head.stdout.trim()) {
-  console.error('✗ FAIL: could not resolve local HEAD (git rev-parse HEAD failed).');
-  process.exit(1);
+// ── 1. Expected head ─────────────────────────────────────────────────────────
+// --head <sha> pins the compared-against commit (PR head in CI); without it
+// local HEAD is resolved via git (the operator / push-time contract).
+let LOCAL_HEAD;
+if (HEAD_ARG) {
+  LOCAL_HEAD = HEAD_ARG;
+} else {
+  const head = spawnSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' });
+  if (head.status !== 0 || !head.stdout.trim()) {
+    console.error('✗ FAIL: could not resolve local HEAD (git rev-parse HEAD failed).');
+    process.exit(1);
+  }
+  LOCAL_HEAD = head.stdout.trim();
 }
-const LOCAL_HEAD = head.stdout.trim();
+const headLabel = HEAD_ARG ? 'PR head' : 'local HEAD';
 
-console.log('\n=== verify:deployed-hash — live commit vs local HEAD (before any deploy) ===');
-console.log(`  local HEAD  ${LOCAL_HEAD}`);
+console.log('\n=== verify:deployed-hash — live commit vs expected head (before any deploy) ===');
+console.log(`  ${headLabel}  ${LOCAL_HEAD}`);
 
 // ── 2. Run the shared hash driver against the live production alias ────────
 // stdio piped so --stale-guard can parse the live commit from the report;
@@ -92,14 +113,30 @@ if (!live) {
   process.exit(1);
 }
 
-const anc = spawnSync('git', ['merge-base', '--is-ancestor', live, 'HEAD']);
+// Ensure both commits are present locally before the ancestry check. The CI
+// checkout is shallow (fetch-depth 1), so the live commit — and on PRs the
+// head commit — is usually NOT in the object store. Fetching by sha from
+// origin (GitHub allows reachable-sha fetches) makes the direction decision
+// real, never a missing-object accident. Without it, `git merge-base` on a
+// missing object exits 128 and would block EVERY forward PR — or, worse, a
+// future git behavior change could silently flip the verdict.
+const ensureCommit = (sha) => {
+  if (spawnSync('git', ['cat-file', '-e', sha]).status === 0) return true;
+  return spawnSync('git', ['fetch', '--quiet', 'origin', sha]).status === 0;
+};
+if (!ensureCommit(live) || !ensureCommit(LOCAL_HEAD)) {
+  console.error('✗ FAIL: could not fetch the commits needed for the ancestry check — cannot guard against a stale head.');
+  process.exit(1);
+}
+
+const anc = spawnSync('git', ['merge-base', '--is-ancestor', live, LOCAL_HEAD]);
 if (anc.status === 0) {
-  console.log(`\n  ✓ live (${live.slice(0, 12)}…) is behind local HEAD — forward deploy; the post-deploy gate verifies after Vercel finishes`);
+  console.log(`\n  ✓ live (${live.slice(0, 12)}…) is behind ${headLabel} — forward deploy; the post-deploy gate verifies after Vercel finishes`);
   console.log('RESULT: PASS (stale-guard)');
   process.exit(0);
 }
 
-console.error(`\n  ✗ STALE-HEAD BLOCK: live is at ${live} and the pushed HEAD (${LOCAL_HEAD.slice(0, 12)}…) is not ahead of it.`);
+console.error(`\n  ✗ STALE-HEAD BLOCK: live is at ${live} and the ${headLabel} (${LOCAL_HEAD.slice(0, 12)}…) is not ahead of it.`);
 console.error('  Pushing would roll the site back or clobber history — pull/rebase first.');
 console.error('  RESULT: FAIL');
 process.exit(1);

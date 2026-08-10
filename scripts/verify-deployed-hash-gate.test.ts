@@ -40,8 +40,11 @@ describe('scripts/verify-deployed-hash-gate.mjs · live-URL contract', () => {
 
 describe('scripts/verify-deployed-hash-gate.mjs · local-HEAD comparison', () => {
   it('resolves local HEAD via git rev-parse before comparing', () => {
+    // The resolution now lives in the else branch of the --head split (the
+    // PR-time variant pins the expected head instead), but the operator
+    // contract is unchanged: rev-parse output feeds LOCAL_HEAD.
     expect(SRC).toContain("spawnSync('git', ['rev-parse', 'HEAD']");
-    expect(SRC).toContain("const LOCAL_HEAD = head.stdout.trim();");
+    expect(SRC).toContain('LOCAL_HEAD = head.stdout.trim();');
   });
 
   it('passes the resolved HEAD as --expect to the shared driver', () => {
@@ -111,8 +114,12 @@ describe('scripts/verify-deployed-hash-gate.mjs · --stale-guard direction routi
     expect(SRC).toContain('process.exit(1);');
   });
 
-  it('forward deploy (live is an ancestor of HEAD) → PASS, left to the post-deploy gate', () => {
-    expect(SRC).toContain("spawnSync('git', ['merge-base', '--is-ancestor', live, 'HEAD'])");
+  it('forward deploy (live is an ancestor of the expected head) → PASS, left to the post-deploy gate', () => {
+    // The ancestry check targets LOCAL_HEAD (the resolved expected head —
+    // local HEAD, or the --head value on PRs) rather than the literal
+    // checkout HEAD: on a PR the checkout is the MERGE ref, which always
+    // contains current base main and would make every stale PR pass.
+    expect(SRC).toContain("spawnSync('git', ['merge-base', '--is-ancestor', live, LOCAL_HEAD])");
     expect(SRC).toContain('RESULT: PASS (stale-guard)');
     expect(SRC).toContain('process.exit(0);');
   });
@@ -127,5 +134,53 @@ describe('scripts/verify-deployed-hash-gate.mjs · --stale-guard direction routi
     const blocked = SRC.indexOf('✗ STALE-HEAD BLOCK');
     expect(forward).toBeGreaterThan(-1);
     expect(blocked).toBeGreaterThan(forward);
+  });
+});
+
+describe('scripts/verify-deployed-hash-gate.mjs · --head (PR-time variant)', () => {
+  it('parses the --head flag and pins the compared-against commit to it', () => {
+    // The PR-time step passes github.event.pull_request.head.sha; the gate
+    // must use THAT commit for both the --expect wiring and the ancestry
+    // check — never the checkout's HEAD (the merge ref).
+    expect(SRC).toContain("process.argv.indexOf('--head')");
+    expect(SRC).toContain('HEAD_ARG ? \'PR head\' : \'local HEAD\'');
+  });
+
+  it('falls back to git rev-parse only when --head is absent', () => {
+    // The operator/push-time contract (local HEAD) must remain the default;
+    // --head is the PR override. A refactor that resolves local HEAD
+    // unconditionally (silently ignoring --head) fails here.
+    expect(SRC).toContain('if (HEAD_ARG) {');
+    expect(SRC).toContain('LOCAL_HEAD = HEAD_ARG;');
+    const headFlagIdx = SRC.indexOf("process.argv.indexOf('--head')");
+    const revParseIdx = SRC.indexOf("spawnSync('git', ['rev-parse', 'HEAD']");
+    expect(headFlagIdx).toBeGreaterThan(-1);
+    expect(revParseIdx).toBeGreaterThan(headFlagIdx);
+  });
+
+  it('passes the pinned head as --expect to the shared driver', () => {
+    // With --head, the driver still sees the same --expect LOCAL_HEAD wiring
+    // (LOCAL_HEAD IS the --head value) — one comparison pipeline, both modes.
+    expect(SRC).toContain("'--expect', LOCAL_HEAD");
+  });
+
+  it('fetches commits by sha from origin before the ancestry check (shallow CI checkout)', () => {
+    // The CI checkout is fetch-depth 1, so the live commit — and on PRs the
+    // head commit — is usually NOT in the object store; a bare `git
+    // merge-base` would exit 128 on the missing object and block EVERY
+    // forward PR (or silently flip verdict on a future git change). The
+    // cat-file-then-fetch fallback makes the direction decision real.
+    expect(SRC).toContain("spawnSync('git', ['cat-file', '-e', sha])");
+    expect(SRC).toContain("spawnSync('git', ['fetch', '--quiet', 'origin', sha])");
+    // The fetch must run BEFORE the ancestry check.
+    const fetchIdx = SRC.indexOf("['fetch', '--quiet', 'origin', sha]");
+    const ancIdx = SRC.indexOf("['merge-base', '--is-ancestor', live, LOCAL_HEAD]");
+    expect(fetchIdx).toBeGreaterThan(-1);
+    expect(ancIdx).toBeGreaterThan(fetchIdx);
+  });
+
+  it('fails loudly when the commits needed for the ancestry check cannot be fetched', () => {
+    expect(SRC).toContain('could not fetch the commits needed for the ancestry check');
+    expect(SRC).toContain('process.exit(1);');
   });
 });

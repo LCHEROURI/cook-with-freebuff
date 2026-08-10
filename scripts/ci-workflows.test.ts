@@ -92,6 +92,39 @@ describe('.github/workflows/ci.yml · push-time validate contract', () => {
     expect(validateBlock).toContain('exit 1');
   });
 
+  it('keeps the PR stale-guard step strictly PR-only — it can never fire on push', () => {
+    // The PR-time variant is the mirror image of the push-only step above:
+    // it must run ONLY on pull_request (pinned to the PR head via --head),
+    // never on push — the push contract belongs to the --stale-guard step
+    // above, and a push firing this step would compare live against a
+    // branch head and falsely block healthy pushes.
+    const prStepStart = validateBlock.indexOf('name: Verify PR head is not stale vs live (stale-guard)');
+    const prStepEnd = validateBlock.indexOf('\n  # NOTE:', prStepStart);
+    const prStepBlock = validateBlock.slice(prStepStart, prStepEnd === -1 ? undefined : prStepEnd);
+    expect(prStepBlock.length).toBeGreaterThan(0);
+    expect(prStepBlock).toContain('node scripts/verify-deployed-hash-gate.mjs --stale-guard --head "${{ github.event.pull_request.head.sha }}"');
+    expect(prStepBlock).toContain("if: ${{ github.event_name == 'pull_request' && env.VERCEL_TOKEN != '' }}");
+    expect(prStepBlock).toContain('VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}');
+    // Negative locks: the PR step must not be push-gated and must not run
+    // without --head (a --head-less copy would compare against the checkout
+    // HEAD — the merge ref — and make every stale PR pass).
+    expect(prStepBlock).not.toMatch(/github\.event_name\s*==\s*'push'/);
+    expect(prStepBlock).not.toMatch(/verify-deployed-hash-gate\.mjs --stale-guard$/m);
+  });
+
+  it('fails loudly when VERCEL_TOKEN is missing on a PR (no silent skip on the canonical repo)', () => {
+    // Same loud-guard discipline as the push side: a missing token must fail
+    // PRs from the canonical repo instead of silently skipping the gate;
+    // fork PRs (no secrets) keep skip-not-fail via the repository check.
+    const prGuardStart = validateBlock.indexOf('name: Fail loudly if VERCEL_TOKEN is missing (PR)');
+    const prGuardBlock = validateBlock.slice(prGuardStart, validateBlock.indexOf('name: Verify PR head', prGuardStart));
+    expect(prGuardBlock.length).toBeGreaterThan(0);
+    expect(prGuardBlock).toContain("github.event_name == 'pull_request'");
+    expect(prGuardBlock).toContain("github.repository == 'LCHEROURI/cook-with-freebuff'");
+    expect(prGuardBlock).toContain("env.VERCEL_TOKEN == ''");
+    expect(prGuardBlock).toContain('exit 1');
+  });
+
   it('keeps the stale-guard step strictly push-only — it can never fire on pull_request', () => {
     // The stale-head guard was live-proven on a real runner with a BRANCH
     // push (the __stale-guard-proof experiment) — it fired red on a stale
@@ -108,14 +141,20 @@ describe('.github/workflows/ci.yml · push-time validate contract', () => {
     // cannot. The single-invocation count guards against a second,
     // PR-gated copy of the step appearing elsewhere in the job.
     expect(CI).toContain('pull_request:'); // validate still runs on PRs
-    expect(validateBlock.match(/verify-deployed-hash-gate\.mjs --stale-guard/g)).toHaveLength(1);
+    // Exactly ONE push-time stale-guard invocation (no --head) in validate;
+    // the PR-time variant has its own --head invocation, locked by its own
+    // test below. A second push-gated copy appearing elsewhere fails here.
+    expect(validateBlock.match(/verify-deployed-hash-gate\.mjs --stale-guard$/m)).toHaveLength(1);
 
     const stepStart = validateBlock.indexOf('name: Verify pushed head is not stale vs live (stale-guard)');
-    // Scope ends at the trailing NOTE comment (prose about the verify:live
-    // move may legitimately mention other event names — the step block must
-    // not include it, or the negative locks below would trip on documentation).
+    // Scope ends at the PR-time section (the push-only step must not include
+    // the PR step, which legitimately references pull_request). The trailing
+    // NOTE comment is prose about the verify:live move — also excluded.
+    const prStart = validateBlock.indexOf('\n      # PR-time stale-head guard');
     const noteStart = validateBlock.indexOf('\n  # NOTE:');
-    const stepBlock = validateBlock.slice(stepStart, noteStart === -1 ? undefined : noteStart);
+    const ends = [prStart, noteStart].filter((i) => i !== -1);
+    const stepEnd = ends.length ? Math.min(...ends) : undefined;
+    const stepBlock = validateBlock.slice(stepStart, stepEnd);
     expect(stepBlock).toContain("if: ${{ github.event_name == 'push' && env.VERCEL_TOKEN != '' }}");
     // Negative locks: no literal pull_request, no negated event gate, and no
     // other event name — the ONLY event this step can ever run on is push.

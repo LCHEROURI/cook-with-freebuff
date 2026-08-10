@@ -70,6 +70,35 @@ jobs:
         env:
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
 
+      # PR-time stale-head guard: the SAME direction-aware gate, pinned to the
+      # PR head via --head instead of the pushed HEAD. This is load-bearing on
+      # PRs because the checkout is the MERGE ref — which always contains
+      # current base main — so comparing live against the checkout HEAD would
+      # make every stale PR pass. The rule, applied to the PR head: FAIL iff
+      # live is NOT an ancestor of the PR head (the PR was cut before live's
+      # current state — stale, update the branch); PASS if the PR head already
+      # contains the entire live state (cut from current-or-newer main). A PR
+      # head is legitimately behind BASE main (that is why this step never
+      # runs on push — the push-time step above is the push contract), but a
+      # PR cut before LIVE's state is exactly what this check surfaces in the
+      # PR checks instead of only at merge time. Gated on VERCEL_TOKEN: fork
+      # PRs have no secrets → skip-not-fail, and the loud guard below fails a
+      # missing token on the canonical repo instead of a silently green skip.
+      - name: Fail loudly if VERCEL_TOKEN is missing (PR)
+        if: ${{ github.event_name == 'pull_request' && github.repository == 'LCHEROURI/cook-with-freebuff' && env.VERCEL_TOKEN == '' }}
+        run: |
+          echo "::error::VERCEL_TOKEN secret missing — the PR stale-head guard cannot run."
+          echo "Add it under GitHub -> Settings -> Secrets and variables -> Actions, then re-run."
+          exit 1
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+
+      - name: Verify PR head is not stale vs live (stale-guard)
+        if: ${{ github.event_name == 'pull_request' && env.VERCEL_TOKEN != '' }}
+        run: node scripts/verify-deployed-hash-gate.mjs --stale-guard --head "${{ github.event.pull_request.head.sha }}"
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+
   # NOTE: the post-deploy verify:live gate NO LONGER lives here. It used to run
   # in this push-triggered job, where it RACED the Vercel build — hitting the
   # previous deployment or a 502 mid-deploy. It now runs from

@@ -356,6 +356,26 @@ so verifying every PR costs no owner-verify write budget (that is why the
 write-heavy `verify:live` stays Production-only). Fork PRs (no secrets) get a
 skipped-but-green check; a missing token on the canonical repo fails loudly.
 
+### PR-time stale-head guard — a stale PR surfaces in the checks
+
+Beyond the push-time stale-head guard, the CI validate job also runs the same
+direction-aware gate on **pull_request**, pinned to the PR head via `--head`:
+
+```bash
+node scripts/verify-deployed-hash-gate.mjs --stale-guard --head "${{ github.event.pull_request.head.sha }}"
+```
+
+This is load-bearing on PRs because the checkout is the **merge ref** — which
+always contains current base main, so comparing live against the checkout HEAD
+would make every stale PR pass. The rule, applied to the PR head: **FAIL iff
+live is NOT an ancestor of the PR head** (the PR was cut before live's current
+state — stale, update the branch); **PASS** if the PR head already contains the
+entire live state (cut from current-or-newer main). A PR head is legitimately
+behind *base* main (that is the push-time step's job), but a PR cut before
+*live's* state surfaces here in the checks instead of only at merge time. The
+gate fetches commits by sha from `origin` first (the CI checkout is shallow),
+so the ancestry decision is real, never a missing-object accident.
+
 ## Project principles
 
 1. The backend is the source of truth — LLM conversation history is never authoritative.
