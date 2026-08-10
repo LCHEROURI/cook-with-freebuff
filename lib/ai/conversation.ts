@@ -85,13 +85,16 @@ function buildConversationPrompt(params: {
 
 const stringArray = { type: 'array', items: { type: 'string' } } as const;
 
+// Gemini's function-declaration schemas reject union types like
+// `['number', 'null']` ("Proto field is not repeating") — nullable fields must
+// use the `nullable: true` flag instead.
 const INGREDIENT_SCHEMA = {
   type: 'object',
   properties: {
     id: { type: 'string' },
     name: { type: 'string' },
-    quantity: { type: ['number', 'null'], description: 'null when unknown — never invent' },
-    unit: { type: ['string', 'null'] },
+    quantity: { type: 'number', nullable: true, description: 'null when unknown — never invent' },
+    unit: { type: 'string', nullable: true },
     preparation: { type: 'string' },
     condition: { type: 'string' },
     optional: { type: 'boolean' },
@@ -213,8 +216,8 @@ const TOOL_DECLARATIONS = [
       properties: {
         sessionId: { type: 'string' },
         name: { type: 'string' },
-        quantity: { type: ['number', 'null'] },
-        unit: { type: ['string', 'null'] },
+        quantity: { type: 'number', nullable: true },
+        unit: { type: 'string', nullable: true },
         remove: { type: 'boolean' },
       },
       required: ['name'],

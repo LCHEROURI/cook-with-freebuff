@@ -24,7 +24,7 @@ export interface GeminiOptions {
   validationModel?: string;
 }
 
-const DEFAULT_MODEL = 'gemini-2.0-flash';
+const DEFAULT_MODEL = 'gemini-2.5-flash';
 
 function resolveKey(opts: GeminiOptions): string | undefined {
   return opts.apiKey ?? process.env.GOOGLE_AI_API_KEY;

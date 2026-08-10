@@ -97,7 +97,11 @@ export function getAdminDb(): Firestore | null {
   if (cachedDb) return cachedDb;
   const app = getAdminApp();
   if (!app) return null;
-  cachedDb = getFirestore(app);
+  // Optional fields (e.g. correlationId) are passed through as `undefined` in
+  // write payloads — Firestore rejects undefined values unless this flag is on.
+  const db = getFirestore(app);
+  db.settings({ ignoreUndefinedProperties: true });
+  cachedDb = db;
   return cachedDb;
 }
 
