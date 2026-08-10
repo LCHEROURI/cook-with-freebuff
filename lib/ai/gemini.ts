@@ -30,15 +30,22 @@ function resolveKey(opts: GeminiOptions): string | undefined {
   return opts.apiKey ?? process.env.GOOGLE_AI_API_KEY;
 }
 
-function getModel(opts: GeminiOptions, role: 'generation' | 'validation'): GenerativeModel | null {
+/**
+ * Resolve a GenerativeModel from options/env, or null when no API key is set.
+ */
+export function getGeminiModel(opts: GeminiOptions, model?: string): GenerativeModel | null {
   const key = resolveKey(opts);
   if (!key) return null;
+  const genAI = new GoogleGenerativeAI(key);
+  return genAI.getGenerativeModel({ model: model ?? DEFAULT_MODEL });
+}
+
+function getModel(opts: GeminiOptions, role: 'generation' | 'validation'): GenerativeModel | null {
   const model =
     role === 'generation'
       ? (opts.generationModel ?? process.env.RECIPE_GENERATION_MODEL ?? DEFAULT_MODEL)
       : (opts.validationModel ?? process.env.RECIPE_VALIDATION_MODEL ?? DEFAULT_MODEL);
-  const genAI = new GoogleGenerativeAI(key);
-  return genAI.getGenerativeModel({ model });
+  return getGeminiModel(opts, model);
 }
 
 /** Extract the first balanced JSON object from a model response (handles ``` fences). */

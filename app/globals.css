@@ -50,6 +50,50 @@ a,
   touch-action: manipulation;
 }
 
+/* ── Voice indicator ───────────────────────────────────────────────────── */
+.voice-indicator {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 1rem;
+  border-radius: 999px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--color-text-secondary);
+}
+
+.voice-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--color-text-secondary);
+}
+
+.voice-indicator[data-status='LISTENING'] .voice-dot,
+.voice-indicator[data-status='SPEAKING'] .voice-dot {
+  background: var(--color-success);
+  animation: voice-pulse 1.2s ease-in-out infinite;
+}
+
+.voice-indicator[data-status='THINKING'] .voice-dot {
+  background: var(--color-warning);
+}
+
+.voice-indicator[data-status='ERROR'] .voice-dot {
+  background: var(--color-error);
+}
+
+.voice-indicator[data-status='OFFLINE'] .voice-dot {
+  background: var(--color-text-secondary);
+}
+
+@keyframes voice-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
+}
+
 /* ── Utility ────────────────────────────────────────────────────────────── */
 .sr-only {
   position: absolute;

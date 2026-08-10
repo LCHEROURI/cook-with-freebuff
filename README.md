@@ -123,6 +123,18 @@ The app will follow the same contract-locked verification discipline as Freebuff
 - [x] One-action-suitability heuristic: verb-counting catches multi-action steps, tolerates "add salt and pepper"
 - [x] 30 new tests (21 validation + 9 pipeline) — 123 total green + production build passes
 
+## K5 — Realtime voice agent + conversational orchestration
+
+- [x] Voice-status state machine (`lib/agent/voice-status.ts`) — LISTENING / THINKING / SPEAKING / OFFLINE / ERROR with pure transition rules
+- [x] Deterministic command router (`lib/agent/commands.ts`) — done/next, repeat, previous, pause, resume, stop, timer, temperature, substitute (follow-up), confirm, help
+- [x] Ingredient brain-dump extraction (`lib/agent/extract.ts`) — structured quantities, unknown quantities stay `null`, extraction only fires on real brain-dumps (possession lead-in or quantity signal, so "hello" or "go ahead and start cooking" never become fake ingredients)
+- [x] `ConversationOrchestrator` (`lib/agent/orchestrator.ts`) — commands → extraction → provider fallback, always concise spoken responses, never claims success the backend didn't confirm
+- [x] Gemini conversation provider (`lib/ai/conversation.ts`) — function calling over the full 20-tool surface, tool calls executed by the backend executor
+- [x] Realtime voice provider boundary (`lib/voice/`) — Gemini Live WebRTC skeleton (`gemini-live.ts`) behind a swappable interface
+- [x] `POST /api/agent` route — Firebase-auth-gated, routes through the orchestrator
+- [x] Voice UI: `VoiceIndicator` component + `useVoiceSession` hook wired into the landing page
+- [x] 46 new tests (commands, extraction + gate, voice status, orchestrator, route) — 169 total green + production build passes
+
 ## Development
 
 ```bash

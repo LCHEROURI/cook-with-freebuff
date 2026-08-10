@@ -11,7 +11,12 @@ import {
   createGeminiRecipeValidator,
   type GeminiOptions,
 } from './gemini';
-import { registerRecipeGenerator, registerRecipeValidator } from './provider';
+import { createGeminiConversationAgent } from './conversation';
+import {
+  registerRecipeGenerator,
+  registerRecipeValidator,
+  registerConversationAgent,
+} from './provider';
 
 /**
  * Register Gemini providers. Returns true when registered (key present),
@@ -24,5 +29,6 @@ export function registerGeminiProviders(opts: GeminiOptions = {}): boolean {
 
   registerRecipeGenerator('default', createGeminiRecipeGenerator(opts));
   registerRecipeValidator('default', createGeminiRecipeValidator(opts));
+  registerConversationAgent('default', createGeminiConversationAgent(opts));
   return true;
 }
