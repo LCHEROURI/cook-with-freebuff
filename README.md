@@ -315,8 +315,10 @@ mismatches. Each one-liner creates the worktree, runs the check, prints the
 verdict, and always cleans up.
 
 Each proof is also one npm script — no copy-paste needed (the runner
-creates the worktree, asserts the expected verdict actually appeared, and
-always cleans up, exiting 1 if the proof did not reproduce):
+creates the worktree, copies the CURRENT hook/driver artifacts in, asserts
+the expected verdict actually appeared, and always cleans up, exiting 1 if
+the proof did not reproduce — so it is independent of the worktree
+commit's age):
 
 ```bash
 npm run verify:teeth-proofs         # ALL three teeth in one command

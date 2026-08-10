@@ -33,13 +33,12 @@
 // reason instead of silently "passing". Exit 0 means every expected verdict
 // appeared and every worktree was cleaned up.
 //
-// Requirements (same as the one-liners): the gate proofs run the worktree's
-// OWN driver, so their worktree commit must carry it (any commit at or after
-// 067b313 — HEAD~1 normally is); hook-block copies the current driver in, so
-// it is age-independent. The gate needs VERCEL_TOKEN (from the environment,
-// the repo's .env.local, or the Vercel CLI auth store — the script copies
-// .env.local into the worktree when present so a token stored there resolves
-// exactly like a real push).
+// Every proof copies the CURRENT gate driver (and the base driver it
+// composes) into the worktree, so the proofs are independent of the worktree
+// commit's age — no minimum-commit requirement to track. The gate needs
+// VERCEL_TOKEN (from the environment, the repo's .env.local, or the Vercel
+// CLI auth store — the script copies .env.local into the worktree when
+// present so a token stored there resolves exactly like a real push).
 //
 // Read-only against git and Vercel — only temporary worktrees are created
 // and removed; nothing is pushed or deployed by the proof itself.
@@ -56,7 +55,12 @@ const ROOT = resolve(import.meta.dirname, '..');
 //    and the expected verdict substring that proves the path reproduced. ──
 const MODES = {
   'gate-fail': {
-    command: ['npm', 'run', 'verify:deployed-hash'],
+    // The GATE in plain mode (no --stale-guard): it composes the shared
+    // driver with --expect <worktree HEAD>, the mismatch prints RESULT: FAIL
+    // and exits 1. Invoking the gate script directly (not `npm run
+    // verify:deployed-hash`) keeps the runner repo-agnostic — that npm
+    // script's target differs between repos.
+    command: ['node', 'scripts/verify-deployed-hash-gate.mjs'],
     stdin: null,
     expected: 'RESULT: FAIL',
     summary: 'Gate FAIL path',
@@ -134,30 +138,22 @@ function runProof(mode) {
   let reproduced = false;
   let childExit = -1;
   try {
-    // The gate proofs run the worktree's OWN driver, so their worktree commit
-    // must carry it (the README's >= 067b313 requirement, checked by file
-    // presence). hook-block is exempt: it copies the CURRENT driver in below,
-    // so it is independent of the worktree commit's age — like the README
-    // one-liner it documents.
-    if (mode !== 'hook-block' && !existsSync(resolve(wtPath, 'scripts', 'verify-deployed-hash-gate.mjs'))) {
-      console.error(`✗ FAIL: worktree commit ${WORKTREE_SHA} predates the gate driver — the proof needs a commit at or after 067b313 (HEAD~1 normally is).`);
-      process.exit(1);
-    }
-
     // Copy the repo's .env.local so a token stored there resolves inside the
-    // worktree (a fresh worktree does not check out gitignored files), and copy
-    // the CURRENT hook for hook-block (the worktree commit may predate it).
+    // worktree (a fresh worktree does not check out gitignored files).
     if (existsSync(resolve(ROOT, '.env.local'))) {
       spawnSync('cp', [resolve(ROOT, '.env.local'), resolve(wtPath, '.env.local')]);
     }
+    // EVERY proof exercises the CURRENT artifacts: copy the gate driver (and
+    // the base driver it composes) into the worktree, so the proofs are
+    // independent of the worktree commit's age — no minimum-commit
+    // requirement, and the exact current driver is always the one tested.
+    spawnSync('cp', [resolve(ROOT, 'scripts', 'verify-deployed-hash-gate.mjs'), resolve(wtPath, 'scripts', 'verify-deployed-hash-gate.mjs')]);
+    spawnSync('cp', [resolve(ROOT, 'scripts', 'verify-deployed-hash.mjs'), resolve(wtPath, 'scripts', 'verify-deployed-hash.mjs')]);
+    // The CURRENT hook for hook-block (a fresh worktree has no .githooks, and
+    // the worktree commit may predate the unified hook).
     if (mode === 'hook-block') {
       mkdirSync(resolve(wtPath, '.githooks'), { recursive: true });
       spawnSync('cp', [resolve(ROOT, '.githooks', 'pre-push'), resolve(wtPath, '.githooks', 'pre-push')]);
-      // The unified hook delegates to the gate driver — copy the CURRENT
-      // driver (and the base driver it composes) so the proof exercises the
-      // exact current artifacts, independent of the worktree commit's age.
-      spawnSync('cp', [resolve(ROOT, 'scripts', 'verify-deployed-hash-gate.mjs'), resolve(wtPath, 'scripts', 'verify-deployed-hash-gate.mjs')]);
-      spawnSync('cp', [resolve(ROOT, 'scripts', 'verify-deployed-hash.mjs'), resolve(wtPath, 'scripts', 'verify-deployed-hash.mjs')]);
     }
 
     console.log(`\n=== verify-teeth-proofs: ${def.summary} — worktree at ${WORKTREE_SHA.slice(0, 12)} ===`);

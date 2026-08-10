@@ -21,7 +21,10 @@ const PKG = readFileSync('package.json', 'utf8');
 describe('scripts/verify-teeth-proofs.mjs · mode table', () => {
   it('defines the three modes with their exact commands', () => {
     expect(SRC).toContain("'gate-fail': {");
-    expect(SRC).toContain("command: ['npm', 'run', 'verify:deployed-hash']");
+    // The plain gate invocation (not `npm run verify:deployed-hash` — that
+    // script's target differs between repos, so the runner must not depend
+    // on it for the gate-fail proof to stay identical across repos).
+    expect(SRC).toContain("command: ['node', 'scripts/verify-deployed-hash-gate.mjs']");
     expect(SRC).toContain("'stale-guard': {");
     expect(SRC).toContain("command: ['node', 'scripts/verify-deployed-hash-gate.mjs', '--stale-guard']");
     expect(SRC).toContain("'hook-block': {");
@@ -88,33 +91,33 @@ describe('scripts/verify-teeth-proofs.mjs · throwaway-worktree mechanics', () =
     expect(SRC).toContain("['worktree', 'prune']");
   });
 
-  it('guards the gate proofs (worktree carries the driver, ≥ 067b313) but EXEMPTS hook-block', () => {
-    // The README requires the worktree commit to be at or after 067b313 for
-    // the gate proofs, which run the worktree's OWN driver. hook-block is
-    // exempt — it copies the current driver in, so it is independent of the
-    // worktree commit's age (the same split the README documents).
-    expect(SRC).toContain("'scripts', 'verify-deployed-hash-gate.mjs'");
-    expect(SRC).toContain('predates the gate driver');
-    expect(SRC).toContain('067b313');
-    expect(SRC).toContain("mode !== 'hook-block' && !existsSync");
+  it('copies the CURRENT driver into the worktree for EVERY proof (age-independent — no minimum-commit guard)', () => {
+    // The proofs always exercise the exact current artifacts: the gate
+    // driver (and the base driver it composes) are copied into the worktree
+    // unconditionally, so no commit-age guard is needed — and the old
+    // repo-specific 067b313 minimum is gone (the portfolio's gate only
+    // appeared at a different commit, so the guard could never have been
+    // shared identically). Negative locks: the guard and its commit reference
+    // must not reappear.
+    expect(SRC).toContain("resolve(ROOT, 'scripts', 'verify-deployed-hash-gate.mjs')");
+    expect(SRC).toContain("resolve(wtPath, 'scripts', 'verify-deployed-hash-gate.mjs')");
+    expect(SRC).toContain("resolve(ROOT, 'scripts', 'verify-deployed-hash.mjs')");
+    expect(SRC).toContain("resolve(wtPath, 'scripts', 'verify-deployed-hash.mjs')");
+    expect(SRC).not.toContain('predates the gate driver');
+    expect(SRC).not.toContain('067b313');
+    expect(SRC).not.toContain("mode !== 'hook-block' && !existsSync");
   });
 
-  it('copies .env.local (token resolution) and, for hook-block, the CURRENT hook + both drivers', () => {
-    // A fresh worktree does not check out gitignored files; the one-liners'
-    // hook proof copies the hook, and the token must resolve exactly like a
-    // real push (env → copied .env.local → CLI auth store). The unified hook
-    // delegates to the gate driver, so the current driver (and the base
-    // driver it composes) must be copied in too — otherwise the proof would
-    // silently run the worktree commit's stale driver.
+  it('copies .env.local (token resolution) and, for hook-block, the CURRENT hook', () => {
+    // A fresh worktree does not check out gitignored files, and it has no
+    // .githooks — the token must resolve exactly like a real push (env →
+    // copied .env.local → CLI auth store), and the hook proof must exercise
+    // the current unified hook, not whatever the worktree commit carried.
     expect(SRC).toContain("resolve(ROOT, '.env.local')");
     expect(SRC).toContain("resolve(wtPath, '.env.local')");
     expect(SRC).toContain("mode === 'hook-block'");
     expect(SRC).toContain("resolve(ROOT, '.githooks', 'pre-push')");
     expect(SRC).toContain("resolve(wtPath, '.githooks', 'pre-push')");
-    expect(SRC).toContain("resolve(ROOT, 'scripts', 'verify-deployed-hash-gate.mjs')");
-    expect(SRC).toContain("resolve(wtPath, 'scripts', 'verify-deployed-hash-gate.mjs')");
-    expect(SRC).toContain("resolve(ROOT, 'scripts', 'verify-deployed-hash.mjs')");
-    expect(SRC).toContain("resolve(wtPath, 'scripts', 'verify-deployed-hash.mjs')");
   });
 });
 
