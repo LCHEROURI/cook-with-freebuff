@@ -1,16 +1,39 @@
-// ─────────────────────────────────────────────────────────────────────────────
-// Firestore security rules — Kitchen Agent
-//
-// Every document is owner-scoped via the `userId` field. The app reads/writes
-// only documents where userId == request.auth.uid.
-// ─────────────────────────────────────────────────────────────────────────────
-
 rules_version = '2';
-
+// ============================================================================
+// SHARED Firestore rules — one Firebase project, two apps.
+//
+// Firestore rules are deployed PER PROJECT, not per app: only one ruleset
+// can be active in a project at a time. This file is the UNION of the two
+// apps' rulesets and MUST stay byte-identical in both repos:
+//
+//   - App Portfolio Command Center (portfolio-app-freebuff)
+//       collections: profiles, projects, project_versions, repositories,
+//       deployments, tasks, model_evaluations, activity, reports
+//   - Kitchen Agent "Cook With Me" (cook-with-freebuff)
+//       collections: users, dietary_profiles, recipes, cooking_sessions,
+//       cooking_session_events, timers, pantry_items, agent_tool_logs
+//
+// Both apps are per-user isolated: `profiles`, `users` and
+// `dietary_profiles` are keyed by the authenticated uid; every other
+// collection carries a `userId` field that must equal the authenticated
+// uid. The collection sets are disjoint, so this union is a strict
+// superset of either app's original ruleset — deploying from EITHER repo
+// keeps the whole shared project consistent for BOTH apps.
+//
+// Overlap semantics: when a document matches several match statements the
+// request is allowed if ANY condition is true, so the trailing catch-all
+// deny below cannot override the explicit per-collection rules above it.
+//
+// Deploy with (from either repo):
+//   firebase deploy --only firestore:rules --project portfolio-app-freebuff2
+// ============================================================================
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    // ── Helper: check that the requesting user owns the document ──────────
+    function isAuthed() {
+      return request.auth != null;
+    }
+
     function isOwner(userId) {
       return request.auth != null && request.auth.uid == userId;
     }
@@ -19,60 +42,115 @@ service cloud.firestore {
       return request.auth != null;
     }
 
-    // ── Users collection (per-user profiles) ─────────────────────────────
+    // ── App Portfolio Command Center ─────────────────────────────────────────
+    // profiles (keyed by uid; no inner userId field). Reads of a
+    // not-yet-existing document are allowed (resource == null) so a first-run
+    // getDoc returns NOT_FOUND instead of a spurious 403.
+    match /profiles/{profileId} {
+      allow read: if isAuthed()
+        && (resource == null || profileId == request.auth.uid);
+      allow create, update, delete: if isAuthed()
+        && profileId == request.auth.uid;
+    }
+
+    // Portfolio collections (userId field isolation).
+    match /projects/{document} {
+      allow read, update, delete: if isAuthed()
+        && (resource == null || resource.data.userId == request.auth.uid);
+      allow create: if isAuthed()
+        && request.resource.data.userId == request.auth.uid;
+    }
+    match /project_versions/{document} {
+      allow read, update, delete: if isAuthed()
+        && (resource == null || resource.data.userId == request.auth.uid);
+      allow create: if isAuthed()
+        && request.resource.data.userId == request.auth.uid;
+    }
+    match /repositories/{document} {
+      allow read, update, delete: if isAuthed()
+        && (resource == null || resource.data.userId == request.auth.uid);
+      allow create: if isAuthed()
+        && request.resource.data.userId == request.auth.uid;
+    }
+    match /deployments/{document} {
+      allow read, update, delete: if isAuthed()
+        && (resource == null || resource.data.userId == request.auth.uid);
+      allow create: if isAuthed()
+        && request.resource.data.userId == request.auth.uid;
+    }
+    match /tasks/{document} {
+      allow read, update, delete: if isAuthed()
+        && (resource == null || resource.data.userId == request.auth.uid);
+      allow create: if isAuthed()
+        && request.resource.data.userId == request.auth.uid;
+    }
+    match /model_evaluations/{document} {
+      allow read, update, delete: if isAuthed()
+        && (resource == null || resource.data.userId == request.auth.uid);
+      allow create: if isAuthed()
+        && request.resource.data.userId == request.auth.uid;
+    }
+    match /activity/{document} {
+      allow read, update, delete: if isAuthed()
+        && (resource == null || resource.data.userId == request.auth.uid);
+      allow create: if isAuthed()
+        && request.resource.data.userId == request.auth.uid;
+    }
+    match /reports/{document} {
+      allow read, update, delete: if isAuthed()
+        && (resource == null || resource.data.userId == request.auth.uid);
+      allow create: if isAuthed()
+        && request.resource.data.userId == request.auth.uid;
+    }
+
+    // ── Kitchen Agent (cook-with-freebuff) ───────────────────────────────────
+    // users + dietary_profiles (keyed by uid).
     match /users/{userId} {
       allow read, write: if isOwner(userId);
     }
-
-    // ── Dietary profiles ─────────────────────────────────────────────────
     match /dietary_profiles/{userId} {
       allow read, write: if isOwner(userId);
     }
 
-    // ── Recipes ──────────────────────────────────────────────────────────
+    // Kitchen Agent collections (userId field isolation).
     match /recipes/{recipeId} {
       allow read: if resource.data.userId == request.auth.uid;
       allow create: if isAuthenticated()
         && request.resource.data.userId == request.auth.uid;
       allow update, delete: if resource.data.userId == request.auth.uid;
     }
-
-    // ── Cooking sessions ─────────────────────────────────────────────────
     match /cooking_sessions/{sessionId} {
       allow read: if resource.data.userId == request.auth.uid;
       allow create: if isAuthenticated()
         && request.resource.data.userId == request.auth.uid;
       allow update, delete: if resource.data.userId == request.auth.uid;
     }
-
-    // ── Cooking session events ───────────────────────────────────────────
     match /cooking_session_events/{eventId} {
       allow read: if resource.data.userId == request.auth.uid;
       allow create: if isAuthenticated()
         && request.resource.data.userId == request.auth.uid;
     }
-
-    // ── Timers ───────────────────────────────────────────────────────────
     match /timers/{timerId} {
       allow read: if resource.data.userId == request.auth.uid;
       allow create: if isAuthenticated()
         && request.resource.data.userId == request.auth.uid;
       allow update, delete: if resource.data.userId == request.auth.uid;
     }
-
-    // ── Pantry items ─────────────────────────────────────────────────────
     match /pantry_items/{itemId} {
       allow read: if resource.data.userId == request.auth.uid;
       allow create: if isAuthenticated()
         && request.resource.data.userId == request.auth.uid;
       allow update, delete: if resource.data.userId == request.auth.uid;
     }
-
-    // ── Agent tool logs ──────────────────────────────────────────────────
     match /agent_tool_logs/{logId} {
       allow read: if resource.data.userId == request.auth.uid;
       allow create: if isAuthenticated()
         && request.resource.data.userId == request.auth.uid;
+    }
+
+    // --- Catch-all (deny everything else) — keep last. ---
+    match /{document=**} {
+      allow read, write: if false;
     }
   }
 }
