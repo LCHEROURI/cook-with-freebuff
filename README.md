@@ -312,7 +312,7 @@ The gate's FAIL and the hook's BLOCK paths are easy to reproduce with a
 throwaway detached worktree at an older commit — the live site is always
 at (or ahead of) your recent commits, so the comparison necessarily
 mismatches. Each one-liner creates the worktree, runs the check, prints the
-verdict, and always cleans up. The worktree commit must be recent enough to
+verdict, and always cleans up.
 
 Each proof is also one npm script — no copy-paste needed (the runner
 creates the worktree, asserts the expected verdict actually appeared, and
@@ -325,9 +325,12 @@ npm run verify:hook-block-proof     # Hook BLOCK path    → expects ✗ BLOCKED
 ```
 
 The one-liners below document exactly what each script runs under the hood.
-include the gate driver with `--stale-guard` support (any commit at or
-after `067b313` — required by the hook's BLOCK one-liner, since the hook
-now delegates to that mode); `HEAD~1` normally is.
+The Gate FAIL and CI stale-guard one-liners run the worktree's OWN driver,
+so their worktree commit must be recent enough to include the gate driver
+with `--stale-guard` support (any commit at or after `067b313`; `HEAD~1`
+normally is). The Hook BLOCK one-liner copies the CURRENT hook AND the
+current `--stale-guard` driver (plus the base driver it composes) into the
+worktree, so it is independent of the worktree commit's age.
 
 **Gate FAIL path** (expect `RESULT: FAIL` and `gate exit=1`):
 
@@ -345,7 +348,7 @@ git worktree add --detach /tmp/cook-stale-guard HEAD~1 && (cd /tmp/cook-stale-gu
 **Hook BLOCK path** (expect `✗ BLOCKED` and `hook exit=1`):
 
 ```bash
-git worktree add --detach /tmp/cook-hook-block HEAD~1 && mkdir -p /tmp/cook-hook-block/.githooks && cp .githooks/pre-push /tmp/cook-hook-block/.githooks/ && (cd /tmp/cook-hook-block && printf 'refs/heads/main a refs/heads/main b\n' | bash .githooks/pre-push; echo "hook exit=$?"); git worktree remove /tmp/cook-hook-block --force
+git worktree add --detach /tmp/cook-hook-block HEAD~1 && mkdir -p /tmp/cook-hook-block/.githooks && cp .githooks/pre-push /tmp/cook-hook-block/.githooks/ && cp scripts/verify-deployed-hash-gate.mjs scripts/verify-deployed-hash.mjs /tmp/cook-hook-block/scripts/ && (cd /tmp/cook-hook-block && printf 'refs/heads/main a refs/heads/main b\n' | bash .githooks/pre-push; echo "hook exit=$?"); git worktree remove /tmp/cook-hook-block --force
 ```
 
 All three are read-only against git and Vercel — nothing is pushed, deployed, or

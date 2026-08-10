@@ -77,15 +77,22 @@ describe("README · 'Re-proving the gate's teeth in seconds'", () => {
     expect(TEETH).toContain('`✗ STALE-HEAD BLOCK` and `gate exit=1`');
   });
 
-  it('keeps the Hook BLOCK one-liner (hook copied into the worktree, main-push stdin) with its BLOCKED verdict', () => {
-    // The hook proof needs three load-bearing pieces: the hook copied into
-    // the worktree (a fresh worktree has no .githooks), a main-push stdin
-    // line piped through it, and the exit echo.
+  it('keeps the Hook BLOCK one-liner (current hook AND driver copied in, main-push stdin) with its BLOCKED verdict', () => {
+    // The hook proof needs four load-bearing pieces: the hook copied into
+    // the worktree (a fresh worktree has no .githooks), the CURRENT
+    // --stale-guard driver copied in too (the unified hook delegates to it —
+    // the copy is what makes the proof independent of the worktree commit's
+    // age), a main-push stdin line piped through it, and the exit echo.
     expect(TEETH).toContain('git worktree add --detach /tmp/cook-hook-block HEAD~1');
     expect(TEETH).toContain("mkdir -p /tmp/cook-hook-block/.githooks && cp .githooks/pre-push /tmp/cook-hook-block/.githooks/");
+    expect(TEETH).toContain("cp scripts/verify-deployed-hash-gate.mjs scripts/verify-deployed-hash.mjs /tmp/cook-hook-block/scripts/");
     expect(TEETH).toContain("printf 'refs/heads/main a refs/heads/main b\\n' | bash .githooks/pre-push");
     expect(TEETH).toContain('echo "hook exit=$?"');
     expect(TEETH).toContain('git worktree remove /tmp/cook-hook-block --force');
     expect(TEETH).toContain('`✗ BLOCKED` and `hook exit=1`');
+    // The requirement note must reflect the split: the hook proof copies its
+    // artifacts (age-independent); the gate proofs run the worktree's own
+    // driver and still need >= 067b313.
+    expect(TEETH).toContain('independent of the worktree commit');
   });
 });

@@ -68,24 +68,33 @@ describe('scripts/verify-teeth-proofs.mjs · throwaway-worktree mechanics', () =
     expect(SRC).toContain("['worktree', 'prune']");
   });
 
-  it('guards that the worktree commit carries the gate driver (≥ 067b313 requirement)', () => {
-    // The README requires the worktree commit to be at or after 067b313; the
-    // script checks the driver file is actually present in the worktree so
-    // the proof can never silently run a driver-less checkout.
+  it('guards the gate proofs (worktree carries the driver, ≥ 067b313) but EXEMPTS hook-block', () => {
+    // The README requires the worktree commit to be at or after 067b313 for
+    // the gate proofs, which run the worktree's OWN driver. hook-block is
+    // exempt — it copies the current driver in, so it is independent of the
+    // worktree commit's age (the same split the README documents).
     expect(SRC).toContain("'scripts', 'verify-deployed-hash-gate.mjs'");
     expect(SRC).toContain('predates the gate driver');
     expect(SRC).toContain('067b313');
+    expect(SRC).toContain("mode !== 'hook-block' && !existsSync");
   });
 
-  it('copies .env.local (token resolution) and the CURRENT hook for hook-block', () => {
+  it('copies .env.local (token resolution) and, for hook-block, the CURRENT hook + both drivers', () => {
     // A fresh worktree does not check out gitignored files; the one-liners'
     // hook proof copies the hook, and the token must resolve exactly like a
-    // real push (env → copied .env.local → CLI auth store).
+    // real push (env → copied .env.local → CLI auth store). The unified hook
+    // delegates to the gate driver, so the current driver (and the base
+    // driver it composes) must be copied in too — otherwise the proof would
+    // silently run the worktree commit's stale driver.
     expect(SRC).toContain("resolve(ROOT, '.env.local')");
     expect(SRC).toContain("resolve(wtPath, '.env.local')");
     expect(SRC).toContain("mode === 'hook-block'");
     expect(SRC).toContain("resolve(ROOT, '.githooks', 'pre-push')");
     expect(SRC).toContain("resolve(wtPath, '.githooks', 'pre-push')");
+    expect(SRC).toContain("resolve(ROOT, 'scripts', 'verify-deployed-hash-gate.mjs')");
+    expect(SRC).toContain("resolve(wtPath, 'scripts', 'verify-deployed-hash-gate.mjs')");
+    expect(SRC).toContain("resolve(ROOT, 'scripts', 'verify-deployed-hash.mjs')");
+    expect(SRC).toContain("resolve(wtPath, 'scripts', 'verify-deployed-hash.mjs')");
   });
 });
 
