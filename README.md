@@ -239,6 +239,11 @@ npm run build
 # guided flow + safety gate + timer + Gemini turn, with cleanup)
 npm run verify:live
 # → https://cook-with-freebuff.vercel.app (override: npm run verify:live -- --app URL)
+
+# Same check against a LOCAL dev server — boots `next dev` on port 3100,
+# warms the routes, runs the full check, and tears the server down, all in
+# one command (port override: VERIFY_LOCAL_PORT=3105)
+npm run verify:live:local
 ```
 
 ## Project principles
