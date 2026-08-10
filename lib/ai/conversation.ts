@@ -102,7 +102,7 @@ const INGREDIENT_SCHEMA = {
   required: ['name', 'quantity', 'unit'],
 } as const;
 
-const TOOL_DECLARATIONS = [
+export const TOOL_DECLARATIONS = [
   {
     name: 'start_cooking_session',
     description: 'Start a new cooking session.',
@@ -316,6 +316,76 @@ const TOOL_DECLARATIONS = [
     parameters: {
       type: 'object',
       properties: { recipe: { type: 'object' }, servings: { type: 'number' } },
+    },
+  },
+  {
+    name: 'get_pantry',
+    description: 'List the pantry, optionally filtered by name. Entries older than 30 days are flagged stale.',
+    parameters: { type: 'object', properties: { name: { type: 'string' } } },
+  },
+  {
+    name: 'add_pantry_item',
+    description: 'Add an item the user says they have to the pantry (voice add).',
+    parameters: {
+      type: 'object',
+      properties: {
+        name: { type: 'string' },
+        quantity: { type: 'number', nullable: true },
+        unit: { type: 'string' },
+      },
+      required: ['name'],
+    },
+  },
+  {
+    name: 'update_pantry_item',
+    description: 'Correct a pantry item quantity, unit, or notes.',
+    parameters: {
+      type: 'object',
+      properties: {
+        itemId: { type: 'string' },
+        quantity: { type: 'number', nullable: true },
+        unit: { type: 'string', nullable: true },
+        notes: { type: 'string', nullable: true },
+      },
+      required: ['itemId'],
+    },
+  },
+  {
+    name: 'remove_pantry_item',
+    description: 'Remove a pantry item by itemId or exact name.',
+    parameters: {
+      type: 'object',
+      properties: { itemId: { type: 'string' }, name: { type: 'string' } },
+    },
+  },
+  {
+    name: 'confirm_pantry_item',
+    description: 'Confirm the user still has a pantry item — full confidence, refreshed date.',
+    parameters: { type: 'object', properties: { itemId: { type: 'string' } }, required: ['itemId'] },
+  },
+  {
+    name: 'confirm_pending_pantry_items',
+    description: 'Confirm every pantry item the user just offered in this session.',
+    parameters: { type: 'object', properties: {} },
+  },
+  {
+    name: 'get_dietary_profile',
+    description: 'Inspect the remembered dietary profile (allergies, restrictions, dislikes, cuisines, servings, equipment).',
+    parameters: { type: 'object', properties: {} },
+  },
+  {
+    name: 'update_dietary_profile',
+    description: 'Change the remembered dietary profile. Arrays replace the whole list — pass the full desired set.',
+    parameters: {
+      type: 'object',
+      properties: {
+        allergies: stringArray,
+        dietaryRestrictions: stringArray,
+        dislikedIngredients: stringArray,
+        preferredCuisines: stringArray,
+        defaultServings: { type: 'number' },
+        preferredEquipment: stringArray,
+      },
     },
   },
 ] as const;

@@ -173,6 +173,31 @@ The app will follow the same contract-locked verification discipline as Freebuff
 - [x] New tools: `correct_ingredient`, `recover_session`; `/api/cook` actions: substitute / apply_substitution / correct / recover / clear_recovery
 - [x] 36 new tests (substitute engine, K7 guide flows + invariants, tools, route, commands) — 245 total green + production build passes
 
+## K8 — User memory, dietary profile & pantry intelligence
+
+### Dietary profile (long-term preferences)
+- [x] `DietaryProfile` persisted per user (`allergies`, `dietaryRestrictions`, `dislikedIngredients`, `preferredCuisines`, `defaultServings`, `preferredEquipment`)
+- [x] `get_dietary_profile` / `update_dietary_profile` tools — inspect and change remembered information; arrays replace whole lists
+- [x] Explicit allergies/safety constraints take priority (single source of truth for generation/validation to consult)
+
+### Pantry model & confidence
+- [x] `pantry_items` with quantity/unit, `confidence` (0..1), `source` (VOICE/MANUAL/RECIPE_USAGE, BARCODE/VISION reserved), `lastConfirmedAt`, optional expiration/notes
+- [x] Honest staleness: entries older than 30 days are flagged `stale` and never silently trusted ("You had garlic last time — do you still have some?")
+- [x] Explicit confirmation (`confirm_pantry_item`) raises confidence to 1 and refreshes the date
+
+### Pantry conversational tools
+- [x] `get_pantry`, `add_pantry_item`, `update_pantry_item`, `remove_pantry_item`, `confirm_pantry_item` + `confirm_pending_pantry_items`
+- [x] "I always have olive oil, salt and black pepper" → parsed names added to the pantry, listed as **pending on the session**, and confirmed on "yes" (persistence after confirmation)
+- [x] Orchestrator intents: `PANTRY_ADD` ("I always have…", "add X to my pantry"), `PANTRY_GET` ("what's in my pantry", "do I have X"), `PANTRY_REMOVE` ("remove X from my pantry")
+- [x] `CONFIRM` fallback chain: pending pantry items → collected ingredients → advance the step
+- [x] Gemini tool declarations extended with all 8 pantry/profile tools (`nullable: true` schema rule kept — no union types)
+
+### Recipe consumption
+- [x] `consumeForRecipe` on guided completion — adjusts ONLY high-confidence, quantity-known matches; uncertain quantities are never reduced automatically
+- [x] Wired into `GuidedCookingService` (optional `PantryService`, best-effort, non-fatal) and every tool-route construction via `createGuideService`
+- [x] Session events logged: `INGREDIENT_ADDED` / `INGREDIENT_REMOVED` / `INGREDIENT_CORRECTED` / `PANTRY_ITEM_CONFIRMED`
+- [x] 30 new tests (pantry service, pantry tools, commands, orchestrator flows, guide-service consumption, Gemini declarations) — 284 total green + production build passes
+
 ## Development
 
 ```bash

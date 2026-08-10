@@ -11,6 +11,8 @@ import type {
   CookingTimer,
   Recipe,
   AgentToolLog,
+  PantryItem,
+  DietaryProfile,
 } from '../../domain/types';
 import type { SessionService } from '../session-service';
 
@@ -77,6 +79,19 @@ export interface RecipeStore {
   updateRecipe(recipe: Recipe): Promise<void>;
 }
 
+export interface PantryStore {
+  listItems(userId: string): Promise<PantryItem[]>;
+  getItem(id: string): Promise<PantryItem | null>;
+  /** Create or overwrite a pantry item. */
+  upsertItem(item: PantryItem): Promise<void>;
+  deleteItem(id: string): Promise<void>;
+}
+
+export interface DietaryProfileStore {
+  getProfile(userId: string): Promise<DietaryProfile | null>;
+  upsertProfile(profile: DietaryProfile): Promise<void>;
+}
+
 // ── Tool context ─────────────────────────────────────────────────────────────
 
 export interface ToolContext {
@@ -87,6 +102,8 @@ export interface ToolContext {
   timerStore: TimerStore;
   logStore: LogStore;
   recipeStore?: RecipeStore;
+  pantryStore?: PantryStore;
+  dietaryProfileStore?: DietaryProfileStore;
 }
 
 // ── Tool definition ──────────────────────────────────────────────────────────

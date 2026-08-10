@@ -136,6 +136,14 @@ export const cookingSessionSchema = z.object({
   availableIngredients: z.array(ingredientSchema).default([]),
   recoveryContext: recoveryContextSchema.optional(),
   pendingSubstitution: z.string().optional(),
+  pendingPantryItems: z
+    .array(z.object({
+      itemId: z.string().min(1),
+      name: z.string().min(1),
+      quantity: z.number().positive().optional(),
+      unit: z.string().optional(),
+    }))
+    .optional(),
   startedAt: z.number().int().positive(),
   lastActivityAt: z.number().int().positive(),
   pausedAt: z.number().int().positive().optional(),
@@ -166,6 +174,7 @@ export const sessionEventTypeSchema = z.enum([
   'SUBSTITUTION_REQUESTED',
   'SUBSTITUTION_APPLIED',
   'SAFETY_WARNING_TRIGGERED',
+  'PANTRY_ITEM_CONFIRMED',
   'ERROR_OCCURRED',
   'ERROR_RECOVERED',
   'SESSION_COMPLETED',

@@ -20,6 +20,7 @@ import type {
   Ingredient,
   EpochMs,
   RecoveryContext,
+  PendingPantryItem,
 } from '../domain/types';
 
 // ── Store interface (abstracted for testability) ─────────────────────────────
@@ -606,7 +607,12 @@ export class SessionService {
   async updateSessionMetadata(
     sessionId: string,
     expectedVersion: number,
-    metadata: { recipeId?: string; recoveryContext?: RecoveryContext | null; pendingSubstitution?: string | null },
+    metadata: {
+      recipeId?: string;
+      recoveryContext?: RecoveryContext | null;
+      pendingSubstitution?: string | null;
+      pendingPantryItems?: PendingPantryItem[] | null;
+    },
     options?: { correlationId?: string },
   ): Promise<CookingSession> {
     if (hasBeenProcessed(options?.correlationId)) {
@@ -627,6 +633,9 @@ export class SessionService {
     }
     if (metadata.pendingSubstitution !== undefined) {
       partial.pendingSubstitution = metadata.pendingSubstitution ?? undefined;
+    }
+    if (metadata.pendingPantryItems !== undefined) {
+      partial.pendingPantryItems = metadata.pendingPantryItems ?? undefined;
     }
 
     const updated = await this.store.updateSession(sessionId, partial, expectedVersion);

@@ -119,6 +119,8 @@ export interface CookingSession {
   recoveryContext?: RecoveryContext;
   /** The ingredient the cook is out of, while a substitution is pending (K7). */
   pendingSubstitution?: string;
+  /** Pantry items the user offered ("I always have…") awaiting confirmation (K8). */
+  pendingPantryItems?: PendingPantryItem[];
   startedAt: EpochMs;
   lastActivityAt: EpochMs;
   pausedAt?: EpochMs;
@@ -177,6 +179,7 @@ export type SessionEventType =
   | 'SUBSTITUTION_REQUESTED'
   | 'SUBSTITUTION_APPLIED'
   | 'SAFETY_WARNING_TRIGGERED'
+  | 'PANTRY_ITEM_CONFIRMED'
   | 'ERROR_OCCURRED'
   | 'ERROR_RECOVERED'
   | 'SESSION_COMPLETED';
@@ -211,6 +214,15 @@ export interface CookingTimer {
 }
 
 // ── Pantry ───────────────────────────────────────────────────────────────────
+
+/** A pantry item offered via voice, awaiting the user's confirmation (K8). */
+export interface PendingPantryItem {
+  /** The persisted pantry_items doc id — confirmation resolves via this. */
+  itemId: string;
+  name: string;
+  quantity?: number;
+  unit?: string;
+}
 
 export type PantryItemSource =
   | 'VOICE'

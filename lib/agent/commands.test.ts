@@ -83,11 +83,47 @@ describe('matchCommand', () => {
     expect(m?.arguments).toEqual({ name: 'chicken thighs' });
   });
 
-  it('maps a short confirmation to confirm_available_ingredients with a step fallback', () => {
+  it('maps a short confirmation to the pending-pantry chain with step fallback', () => {
     const m = matchCommand('yes');
     expect(m?.intent).toBe('CONFIRM');
-    expect(m?.tool).toBe('confirm_available_ingredients');
-    expect(m?.fallbackTool).toBe('complete_current_step');
+    expect(m?.tool).toBe('confirm_pending_pantry_items');
+    expect(m?.fallbackTools).toEqual(['confirm_available_ingredients', 'complete_current_step']);
+  });
+
+  it('maps "I always have …" to PANTRY_ADD with the extracted names', () => {
+    const m = matchCommand('I always have olive oil, salt and black pepper');
+    expect(m?.intent).toBe('PANTRY_ADD');
+    expect(m?.arguments).toEqual({ names: ['olive oil', 'salt', 'black pepper'] });
+  });
+
+  it('maps "add X to my pantry" to PANTRY_ADD', () => {
+    const m = matchCommand('add flour to my pantry');
+    expect(m?.intent).toBe('PANTRY_ADD');
+    expect(m?.arguments).toEqual({ names: ['flour'] });
+  });
+
+  it('leaves a plain "I have …" brain-dump alone (ingredient extraction)', () => {
+    expect(matchCommand('I have some chicken thighs, three tomatoes and rice')).toBeNull();
+  });
+
+  it('maps a pantry listing question to PANTRY_GET without a filter', () => {
+    const m = matchCommand("what's in my pantry?");
+    expect(m?.intent).toBe('PANTRY_GET');
+    expect(m?.tool).toBe('get_pantry');
+    expect(m?.arguments?.name).toBeUndefined();
+  });
+
+  it('maps "do I have X" to PANTRY_GET with a name filter', () => {
+    const m = matchCommand('do I have garlic?');
+    expect(m?.intent).toBe('PANTRY_GET');
+    expect(m?.arguments).toEqual({ name: 'garlic' });
+  });
+
+  it('maps "remove X from my pantry" to PANTRY_REMOVE', () => {
+    const m = matchCommand('remove olive oil from my pantry');
+    expect(m?.intent).toBe('PANTRY_REMOVE');
+    expect(m?.tool).toBe('remove_pantry_item');
+    expect(m?.arguments).toEqual({ name: 'olive oil' });
   });
 
   it('does not treat a long sentence as a confirmation', () => {
@@ -96,10 +132,6 @@ describe('matchCommand', () => {
 
   it('maps help to a help intent', () => {
     expect(matchCommand('what can you do?')?.intent).toBe('HELP');
-  });
-
-  it('returns null for a brain-dump', () => {
-    expect(matchCommand('I have some chicken thighs, three tomatoes and rice')).toBeNull();
   });
 
   it('returns null for empty input', () => {

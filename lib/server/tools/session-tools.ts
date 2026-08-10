@@ -9,11 +9,11 @@ import { z } from 'zod';
 import { ok, fail, toToolError } from './types';
 import type { ToolDefinition, ToolContext, ToolResult } from './types';
 import type { CookingSession } from '../../domain/types';
-import { GuidedCookingService } from '../guide-service';
+import { createGuideService } from './guide-tools';
 
 /** Guided-cooking service bound to the tool context. */
-function guide(ctx: ToolContext): GuidedCookingService {
-  return new GuidedCookingService(ctx.sessionService, ctx.timerStore, ctx.recipeStore);
+function guide(ctx: ToolContext) {
+  return createGuideService(ctx);
 }
 
 type ResolvedSession =

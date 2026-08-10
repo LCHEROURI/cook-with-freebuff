@@ -9,7 +9,14 @@ import 'server-only';
 import * as repo from './repositories';
 import { SessionService } from './session-service';
 import type { SessionStore } from './session-service';
-import type { ToolContext, TimerStore, LogStore, RecipeStore } from './tools/types';
+import type {
+  ToolContext,
+  TimerStore,
+  LogStore,
+  RecipeStore,
+  PantryStore,
+  DietaryProfileStore,
+} from './tools/types';
 import { registerGeminiProviders } from '../ai/register';
 
 // Register concrete AI providers (no-op when GOOGLE_AI_API_KEY is missing).
@@ -41,6 +48,18 @@ export const firestoreRecipeStore: RecipeStore = {
   updateRecipe: (r) => repo.updateRecipe(r),
 };
 
+export const firestorePantryStore: PantryStore = {
+  listItems: (userId) => repo.listPantryItems(userId),
+  getItem: (id) => repo.getPantryItem(id),
+  upsertItem: (item) => repo.createPantryItem(item),
+  deleteItem: (id) => repo.deletePantryItem(id),
+};
+
+export const firestoreDietaryProfileStore: DietaryProfileStore = {
+  getProfile: (userId) => repo.getDietaryProfile(userId),
+  upsertProfile: (profile) => repo.upsertDietaryProfile(profile),
+};
+
 /** Singleton session service over Firestore. */
 export const productionSessionService = new SessionService(firestoreSessionStore);
 
@@ -56,5 +75,7 @@ export function buildProductionContext(
     timerStore: firestoreTimerStore,
     logStore: firestoreLogStore,
     recipeStore: firestoreRecipeStore,
+    pantryStore: firestorePantryStore,
+    dietaryProfileStore: firestoreDietaryProfileStore,
   };
 }

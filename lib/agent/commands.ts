@@ -21,6 +21,9 @@ export type AgentIntent =
   | 'CORRECT'
   | 'CONFIRM'
   | 'COOK'
+  | 'PANTRY_ADD'
+  | 'PANTRY_GET'
+  | 'PANTRY_REMOVE'
   | 'HELP';
 
 export interface CommandMatch {
@@ -30,6 +33,12 @@ export interface CommandMatch {
   arguments?: Record<string, unknown>;
   /** Fallback tool when the primary fails with a recoverable error. */
   fallbackTool?: string;
+  /**
+   * Fallback chain walked in order when the primary (and prior fallbacks)
+   * fail with a recoverable error. Used by CONFIRM: pending pantry items →
+   * available ingredients → complete current step.
+   */
+  fallbackTools?: string[];
   /** When set, the agent asks this question instead of calling a tool. */
   needsFollowUp?: string;
 }
@@ -117,7 +126,30 @@ const RULES: Rule[] = [
       const words = t.split(/\s+/).filter(Boolean);
       return words.length <= 5 && CONFIRM_RE.test(t);
     },
-    match: { intent: 'CONFIRM', tool: 'confirm_available_ingredients', fallbackTool: 'complete_current_step' },
+    // "yes" acknowledges whatever is pending, in priority order: pantry items
+    // the user just offered → collected ingredients → nothing (advance step).
+    match: {
+      intent: 'CONFIRM',
+      tool: 'confirm_pending_pantry_items',
+      fallbackTools: ['confirm_available_ingredients', 'complete_current_step'],
+    },
+  },
+  {
+    intent: 'PANTRY_ADD',
+    test: (t) =>
+      /\b(?:i always have|we always have|i always keep|add .* to (?:my )?pantry|put .* in (?:my )?pantry)\b/.test(t) ||
+      /^\s*add\b.*\b(?:to (?:my )?pantry|to the pantry)$/.test(t),
+    match: { intent: 'PANTRY_ADD' },
+  },
+  {
+    intent: 'PANTRY_GET',
+    test: (t) => /\b(what(?:'s| is) in (?:my |the )?pantry|what do i have|what(?:'s| is) in stock|do i (?:still )?have|do you have any)\b/.test(t),
+    match: { intent: 'PANTRY_GET' },
+  },
+  {
+    intent: 'PANTRY_REMOVE',
+    test: (t) => /\b(remove .* from (?:my |the )?pantry|take .* out of (?:my |the )?pantry|delete .* from (?:my |the )?pantry)\b/.test(t),
+    match: { intent: 'PANTRY_REMOVE' },
   },
   {
     intent: 'HELP',
@@ -135,6 +167,39 @@ const QUANTITY_WORDS: Record<string, number> = {
   a: 1, an: 1, one: 1, two: 2, three: 3, four: 4, five: 5,
   six: 6, seven: 7, eight: 8, nine: 9, ten: 10, half: 0.5, couple: 2,
 };
+
+/**
+ * "I always have olive oil, salt and black pepper" → ['olive oil', 'salt',
+ * 'black pepper']. "add flour to my pantry" → ['flour']. Returns null when
+ * nothing listable follows the trigger phrase.
+ */
+export function parsePantryAdd(text: string): string[] | null {
+  const m = text.match(/\b(?:always )?(?:have|keep|stock)\b\s+(.+)$/) ?? text.match(/^\s*(?:add|put)\s+(.+?)\s+(?:to|in)\s+(?:my |the )?pantry$/);
+  if (!m) return null;
+  let clause = m[1].replace(/[.!?]+$/, '').trim();
+  if (!clause) return null;
+  const items = clause
+    .split(/\s*(?:,|and)\s+/)
+    .map((s) => s.replace(/^(?:some|any|a|an|the|a bit of|plenty of|lots of|a few|fresh|dried)\s+/, '').trim())
+    .filter(Boolean);
+  return items.length > 0 ? items : null;
+}
+
+/** "do I have garlic" → 'garlic'; "what's in my pantry" → null (list all). */
+export function parsePantryQuery(text: string): string | null {
+  const m = text.match(/\bdo i (?:still )?have\s+(.+)$/);
+  if (!m) return null;
+  const name = m[1].replace(/[.!?]+$/, '').trim();
+  return name.length > 0 ? name : null;
+}
+
+/** "remove olive oil from my pantry" → 'olive oil'. */
+export function parsePantryRemove(text: string): string | null {
+  const m = text.match(/\b(?:remove|take|delete)\s+(.+?)\s+(?:from|out of)\s+(?:my |the )?pantry$/);
+  if (!m) return null;
+  const name = m[1].replace(/[.!?]+$/, '').trim();
+  return name.length > 0 ? name : null;
+}
 
 /** "I don't have garlic" / "I'm out of milk" → "garlic" / "milk". */
 export function parseSubstituteIngredient(text: string): string | null {
@@ -216,6 +281,23 @@ export function matchCommand(utterance: string): CommandMatch | null {
       }
       return { intent: 'USE_SUBSTITUTE', needsFollowUp: 'Which substitute should I use?' };
     }
+    if (rule.intent === 'PANTRY_ADD') {
+      const names = parsePantryAdd(text);
+      if (names) {
+        return { intent: 'PANTRY_ADD', arguments: { names } };
+      }
+      return { intent: 'PANTRY_ADD', needsFollowUp: 'What would you like me to remember in your pantry?' };
+    }
+    if (rule.intent === 'PANTRY_GET') {
+      return { intent: 'PANTRY_GET', tool: 'get_pantry', arguments: { name: parsePantryQuery(text) ?? undefined } };
+    }
+    if (rule.intent === 'PANTRY_REMOVE') {
+      const name = parsePantryRemove(text);
+      if (name) {
+        return { intent: 'PANTRY_REMOVE', tool: 'remove_pantry_item', arguments: { name } };
+      }
+      return { intent: 'PANTRY_REMOVE', needsFollowUp: 'Which item should I remove from your pantry?' };
+    }
 
     return { ...rule.match };
   }
@@ -231,5 +313,7 @@ export const HELP_TEXT = [
   '- "pause" / "resume" anytime',
   '- "how much time is left?" for timers',
   '- "I don\'t have X, what can I use instead?" for substitutions',
+  '- "I always have olive oil, salt and pepper" to remember your pantry',
+  '- "what\'s in my pantry?" / "remove X from my pantry"',
   '- "stop" to end the session',
 ].join('\n');

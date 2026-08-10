@@ -3,7 +3,7 @@ import { ConversationOrchestrator } from './orchestrator';
 import { createDefaultToolRegistry } from '../server/tools';
 import { ToolRegistry, executeTool } from '../server/tools/registry';
 import { SessionService, InMemorySessionStore } from '../server/session-service';
-import { InMemoryTimerStore, InMemoryLogStore, InMemoryRecipeStore } from '../server/tools/registry';
+import { InMemoryTimerStore, InMemoryLogStore, InMemoryRecipeStore, InMemoryPantryStore, InMemoryDietaryProfileStore } from '../server/tools/registry';
 import { GuidedCookingService } from '../server/guide-service';
 import type { ToolContext } from '../server/tools/types';
 import type { ConversationAgent } from '../ai/provider';
@@ -46,6 +46,8 @@ function makeContext(userId = 'user-1'): { ctx: ToolContext; store: InMemorySess
       timerStore: new InMemoryTimerStore(),
       logStore: new InMemoryLogStore(),
       recipeStore: new InMemoryRecipeStore(),
+      pantryStore: new InMemoryPantryStore(),
+      dietaryProfileStore: new InMemoryDietaryProfileStore(),
     },
     store,
   };
@@ -170,6 +172,58 @@ describe('ConversationOrchestrator', () => {
     const orch = new ConversationOrchestrator({ registry, context: ctx });
     const turn = await orch.process('what do I do now?');
     expect(turn.toolCalls[0]?.tool).toBe('get_current_step');
+  });
+
+  it('adds "I always have …" items to the pantry and asks for confirmation', async () => {
+    const { ctx } = makeContext();
+    const orch = new ConversationOrchestrator({ registry, context: ctx });
+    const turn = await orch.process('I always have olive oil and salt');
+
+    // A session is started (pending items live on it) before the two adds.
+    expect(turn.toolCalls.map((c) => c.tool)).toEqual(['start_cooking_session', 'add_pantry_item', 'add_pantry_item']);
+    expect(turn.toolCalls.every((c) => c.result.success)).toBe(true);
+    expect(turn.response).toContain('olive oil');
+    expect(turn.response).toContain('salt');
+    expect(turn.response).toContain('Say "yes" to confirm');
+  });
+
+  it('confirms pending pantry items with "yes"', async () => {
+    const { ctx, store } = makeContext();
+    const orch = new ConversationOrchestrator({ registry, context: ctx });
+    await orch.process('I always have olive oil and salt');
+
+    const confirm = await orch.process('yes');
+    expect(confirm.toolCalls.at(-1)?.tool).toBe('confirm_pending_pantry_items');
+    expect(confirm.toolCalls.at(-1)?.result.success).toBe(true);
+    expect(confirm.response).toContain('saved olive oil, salt to your pantry');
+
+    const session = await store.getActiveSession('user-1');
+    expect(session!.pendingPantryItems).toEqual([]);
+  });
+
+  it('lists the pantry on request with stale items flagged', async () => {
+    const { ctx } = makeContext();
+    const orch = new ConversationOrchestrator({ registry, context: ctx });
+    await orch.process('I always have olive oil and salt');
+    await orch.process('yes');
+
+    const turn = await orch.process("what's in my pantry?");
+    expect(turn.toolCalls[0]?.tool).toBe('get_pantry');
+    expect(turn.toolCalls[0]?.result.success).toBe(true);
+    expect(turn.response).toContain('olive oil');
+    expect(turn.response).toContain('salt');
+  });
+
+  it('removes a pantry item by name', async () => {
+    const { ctx } = makeContext();
+    const orch = new ConversationOrchestrator({ registry, context: ctx });
+    await orch.process('I always have olive oil');
+    await orch.process('yes');
+
+    const turn = await orch.process('remove olive oil from my pantry');
+    expect(turn.toolCalls[0]?.tool).toBe('remove_pantry_item');
+    expect(turn.toolCalls[0]?.result.success).toBe(true);
+    expect(turn.response).toContain('removed olive oil from your pantry');
   });
 
   it('asks for explicit confirmation when "done" hits a safety gate, then completes', async () => {

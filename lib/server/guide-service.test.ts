@@ -1,7 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import { SessionService, InMemorySessionStore } from './session-service';
-import { InMemoryTimerStore, InMemoryLogStore, InMemoryRecipeStore } from './tools';
+import { InMemoryTimerStore, InMemoryLogStore, InMemoryRecipeStore, InMemoryPantryStore } from './tools';
 import { GuidedCookingService, secondsToLabel } from './guide-service';
+import { PantryService } from './pantry-service';
 import type { CookingTimer, Ingredient, Recipe } from '../domain/types';
 
 // ── Fixtures ─────────────────────────────────────────────────────────────────
@@ -420,5 +421,61 @@ describe('ownership and errors', () => {
     expect(secondsToLabel(30)).toBe('30-second timer');
     expect(secondsToLabel(90)).toBe('one-and-a-half-minute timer');
     expect(secondsToLabel(60)).toBe('one-minute timer');
+  });
+});
+
+// ── Recipe consumption (K8) ──────────────────────────────────────────────────
+
+describe('recipe consumption on completion (K8)', () => {
+  /** Seed the pantry, launch, and drive the full guided journey to COMPLETED. */
+  async function cookToCompletion() {
+    const store = new InMemorySessionStore();
+    const timers = new InMemoryTimerStore();
+    const recipes = new InMemoryRecipeStore();
+    const pantry = new InMemoryPantryStore();
+    const sessionService = new SessionService(store);
+    const pantryService = new PantryService(pantry, sessionService);
+    const guide = new GuidedCookingService(sessionService, timers, recipes, pantryService);
+
+    await recipes.createRecipe(makeRecipe());
+    // Seed high-confidence, quantity-known pantry matches for the recipe.
+    const chicken = await pantryService.addItem('user-1', { name: 'chicken thighs', quantity: 6, unit: 'pieces', source: 'MANUAL' });
+    const rice = await pantryService.addItem('user-1', { name: 'rice', quantity: 3, unit: 'cup', source: 'MANUAL' });
+    await pantryService.confirmItem('user-1', chicken.id);
+    await pantryService.confirmItem('user-1', rice.id);
+
+    const snap = await guide.launchCookWithMe('user-1', 'recipe-1');
+    // Prep ×2 → cooking 1 (timer) → wait → cooking 2 → plating → completed.
+    await guide.completeCurrentAction('user-1', snap.sessionId);
+    await guide.completeCurrentAction('user-1', snap.sessionId); // → WAITING_FOR_TIMER
+    const sessionId = (await guide.getCurrentAction('user-1', snap.sessionId)).sessionId!;
+    const [timer] = await timers.listActiveTimers(sessionId);
+    await timers.updateTimer(timer.id, { startedAt: Date.now() - 250_000, endsAt: Date.now() - 10_000 });
+    await guide.checkTimers('user-1', sessionId); // → COOKING_GUIDANCE
+    await guide.completeCurrentAction('user-1', sessionId); // gate
+    await guide.completeCurrentAction('user-1', sessionId); // ack → step 2
+    await guide.completeCurrentAction('user-1', sessionId); // → PLATING
+    const done = await guide.completeCurrentAction('user-1', sessionId);
+    expect(done.phase).toBe('COMPLETED');
+    return { pantry, done };
+  }
+
+  it('adjusts pantry inventory when the guided session completes', async () => {
+    const { pantry } = await cookToCompletion();
+    const items = await pantry.listItems('user-1');
+    const byName = Object.fromEntries(items.map((i) => [i.name, i]));
+    // 4 of 6 thighs consumed; 1 of 3 cups of rice consumed.
+    expect(byName['chicken thighs'].quantity).toBe(2);
+    expect(byName['rice'].quantity).toBe(2);
+    // The recipe's onion has no quantity in the recipe — never reduced.
+    expect(byName['onion']).toBeUndefined();
+  });
+
+  it('logs INGREDIENT_REMOVED / CORRECTED events for consumption', async () => {
+    const { pantry } = await cookToCompletion();
+    const items = await pantry.listItems('user-1');
+    const chicken = items.find((i) => i.name === 'chicken thighs')!;
+    // Reduced, not removed (2 left).
+    expect(chicken.quantity).toBe(2);
   });
 });

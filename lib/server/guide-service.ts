@@ -16,6 +16,7 @@
 
 import type { SessionService } from './session-service';
 import type { TimerStore, RecipeStore } from './tools/types';
+import type { PantryService } from './pantry-service';
 import type {
   CookingSession,
   CookingStep,
@@ -166,6 +167,8 @@ export class GuidedCookingService {
     private readonly sessionService: SessionService,
     private readonly timerStore: TimerStore,
     private readonly recipeStore?: RecipeStore,
+    /** Optional pantry (K8) — adjusts inventory when a recipe is completed. */
+    private readonly pantryService?: PantryService,
   ) {}
 
   // ── Launch ────────────────────────────────────────────────────────────────
@@ -306,6 +309,9 @@ export class GuidedCookingService {
           'AGENT_TOOL',
           { correlationId: options?.correlationId },
         );
+        // K8 recipe consumption: adjust pantry inventory for the finished
+        // recipe. Uncertain quantities are never reduced (service contract).
+        await this.consumePantryForCompleted(userId, updated, recipe);
         return this.buildSnapshot(userId, updated, recipe);
       }
       case 'SAFETY_WARNING': {
@@ -493,7 +499,7 @@ export class GuidedCookingService {
   async applySubstitution(
     userId: string,
     sessionId: string | undefined,
-    change: { unavailableIngredient: string; replacement: string },
+    change: { unavailableIngredient?: string; replacement: string },
     options?: { correlationId?: string },
   ): Promise<{ snapshot: GuideSnapshot; from: string; to: string; validation: RecipeValidationResult }> {
     const session = await this.resolveSession(userId, sessionId);
@@ -1026,6 +1032,27 @@ export class GuidedCookingService {
     const timerStarted = await this.autoStartTimerForStep(session, step, options);
     const fresh = await this.sessionService.getSession(session.id);
     return { session: fresh ?? session, timerStarted };
+  }
+
+  // ── Recipe consumption (K8) ────────────────────────────────────────────────
+
+  /**
+   * Adjust pantry inventory for a completed recipe. Best-effort and
+   * non-fatal: consumption only touches high-confidence, quantity-known
+   * matches, so a failure here must never fail the completion itself.
+   */
+  private async consumePantryForCompleted(
+    userId: string,
+    session: CookingSession,
+    recipe: Recipe,
+  ): Promise<void> {
+    if (!this.pantryService) return;
+    try {
+      await this.pantryService.consumeForRecipe(userId, recipe, { sessionId: session.id });
+    } catch {
+      // Logged by the pantry service on the session when possible; the
+      // completion is already durable — do not roll it back.
+    }
   }
 
   // ── Resolution helpers ────────────────────────────────────────────────────

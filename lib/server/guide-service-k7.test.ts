@@ -174,21 +174,27 @@ describe('error recovery (K7 Part C)', () => {
       code: 'NETWORK_ERROR', failedTool: 'complete_current_step',
     });
     expect(r1.action).toBe('RETRY');
-    expect(r1.retryCount).toBe(1);
-    expect(r1.failedTool).toBe('complete_current_step');
-    expect(r1.snapshot.phase).toBe('PREP_GUIDANCE');
-    expect(r1.snapshot.stepNumber).toBe(before.stepNumber);
+    if (r1.action === 'RETRY') {
+      expect(r1.retryCount).toBe(1);
+      expect(r1.failedTool).toBe('complete_current_step');
+      expect(r1.snapshot.phase).toBe('PREP_GUIDANCE');
+      expect(r1.snapshot.stepNumber).toBe(before.stepNumber);
+    }
   });
 
   it('bounds retries: RETRY → RETRY → GIVE_UP', async () => {
     const { guide, snap } = await launch();
     const r1 = await guide.recoverAfterError('user-1', snap.sessionId, { code: 'NETWORK_ERROR' });
     expect(r1.action).toBe('RETRY');
-    expect(r1.retryCount).toBe(1);
+    if (r1.action === 'RETRY') {
+      expect(r1.retryCount).toBe(1);
+    }
 
     const r2 = await guide.recoverAfterError('user-1', snap.sessionId, { code: 'NETWORK_ERROR' });
     expect(r2.action).toBe('RETRY');
-    expect(r2.retryCount).toBe(2);
+    if (r2.action === 'RETRY') {
+      expect(r2.retryCount).toBe(2);
+    }
 
     const r3 = await guide.recoverAfterError('user-1', snap.sessionId, { code: 'NETWORK_ERROR' });
     expect(r3.action).toBe('GIVE_UP');

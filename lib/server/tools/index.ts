@@ -40,6 +40,16 @@ import {
   correctIngredientTool,
   recoverSessionTool,
 } from './guide-tools';
+import {
+  getPantryTool,
+  addPantryItemTool,
+  updatePantryItemTool,
+  removePantryItemTool,
+  confirmPantryItemTool,
+  confirmPendingPantryItemsTool,
+  getDietaryProfileTool,
+  updateDietaryProfileTool,
+} from './pantry-tools';
 
 export * from './types';
 export * from './registry';
@@ -78,7 +88,16 @@ export function createDefaultToolRegistry(): ToolRegistry {
     .register(requestSubstitutionTool)
     .register(applySubstitutionTool)
     .register(correctIngredientTool)
-    .register(recoverSessionTool);
+    .register(recoverSessionTool)
+    // Pantry + dietary profile (K8)
+    .register(getPantryTool)
+    .register(addPantryItemTool)
+    .register(updatePantryItemTool)
+    .register(removePantryItemTool)
+    .register(confirmPantryItemTool)
+    .register(confirmPendingPantryItemsTool)
+    .register(getDietaryProfileTool)
+    .register(updateDietaryProfileTool);
 }
 
 /** Singleton used by the API route and the agent (K5). */

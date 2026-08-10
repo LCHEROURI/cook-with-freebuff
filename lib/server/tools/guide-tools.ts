@@ -11,7 +11,21 @@ import { z } from 'zod';
 import { ok, toToolError } from './types';
 import type { ToolDefinition, ToolContext } from './types';
 import { GuidedCookingService } from '../guide-service';
+import { PantryService } from '../pantry-service';
 import type { Ingredient } from '../../domain/types';
+
+/**
+ * Guided-cooking service bound to the tool context. When a pantry store is
+ * wired, the service also adjusts pantry inventory on recipe completion (K8).
+ */
+export function createGuideService(ctx: ToolContext): GuidedCookingService {
+  return new GuidedCookingService(
+    ctx.sessionService,
+    ctx.timerStore,
+    ctx.recipeStore,
+    ctx.pantryStore ? new PantryService(ctx.pantryStore, ctx.sessionService) : undefined,
+  );
+}
 
 export const cookWithMeTool: ToolDefinition = {
   name: 'cook_with_me',
@@ -22,11 +36,7 @@ export const cookWithMeTool: ToolDefinition = {
   }),
   async handler(ctx, args) {
     try {
-      const snapshot = await new GuidedCookingService(
-        ctx.sessionService,
-        ctx.timerStore,
-        ctx.recipeStore,
-      ).launchCookWithMe(ctx.userId, args.recipeId, args.sessionId, {
+      const snapshot = await createGuideService(ctx).launchCookWithMe(ctx.userId, args.recipeId, args.sessionId, {
         correlationId: ctx.correlationId,
       });
       return ok(snapshot);
@@ -45,11 +55,7 @@ export const requestSubstitutionTool: ToolDefinition = {
   }),
   async handler(ctx, args) {
     try {
-      const result = await new GuidedCookingService(
-        ctx.sessionService,
-        ctx.timerStore,
-        ctx.recipeStore,
-      ).requestSubstitution(ctx.userId, args.sessionId, args.unavailableIngredient, {
+      const result = await createGuideService(ctx).requestSubstitution(ctx.userId, args.sessionId, args.unavailableIngredient, {
         correlationId: ctx.correlationId,
       });
       return ok(result);
@@ -69,11 +75,7 @@ export const applySubstitutionTool: ToolDefinition = {
   }),
   async handler(ctx, args) {
     try {
-      const result = await new GuidedCookingService(
-        ctx.sessionService,
-        ctx.timerStore,
-        ctx.recipeStore,
-      ).applySubstitution(ctx.userId, args.sessionId, {
+      const result = await createGuideService(ctx).applySubstitution(ctx.userId, args.sessionId, {
         unavailableIngredient: args.unavailableIngredient,
         replacement: args.replacement,
       }, {
@@ -105,11 +107,7 @@ export const correctIngredientTool: ToolDefinition = {
         unit: args.unit ?? null,
         optional: false,
       };
-      const result = await new GuidedCookingService(
-        ctx.sessionService,
-        ctx.timerStore,
-        ctx.recipeStore,
-      ).correctAvailableIngredients(ctx.userId, args.sessionId, [ingredient], args.remove ? 'REMOVE' : 'UPSERT', {
+      const result = await createGuideService(ctx).correctAvailableIngredients(ctx.userId, args.sessionId, [ingredient], args.remove ? 'REMOVE' : 'UPSERT', {
         correlationId: ctx.correlationId,
       });
       return ok(result);
@@ -130,11 +128,7 @@ export const recoverSessionTool: ToolDefinition = {
   }),
   async handler(ctx, args) {
     try {
-      const decision = await new GuidedCookingService(
-        ctx.sessionService,
-        ctx.timerStore,
-        ctx.recipeStore,
-      ).recoverAfterError(ctx.userId, args.sessionId, {
+      const decision = await createGuideService(ctx).recoverAfterError(ctx.userId, args.sessionId, {
         code: args.errorCode ?? 'INTERNAL_ERROR',
         message: args.errorMessage,
         failedTool: args.failedTool,
@@ -155,11 +149,7 @@ export const checkTimersTool: ToolDefinition = {
   inputSchema: z.object({ sessionId: z.string().optional() }),
   async handler(ctx, args) {
     try {
-      const { alerts, snapshot } = await new GuidedCookingService(
-        ctx.sessionService,
-        ctx.timerStore,
-        ctx.recipeStore,
-      ).checkTimers(ctx.userId, args.sessionId, {
+      const { alerts, snapshot } = await createGuideService(ctx).checkTimers(ctx.userId, args.sessionId, {
         correlationId: ctx.correlationId,
       });
       return ok({ alerts, snapshot });

@@ -10,9 +10,18 @@
 //   6. returns the structured result envelope
 // ─────────────────────────────────────────────────────────────────────────────
 
-import type { ToolDefinition, ToolContext, ToolResult, TimerStore, LogStore, RecipeStore } from './types';
+import type {
+  ToolDefinition,
+  ToolContext,
+  ToolResult,
+  TimerStore,
+  LogStore,
+  RecipeStore,
+  PantryStore,
+  DietaryProfileStore,
+} from './types';
 import { fail } from './types';
-import type { AgentToolLog, CookingTimer, Recipe } from '../../domain/types';
+import type { AgentToolLog, CookingTimer, Recipe, PantryItem, DietaryProfile } from '../../domain/types';
 
 export class ToolRegistry {
   private tools = new Map<string, ToolDefinition>();
@@ -188,5 +197,37 @@ export class InMemoryRecipeStore implements RecipeStore {
 
   async updateRecipe(recipe: Recipe): Promise<void> {
     this.recipes.set(recipe.id, recipe);
+  }
+}
+
+export class InMemoryPantryStore implements PantryStore {
+  private items = new Map<string, PantryItem>();
+
+  async listItems(userId: string): Promise<PantryItem[]> {
+    return [...this.items.values()].filter((i) => i.userId === userId);
+  }
+
+  async getItem(id: string): Promise<PantryItem | null> {
+    return this.items.get(id) ?? null;
+  }
+
+  async upsertItem(item: PantryItem): Promise<void> {
+    this.items.set(item.id, item);
+  }
+
+  async deleteItem(id: string): Promise<void> {
+    this.items.delete(id);
+  }
+}
+
+export class InMemoryDietaryProfileStore implements DietaryProfileStore {
+  private profiles = new Map<string, DietaryProfile>();
+
+  async getProfile(userId: string): Promise<DietaryProfile | null> {
+    return this.profiles.get(userId) ?? null;
+  }
+
+  async upsertProfile(profile: DietaryProfile): Promise<void> {
+    this.profiles.set(profile.userId, profile);
   }
 }

@@ -75,6 +75,10 @@ export class ConversationOrchestrator {
     if (command.needsFollowUp) {
       return command.needsFollowUp;
     }
+    if (command.intent === 'PANTRY_ADD') {
+      // Multiple items per turn — one add_pantry_item call each.
+      return this.handlePantryAdd(command.arguments?.names, sessionId, turn);
+    }
     if (!command.tool) {
       // HELP
       return HELP_TEXT;
@@ -82,9 +86,16 @@ export class ConversationOrchestrator {
 
     let result = await this.runTool(command.tool, command.arguments ?? {}, sessionId, turn);
 
-    // CONFIRM falls back to advancing a step when there is nothing to confirm.
-    if (!result.result.success && command.fallbackTool && command.intent === 'CONFIRM') {
-      result = await this.runTool(command.fallbackTool, {}, sessionId, turn);
+    // CONFIRM walks a fallback chain in priority order: pantry items just
+    // offered → collected ingredients → (nothing pending) advance the step.
+    if (!result.result.success && command.intent === 'CONFIRM') {
+      const chain = command.fallbackTool
+        ? [command.fallbackTool, ...(command.fallbackTools ?? [])]
+        : (command.fallbackTools ?? []);
+      for (const fallback of chain) {
+        if (result.result.success) break;
+        result = await this.runTool(fallback, {}, sessionId, turn);
+      }
     }
 
     return this.responseForIntent(command.intent, result.result);
@@ -103,6 +114,37 @@ export class ConversationOrchestrator {
     };
     turn.toolCalls.push(call);
     return call;
+  }
+
+  // ── Pantry handling (K8) ────────────────────────────────────────────────────
+
+  /** "I always have X, Y and Z" → add each, then ask for confirmation. */
+  private async handlePantryAdd(
+    names: unknown,
+    sessionId: string | undefined,
+    turn: AgentTurn,
+  ): Promise<string> {
+    const items = Array.isArray(names) ? (names as string[]) : [];
+    if (items.length === 0) {
+      return 'What would you like me to remember in your pantry?';
+    }
+    let sid = sessionId;
+    if (!sid) {
+      const started = await this.runTool('start_cooking_session', {}, sid, turn);
+      if (started.result.success) {
+        sid = (started.result.data as { sessionId: string }).sessionId;
+      }
+      // No session is fine — pantry adds still persist (no pending list).
+    }
+    for (const name of items) {
+      await this.runTool('add_pantry_item', { name, sessionId: sid }, sid, turn);
+    }
+    const last = turn.toolCalls[turn.toolCalls.length - 1];
+    if (!last.result.success) {
+      return `Sorry, I could not add those to your pantry: ${this.errorMessage(last.result)}`;
+    }
+    const list = items.join(', ');
+    return `Got it — I have added ${list} to your pantry. Say "yes" to confirm, or tell me what to fix.`;
   }
 
   // ── Ingredient handling ─────────────────────────────────────────────────────
@@ -215,6 +257,11 @@ export class ConversationOrchestrator {
           from?: string;
           to?: string;
           safetyGate?: { note: string };
+          items?: { id: string; name: string; stale: boolean }[];
+          stale?: string[];
+          query?: string | null;
+          removed?: { name: string };
+          confirmed?: { name: string }[];
         }
       | undefined;
     switch (intent) {
@@ -258,8 +305,36 @@ export class ConversationOrchestrator {
         return d?.regenerating
           ? 'Got it — that changes the recipe, so I will rework it. Tell me what you have and I will start over.'
           : 'Got it — I have updated that.';
-      case 'CONFIRM':
+      case 'CONFIRM': {
+        const confirmed = d?.confirmed;
+        if (confirmed && confirmed.length > 0) {
+          const list = confirmed.map((c) => c.name).join(', ');
+          return `Confirmed — I have saved ${list} to your pantry.`;
+        }
         return 'Confirmed — moving on.';
+      }
+      case 'PANTRY_GET': {
+        const items = d?.items ?? [];
+        const stale = d?.stale ?? [];
+        if (items.length === 0) {
+          return d?.query
+            ? `You do not have ${d.query} in your pantry.`
+            : 'Your pantry is empty. Tell me what you have and I will remember it.';
+        }
+        const names = items.map((i) => i.name);
+        let out =
+          names.length === 1
+            ? `You have ${names[0]}.`
+            : `You have ${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}.`;
+        if (stale.length > 0) {
+          out += ` Some of those are older than 30 days — say "yes" if you still have them.`;
+        }
+        return out;
+      }
+      case 'PANTRY_REMOVE':
+        return d?.removed
+          ? `Done — removed ${d.removed.name} from your pantry.`
+          : 'Done — removed from your pantry.';
       case 'TIMER_STATUS': {
         const timers = d?.timers ?? [];
         return timers.length === 0

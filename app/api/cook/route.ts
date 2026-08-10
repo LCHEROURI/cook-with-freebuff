@@ -14,7 +14,7 @@
 import { NextResponse } from 'next/server';
 import { resolveUserId } from '@/lib/server/admin';
 import { buildProductionContext } from '@/lib/server/stores';
-import { GuidedCookingService } from '@/lib/server/guide-service';
+import { createGuideService } from '@/lib/server/tools/guide-tools';
 
 const ACTIONS = [
   'launch', 'status', 'done', 'repeat', 'back', 'pause', 'resume', 'timers',
@@ -58,7 +58,7 @@ async function handle(userId: string, body: unknown): Promise<NextResponse> {
   const failedTool = typeof parsed.failedTool === 'string' ? parsed.failedTool : undefined;
 
   const ctx = buildProductionContext(userId, correlationId);
-  const guide = new GuidedCookingService(ctx.sessionService, ctx.timerStore, ctx.recipeStore);
+  const guide = createGuideService(ctx);
 
   switch (action) {
     case 'launch': {
