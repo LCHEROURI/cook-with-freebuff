@@ -184,6 +184,56 @@ const TOOL_DECLARATIONS = [
     parameters: { type: 'object', properties: { sessionId: { type: 'string' } } },
   },
   {
+    name: 'request_substitution',
+    description: 'The cook is out of an ingredient — return viable substitution candidates.',
+    parameters: {
+      type: 'object',
+      properties: { sessionId: { type: 'string' }, unavailableIngredient: { type: 'string' } },
+      required: ['unavailableIngredient'],
+    },
+  },
+  {
+    name: 'apply_substitution',
+    description: 'Confirm a substitution: replace throughout the recipe and resume the exact step.',
+    parameters: {
+      type: 'object',
+      properties: {
+        sessionId: { type: 'string' },
+        unavailableIngredient: { type: 'string' },
+        replacement: { type: 'string' },
+      },
+      required: ['unavailableIngredient', 'replacement'],
+    },
+  },
+  {
+    name: 'correct_ingredient',
+    description: 'The cook corrects an ingredient mid-guidance — persist and resume.',
+    parameters: {
+      type: 'object',
+      properties: {
+        sessionId: { type: 'string' },
+        name: { type: 'string' },
+        quantity: { type: ['number', 'null'] },
+        unit: { type: ['string', 'null'] },
+        remove: { type: 'boolean' },
+      },
+      required: ['name'],
+    },
+  },
+  {
+    name: 'recover_session',
+    description: 'Classify and handle the last error (bounded retry / question / reload).',
+    parameters: {
+      type: 'object',
+      properties: {
+        sessionId: { type: 'string' },
+        errorCode: { type: 'string' },
+        errorMessage: { type: 'string' },
+        failedTool: { type: 'string' },
+      },
+    },
+  },
+  {
     name: 'complete_current_step',
     description: 'Advance to the next step after the user says done.',
     parameters: { type: 'object', properties: { sessionId: { type: 'string' } } },

@@ -116,10 +116,21 @@ describe('ConversationOrchestrator', () => {
     expect(turn.response).toContain('Here is what I can do');
   });
 
-  it('answers substitution with a clarifying question instead of a tool call', async () => {
+  it('routes "I don\'t have garlic" to request_substitution and reports failure honestly', async () => {
     const { ctx } = makeContext();
     const orch = new ConversationOrchestrator({ registry, context: ctx });
     const turn = await orch.process("I don't have garlic");
+    expect(turn.toolCalls[0]?.tool).toBe('request_substitution');
+    expect(turn.toolCalls[0]?.arguments).toEqual({ unavailableIngredient: 'garlic' });
+    // No session in this test — the failure must be reported honestly.
+    expect(turn.toolCalls[0]?.result.success).toBe(false);
+    expect(turn.response).toContain('did not work');
+  });
+
+  it('asks a clarifying question when substitution has no ingredient named', async () => {
+    const { ctx } = makeContext();
+    const orch = new ConversationOrchestrator({ registry, context: ctx });
+    const turn = await orch.process('can I use something else?');
     expect(turn.toolCalls).toHaveLength(0);
     expect(turn.response).toContain('What are you out of?');
   });

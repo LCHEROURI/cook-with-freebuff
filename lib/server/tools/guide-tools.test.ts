@@ -109,6 +109,86 @@ describe('complete_current_step (guided)', () => {
   });
 });
 
+describe('request_substitution / apply_substitution', () => {
+  it('request preserves location and returns candidates', async () => {
+    const { ctx, recipes } = makeContext();
+    await recipes.createRecipe(makeRecipe());
+    await executeTool(registry, ctx, 'cook_with_me', { recipeId: 'recipe-1' });
+
+    const result = await executeTool(registry, ctx, 'request_substitution', {
+      unavailableIngredient: 'garlic',
+    });
+    expect(result.success).toBe(true);
+    const data = result.data as {
+      snapshot: { phase: string; stepNumber: number };
+      candidates: { ingredient: string }[];
+    };
+    expect(data.snapshot.phase).toBe('SUBSTITUTION_REQUIRED');
+    expect(data.snapshot.stepNumber).toBe(1);
+    expect(data.candidates.length).toBeGreaterThan(0);
+  });
+
+  it('apply persists the replacement and resumes the exact step', async () => {
+    const { ctx, recipes } = makeContext();
+    await recipes.createRecipe(makeRecipe());
+    await executeTool(registry, ctx, 'cook_with_me', { recipeId: 'recipe-1' });
+    await executeTool(registry, ctx, 'request_substitution', { unavailableIngredient: 'milk' });
+
+    const result = await executeTool(registry, ctx, 'apply_substitution', { replacement: 'heavy cream' });
+    expect(result.success).toBe(true);
+    const data = result.data as { from: string; to: string; snapshot: { phase: string; stepNumber: number } };
+    expect(data.from).toBe('milk');
+    expect(data.to).toBe('heavy cream');
+    expect(data.snapshot.phase).toBe('PREP_GUIDANCE');
+    expect(data.snapshot.stepNumber).toBe(1);
+  });
+
+  it('apply without a pending substitution fails honestly', async () => {
+    const { ctx, recipes } = makeContext();
+    await recipes.createRecipe(makeRecipe());
+    await executeTool(registry, ctx, 'cook_with_me', { recipeId: 'recipe-1' });
+
+    const result = await executeTool(registry, ctx, 'apply_substitution', {
+      unavailableIngredient: 'milk',
+      replacement: 'heavy cream',
+    });
+    expect(result.success).toBe(false);
+    expect(result.error?.code).toBe('NO_PENDING_SUBSTITUTION');
+  });
+});
+
+describe('correct_ingredient', () => {
+  it('persists the correction and resumes the exact step', async () => {
+    const { ctx, recipes } = makeContext();
+    await recipes.createRecipe(makeRecipe());
+    await executeTool(registry, ctx, 'cook_with_me', { recipeId: 'recipe-1' });
+
+    const result = await executeTool(registry, ctx, 'correct_ingredient', {
+      name: 'tomatoes',
+      quantity: 2,
+    });
+    expect(result.success).toBe(true);
+    const data = result.data as { regenerating: boolean; snapshot: { phase: string } };
+    expect(data.regenerating).toBe(false);
+    expect(data.snapshot.phase).toBe('PREP_GUIDANCE');
+  });
+});
+
+describe('recover_session', () => {
+  it('classifies a transient error as a bounded RETRY and restores', async () => {
+    const { ctx, recipes } = makeContext();
+    await recipes.createRecipe(makeRecipe());
+    await executeTool(registry, ctx, 'cook_with_me', { recipeId: 'recipe-1' });
+
+    const result = await executeTool(registry, ctx, 'recover_session', { errorCode: 'NETWORK_ERROR' });
+    expect(result.success).toBe(true);
+    const data = result.data as { action: string; retryCount: number; snapshot: { phase: string } };
+    expect(data.action).toBe('RETRY');
+    expect(data.retryCount).toBe(1);
+    expect(data.snapshot.phase).toBe('PREP_GUIDANCE');
+  });
+});
+
 describe('check_timers', () => {
   it('surfaces a finished-timer alert and recovers the session', async () => {
     const { ctx, recipes, timers } = makeContext();

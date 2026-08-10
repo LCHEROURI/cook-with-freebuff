@@ -121,6 +121,11 @@ export async function getRecipe(id: string): Promise<Recipe | null> {
   return doc?.data ?? null;
 }
 
+export async function updateRecipe(recipe: Recipe): Promise<void> {
+  recipeSchema.parse(recipe);
+  await writeDoc(RECIPES, recipe.id, recipe);
+}
+
 export async function listRecipes(userId: UserId): Promise<Recipe[]> {
   const docs = await queryDocs<Recipe>(RECIPES, 'userId', userId);
   return docs.map((d) => d.data);

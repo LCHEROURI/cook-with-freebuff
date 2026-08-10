@@ -12,18 +12,30 @@ import {
   type GeminiOptions,
 } from './gemini';
 import { createGeminiConversationAgent } from './conversation';
+import { findSubstitutionCandidates } from '../recipe/substitute';
 import {
   registerRecipeGenerator,
   registerRecipeValidator,
   registerConversationAgent,
+  registerSubstitutionService,
 } from './provider';
 
 /**
- * Register Gemini providers. Returns true when registered (key present),
- * false when the key is missing (providers stay unregistered and tools
- * return *_UNAVAILABLE).
+ * Register providers.
+ *
+ * The deterministic substitution engine is always registered — substitutions
+ * must work without an AI key (K7). The Gemini providers are registered only
+ * when a Google AI API key is present; without it, generation/validation tools
+ * return *_UNAVAILABLE.
  */
 export function registerGeminiProviders(opts: GeminiOptions = {}): boolean {
+  // Deterministic substitution is key-independent.
+  registerSubstitutionService('default', {
+    async findSubstitution({ unavailableIngredient, recipe, availablePantry }) {
+      return findSubstitutionCandidates(recipe, unavailableIngredient, availablePantry);
+    },
+  });
+
   const apiKey = opts.apiKey ?? process.env.GOOGLE_AI_API_KEY;
   if (!apiKey) return false;
 

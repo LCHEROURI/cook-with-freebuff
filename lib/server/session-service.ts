@@ -19,6 +19,7 @@ import type {
   SessionEventType,
   Ingredient,
   EpochMs,
+  RecoveryContext,
 } from '../domain/types';
 
 // ── Store interface (abstracted for testability) ─────────────────────────────
@@ -471,7 +472,7 @@ export class SessionService {
     expectedVersion: number,
     errorCode: string,
     errorMessage: string,
-    options?: { correlationId?: string },
+    options?: { correlationId?: string; failedTool?: string; recoverable?: boolean; retryCount?: number },
   ): Promise<CookingSession> {
     const session = await this.store.getSession(sessionId);
     if (!session) throw new SessionError('Session not found', 'NOT_FOUND', false);
@@ -490,11 +491,27 @@ export class SessionService {
     const currentState = sessionStateFromSession(session);
     const { resumableState } = transitionSessionState(currentState, from, 'ERROR_RECOVERY');
 
+    const recoveryContext: RecoveryContext = {
+      errorCode,
+      errorMessage,
+      previousState: currentState,
+      currentPhase: from,
+      currentStepIndex: from === 'COOKING_GUIDANCE' || from === 'WAITING_FOR_TIMER'
+        ? session.currentCookingStepIndex
+        : session.currentPrepStepIndex,
+      failedTool: options?.failedTool,
+      // Carry the existing retry budget forward so repeated failures stay
+      // bounded (K7 Part C).
+      retryCount: options?.retryCount ?? session.recoveryContext?.retryCount ?? 0,
+      recoverable: options?.recoverable ?? true,
+    };
+
     const partial: Partial<CookingSession> = {
       currentPhase: 'ERROR_RECOVERY',
       status: 'ERROR_RECOVERY',
       resumableState: resumableState ?? currentState,
       previousState: currentState,
+      recoveryContext,
     };
 
     const updated = await this.store.updateSession(sessionId, partial, expectedVersion);
@@ -550,6 +567,8 @@ export class SessionService {
       throw new VersionConflictError(sessionId, expectedVersion, session.version);
     }
 
+    // Note: recoveryContext is deliberately NOT cleared here — the K7 retry
+    // budget must carry across repeated failures.
     const partial: Partial<CookingSession> = {
       currentPhase: resumable.phase,
       currentPrepStepIndex: resumable.prepStepIndex,
@@ -587,7 +606,7 @@ export class SessionService {
   async updateSessionMetadata(
     sessionId: string,
     expectedVersion: number,
-    metadata: { recipeId?: string },
+    metadata: { recipeId?: string; recoveryContext?: RecoveryContext | null; pendingSubstitution?: string | null },
     options?: { correlationId?: string },
   ): Promise<CookingSession> {
     if (hasBeenProcessed(options?.correlationId)) {
@@ -603,6 +622,12 @@ export class SessionService {
 
     const partial: Partial<CookingSession> = {};
     if (metadata.recipeId !== undefined) partial.recipeId = metadata.recipeId;
+    if (metadata.recoveryContext !== undefined) {
+      partial.recoveryContext = metadata.recoveryContext ?? undefined;
+    }
+    if (metadata.pendingSubstitution !== undefined) {
+      partial.pendingSubstitution = metadata.pendingSubstitution ?? undefined;
+    }
 
     const updated = await this.store.updateSession(sessionId, partial, expectedVersion);
     markProcessed(options?.correlationId);
@@ -705,7 +730,11 @@ export class SessionService {
     }
 
     const phase = session.currentPhase;
-    if (phase !== 'COLLECTING_INGREDIENTS' && phase !== 'CONFIRMING_INGREDIENTS') {
+    if (
+      phase !== 'COLLECTING_INGREDIENTS' &&
+      phase !== 'CONFIRMING_INGREDIENTS' &&
+      phase !== 'USER_CORRECTION'
+    ) {
       throw new SessionError(
         `Cannot edit ingredients in phase ${phase}`,
         'INVALID_PHASE',

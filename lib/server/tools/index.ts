@@ -35,6 +35,10 @@ import {
 import {
   cookWithMeTool,
   checkTimersTool,
+  requestSubstitutionTool,
+  applySubstitutionTool,
+  correctIngredientTool,
+  recoverSessionTool,
 } from './guide-tools';
 
 export * from './types';
@@ -69,7 +73,12 @@ export function createDefaultToolRegistry(): ToolRegistry {
     .register(replaceIngredientTool)
     // Guided cooking (K6)
     .register(cookWithMeTool)
-    .register(checkTimersTool);
+    .register(checkTimersTool)
+    // Substitutions, corrections & recovery (K7)
+    .register(requestSubstitutionTool)
+    .register(applySubstitutionTool)
+    .register(correctIngredientTool)
+    .register(recoverSessionTool);
 }
 
 /** Singleton used by the API route and the agent (K5). */

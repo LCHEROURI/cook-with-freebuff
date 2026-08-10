@@ -205,7 +205,16 @@ export class ConversationOrchestrator {
       return `Sorry, that did not work: ${result.error?.message ?? 'unknown error'}`;
     }
     const d = result.data as
-      | { instruction?: string; timerStarted?: { label: string }; timers?: unknown[] }
+      | {
+          instruction?: string;
+          timerStarted?: { label: string };
+          timers?: unknown[];
+          unavailableIngredient?: string;
+          candidates?: { ingredient: string; ratio: string }[];
+          regenerating?: boolean;
+          from?: string;
+          to?: string;
+        }
       | undefined;
     switch (intent) {
       case 'COOK':
@@ -224,6 +233,25 @@ export class ConversationOrchestrator {
         return d?.instruction ? `Resumed — ${d.instruction}` : 'Resumed — back to it.';
       case 'STOP':
         return 'Stopping the session. Great cooking!';
+      case 'SUBSTITUTE': {
+        const ingredient = d?.unavailableIngredient;
+        const candidates = d?.candidates ?? [];
+        if (candidates.length === 0) {
+          return ingredient
+            ? `I could not find a substitute for ${ingredient}. Tell me what else you have.`
+            : 'What are you out of? I can find you a substitute.';
+        }
+        const list = candidates.map((c) => `${c.ingredient} (${c.ratio})`).join(', ');
+        return `You are out of ${ingredient}. Try ${list}. Say "use X" to confirm.`;
+      }
+      case 'USE_SUBSTITUTE':
+        return d?.from && d?.to
+          ? `Done — using ${d.to} instead of ${d.from}.`
+          : 'Done — substitution applied.';
+      case 'CORRECT':
+        return d?.regenerating
+          ? 'Got it — that changes the recipe, so I will rework it. Tell me what you have and I will start over.'
+          : 'Got it — I have updated that.';
       case 'CONFIRM':
         return 'Confirmed — moving on.';
       case 'TIMER_STATUS': {

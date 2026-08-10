@@ -73,6 +73,8 @@ export interface LogStore {
 export interface RecipeStore {
   createRecipe(recipe: Recipe): Promise<void>;
   getRecipe(id: string): Promise<Recipe | null>;
+  /** Persist an updated recipe (e.g. after an ingredient substitution). */
+  updateRecipe(recipe: Recipe): Promise<void>;
 }
 
 // ── Tool context ─────────────────────────────────────────────────────────────

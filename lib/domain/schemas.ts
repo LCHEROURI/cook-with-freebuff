@@ -110,6 +110,17 @@ export const sessionStateSchema = z.object({
   activeTimerIds: z.array(z.string()).default([]),
 });
 
+export const recoveryContextSchema = z.object({
+  errorCode: z.string().min(1),
+  errorMessage: z.string(),
+  previousState: sessionStateSchema.optional(),
+  currentPhase: sessionPhaseSchema,
+  currentStepIndex: z.number().int().nonnegative(),
+  failedTool: z.string().optional(),
+  retryCount: z.number().int().nonnegative(),
+  recoverable: z.boolean(),
+});
+
 export const cookingSessionSchema = z.object({
   id: z.string().min(1),
   userId: z.string().min(1),
@@ -122,6 +133,8 @@ export const cookingSessionSchema = z.object({
   resumableState: sessionStateSchema.optional(),
   activeTimerIds: z.array(z.string()).default([]),
   availableIngredients: z.array(ingredientSchema).default([]),
+  recoveryContext: recoveryContextSchema.optional(),
+  pendingSubstitution: z.string().optional(),
   startedAt: z.number().int().positive(),
   lastActivityAt: z.number().int().positive(),
   pausedAt: z.number().int().positive().optional(),

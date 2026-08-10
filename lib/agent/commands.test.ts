@@ -42,11 +42,45 @@ describe('matchCommand', () => {
     expect(matchCommand('what temperature?')?.tool).toBe('get_current_step');
   });
 
-  it('maps substitution phrases to a follow-up (no tool call)', () => {
+  it('maps "I don\'t have garlic" to request_substitution with the ingredient', () => {
     const m = matchCommand("I don't have garlic, what can I use instead?");
+    expect(m?.intent).toBe('SUBSTITUTE');
+    expect(m?.tool).toBe('request_substitution');
+    expect(m?.arguments).toEqual({ unavailableIngredient: 'garlic' });
+  });
+
+  it('maps "I am out of milk" to request_substitution', () => {
+    const m = matchCommand("I'm out of milk");
+    expect(m?.intent).toBe('SUBSTITUTE');
+    expect(m?.arguments).toEqual({ unavailableIngredient: 'milk' });
+  });
+
+  it('asks a follow-up when no ingredient is named', () => {
+    const m = matchCommand('can I use something else?');
     expect(m?.intent).toBe('SUBSTITUTE');
     expect(m?.tool).toBeUndefined();
     expect(m?.needsFollowUp).toContain('What are you out of?');
+  });
+
+  it('maps "use X" to apply_substitution', () => {
+    const m = matchCommand('use garlic powder instead');
+    expect(m?.intent).toBe('USE_SUBSTITUTE');
+    expect(m?.tool).toBe('apply_substitution');
+    expect(m?.arguments).toEqual({ replacement: 'garlic powder' });
+  });
+
+  it('maps corrections with a quantity to correct_ingredient', () => {
+    const m = matchCommand('No, I said two tomatoes');
+    expect(m?.intent).toBe('CORRECT');
+    expect(m?.tool).toBe('correct_ingredient');
+    expect(m?.arguments).toEqual({ name: 'tomatoes', quantity: 2 });
+  });
+
+  it('maps "I meant chicken thighs" to correct_ingredient without a quantity', () => {
+    const m = matchCommand('I meant chicken thighs, not chicken breast');
+    expect(m?.intent).toBe('CORRECT');
+    expect(m?.tool).toBe('correct_ingredient');
+    expect(m?.arguments).toEqual({ name: 'chicken thighs' });
   });
 
   it('maps a short confirmation to confirm_available_ingredients with a step fallback', () => {

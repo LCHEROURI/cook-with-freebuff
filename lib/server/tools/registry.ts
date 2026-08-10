@@ -185,4 +185,8 @@ export class InMemoryRecipeStore implements RecipeStore {
   async getRecipe(id: string): Promise<Recipe | null> {
     return this.recipes.get(id) ?? null;
   }
+
+  async updateRecipe(recipe: Recipe): Promise<void> {
+    this.recipes.set(recipe.id, recipe);
+  }
 }

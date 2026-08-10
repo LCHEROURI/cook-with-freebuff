@@ -17,6 +17,8 @@ export type AgentIntent =
   | 'TIMER_STATUS'
   | 'CURRENT_STEP'
   | 'SUBSTITUTE'
+  | 'USE_SUBSTITUTE'
+  | 'CORRECT'
   | 'CONFIRM'
   | 'COOK'
   | 'HELP';
@@ -69,8 +71,20 @@ const RULES: Rule[] = [
   },
   {
     intent: 'SUBSTITUTE',
-    test: (t) => /\b(don'?t have|do not have|out of |what can i use instead|substitute|replacement|instead of|ran out|all out)\b/.test(t),
-    match: { intent: 'SUBSTITUTE', needsFollowUp: 'What are you out of? I can find you a substitute.' },
+    test: (t) => /\b(don'?t have|do not have|out of |ran out|all out|no more|substitute|replacement|instead of|what can i use|can i use)\b/.test(t),
+    match: { intent: 'SUBSTITUTE' },
+  },
+  {
+    intent: 'CORRECT',
+    test: (t) =>
+      /\b(i said|i meant)\b/.test(t) ||
+      /^(no|nope|actually|wait)[,.!\s]+(?:i said|i meant|it'?s|it is|make that|change)/i.test(t),
+    match: { intent: 'CORRECT' },
+  },
+  {
+    intent: 'USE_SUBSTITUTE',
+    test: (t) => /^(?:use|go with|i'?ll use|swap in|substitute with|let'?s use|ok(?:ay)? use)\s+/.test(t),
+    match: { intent: 'USE_SUBSTITUTE' },
   },
   {
     intent: 'COOK',
@@ -116,11 +130,94 @@ const RULES: Rule[] = [
  * Match a natural utterance against the command table.
  * Returns null when no command applies (→ ingredient extraction / provider).
  */
+/** Quantity words for correction parsing ("No, I said two tomatoes"). */
+const QUANTITY_WORDS: Record<string, number> = {
+  a: 1, an: 1, one: 1, two: 2, three: 3, four: 4, five: 5,
+  six: 6, seven: 7, eight: 8, nine: 9, ten: 10, half: 0.5, couple: 2,
+};
+
+/** "I don't have garlic" / "I'm out of milk" → "garlic" / "milk". */
+export function parseSubstituteIngredient(text: string): string | null {
+  // Stop at secondary clauses so "I don't have garlic, what can I use?"
+  // parses to "garlic", not the whole sentence.
+  const clause = text.split(/\b(?:what can i use|do you have any|is there|give me an idea)\b/)[0];
+  const m = clause.match(/(?:don'?t have|do not have|out of|ran out|all out of|no more|instead of)\s+(.+)$/);
+  if (!m) return null;
+  let ingredient = m[1].trim().replace(/[,.!?]+$/, '').trim();
+  ingredient = ingredient.replace(/^(?:the|a|an|some|any|my|fresh|dried|a bit of)\s+/, '').trim();
+  return ingredient.length > 0 ? ingredient : null;
+}
+
+/**
+ * "No, I said two tomatoes" → { name: 'tomatoes', quantity: 2 }.
+ * "I meant chicken thighs" → { name: 'chicken thighs' }.
+ */
+export function parseCorrection(text: string): { name: string; quantity?: number } | null {
+  const m = text.match(/\b(i said|i meant)\s+(.+)$/);
+  if (!m) return null;
+  let clause = m[2].replace(/[.!?]+$/, '').trim();
+  clause = clause.replace(/^(?:it|it'?s|that|that'?s)\s+/, '');
+  // Drop "not X" clauses: "chicken thighs, not chicken breast" → "chicken thighs".
+  clause = clause.split(/\s*,\s*(?:not|nor)\b|\s+(?:not|nor)\s+/)[0].trim();
+
+  let quantity: number | undefined;
+  const num = clause.match(/^(\d+(?:\.\d+)?)\b/);
+  const word = clause.match(/^([a-z]+(?:\s+and\s+a\s+half)?)\b/);
+  if (num) {
+    quantity = Number(num[1]);
+    clause = clause.slice(num[0].length);
+  } else if (word) {
+    const direct = QUANTITY_WORDS[word[1]];
+    if (direct !== undefined) {
+      quantity = direct;
+      clause = clause.slice(word[0].length);
+    } else if (word[1].includes('and a half')) {
+      const base = QUANTITY_WORDS[word[1].split(' and ')[0]];
+      if (base !== undefined) {
+        quantity = base + 0.5;
+        clause = clause.slice(word[0].length);
+      }
+    }
+  }
+
+  clause = clause.replace(/^(?:of|the|a|an)\s+/, '').trim();
+  if (!clause) return null;
+  const result: { name: string; quantity?: number } = { name: clause };
+  if (quantity !== undefined) result.quantity = quantity;
+  return result;
+}
+
 export function matchCommand(utterance: string): CommandMatch | null {
   const text = normalizeUtterance(utterance);
   if (!text) return null;
   for (const rule of RULES) {
-    if (rule.test(text)) return { ...rule.match };
+    if (!rule.test(text)) continue;
+
+    // Dynamic argument extraction for substitution / correction.
+    if (rule.intent === 'SUBSTITUTE') {
+      const ingredient = parseSubstituteIngredient(text);
+      if (ingredient) {
+        return { intent: 'SUBSTITUTE', tool: 'request_substitution', arguments: { unavailableIngredient: ingredient } };
+      }
+      return { intent: 'SUBSTITUTE', needsFollowUp: 'What are you out of? I can find you a substitute.' };
+    }
+    if (rule.intent === 'CORRECT') {
+      const correction = parseCorrection(text);
+      if (correction) {
+        return { intent: 'CORRECT', tool: 'correct_ingredient', arguments: correction };
+      }
+      return { intent: 'CORRECT', needsFollowUp: 'What should I change?' };
+    }
+    if (rule.intent === 'USE_SUBSTITUTE') {
+      const m = text.match(/^(?:use|go with|i'?ll use|swap in|substitute with|let'?s use|ok(?:ay)? use)\s+(.+)$/);
+      const replacement = m ? m[1].replace(/\s+instead$/, '').replace(/[.!?]+$/, '').trim() : null;
+      if (replacement) {
+        return { intent: 'USE_SUBSTITUTE', tool: 'apply_substitution', arguments: { replacement } };
+      }
+      return { intent: 'USE_SUBSTITUTE', needsFollowUp: 'Which substitute should I use?' };
+    }
+
+    return { ...rule.match };
   }
   return null;
 }

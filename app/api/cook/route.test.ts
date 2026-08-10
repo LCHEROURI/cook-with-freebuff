@@ -141,4 +141,41 @@ describe('/api/cook', () => {
     expect(body.success).toBe(false);
     expect(body.error.code).toBe('SESSION_NOT_FOUND');
   });
+
+  it('substitute preserves the location and returns candidates', async () => {
+    await (ctx.recipeStore as InMemoryRecipeStore).createRecipe(makeRecipe());
+    await post({ action: 'launch', recipeId: 'recipe-1' });
+
+    const res = await post({ action: 'substitute', unavailableIngredient: 'garlic' });
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.data.snapshot.phase).toBe('SUBSTITUTION_REQUIRED');
+    expect(body.data.snapshot.stepNumber).toBe(1);
+    expect(body.data.candidates.length).toBeGreaterThan(0);
+  });
+
+  it('apply_substitution replaces, persists, and resumes the exact step', async () => {
+    await (ctx.recipeStore as InMemoryRecipeStore).createRecipe(makeRecipe());
+    await post({ action: 'launch', recipeId: 'recipe-1' });
+    await post({ action: 'substitute', unavailableIngredient: 'milk' });
+
+    const res = await post({ action: 'apply_substitution', replacement: 'heavy cream' });
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.data.from).toBe('milk');
+    expect(body.data.to).toBe('heavy cream');
+    expect(body.data.snapshot.phase).toBe('PREP_GUIDANCE');
+  });
+
+  it('recover classifies a transient error as a bounded RETRY', async () => {
+    await (ctx.recipeStore as InMemoryRecipeStore).createRecipe(makeRecipe());
+    await post({ action: 'launch', recipeId: 'recipe-1' });
+
+    const res = await post({ action: 'recover', errorCode: 'NETWORK_ERROR', failedTool: 'complete_current_step' });
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.data.action).toBe('RETRY');
+    expect(body.data.retryCount).toBe(1);
+    expect(body.data.snapshot.phase).toBe('PREP_GUIDANCE');
+  });
 });

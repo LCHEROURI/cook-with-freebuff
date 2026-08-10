@@ -38,6 +38,7 @@ export const firestoreLogStore: LogStore = {
 export const firestoreRecipeStore: RecipeStore = {
   createRecipe: (r) => repo.createRecipe(r),
   getRecipe: (id) => repo.getRecipe(id),
+  updateRecipe: (r) => repo.updateRecipe(r),
 };
 
 /** Singleton session service over Firestore. */

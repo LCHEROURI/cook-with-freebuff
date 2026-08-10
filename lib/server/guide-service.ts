@@ -24,6 +24,12 @@ import type {
   Recipe,
   SessionPhase,
 } from '../domain/types';
+import { replaceIngredientInRecipe } from '../recipe/transform';
+import { validateRecipe } from '../recipe/validate';
+import { findSubstitutionCandidates, type SubstitutionCandidate } from '../recipe/substitute';
+import { recipeSchema } from '../domain/schemas';
+import { getSubstitutionService } from '../ai/provider';
+import type { RecipeValidationResult } from '../ai/types';
 
 // ── Public shapes ────────────────────────────────────────────────────────────
 
@@ -98,6 +104,55 @@ export class GuideError extends Error {
   }
 }
 
+// ── Error-recovery classification (K7 Part C) ────────────────────────────────
+
+/** Bounded retry budget for transient failures. */
+export const MAX_RETRIES = 2;
+
+/** Codes that may safely be retried (bounded). */
+const TRANSIENT_CODES = new Set([
+  'NETWORK_ERROR',
+  'NETWORK',
+  'TIMEOUT',
+  'MODEL_TIMEOUT',
+  'GENERATION_UNAVAILABLE',
+  'INTERNAL_ERROR',
+  'RATE_LIMITED',
+  'SERVER_BUSY',
+  'SUBSTITUTION_UNAVAILABLE',
+]);
+
+/** Codes that mean the user should provide better input. */
+const USER_CORRECTABLE_CODES = new Set([
+  'INVALID_ARGUMENTS',
+  'INVALID_PHASE',
+  'MISSING_INPUT',
+  'NO_RECIPE',
+  'WAITING_FOR_TIMER',
+  'NOT_PAUSED',
+  'NO_PENDING_SUBSTITUTION',
+]);
+
+export type RecoveryDecision =
+  | { action: 'RETRY'; retryCount: number; failedTool?: string; snapshot: GuideSnapshot }
+  | { action: 'GIVE_UP'; message: string; retryCount: number; failedTool?: string; snapshot: GuideSnapshot }
+  | { action: 'QUESTION'; question: string; snapshot: GuideSnapshot }
+  | { action: 'RELOAD'; snapshot: GuideSnapshot }
+  | { action: 'FATAL'; message: string; snapshot: GuideSnapshot };
+
+function conciseQuestion(code: string, message?: string): string {
+  switch (code) {
+    case 'NO_RECIPE':
+      return 'This recipe is missing — can you confirm which recipe we are cooking?';
+    case 'WAITING_FOR_TIMER':
+      return 'A timer is still running — should I wait for it to finish?';
+    case 'NO_PENDING_SUBSTITUTION':
+      return 'What would you like to substitute?';
+    default:
+      return message ? `${message} — what would you like to do?` : 'Can you rephrase that?';
+  }
+}
+
 // ── Service ─────────────────────────────────────────────────────────────────
 
 export class GuidedCookingService {
@@ -145,6 +200,15 @@ export class GuidedCookingService {
         recipeId,
         correlationId: options?.correlationId,
       });
+      // The user is cooking this validated recipe — seed the availability list
+      // so ingredient corrections stay viable (K7 Part B).
+      session = await this.sessionService.updateAvailableIngredients(
+        session.id,
+        session.version,
+        recipe.ingredients,
+        'UPSERT',
+        { correlationId: options?.correlationId },
+      );
     }
 
     // Attach the recipe id if the session does not carry one yet.
@@ -300,6 +364,336 @@ export class GuidedCookingService {
     return this.buildSnapshot(userId, updated);
   }
 
+  // ── Substitution (K7 Part A) ──────────────────────────────────────────────
+
+  /**
+   * The cook is out of an ingredient. Preserve the exact session location and
+   * enter SUBSTITUTION_REQUIRED. Returns honest candidates (deterministic map,
+   * pantry-first); [] when nothing is known — never invented.
+   */
+  async requestSubstitution(
+    userId: string,
+    sessionId: string | undefined,
+    unavailableIngredient: string,
+    options?: { correlationId?: string },
+  ): Promise<{ snapshot: GuideSnapshot; unavailableIngredient: string; candidates: SubstitutionCandidate[] }> {
+    const session = await this.resolveSession(userId, sessionId);
+    if (!session) throw new GuideError('No cooking session found for this user', 'SESSION_NOT_FOUND', true);
+    if (session.currentPhase !== 'PREP_GUIDANCE' && session.currentPhase !== 'COOKING_GUIDANCE') {
+      throw new GuideError(
+        `Cannot substitute while ${session.currentPhase}`,
+        'INVALID_PHASE',
+        true,
+      );
+    }
+
+    const transitioned = await this.sessionService.transitionTo(
+      session.id,
+      session.version,
+      'SUBSTITUTION_REQUIRED',
+      'USER_INPUT',
+      { correlationId: options?.correlationId },
+    );
+
+    // Persist the pending ingredient so a later "use X" can confirm it.
+    const updated = await this.sessionService.updateSessionMetadata(
+      transitioned.id,
+      transitioned.version,
+      { pendingSubstitution: unavailableIngredient },
+      { correlationId: options?.correlationId },
+    );
+
+    const recipe = await this.requireRecipeSafe(updated);
+    const candidates = recipe
+      ? await this.substitutionCandidates(recipe, unavailableIngredient, updated.availableIngredients.map((i) => i.name))
+      : [];
+
+    return {
+      snapshot: await this.buildSnapshot(userId, updated, recipe ?? undefined),
+      unavailableIngredient,
+      candidates,
+    };
+  }
+
+  /**
+   * Confirm a substitution: replace the ingredient throughout the recipe,
+   * persist, revalidate, log, and resume the EXACT step. Never silent — the
+   * session must be in SUBSTITUTION_REQUIRED.
+   */
+  async applySubstitution(
+    userId: string,
+    sessionId: string | undefined,
+    change: { unavailableIngredient: string; replacement: string },
+    options?: { correlationId?: string },
+  ): Promise<{ snapshot: GuideSnapshot; from: string; to: string; validation: RecipeValidationResult }> {
+    const session = await this.resolveSession(userId, sessionId);
+    if (!session) throw new GuideError('No cooking session found for this user', 'SESSION_NOT_FOUND', true);
+    if (session.currentPhase !== 'SUBSTITUTION_REQUIRED') {
+      throw new GuideError(
+        'There is no pending substitution to confirm',
+        'NO_PENDING_SUBSTITUTION',
+        true,
+      );
+    }
+
+    // The unavailable ingredient may come from the request or the pending
+    // session state ("use X" flow) — never silent either way.
+    const from = change.unavailableIngredient || session.pendingSubstitution;
+    if (!from) {
+      throw new GuideError('Which ingredient should I substitute?', 'NO_PENDING_SUBSTITUTION', true);
+    }
+
+    const recipe = await this.requireRecipe(session);
+    const updated = replaceIngredientInRecipe(recipe, from, change.replacement);
+    const parsed = recipeSchema.safeParse(updated);
+    if (!parsed.success) {
+      throw new GuideError(
+        `Replacement produced an invalid recipe: ${parsed.error.issues[0]?.message ?? 'schema error'}`,
+        'REPLACEMENT_INVALID',
+        false,
+      );
+    }
+
+    if (this.recipeStore) {
+      await this.recipeStore.updateRecipe(parsed.data);
+    }
+
+    // Revalidate the affected recipe against what the cook has.
+    const validation = validateRecipe(parsed.data, {
+      availableIngredients: session.availableIngredients.map((i) => i.name),
+    });
+
+    await this.sessionService.logSessionEvent(session.id, 'SUBSTITUTION_APPLIED', {
+      from,
+      to: change.replacement,
+      validationValid: validation.valid,
+      validationErrors: validation.errors.length,
+    }, { correlationId: options?.correlationId });
+
+    // Clear the pending substitution, then resume the exact step (RECOVERY
+    // transition restores the resumable phase).
+    const cleared = await this.sessionService.updateSessionMetadata(
+      session.id,
+      session.version,
+      { pendingSubstitution: null },
+      { correlationId: options?.correlationId },
+    );
+
+    const resumable = session.resumableState;
+    if (!resumable || (resumable.phase !== 'PREP_GUIDANCE' && resumable.phase !== 'COOKING_GUIDANCE')) {
+      throw new GuideError('Substitution state lost — cannot resume safely', 'NO_RESUMABLE_STATE', false);
+    }
+    const restored = await this.sessionService.transitionTo(
+      cleared.id,
+      cleared.version,
+      resumable.phase,
+      'RECOVERY',
+      { correlationId: options?.correlationId },
+    );
+
+    return {
+      snapshot: await this.buildSnapshot(userId, restored, parsed.data),
+      from,
+      to: change.replacement,
+      validation,
+    };
+  }
+
+  // ── User correction (K7 Part B) ───────────────────────────────────────────
+
+  /**
+   * The cook corrects an ingredient mid-guidance ("No, I said two tomatoes").
+   * Preserves the step, persists the correction, and decides whether the
+   * recipe needs regeneration (revalidation failure) or can resume as-is.
+   */
+  async correctAvailableIngredients(
+    userId: string,
+    sessionId: string | undefined,
+    ingredients: Ingredient[],
+    mode: 'UPSERT' | 'REMOVE',
+    options?: { correlationId?: string },
+  ): Promise<{ snapshot: GuideSnapshot; revalidated: boolean; regenerating: boolean; validation?: RecipeValidationResult }> {
+    const session = await this.resolveSession(userId, sessionId);
+    if (!session) throw new GuideError('No cooking session found for this user', 'SESSION_NOT_FOUND', true);
+    if (session.currentPhase !== 'PREP_GUIDANCE' && session.currentPhase !== 'COOKING_GUIDANCE') {
+      throw new GuideError(
+        `Cannot correct while ${session.currentPhase}`,
+        'INVALID_PHASE',
+        true,
+      );
+    }
+
+    // Preserve location before persisting the correction.
+    const interrupted = await this.sessionService.transitionTo(
+      session.id,
+      session.version,
+      'USER_CORRECTION',
+      'USER_INPUT',
+      { correlationId: options?.correlationId },
+    );
+
+    const corrected = await this.sessionService.updateAvailableIngredients(
+      interrupted.id,
+      interrupted.version,
+      ingredients,
+      mode === 'REMOVE' ? 'REPLACE' : 'UPSERT',
+      { correlationId: options?.correlationId },
+    );
+
+    // Decide whether the recipe is still viable with the corrected list.
+    const recipe = await this.requireRecipeSafe(corrected);
+    if (!recipe) {
+      const restored = await this.restoreFromInterruption(corrected, options?.correlationId);
+      return { snapshot: await this.buildSnapshot(userId, restored), revalidated: false, regenerating: false };
+    }
+
+    const validation = validateRecipe(recipe, {
+      availableIngredients: corrected.availableIngredients.map((i) => i.name),
+    });
+    const regenerating = !validation.valid || validation.missingConfirmations.length > 0;
+
+    if (regenerating) {
+      // Recipe no longer viable — back to requirements to regenerate.
+      const backToRequirements = await this.sessionService.transitionTo(
+        corrected.id,
+        corrected.version,
+        'COLLECTING_REQUIREMENTS',
+        'RECOVERY',
+        { correlationId: options?.correlationId },
+      );
+      return {
+        snapshot: await this.buildSnapshot(userId, backToRequirements),
+        revalidated: true,
+        regenerating: true,
+        validation,
+      };
+    }
+
+    const restored = await this.restoreFromInterruption(corrected, options?.correlationId);
+    return {
+      snapshot: await this.buildSnapshot(userId, restored, recipe),
+      revalidated: true,
+      regenerating: false,
+      validation,
+    };
+  }
+
+  // ── Error recovery (K7 Part C) ────────────────────────────────────────────
+
+  /**
+   * Classify and handle an error. Records ERROR_RECOVERY when needed, then
+   * returns a bounded recovery decision:
+   *   RETRY   — transient, retries remain (bounded at 2) — session restored
+   *   GIVE_UP — transient but retries exhausted — session restored
+   *   QUESTION — user-correctable — one concise question — session restored
+   *   RELOAD  — state conflict — canonical state reloaded — session restored
+   *   FATAL   — non-recoverable — session preserved in ERROR_RECOVERY
+   */
+  async recoverAfterError(
+    userId: string,
+    sessionId: string | undefined,
+    error?: { code: string; message?: string; failedTool?: string; recoverable?: boolean },
+    options?: { correlationId?: string },
+  ): Promise<RecoveryDecision> {
+    let session = await this.resolveSession(userId, sessionId);
+    if (!session) throw new GuideError('No cooking session found for this user', 'SESSION_NOT_FOUND', true);
+
+    // Record the failure when the session is not already in ERROR_RECOVERY.
+    if (session.currentPhase !== 'ERROR_RECOVERY') {
+      if (!error) {
+        throw new GuideError('No error was reported and the session is not in recovery', 'NOT_IN_ERROR_RECOVERY', true);
+      }
+      session = await this.sessionService.handleError(
+        session.id,
+        session.version,
+        error.code,
+        error.message ?? error.code,
+        {
+          correlationId: options?.correlationId,
+          failedTool: error.failedTool,
+          recoverable: error.recoverable ?? true,
+        },
+      );
+    }
+
+    const rc = session.recoveryContext;
+    const code = rc?.errorCode ?? error?.code ?? 'UNKNOWN_ERROR';
+    const failedTool = rc?.failedTool ?? error?.failedTool;
+    const recoverable = rc?.recoverable ?? error?.recoverable ?? true;
+
+    if (code === 'VERSION_CONFLICT') {
+      const restored = await this.restoreFromInterruption(session, options?.correlationId);
+      return { action: 'RELOAD', snapshot: await this.buildSnapshot(userId, restored) };
+    }
+
+    if (!recoverable) {
+      return {
+        action: 'FATAL',
+        message: 'This operation cannot continue safely. Your session is preserved — say "help" to recover.',
+        snapshot: await this.buildSnapshot(userId, session),
+      };
+    }
+
+    if (USER_CORRECTABLE_CODES.has(code)) {
+      const restored = await this.restoreFromInterruption(session, options?.correlationId);
+      return {
+        action: 'QUESTION',
+        question: conciseQuestion(code, session.recoveryContext?.errorMessage),
+        snapshot: await this.buildSnapshot(userId, restored),
+      };
+    }
+
+    if (TRANSIENT_CODES.has(code)) {
+      const retryCount = (rc?.retryCount ?? 0) + 1;
+      if (retryCount > MAX_RETRIES) {
+        const restored = await this.restoreFromInterruption(session, options?.correlationId);
+        return {
+          action: 'GIVE_UP',
+          message: 'I am still having trouble with that. Let us pause here — say "help" and I will walk you through it.',
+          retryCount,
+          failedTool,
+          snapshot: await this.buildSnapshot(userId, restored),
+        };
+      }
+
+      // Persist the bumped retry count, then restore for the retry.
+      const bumped = await this.sessionService.updateSessionMetadata(
+        session.id,
+        session.version,
+        { recoveryContext: { ...rc!, retryCount } },
+        { correlationId: options?.correlationId },
+      );
+      const restored = await this.restoreFromInterruption(bumped, options?.correlationId);
+      return {
+        action: 'RETRY',
+        retryCount,
+        failedTool,
+        snapshot: await this.buildSnapshot(userId, restored),
+      };
+    }
+
+    // Unknown code — treat as transient-once.
+    const restored = await this.restoreFromInterruption(session, options?.correlationId);
+    return { action: 'RETRY', retryCount: 1, failedTool, snapshot: await this.buildSnapshot(userId, restored) };
+  }
+
+  /** Clear a lingering recovery context after a successful retry. */
+  async clearRecovery(
+    userId: string,
+    sessionId?: string,
+    options?: { correlationId?: string },
+  ): Promise<GuideSnapshot> {
+    const session = await this.resolveSession(userId, sessionId);
+    if (!session) throw new GuideError('No cooking session found for this user', 'SESSION_NOT_FOUND', true);
+    const cleared = await this.sessionService.updateSessionMetadata(
+      session.id,
+      session.version,
+      { recoveryContext: null },
+      { correlationId: options?.correlationId },
+    );
+    return this.buildSnapshot(userId, cleared);
+  }
+
   // ── Timers ────────────────────────────────────────────────────────────────
 
   /**
@@ -448,8 +842,10 @@ export class GuidedCookingService {
         return { instruction: 'Plate and serve. Say "done" when it is plated.' };
       case 'COMPLETED':
         return { instruction: 'Enjoy your meal!' };
+      case 'SUBSTITUTION_REQUIRED':
+      case 'USER_CORRECTION':
       case 'PAUSED': {
-        // Show the step the cook will return to.
+        // Show the step the cook will return to after the interruption.
         const resumable = session.resumableState;
         if (resumable && recipe) {
           if (resumable.phase === 'PREP_GUIDANCE') {
@@ -581,6 +977,58 @@ export class GuidedCookingService {
   private async loadRecipe(recipeId: string): Promise<Recipe | null> {
     if (!this.recipeStore) return null;
     return this.recipeStore.getRecipe(recipeId);
+  }
+
+  private async requireRecipeSafe(session: CookingSession): Promise<Recipe | null> {
+    if (!session.recipeId) return null;
+    return this.loadRecipe(session.recipeId);
+  }
+
+  /** Merge deterministic + AI substitution candidates (never invented). */
+  private async substitutionCandidates(
+    recipe: Recipe,
+    unavailable: string,
+    pantry: string[],
+  ): Promise<SubstitutionCandidate[]> {
+    const service = getSubstitutionService();
+    if (service) {
+      try {
+        return await service.findSubstitution({
+          unavailableIngredient: unavailable,
+          recipe,
+          availablePantry: pantry,
+        });
+      } catch {
+        // Deterministic fallback below.
+      }
+    }
+    return findSubstitutionCandidates(recipe, unavailable, pantry);
+  }
+
+  /**
+   * Restore a session out of an interruption to its exact resumable step.
+   * ERROR_RECOVERY is restored directly (the machine has no outgoing table
+   * entries); other interruptions use the allowed RECOVERY transitions.
+   */
+  private async restoreFromInterruption(
+    session: CookingSession,
+    correlationId?: string,
+  ): Promise<CookingSession> {
+    if (session.currentPhase === 'ERROR_RECOVERY') {
+      return this.sessionService.recoverFromError(session.id, session.version, { correlationId });
+    }
+    const resumable = session.resumableState;
+    if (!resumable) return session;
+    if (
+      resumable.phase === 'PREP_GUIDANCE' ||
+      resumable.phase === 'COOKING_GUIDANCE' ||
+      resumable.phase === 'COLLECTING_REQUIREMENTS'
+    ) {
+      return this.sessionService.transitionTo(session.id, session.version, resumable.phase, 'RECOVERY', {
+        correlationId,
+      });
+    }
+    return session;
   }
 
   private async activeTimers(session: CookingSession): Promise<ActiveTimerInfo[]> {

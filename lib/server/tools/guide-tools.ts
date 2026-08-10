@@ -11,6 +11,7 @@ import { z } from 'zod';
 import { ok, toToolError } from './types';
 import type { ToolDefinition, ToolContext } from './types';
 import { GuidedCookingService } from '../guide-service';
+import type { Ingredient } from '../../domain/types';
 
 export const cookWithMeTool: ToolDefinition = {
   name: 'cook_with_me',
@@ -29,6 +30,119 @@ export const cookWithMeTool: ToolDefinition = {
         correlationId: ctx.correlationId,
       });
       return ok(snapshot);
+    } catch (e) {
+      return toToolError(e);
+    }
+  },
+};
+
+export const requestSubstitutionTool: ToolDefinition = {
+  name: 'request_substitution',
+  description: 'The cook is out of an ingredient — preserve the session location and return viable substitution candidates.',
+  inputSchema: z.object({
+    sessionId: z.string().optional(),
+    unavailableIngredient: z.string().min(1),
+  }),
+  async handler(ctx, args) {
+    try {
+      const result = await new GuidedCookingService(
+        ctx.sessionService,
+        ctx.timerStore,
+        ctx.recipeStore,
+      ).requestSubstitution(ctx.userId, args.sessionId, args.unavailableIngredient, {
+        correlationId: ctx.correlationId,
+      });
+      return ok(result);
+    } catch (e) {
+      return toToolError(e);
+    }
+  },
+};
+
+export const applySubstitutionTool: ToolDefinition = {
+  name: 'apply_substitution',
+  description: 'Confirm a substitution: replace the ingredient throughout the recipe, revalidate, and resume the exact step. Never silent. unavailableIngredient may be omitted when a substitution is already pending.',
+  inputSchema: z.object({
+    sessionId: z.string().optional(),
+    unavailableIngredient: z.string().optional(),
+    replacement: z.string().min(1),
+  }),
+  async handler(ctx, args) {
+    try {
+      const result = await new GuidedCookingService(
+        ctx.sessionService,
+        ctx.timerStore,
+        ctx.recipeStore,
+      ).applySubstitution(ctx.userId, args.sessionId, {
+        unavailableIngredient: args.unavailableIngredient,
+        replacement: args.replacement,
+      }, {
+        correlationId: ctx.correlationId,
+      });
+      return ok(result);
+    } catch (e) {
+      return toToolError(e);
+    }
+  },
+};
+
+export const correctIngredientTool: ToolDefinition = {
+  name: 'correct_ingredient',
+  description: 'The cook corrects an ingredient mid-guidance (quantity, unit, or removal). Persists the correction and resumes the exact step.',
+  inputSchema: z.object({
+    sessionId: z.string().optional(),
+    name: z.string().min(1),
+    quantity: z.number().nullable().optional(),
+    unit: z.string().nullable().optional(),
+    remove: z.boolean().default(false),
+  }),
+  async handler(ctx, args) {
+    try {
+      const ingredient: Ingredient = {
+        id: `ing-${args.name.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`,
+        name: args.name,
+        quantity: args.quantity ?? null,
+        unit: args.unit ?? null,
+        optional: false,
+      };
+      const result = await new GuidedCookingService(
+        ctx.sessionService,
+        ctx.timerStore,
+        ctx.recipeStore,
+      ).correctAvailableIngredients(ctx.userId, args.sessionId, [ingredient], args.remove ? 'REMOVE' : 'UPSERT', {
+        correlationId: ctx.correlationId,
+      });
+      return ok(result);
+    } catch (e) {
+      return toToolError(e);
+    }
+  },
+};
+
+export const recoverSessionTool: ToolDefinition = {
+  name: 'recover_session',
+  description: 'Classify and handle the last error: bounded retry for transient failures, one question for user-correctable issues, canonical reload for state conflicts.',
+  inputSchema: z.object({
+    sessionId: z.string().optional(),
+    errorCode: z.string().optional(),
+    errorMessage: z.string().optional(),
+    failedTool: z.string().optional(),
+  }),
+  async handler(ctx, args) {
+    try {
+      const decision = await new GuidedCookingService(
+        ctx.sessionService,
+        ctx.timerStore,
+        ctx.recipeStore,
+      ).recoverAfterError(ctx.userId, args.sessionId, {
+        code: args.errorCode ?? 'INTERNAL_ERROR',
+        message: args.errorMessage,
+        failedTool: args.failedTool,
+        recoverable: true,
+      }, {
+        correlationId: ctx.correlationId,
+      });
+      return ok(decision);
     } catch (e) {
       return toToolError(e);
     }

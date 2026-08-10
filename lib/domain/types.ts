@@ -114,6 +114,10 @@ export interface CookingSession {
   activeTimerIds: string[];
   /** Ingredients the user has told us they have (collected via voice/tools). */
   availableIngredients: Ingredient[];
+  /** Error-recovery context (K7) — set while in ERROR_RECOVERY. */
+  recoveryContext?: RecoveryContext;
+  /** The ingredient the cook is out of, while a substitution is pending (K7). */
+  pendingSubstitution?: string;
   startedAt: EpochMs;
   lastActivityAt: EpochMs;
   pausedAt?: EpochMs;
@@ -126,6 +130,27 @@ export interface SessionState {
   prepStepIndex: number;
   cookingStepIndex: number;
   activeTimerIds: string[];
+}
+
+/**
+ * Generalized error-recovery context (K7 Part C). Persisted on the session
+ * when an error transitions it to ERROR_RECOVERY so recovery decisions are
+ * bounded, classified, and restart-safe.
+ */
+export interface RecoveryContext {
+  errorCode: string;
+  errorMessage: string;
+  /** The state just before the error — restoration target. */
+  previousState?: SessionState;
+  /** The phase the failure happened in. */
+  currentPhase: SessionPhase;
+  /** Step index (prep or cooking, by phase) at failure. */
+  currentStepIndex: number;
+  /** The tool/operation that failed, when known. */
+  failedTool?: string;
+  /** Number of retries already attempted (bounded). */
+  retryCount: number;
+  recoverable: boolean;
 }
 
 // ── Cooking session events (event sourcing / audit trail) ───────────────────

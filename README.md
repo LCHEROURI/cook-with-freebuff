@@ -151,6 +151,27 @@ The app will follow the same contract-locked verification discipline as Freebuff
 - [x] "start cooking" / "let's cook" / "cook with me" route to the `cook_with_me` tool in the conversational agent
 - [x] 40 new tests (guide service, guide tools, cook route, CookScreen render) — 209 total green + production build passes
 
+## K7 — Substitutions, corrections & error recovery
+
+### Part A — Ingredient substitution
+- [x] `requestSubstitution` — preserves the exact session location, transitions to `SUBSTITUTION_REQUIRED`, returns honest candidates (never invented)
+- [x] Deterministic substitution engine (`lib/recipe/substitute.ts`) — curated culinary map, pantry-first ranking, excludes recipe ingredients, capped at 3
+- [x] `applySubstitution` — replace throughout the recipe → persist → revalidate → log `SUBSTITUTION_APPLIED` → resume the EXACT step; never silent (requires the pending state)
+- [x] "use X" confirmation flow — the pending ingredient is persisted on the session
+- [x] New tools: `request_substitution`, `apply_substitution`; orchestrator parses "I don't have garlic" → ingredient, "use garlic powder" → confirmation
+
+### Part B — User correction
+- [x] `correctAvailableIngredients` — persists the correction (`USER_CORRECTION`), decides revalidation: recipe still viable → resume exact step; broken → regenerate from requirements
+- [x] `correct_ingredient` tool + orchestrator `CORRECT` intent ("No, I said two tomatoes" → `{ name, quantity }`)
+- [x] Guided launch seeds the availability list from the validated recipe so corrections stay viable
+
+### Part C — Generalized error recovery
+- [x] `RecoveryContext` persisted on the session (errorCode, previousState, currentStepIndex, failedTool, retryCount, recoverable)
+- [x] `recoverAfterError` classification: transient → bounded `RETRY` (max 2, retry budget carries across failures); user-correctable → one `QUESTION`; version conflict → `RELOAD` canonical state; non-recoverable → `FATAL` (session preserved)
+- [x] Recovery invariants proven by tests: never skips/duplicates a step, never duplicates timers, never alters the recipe, never loses progress
+- [x] New tools: `correct_ingredient`, `recover_session`; `/api/cook` actions: substitute / apply_substitution / correct / recover / clear_recovery
+- [x] 36 new tests (substitute engine, K7 guide flows + invariants, tools, route, commands) — 245 total green + production build passes
+
 ## Development
 
 ```bash
