@@ -14,8 +14,15 @@ name: Verify deployed (post-deploy)
 #   - Only Production deployments are verified. Previews share the same
 #     Firestore backend and would consume the owner-verify write budget for no
 #     gate value; they can be driven manually via workflow_dispatch if needed.
-#   - workflow_dispatch re-runs verify the canonical production URL (no
-#     deployment_status context exists for them) — same credential set.
+#   - The verify step targets the CANONICAL production URL, not the
+#     deployment-specific target_url: Vercel's Deployment Protection 401s the
+#     deployment subdomain ("Protected deployment") and the canonical alias is
+#     public. The event still guarantees the deploy COMPLETED before this job
+#     runs, and the runner's checkout + npm ci (~30-60s) cover the alias
+#     promotion window, so verify:live exercises the new build, never the old
+#     one. The target_url is echoed for transparency.
+#   - workflow_dispatch re-runs verify the same canonical URL (no
+#     deployment_status context exists for them) — identical credential set.
 
 on:
   deployment_status:
@@ -82,16 +89,18 @@ jobs:
           APP_OWNER_UID: ${{ secrets.APP_OWNER_UID }}
           GOOGLE_AI_API_KEY: ${{ secrets.GOOGLE_AI_API_KEY }}
 
-      # End-to-end verification of the exact deployment the event describes.
-      # Gated on the full credential set so forks / unconfigured repos stay
-      # green, and the Gemini turn is always enforced here (locally it SKIPs
-      # when the key is absent). VERIFY_BASE_URL is the deployment's own
-      # target_url (canonical production URL for a manual dispatch).
+      # End-to-end verification of the freshly deployed app. Gated on the full
+      # credential set so forks / unconfigured repos stay green, and the Gemini
+      # turn is always enforced here (locally it SKIPs when the key is absent).
+      # VERIFY_BASE_URL is the canonical production URL (public — the
+      # deployment subdomain is Vercel-protected). The event ordering is what
+      # guarantees "new build": this job only starts after a successful
+      # production deploy, and checkout + npm ci outlast the alias promotion.
       - name: Verify deployed app end to end (verify:live)
         if: ${{ env.NEXT_PUBLIC_FIREBASE_API_KEY != '' && env.FIREBASE_SERVICE_ACCOUNT != '' && env.APP_OWNER_UID != '' && env.GOOGLE_AI_API_KEY != '' }}
         run: npm run verify:live
         env:
-          VERIFY_BASE_URL: ${{ github.event_name == 'workflow_dispatch' && 'https://cook-with-freebuff.vercel.app' || github.event.deployment_status.target_url }}
+          VERIFY_BASE_URL: https://cook-with-freebuff.vercel.app
           NEXT_PUBLIC_FIREBASE_API_KEY: ${{ secrets.NEXT_PUBLIC_FIREBASE_API_KEY }}
           FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
           APP_OWNER_UID: ${{ secrets.APP_OWNER_UID }}

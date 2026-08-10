@@ -69,6 +69,9 @@ const fail = (m) => { failures += 1; console.log(`  ✗ FAIL: ${m}`); };
 const skip = (m) => console.log(`  - SKIP: ${m}`);
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+// Safe pretty-print for fail messages — a non-JSON body (e.g. a Vercel
+// protection 401 page) must print as `null`, never crash the verifier.
+const j = (v) => JSON.stringify(v ?? null).slice(0, 160);
 const fetchJson = async (url, init) => {
   const res = await fetch(url, { ...init, signal: AbortSignal.timeout(30_000) });
   let body = null;
@@ -213,7 +216,7 @@ const gated = await cook('done', { sessionId: sid });
 if (gated.status === 200 && gated.body?.data?.phase === 'SAFETY_WARNING' && gated.body?.data?.safetyGate?.note) {
   ok(`safety gate surfaced: “${gated.body.data.safetyGate.note}” (step preserved at ${gated.body.data.stepNumber})`);
 } else {
-  fail(`expected SAFETY_WARNING gate, got ${gated.status} ${JSON.stringify(gated.body?.data).slice(0, 160)}`);
+  fail(`expected SAFETY_WARNING gate, got ${gated.status} ${j(gated.body?.data)}`);
 }
 
 // Acknowledging the gate advances; the first cooking step auto-starts a timer.
@@ -221,7 +224,7 @@ const ack = await cook('done', { sessionId: sid });
 if (ack.status === 200 && ack.body?.data?.phase === 'WAITING_FOR_TIMER' && ack.body?.data?.timerStarted) {
   ok(`gate acknowledged → timer auto-started (“${ack.body.data.timerStarted.label}”)`);
 } else {
-  fail(`expected WAITING_FOR_TIMER + timer, got ${ack.status} ${JSON.stringify(ack.body?.data).slice(0, 160)}`);
+  fail(`expected WAITING_FOR_TIMER + timer, got ${ack.status} ${j(ack.body?.data)}`);
 }
 
 // ── 4. Agent turns through the deployed /api/agent ──────────────────────────
