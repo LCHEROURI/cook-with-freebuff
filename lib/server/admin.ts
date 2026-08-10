@@ -26,7 +26,6 @@ export function getAdminCredentials(): AdminCredentials | null {
 
   if (path) {
     try {
-      // eslint-disable-next-line @typescript-eslint/no-require-imports
       const sa = require(path) as {
         project_id: string;
         client_email: string;
