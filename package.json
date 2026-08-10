@@ -12,7 +12,8 @@
     "test:watch": "vitest",
     "verify:live": "node scripts/verify-live.mjs",
     "verify:live:local": "node scripts/verify-live-local.mjs",
-    "verify:live:compare": "node scripts/verify-live-compare.mjs"
+    "verify:live:compare": "node scripts/verify-live-compare.mjs",
+    "verify:deployed-hash": "node scripts/verify-deployed-hash-gate.mjs"
   },
   "dependencies": {
     "@google/generative-ai": "^0.24.1",

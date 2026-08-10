@@ -273,6 +273,11 @@ npm run verify:live:local
 # runs both checks, normalizes ephemeral content (ids, timings, Gemini text),
 # and fails on any status-line divergence
 npm run verify:live:compare
+
+# Live commit vs local HEAD, before any deploy — reports the commit Vercel
+# is serving and fails unless it matches your local HEAD (exit 2 = the
+# VERCEL_TOKEN is invalid/revoked — paste a fresh one, it is NOT a gate fail)
+npm run verify:deployed-hash
 ```
 
 ## Project principles
