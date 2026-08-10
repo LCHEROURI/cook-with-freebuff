@@ -323,13 +323,20 @@ now delegates to that mode); `HEAD~1` normally is.
 git worktree add --detach /tmp/cook-hash-proof HEAD~1 && (cd /tmp/cook-hash-proof && npm run verify:deployed-hash; echo "gate exit=$?"); git worktree remove /tmp/cook-hash-proof --force
 ```
 
+**CI stale-guard mode** (expect `✗ STALE-HEAD BLOCK` and `gate exit=1` —
+the direction-aware verdict the CI validate step runs):
+
+```bash
+git worktree add --detach /tmp/cook-stale-guard HEAD~1 && (cd /tmp/cook-stale-guard && node scripts/verify-deployed-hash-gate.mjs --stale-guard; echo "gate exit=$?"); git worktree remove /tmp/cook-stale-guard --force
+```
+
 **Hook BLOCK path** (expect `✗ BLOCKED` and `hook exit=1`):
 
 ```bash
 git worktree add --detach /tmp/cook-hook-block HEAD~1 && mkdir -p /tmp/cook-hook-block/.githooks && cp .githooks/pre-push /tmp/cook-hook-block/.githooks/ && (cd /tmp/cook-hook-block && printf 'refs/heads/main a refs/heads/main b\n' | bash .githooks/pre-push; echo "hook exit=$?"); git worktree remove /tmp/cook-hook-block --force
 ```
 
-Both are read-only against git and Vercel — nothing is pushed, deployed, or
+All three are read-only against git and Vercel — nothing is pushed, deployed, or
 modified; only a temporary worktree is created and removed.
 
 ## Project principles
