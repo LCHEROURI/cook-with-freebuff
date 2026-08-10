@@ -14,6 +14,9 @@
     "verify:live:local": "node scripts/verify-live-local.mjs",
     "verify:live:compare": "node scripts/verify-live-compare.mjs",
     "verify:deployed-hash": "node scripts/verify-deployed-hash-gate.mjs",
+    "verify:gate-fail-proof": "node scripts/verify-teeth-proofs.mjs gate-fail",
+    "verify:stale-guard-proof": "node scripts/verify-teeth-proofs.mjs stale-guard",
+    "verify:hook-block-proof": "node scripts/verify-teeth-proofs.mjs hook-block",
     "authorize:domain": "node scripts/authorize-domain.mjs"
   },
   "dependencies": {

@@ -313,6 +313,18 @@ throwaway detached worktree at an older commit — the live site is always
 at (or ahead of) your recent commits, so the comparison necessarily
 mismatches. Each one-liner creates the worktree, runs the check, prints the
 verdict, and always cleans up. The worktree commit must be recent enough to
+
+Each proof is also one npm script — no copy-paste needed (the runner
+creates the worktree, asserts the expected verdict actually appeared, and
+always cleans up, exiting 1 if the proof did not reproduce):
+
+```bash
+npm run verify:gate-fail-proof      # Gate FAIL path     → expects RESULT: FAIL
+npm run verify:stale-guard-proof    # CI stale-guard mode → expects ✗ STALE-HEAD BLOCK
+npm run verify:hook-block-proof     # Hook BLOCK path    → expects ✗ BLOCKED
+```
+
+The one-liners below document exactly what each script runs under the hood.
 include the gate driver with `--stale-guard` support (any commit at or
 after `067b313` — required by the hook's BLOCK one-liner, since the hook
 now delegates to that mode); `HEAD~1` normally is.

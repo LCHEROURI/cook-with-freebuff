@@ -29,6 +29,18 @@ const teethEnd = README.indexOf('\n### ', teethStart + 1);
 const TEETH = README.slice(teethStart, teethEnd === -1 ? undefined : teethEnd);
 
 describe("README · 'Re-proving the gate's teeth in seconds'", () => {
+  it('points each proof at its one-command npm script (no copy-paste)', () => {
+    // The README is the discoverable entry point for the proofs; if the
+    // section stops mentioning the npm scripts (or a script name drifts),
+    // the doc and package.json have diverged and this fails.
+    expect(TEETH).toContain('npm run verify:gate-fail-proof');
+    expect(TEETH).toContain('npm run verify:stale-guard-proof');
+    expect(TEETH).toContain('npm run verify:hook-block-proof');
+    expect(TEETH).toContain('expects RESULT: FAIL');
+    expect(TEETH).toContain('expects ✗ STALE-HEAD BLOCK');
+    expect(TEETH).toContain('expects ✗ BLOCKED');
+  });
+
   it('keeps the section with its read-only framing and the worktree-commit requirement', () => {
     expect(TEETH.length).toBeGreaterThan(0);
     // The framing line: the proofs are read-only against git and Vercel —
