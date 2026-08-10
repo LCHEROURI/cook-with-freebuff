@@ -1,0 +1,116 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  # Manual re-run of the post-deploy verification without a new push.
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    name: Typecheck · Lint · Test · Build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v5
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Test
+        run: npm test
+
+      - name: Production build
+        run: npm run build
+
+  # Post-deploy smoke test against the LIVE app. Every push (or manual
+  # workflow_dispatch re-run) drives scripts/verify-live.mjs against the
+  # deployed Vercel URL: seed an owner recipe in the shared Firestore → mint a
+  # real owner ID token → guided /api/cook flow (launch → prep → safety gate →
+  # acknowledgment → timer auto-start) → agent turns (pantry tool persistence +
+  # a real Gemini answer) → cleanup. Mirrors the portfolio app's verify-deployed
+  # pattern: secret-gated step + a loud guard so a silently-skipped gate can
+  # never masquerade as a green run on main.
+  verify-deployed:
+    name: Verify deployed app (verify:live)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    needs: validate
+    if: ${{ github.event_name == 'push' || github.event_name == 'workflow_dispatch' }}
+
+    # Job-level env is the only place secrets can be read for step gating
+    # (`secrets` is not a valid context in `if:`). An unset secret becomes an
+    # empty string, so `env.X != ''` gates each step cleanly.
+    env:
+      NEXT_PUBLIC_FIREBASE_API_KEY: ${{ secrets.NEXT_PUBLIC_FIREBASE_API_KEY }}
+      FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+      APP_OWNER_UID: ${{ secrets.APP_OWNER_UID }}
+      GOOGLE_AI_API_KEY: ${{ secrets.GOOGLE_AI_API_KEY }}
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v5
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: 22
+
+      - name: Install dependencies
+        run: npm ci
+
+      # Loud guard: on a main push to the canonical repo, a missing secret
+      # fails the run instead of silently skipping the verify step below — a
+      # skipped gate would masquerade as a green run. Forks and manual
+      # workflow_dispatch re-runs stay exempt: forks never carry these
+      # secrets, and a dispatched re-run shows its skipped steps to the
+      # operator.
+      - name: Fail loudly if a verify secret is missing (main push)
+        if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && github.repository == 'LCHEROURI/cook-with-freebuff' && (env.NEXT_PUBLIC_FIREBASE_API_KEY == '' || env.FIREBASE_SERVICE_ACCOUNT == '' || env.APP_OWNER_UID == '' || env.GOOGLE_AI_API_KEY == '') }}
+        run: |
+          echo "::error::Required GitHub Actions secret(s) missing on main push:"
+          [ -z "$NEXT_PUBLIC_FIREBASE_API_KEY" ] && echo "  - NEXT_PUBLIC_FIREBASE_API_KEY (mints the owner ID token for verify:live)"
+          [ -z "$FIREBASE_SERVICE_ACCOUNT" ] && echo "  - FIREBASE_SERVICE_ACCOUNT (seeds the owner recipe + mints the owner custom token)"
+          [ -z "$APP_OWNER_UID" ] && echo "  - APP_OWNER_UID (the owner Firebase Auth uid verify:live signs in as)"
+          [ -z "$GOOGLE_AI_API_KEY" ] && echo "  - GOOGLE_AI_API_KEY (the Gemini provider the agent turn must answer with)"
+          echo "Add them under GitHub -> Settings -> Secrets and variables -> Actions, then re-run this job."
+          exit 1
+        env:
+          NEXT_PUBLIC_FIREBASE_API_KEY: ${{ secrets.NEXT_PUBLIC_FIREBASE_API_KEY }}
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+          APP_OWNER_UID: ${{ secrets.APP_OWNER_UID }}
+          GOOGLE_AI_API_KEY: ${{ secrets.GOOGLE_AI_API_KEY }}
+
+      # End-to-end verification of the deployed app. Gated on the full
+      # credential set (web API key + service account + owner uid + Gemini
+      # key) so forks / unconfigured repos stay green, and the Gemini turn is
+      # always enforced here (locally it SKIPs when the key is absent).
+      - name: Verify deployed app end to end (verify:live)
+        if: ${{ env.NEXT_PUBLIC_FIREBASE_API_KEY != '' && env.FIREBASE_SERVICE_ACCOUNT != '' && env.APP_OWNER_UID != '' && env.GOOGLE_AI_API_KEY != '' }}
+        run: npm run verify:live
+        env:
+          VERIFY_BASE_URL: https://cook-with-freebuff.vercel.app
+          NEXT_PUBLIC_FIREBASE_API_KEY: ${{ secrets.NEXT_PUBLIC_FIREBASE_API_KEY }}
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+          APP_OWNER_UID: ${{ secrets.APP_OWNER_UID }}
+          GOOGLE_AI_API_KEY: ${{ secrets.GOOGLE_AI_API_KEY }}
