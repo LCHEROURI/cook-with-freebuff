@@ -67,6 +67,30 @@ describe('.github/workflows/ci.yml · push-time validate contract', () => {
     expect(validateBlock).toContain('post-deploy verify:live gate NO LONGER lives here');
     expect(validateBlock).toContain('.github/workflows/verify-deployed.yml');
   });
+
+  it('runs the stale-head guard on pushes, gated on VERCEL_TOKEN', () => {
+    // The push-time stale-head protection: verify-deployed-hash with
+    // --stale-guard (direction-aware — a forward push passes, only a
+    // rollback/diverged HEAD fails) so a stale push fails CI before the
+    // deploy even starts. The gating `if:` is the load-bearing half: the step
+    // must run ONLY on `push` events (a PR head is legitimately behind live
+    // main and would falsely block) and only when VERCEL_TOKEN is present.
+    expect(validateBlock).toContain('name: Verify pushed head is not stale vs live (stale-guard)');
+    expect(validateBlock).toContain('node scripts/verify-deployed-hash-gate.mjs --stale-guard');
+    expect(validateBlock).toContain("if: ${{ github.event_name == 'push' && env.VERCEL_TOKEN != '' }}");
+    expect(validateBlock).toContain('VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}');
+  });
+
+  it('fails loudly when VERCEL_TOKEN is missing on a main push (no silent skip)', () => {
+    // The gated step skips-not-fails without the secret; the loud guard stops
+    // that skip from masquerading as a green run on the canonical repo's main
+    // pushes — the same discipline as the post-deploy workflow's guard.
+    expect(validateBlock).toContain('name: Fail loudly if VERCEL_TOKEN is missing (main push)');
+    expect(validateBlock).toContain("github.event_name == 'push'");
+    expect(validateBlock).toContain("github.repository == 'LCHEROURI/cook-with-freebuff'");
+    expect(validateBlock).toContain("env.VERCEL_TOKEN == ''");
+    expect(validateBlock).toContain('exit 1');
+  });
 });
 
 describe('.github/workflows/verify-deployed.yml · deployment_status post-deploy gate', () => {

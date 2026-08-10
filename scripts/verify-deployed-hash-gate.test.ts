@@ -66,8 +66,11 @@ describe('scripts/verify-deployed-hash-gate.mjs · shared-driver composition', (
     // One source of truth with the CI post-deploy gate: same token chain,
     // team resolution, v13 lookup, and exit-code contract.
     expect(SRC).toContain("spawnSync(\n  process.execPath,\n  ['scripts/verify-deployed-hash.mjs'");
-    // stdio inherited so the child's report + RESULT: verdict pass through.
-    expect(SRC).toContain("stdio: 'inherit'");
+    // stdio piped so --stale-guard can parse the live commit; the child's
+    // output is still forwarded verbatim either way.
+    expect(SRC).toContain("stdio: ['ignore', 'pipe', 'pipe']");
+    expect(SRC).toContain('if (child.stdout) process.stdout.write(child.stdout);');
+    expect(SRC).toContain('if (child.stderr) process.stderr.write(child.stderr);');
   });
 
   it('mirrors the child exit code (0 = PASS, 1 = FAIL)', () => {
@@ -87,5 +90,42 @@ describe('scripts/verify-deployed-hash-gate.mjs · shared-driver composition', (
     // The exit-2 branch must precede the generic forward (a reorder that
     // lets exit 2 fall through to exit(code) fails here).
     expect(SRC.indexOf('process.exit(2);')).toBeLessThan(SRC.indexOf('process.exit(code);'));
+  });
+});
+
+describe('scripts/verify-deployed-hash-gate.mjs · --stale-guard direction routing', () => {
+  it('defines the flag and only applies direction routing when it is set', () => {
+    expect(SRC).toContain("export const STALE_GUARD = process.argv.includes('--stale-guard');");
+    // Without the flag the plain mismatch is still the verdict.
+    expect(SRC).toContain('if (!STALE_GUARD) process.exit(1);');
+  });
+
+  it('parses the live commit sha from the child report', () => {
+    // The direction call needs the live sha — a broken parse silently loses
+    // the stale-head protection (and would block every forward push).
+    expect(SRC).toContain("childOut.match(/^  commit  ([0-9a-f]{40})$/m)");
+  });
+
+  it('fails loudly when the live commit cannot be determined', () => {
+    expect(SRC).toContain('could not determine the live commit');
+    expect(SRC).toContain('process.exit(1);');
+  });
+
+  it('forward deploy (live is an ancestor of HEAD) → PASS, left to the post-deploy gate', () => {
+    expect(SRC).toContain("spawnSync('git', ['merge-base', '--is-ancestor', live, 'HEAD'])");
+    expect(SRC).toContain('RESULT: PASS (stale-guard)');
+    expect(SRC).toContain('process.exit(0);');
+  });
+
+  it('stale head (live NOT an ancestor) → STALE-HEAD BLOCK with exit 1', () => {
+    expect(SRC).toContain('✗ STALE-HEAD BLOCK');
+    expect(SRC).toContain('Pushing would roll the site back or clobber history');
+    expect(SRC).toContain('RESULT: FAIL');
+    // The block must come AFTER the forward-pass check — a reorder that lets
+    // a stale push fall into the PASS branch fails here.
+    const forward = SRC.indexOf('RESULT: PASS (stale-guard)');
+    const blocked = SRC.indexOf('✗ STALE-HEAD BLOCK');
+    expect(forward).toBeGreaterThan(-1);
+    expect(blocked).toBeGreaterThan(forward);
   });
 });

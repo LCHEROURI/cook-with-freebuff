@@ -43,6 +43,33 @@ jobs:
       - name: Production build
         run: npm run build
 
+      # Push-time stale-head guard: verifies the pushed HEAD is not a rollback
+      # of what Vercel is currently serving, BEFORE the deploy starts (the
+      # post-deploy workflow can only prove what was deployed == what was
+      # pushed; it cannot catch a stale push that should never have deployed).
+      # Runs verify-deployed-hash with --stale-guard, which is DIRECTION-aware:
+      # a normal forward push (live behind the pushed HEAD — the standard case
+      # right before a deploy) PASSES here and is proven after deploy; only a
+      # push whose HEAD is NOT ahead of live (rollback/diverged) fails. Only
+      # runs on pushes to main — a PR head is legitimately behind live main, so
+      # the check would falsely block every PR. Gated on VERCEL_TOKEN; the
+      # loud guard below turns a missing token into a failure instead of a
+      # silently skipped gate.
+      - name: Fail loudly if VERCEL_TOKEN is missing (main push)
+        if: ${{ github.event_name == 'push' && github.repository == 'LCHEROURI/cook-with-freebuff' && env.VERCEL_TOKEN == '' }}
+        run: |
+          echo "::error::VERCEL_TOKEN secret missing — the stale-head guard cannot run on a main push."
+          echo "Add it under GitHub -> Settings -> Secrets and variables -> Actions, then re-run."
+          exit 1
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+
+      - name: Verify pushed head is not stale vs live (stale-guard)
+        if: ${{ github.event_name == 'push' && env.VERCEL_TOKEN != '' }}
+        run: node scripts/verify-deployed-hash-gate.mjs --stale-guard
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+
   # NOTE: the post-deploy verify:live gate NO LONGER lives here. It used to run
   # in this push-triggered job, where it RACED the Vercel build — hitting the
   # previous deployment or a 502 mid-deploy. It now runs from
