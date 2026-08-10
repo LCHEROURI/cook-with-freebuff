@@ -16,6 +16,7 @@
     "verify:deployed-hash": "node scripts/verify-deployed-hash-gate.mjs",
     "verify:gate-fail-proof": "node scripts/verify-teeth-proofs.mjs gate-fail",
     "verify:stale-guard-proof": "node scripts/verify-teeth-proofs.mjs stale-guard",
+    "verify:gate-stale-proof": "node scripts/verify-teeth-proofs.mjs gate-stale",
     "verify:hook-block-proof": "node scripts/verify-teeth-proofs.mjs hook-block",
     "authorize:domain": "node scripts/authorize-domain.mjs"
   },

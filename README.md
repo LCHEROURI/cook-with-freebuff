@@ -319,9 +319,9 @@ creates the worktree, asserts the expected verdict actually appeared, and
 always cleans up, exiting 1 if the proof did not reproduce):
 
 ```bash
-npm run verify:gate-fail-proof      # Gate FAIL path     → expects RESULT: FAIL
-npm run verify:stale-guard-proof    # CI stale-guard mode → expects ✗ STALE-HEAD BLOCK
+npm run verify:gate-stale-proof     # BOTH gate teeth in one command (FAIL + stale-guard)
 npm run verify:hook-block-proof     # Hook BLOCK path    → expects ✗ BLOCKED
+# granular: npm run verify:gate-fail-proof → expects RESULT: FAIL · npm run verify:stale-guard-proof → expects ✗ STALE-HEAD BLOCK
 ```
 
 The one-liners below document exactly what each script runs under the hood.

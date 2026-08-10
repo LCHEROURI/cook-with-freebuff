@@ -33,9 +33,11 @@ describe("README · 'Re-proving the gate's teeth in seconds'", () => {
     // The README is the discoverable entry point for the proofs; if the
     // section stops mentioning the npm scripts (or a script name drifts),
     // the doc and package.json have diverged and this fails.
+    expect(TEETH).toContain('npm run verify:gate-stale-proof');
+    expect(TEETH).toContain('npm run verify:hook-block-proof');
     expect(TEETH).toContain('npm run verify:gate-fail-proof');
     expect(TEETH).toContain('npm run verify:stale-guard-proof');
-    expect(TEETH).toContain('npm run verify:hook-block-proof');
+    expect(TEETH).toContain('BOTH gate teeth in one command');
     expect(TEETH).toContain('expects RESULT: FAIL');
     expect(TEETH).toContain('expects ✗ STALE-HEAD BLOCK');
     expect(TEETH).toContain('expects ✗ BLOCKED');

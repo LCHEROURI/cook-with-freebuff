@@ -39,6 +39,17 @@ describe('scripts/verify-teeth-proofs.mjs · mode table', () => {
     expect(SRC).toContain("expected: '✗ STALE-HEAD BLOCK'");
     expect(SRC).toContain("expected: 'pre-push: ✗ BLOCKED'");
   });
+
+  it('defines the gate-stale composite mode running BOTH gate proofs back-to-back', () => {
+    // verify:gate-stale-proof is the gate side of the teeth in ONE command:
+    // the composite must chain the two gate modes (each with its own worktree
+    // and cleanup) and fail if EITHER verdict is absent.
+    expect(SRC).toContain("'gate-stale': {");
+    expect(SRC).toContain("subModes: ['gate-fail', 'stale-guard']");
+    expect(SRC).toContain('const subModes = COMBINED[requestedMode]?.subModes ?? [requestedMode];');
+    expect(SRC).toContain('const results = subModes.map(runProof);');
+    expect(SRC).toContain('process.exit(ok ? 0 : 1);');
+  });
 });
 
 describe('scripts/verify-teeth-proofs.mjs · throwaway-worktree mechanics', () => {
@@ -99,9 +110,10 @@ describe('scripts/verify-teeth-proofs.mjs · throwaway-worktree mechanics', () =
 });
 
 describe('package.json · npm script wiring', () => {
-  it('exposes the three proofs as npm scripts calling the runner with their mode', () => {
+  it('exposes the proofs as npm scripts calling the runner with their mode', () => {
     expect(PKG).toContain('"verify:gate-fail-proof": "node scripts/verify-teeth-proofs.mjs gate-fail"');
     expect(PKG).toContain('"verify:stale-guard-proof": "node scripts/verify-teeth-proofs.mjs stale-guard"');
+    expect(PKG).toContain('"verify:gate-stale-proof": "node scripts/verify-teeth-proofs.mjs gate-stale"');
     expect(PKG).toContain('"verify:hook-block-proof": "node scripts/verify-teeth-proofs.mjs hook-block"');
   });
 });
