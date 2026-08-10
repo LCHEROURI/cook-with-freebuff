@@ -319,6 +319,7 @@ creates the worktree, asserts the expected verdict actually appeared, and
 always cleans up, exiting 1 if the proof did not reproduce):
 
 ```bash
+npm run verify:teeth-proofs         # ALL three teeth in one command
 npm run verify:gate-stale-proof     # BOTH gate teeth in one command (FAIL + stale-guard)
 npm run verify:hook-block-proof     # Hook BLOCK path    → expects ✗ BLOCKED
 # granular: npm run verify:gate-fail-proof → expects RESULT: FAIL · npm run verify:stale-guard-proof → expects ✗ STALE-HEAD BLOCK

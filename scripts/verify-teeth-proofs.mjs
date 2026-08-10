@@ -7,6 +7,7 @@
 //   node scripts/verify-teeth-proofs.mjs stale-guard    # CI stale-guard mode
 //   node scripts/verify-teeth-proofs.mjs hook-block     # Hook BLOCK path
 //   node scripts/verify-teeth-proofs.mjs gate-stale     # BOTH gate teeth in one
+//   node scripts/verify-teeth-proofs.mjs teeth-proofs   # ALL three teeth in one
 //
 // Each mode reproduces one of the README "Re-proving the gate's teeth"
 // one-liners programmatically: it creates a throwaway DETACHED worktree at
@@ -22,8 +23,10 @@
 //   hook-block   → expects `pre-push: ✗ BLOCKED`   (hook, main-push stdin)
 //
 // `gate-stale` runs gate-fail and stale-guard back-to-back (one command for
-// the whole gate side of the teeth), each with its own worktree and cleanup,
-// and fails if EITHER verdict does not reproduce.
+// the whole gate side of the teeth); `teeth-proofs` runs ALL three (the gate
+// pair plus the hook BLOCK path) — the whole teeth section in one command.
+// Each sub-proof gets its own worktree and cleanup, and the composite fails
+// if ANY expected verdict does not reproduce.
 //
 // A proof that did not reproduce — live has caught up to HEAD~1, the token is
 // revoked (exit 2), or the driver could not determine live — exits 1 with the
@@ -79,6 +82,10 @@ const COMBINED = {
   'gate-stale': {
     subModes: ['gate-fail', 'stale-guard'],
     summary: 'gate teeth (FAIL + stale-guard)',
+  },
+  'teeth-proofs': {
+    subModes: ['gate-fail', 'stale-guard', 'hook-block'],
+    summary: 'all teeth (gate FAIL + stale-guard + hook BLOCK)',
   },
 };
 

@@ -50,6 +50,15 @@ describe('scripts/verify-teeth-proofs.mjs · mode table', () => {
     expect(SRC).toContain('const results = subModes.map(runProof);');
     expect(SRC).toContain('process.exit(ok ? 0 : 1);');
   });
+
+  it('defines the teeth-proofs composite running ALL three teeth in one command', () => {
+    // verify:teeth-proofs is the whole teeth section in one command: the
+    // gate pair PLUS the hook BLOCK path, each with its own worktree and
+    // cleanup, failing if ANY verdict is absent.
+    expect(SRC).toContain("'teeth-proofs': {");
+    expect(SRC).toContain("subModes: ['gate-fail', 'stale-guard', 'hook-block']");
+    expect(SRC).toContain("summary: 'all teeth (gate FAIL + stale-guard + hook BLOCK)'");
+  });
 });
 
 describe('scripts/verify-teeth-proofs.mjs · throwaway-worktree mechanics', () => {
@@ -114,6 +123,7 @@ describe('package.json · npm script wiring', () => {
     expect(PKG).toContain('"verify:gate-fail-proof": "node scripts/verify-teeth-proofs.mjs gate-fail"');
     expect(PKG).toContain('"verify:stale-guard-proof": "node scripts/verify-teeth-proofs.mjs stale-guard"');
     expect(PKG).toContain('"verify:gate-stale-proof": "node scripts/verify-teeth-proofs.mjs gate-stale"');
+    expect(PKG).toContain('"verify:teeth-proofs": "node scripts/verify-teeth-proofs.mjs teeth-proofs"');
     expect(PKG).toContain('"verify:hook-block-proof": "node scripts/verify-teeth-proofs.mjs hook-block"');
   });
 });
