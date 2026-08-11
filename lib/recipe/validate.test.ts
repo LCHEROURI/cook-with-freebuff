@@ -87,6 +87,30 @@ describe('validateRecipe — ingredient consistency', () => {
     const result = validateRecipe(r);
     expect(result.errors.some((e) => e.message.includes('unknown ingredient'))).toBe(false);
   });
+
+  it('resolves id-style step references (the CI gate regression)', () => {
+    // The post-deploy starter gate failed on real Gemini output: the model
+    // emitted ingredient IDs ("rice_01", "chicken_thighs_01") in
+    // ingredientsUsed instead of names. The validator must resolve a reference
+    // against the ingredient's ID too — a step referencing "rice_01" when the
+    // list has an ingredient with id "rice_01" is CONSISTENT, not an unknown
+    // ingredient. (Same tolerance norm() already applies to kebab-case.)
+    const r = makeRecipe({
+      ingredients: [
+        { id: 'chicken_thighs_01', name: 'chicken thighs', quantity: 4, unit: 'pieces', optional: false },
+        { id: 'rice_01', name: 'rice', quantity: 1, unit: 'cup', optional: false },
+      ],
+      prepSteps: [
+        { id: 'p1', stepNumber: 1, instruction: 'Rinse the rice under cold running water', spokenInstruction: 'Rinse the rice', estimatedSeconds: 60, ingredientsUsed: ['rice_01'], equipmentUsed: [] },
+      ],
+      cookingSteps: [
+        { id: 'c1', stepNumber: 1, instruction: 'Cook the chicken thighs 15 minutes', spokenInstruction: 'Cook the chicken thighs fifteen minutes', estimatedSeconds: 900, ingredientsUsed: ['chicken_thighs_01'], equipmentUsed: ['pan'] },
+      ],
+    });
+    const result = validateRecipe(r);
+    expect(result.errors.some((e) => e.message.includes('unknown ingredient'))).toBe(false);
+    expect(result.valid).toBe(true);
+  });
 });
 
 describe('validateRecipe — quantity consistency', () => {

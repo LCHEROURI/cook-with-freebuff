@@ -88,10 +88,19 @@ export function validateRecipe(
   }
 
   // 2. Ingredient consistency — every step reference must exist in the list.
-  const ingredientNames = new Set(recipe.ingredients.map((i) => norm(i.name)));
+  // References may use the ingredient NAME or its ID: the generator is
+  // instructed to use exact names, but occasionally emits id-style references
+  // ("rice_01") that are still consistent with the list. Resolving both is the
+  // same tolerance norm() already applies to kebab-case vs spaces — a ref that
+  // resolves to ANY listed ingredient is consistent, one that resolves to
+  // nothing is a genuine error.
+  const ingredientKeys = new Set([
+    ...recipe.ingredients.map((i) => norm(i.name)),
+    ...recipe.ingredients.map((i) => norm(i.id)),
+  ]);
   for (const step of [...recipe.prepSteps, ...recipe.cookingSteps]) {
     for (const ref of step.ingredientsUsed) {
-      if (!ingredientNames.has(norm(ref))) {
+      if (!ingredientKeys.has(norm(ref))) {
         errors.push({
           field: 'steps',
           message: `Step "${truncate(step.instruction)}" references unknown ingredient "${ref}"`,
@@ -102,12 +111,13 @@ export function validateRecipe(
   }
 
   // 3. Quantity consistency — null quantities are explicit but flagged.
-  const nullQuantity = new Set(
-    recipe.ingredients.filter((i) => i.quantity === null).map((i) => norm(i.name)),
-  );
+  const nullQuantityKeys = new Set([
+    ...recipe.ingredients.filter((i) => i.quantity === null).map((i) => norm(i.name)),
+    ...recipe.ingredients.filter((i) => i.quantity === null).map((i) => norm(i.id)),
+  ]);
   for (const step of [...recipe.prepSteps, ...recipe.cookingSteps]) {
     for (const ref of step.ingredientsUsed) {
-      if (nullQuantity.has(norm(ref))) {
+      if (nullQuantityKeys.has(norm(ref))) {
         warnings.push({
           field: 'ingredients',
           message: `Quantity for "${ref}" is unknown — confirm before shopping`,
