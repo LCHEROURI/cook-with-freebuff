@@ -25,6 +25,23 @@ describe('app/cook/page.tsx · protected route', () => {
     expect(COOK).toContain('useVoiceSession({ getToken: auth.getToken });');
   });
 
+  it('wires real microphone capture while keeping the typed fallback', () => {
+    // The mic (Web Speech API) captures speech → the FINAL transcript goes
+    // through the SAME voice.send() → /api/agent path as typed text — the
+    // backend flow is untouched. The indicator must show LISTENING while the
+    // mic is live, and the text input must never disappear.
+    expect(COOK).toContain("import { useVoiceInput } from '@/lib/hooks/useVoiceInput'");
+    expect(COOK).toContain('const voiceInput = useVoiceInput({');
+    expect(COOK).toContain('onFinal: (text) => {');
+    expect(COOK).toContain('void voice.send(text);');
+    expect(COOK).toContain('micSupported={voiceInput.supported}');
+    expect(COOK).toContain('micListening={voiceInput.listening}');
+    expect(COOK).toContain('micInterim={voiceInput.interim}');
+    expect(COOK).toContain('micError={voiceInput.error}');
+    expect(COOK).toContain('onMicToggle={voiceInput.toggle}');
+    expect(COOK).toContain("voice.setStatus('LISTENING')");
+  });
+
   it('redirects to /login once auth settles with no user', () => {
     expect(COOK).toContain("router.replace('/login')");
     expect(COOK).toContain("if (auth.state === 'ready' && !auth.user)");

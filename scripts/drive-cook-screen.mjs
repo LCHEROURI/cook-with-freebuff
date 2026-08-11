@@ -349,6 +349,29 @@ if (sawActive) {
 }
 await screenshot('02-cook-active-session');
 
+// ── 6b. Mic surface: real microphone → speech-to-text with the typed fallback ──
+// The mic button must exist on the active screen. In headless Chrome the Web
+// Speech API is unavailable, so it renders disabled with the explanation — the
+// important contract is that the mic surface exists AND the typed path (input +
+// Send) remains fully intact (voice-first never means voice-only).
+const micSurface = await evaluate(`(() => {
+  const mic = document.querySelector('button[aria-label="Speak a command"], button[aria-label="Stop listening"]');
+  const input = document.querySelector('input[aria-label="Speak or type a command"]');
+  const send = document.querySelector('button[type="submit"]');
+  return {
+    mic: !!mic,
+    micDisabled: mic ? mic.disabled : null,
+    fallbackTitle: mic ? (mic.title || '') : '',
+    input: !!input,
+    send: !!send,
+  };
+})()`);
+if (micSurface.mic && micSurface.input && micSurface.send) {
+  ok(`mic surface renders (${micSurface.micDisabled ? 'disabled in headless — typed fallback intact' : 'enabled'})`);
+} else {
+  fail(`mic surface incomplete: ${JSON.stringify(micSurface)}`);
+}
+
 // ── 7. Question-fix proof: type the question into the /cook input ───────────
 // The exact utterance that got swallowed as a fake ingredient before the fix:
 // "what is ONE good tip for seasoning chicken" — the number-word "one" used to

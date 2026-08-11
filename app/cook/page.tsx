@@ -9,6 +9,7 @@ import RecipeRowMeta from './RecipeRowMeta';
 import { CookScreen } from '@/components/CookScreen';
 import { useAuthSession } from '@/lib/auth/useAuthSession';
 import { useVoiceSession } from '@/lib/hooks/useVoiceSession';
+import { useVoiceInput } from '@/lib/hooks/useVoiceInput';
 import { useCookingSession } from '@/lib/hooks/useCookingSession';
 
 export default function CookPage() {
@@ -18,6 +19,13 @@ export default function CookPage() {
   const auth = useAuthSession();
   const cook = useCookingSession({ getToken: auth.getToken });
   const voice = useVoiceSession({ getToken: auth.getToken });
+  // Real microphone → speech-to-text at the edge; the final transcript flows
+  // through the SAME voice.send() path as typed text (the backend is untouched).
+  const voiceInput = useVoiceInput({
+    onFinal: (text) => {
+      void voice.send(text);
+    },
+  });
   const [input, setInput] = useState('');
   const snap = cook.snapshot;
 
@@ -182,6 +190,14 @@ export default function CookPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [voice.transcript.length]);
 
+  // While the mic is live, the indicator must honestly say LISTENING (the
+  // recognition is capturing, not yet processing an utterance).
+  useEffect(() => {
+    if (voiceInput.listening) {
+      voice.setStatus('LISTENING');
+    }
+  }, [voiceInput.listening, voice.setStatus]);
+
   // Wait for the auth settle first, so the screen never flashes content for
   // a signed-out visitor before the redirect to /login fires.
   if (auth.state === 'loading') {
@@ -335,6 +351,12 @@ export default function CookPage() {
       // are re-readable in the scrollable transcript.
       turns={voice.transcript}
       voiceStatus={voice.status}
+      micSupported={voiceInput.supported}
+      micListening={voiceInput.listening}
+      micInterim={voiceInput.interim}
+      micError={voiceInput.error}
+      onMicToggle={voiceInput.toggle}
+      onMicErrorClear={voiceInput.clearError}
       onDone={() => void cook.done()}
       onRepeat={() => void cook.repeat()}
       onBack={() => void cook.back()}

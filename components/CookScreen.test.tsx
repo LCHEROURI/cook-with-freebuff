@@ -40,6 +40,7 @@ function render(snap: GuideSnapshot, props: Partial<Parameters<typeof CookScreen
     error: null,
     alert: null,
     voiceStatus: 'LISTENING' as const,
+    onMicToggle: vi.fn(),
     onDone: vi.fn(),
     onRepeat: vi.fn(),
     onBack: vi.fn(),
@@ -207,5 +208,52 @@ describe('CookScreen', () => {
   it('keeps the "One moment…" fallback for other instruction-less phases', () => {
     const html = render(snapshot({ phase: 'SAFETY_WARNING', instruction: undefined }));
     expect(html).toContain('One moment');
+  });
+
+  it('renders the real mic button (listening state via aria-pressed) WITH the typed fallback', () => {
+    // Voice-first never means voice-only: the mic toggles and the text input
+    // + Send stay present on the same form.
+    const html = render(snapshot(), { micSupported: true, micListening: true, onMicToggle: vi.fn() });
+    expect(html).toContain('aria-label="Stop listening"');
+    expect(html).toContain('aria-pressed="true"');
+    expect(html).toContain('Speak or type a command');
+    expect(html).toContain('>Send</button>');
+  });
+
+  it('renders the mic idle when not listening and the text input remains the fallback', () => {
+    const html = render(snapshot(), { micSupported: true, micListening: false, onMicToggle: vi.fn() });
+    expect(html).toContain('aria-label="Speak a command"');
+    expect(html).not.toContain('aria-pressed="true"');
+    expect(html).toContain('Speak or type a command');
+  });
+
+  it('renders the mic disabled with a clear explanation when unsupported', () => {
+    const html = render(snapshot(), { micSupported: false });
+    expect(html).toContain('aria-label="Speak a command"');
+    expect(html).toContain('Microphone not supported in this browser — type instead');
+    // The typed path is fully intact.
+    expect(html).toContain('Speak or type a command');
+    expect(html).toContain('>Send</button>');
+  });
+
+  it('shows the live interim transcript while listening', () => {
+    const html = render(snapshot(), { micSupported: true, micListening: true, micInterim: 'repeat the', onMicToggle: vi.fn() });
+    expect(html).toContain('repeat the');
+    expect(html).toContain('role="status"');
+  });
+
+  it('shows the listening prompt when no words have been caught yet', () => {
+    const html = render(snapshot(), { micSupported: true, micListening: true, micInterim: '', onMicToggle: vi.fn() });
+    expect(html).toContain('Listening… speak now');
+  });
+
+  it('surfaces mic errors with a dismiss control', () => {
+    const html = render(snapshot(), {
+      micError: 'Microphone permission denied — enable it in your browser to speak.',
+      onMicErrorClear: vi.fn(),
+    });
+    expect(html).toContain('Microphone permission denied');
+    expect(html).toContain('Dismiss microphone error');
+    expect(html).toContain('role="alert"');
   });
 });

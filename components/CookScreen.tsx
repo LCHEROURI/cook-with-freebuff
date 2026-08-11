@@ -38,6 +38,14 @@ export interface CookScreenProps {
   /** The turn transcript — the agent's replies are shown on screen so the user SEES what the app understood and said, instead of only hearing it. */
   turns?: AgentTurn[];
   voiceStatus: VoiceStatus;
+  /** Real microphone → speech-to-text (Web Speech API). When unsupported the
+   *  mic button renders disabled and the text input stays the fallback. */
+  micSupported?: boolean;
+  micListening?: boolean;
+  micInterim?: string;
+  micError?: string | null;
+  onMicToggle: () => void;
+  onMicErrorClear?: () => void;
   onDone: () => void;
   onRepeat: () => void;
   onBack: () => void;
@@ -58,6 +66,12 @@ export function CookScreen({
   alert,
   turns,
   voiceStatus,
+  micSupported = false,
+  micListening = false,
+  micInterim = '',
+  micError,
+  onMicToggle,
+  onMicErrorClear,
   onDone,
   onRepeat,
   onBack,
@@ -281,6 +295,37 @@ export function CookScreen({
           setInput('');
         }}
       >
+        <button
+          type="button"
+          className={`${styles.micBtn} ${micListening ? styles.micListening : ''}`}
+          onClick={onMicToggle}
+          disabled={!micSupported}
+          aria-label={micListening ? 'Stop listening' : 'Speak a command'}
+          aria-pressed={micListening}
+          title={
+            micSupported
+              ? micListening
+                ? 'Tap to stop listening'
+                : 'Tap, speak, then I send it'
+              : 'Microphone not supported in this browser — type instead'
+          }
+        >
+          <svg
+            width="20"
+            height="20"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            aria-hidden="true"
+          >
+            <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z" />
+            <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
+            <line x1="12" x2="12" y1="19" y2="22" />
+          </svg>
+        </button>
         <input
           className={styles.voiceInput}
           value={input}
@@ -292,6 +337,21 @@ export function CookScreen({
           Send
         </button>
       </form>
+      {micListening && (
+        <p className={styles.micStatus} role="status" aria-live="polite">
+          🎙 {micInterim || 'Listening… speak now'}
+        </p>
+      )}
+      {micError && (
+        <div className={styles.micError} role="alert">
+          <span>{micError}</span>
+          {onMicErrorClear && (
+            <button className={styles.alertClose} onClick={onMicErrorClear} aria-label="Dismiss microphone error">
+              ×
+            </button>
+          )}
+        </div>
+      )}
     </main>
   );
 }
