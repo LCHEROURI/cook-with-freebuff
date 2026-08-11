@@ -105,7 +105,7 @@ describe('scripts/verify-live.mjs · starter-flow gate (create → validate → 
     // generation + Chrome launch on cold serverless), and a driver exit
     // WITHOUT `RESULT: PASS` must fail the gate — a UI regression in the
     // ready-card/constraints flow can never silently pass.
-    expect(SRC).toContain("spawnSync('node', ['scripts/drive-starter-prefs.mjs', '--app', APP, '--out', driverOut], {");
+    expect(SRC).toContain("spawnSync('node', ['scripts/drive-starter-prefs.mjs', '--app', APP, '--out', `${driverOut}-${attempt}`], {");
     expect(SRC).toContain('timeout: 300_000');
     expect(SRC).toContain('driver.status === 0 && /RESULT: PASS/.test(driverLog)');
     expect(SRC).toContain("ok('UI starter driver → RESULT: PASS (ready card prefs + constraints view)')");
@@ -113,6 +113,20 @@ describe('scripts/verify-live.mjs · starter-flow gate (create → validate → 
     // The driver must be swept-account-safe: verify-live's pre-run sweep and
     // this script's own cleanup must NOT be the driver's only safety net.
     expect(SRC).toContain('sweeps its own probe recipe');
+  });
+
+  it('retries the driver ONCE after a 30s backoff on a failed first attempt (transient stalls)', () => {
+    // A second consecutive Gemini generation (right after [3b]) can stall on
+    // cold serverless — the transient that failed the post-deploy gate once.
+    // Mirroring the portfolio's live-gate pattern: a non-PASS first attempt
+    // waits 30s and retries once before failing. A deterministic regression
+    // fails both attempts; a transient passes on the retry. The final verdict
+    // (ok/fail) must come from the LAST attempt's log only.
+    expect(SRC).toContain('let driver = runDriver(1);');
+    expect(SRC).toContain('retrying once (transient backoff)');
+    expect(SRC).toContain('await sleep(30_000)');
+    expect(SRC).toContain('driver = runDriver(2);');
+    expect(SRC).toContain('timed out after 300s (both attempts)');
   });
 
   it('asserts the expanded constraints-view rows from the driver log (not a black box)', () => {

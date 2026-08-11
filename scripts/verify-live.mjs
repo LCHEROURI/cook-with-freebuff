@@ -457,16 +457,32 @@ try {
   // RESULT: PASS — crash, timeout, or assertion failure — fails the gate.
   console.log(`\n[3d] UI starter proof: preference-rich ready card + constraints view (${APP})`);
   const driverOut = `/tmp/verify-live-driver-${t}`;
-  const driver = spawnSync('node', ['scripts/drive-starter-prefs.mjs', '--app', APP, '--out', driverOut], {
-    encoding: 'utf8',
-    timeout: 300_000, // Gemini generation + Chrome launch on cold serverless
-    env: process.env,
-  });
-  const driverLog = `${driver.stdout ?? ''}\n${driver.stderr ?? ''}`;
+  // Retry-once-after-30s (the portfolio's live-gate pattern): the [3b] API
+  // generation ran seconds before this stage, and a second consecutive Gemini
+  // call can stall on cold serverless (seen live: the first attempt timed out
+  // at the driver's 120s create poll; the next attempt passed). A non-PASS
+  // first attempt therefore waits 30s and retries ONCE before failing — a
+  // deterministic regression fails both attempts, a transient stall passes.
+  // (The driver self-caps at ~150s via its own 120s create poll, so two
+  // attempts + 30s backoff fit comfortably inside the job budget.)
+  const runDriver = (attempt) =>
+    spawnSync('node', ['scripts/drive-starter-prefs.mjs', '--app', APP, '--out', `${driverOut}-${attempt}`], {
+      encoding: 'utf8',
+      timeout: 300_000, // Gemini generation + Chrome launch on cold serverless
+      env: process.env,
+    });
+  let driver = runDriver(1);
+  let driverLog = `${driver.stdout ?? ''}\n${driver.stderr ?? ''}`;
+  if (!(driver.status === 0 && /RESULT: PASS/.test(driverLog))) {
+    note('first driver attempt did not pass — waiting 30s and retrying once (transient backoff)');
+    await sleep(30_000);
+    driver = runDriver(2);
+    driverLog = `${driver.stdout ?? ''}\n${driver.stderr ?? ''}`;
+  }
   if (driver.status === 0 && /RESULT: PASS/.test(driverLog)) {
     ok('UI starter driver → RESULT: PASS (ready card prefs + constraints view)');
   } else if (driver.error?.code === 'ETIMEDOUT') {
-    fail('UI starter driver timed out after 300s');
+    fail('UI starter driver timed out after 300s (both attempts)');
   } else {
     const tail = driverLog.split('\n').filter(Boolean).slice(-6).join('\n');
     fail(`UI starter driver → exit ${driver.status ?? 'crash'}${driver.error ? ` (${driver.error.message})` : ''}. Tail: ${tail}`);
