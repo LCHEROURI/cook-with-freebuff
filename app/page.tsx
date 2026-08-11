@@ -31,7 +31,10 @@ export default function HomePage() {
   const auth = useAuthSession();
 
   const cta = auth.state === 'loading' ? null : auth.user ? (
-    <Link href="/cook" className={styles.primaryBtn}>👨‍🍳 Start cooking</Link>
+    <div className={styles.ctaRow}>
+      <Link href="/cook" className={styles.primaryBtn}>👨‍🍳 Start cooking</Link>
+      <Link href="/kitchen" className={styles.secondaryBtn}>🧺 My kitchen</Link>
+    </div>
   ) : (
     <Link href="/login" className={styles.primaryBtn}>Sign in to start</Link>
   );

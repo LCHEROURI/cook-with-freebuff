@@ -238,6 +238,26 @@ See [`DEPLOYMENT.md`](./DEPLOYMENT.md) for the full operational story.
 - [x] All 7 K10 tools declared in Gemini (nullable rule kept); Firestore rules extended (`leftovers` + `grocery_list`, owner-isolated, byte-identical union deployed to both projects)
 - [x] 38 new tests (leftover service, grocery service incl. dedupe/depletion/expiry, tools, guide-completion journey, commands, orchestrator flows, declarations) — 372 total green
 
+## My Kitchen — inspect & change remembered information
+
+`/kitchen` (link from the home page CTA) is the screen counterpart to the
+conversational agent: everything the agent remembers about the user's kitchen
+is readable and editable without asking.
+
+- **🧺 Pantry** — quantities, live expiry flags (Expired / Expiring soon),
+  stale re-confirmation (`✓ Have it` raises confidence), remove, add
+- **🛒 Grocery list** — open lines with their source badge (Added by you /
+  Pantry ran out / Expired item), mark bought, remove, add
+- **🍲 Leftovers** — what's stored and for how long, consume, log manual entries
+- **🥗 Dietary profile** — edit allergies / restrictions / dislikes / cuisines /
+  default servings (applied to every generated recipe)
+
+Every read and mutation goes through `POST /api/kitchen` (Bearer-token auth,
+owner-scoped services) — the page is a thin client over the same
+`PantryService` / `GroceryService` / `LeftoverService` / `DietaryProfileService`
+the agent uses, never direct client-side writes. K8's "allow users to inspect
+and change remembered information" is now a screen, not a conversation.
+
 ## Development
 
 ```bash

@@ -16,6 +16,7 @@ import { describe, expect, it } from 'vitest';
 const COOK = readFileSync('app/cook/page.tsx', 'utf8');
 const LOGIN = readFileSync('app/login/page.tsx', 'utf8');
 const HOME = readFileSync('app/page.tsx', 'utf8');
+const KITCHEN = readFileSync('app/kitchen/page.tsx', 'utf8');
 
 describe('app/cook/page.tsx · protected route', () => {
   it('wires getToken into BOTH data hooks', () => {
@@ -117,5 +118,46 @@ describe('app/page.tsx · landing page', () => {
   it('wires the auth session and sign-out', () => {
     expect(HOME).toContain('const auth = useAuthSession();');
     expect(HOME).toContain('auth.signOut()');
+  });
+
+  it('links to the kitchen from the signed-in CTA', () => {
+    // “My Kitchen” is the inspect-and-change surface for everything the agent
+    // remembers — it must stay reachable from the landing page.
+    expect(HOME).toContain('href="/kitchen"');
+    expect(HOME).toContain('🧺 My kitchen');
+  });
+});
+
+describe('app/kitchen/page.tsx · protected kitchen surface', () => {
+  it('wires getToken into the data hook and protects the route', () => {
+    expect(KITCHEN).toContain('const auth = useAuthSession();');
+    expect(KITCHEN).toContain('router.replace(\'/login\')');
+    expect(KITCHEN).toContain("if (auth.state === 'ready' && !auth.user)");
+    expect(KITCHEN).toContain('Loading your kitchen…');
+  });
+
+  it('reads and mutates through /api/kitchen only (never client-side writes)', () => {
+    // The screen is a thin client over the backend: every read is the
+    // snapshot action and every write is a named mutation — the services
+    // execute on the server. Direct Firestore writes from the page would
+    // bypass ownership checks and must never appear.
+    expect(KITCHEN).toContain("fetch('/api/kitchen'");
+    expect(KITCHEN).toContain("{ action: 'snapshot' }");
+    for (const action of ['pantry_add', 'pantry_remove', 'pantry_confirm', 'grocery_bought', 'grocery_remove', 'leftover_consume', 'profile_update']) {
+      expect(KITCHEN).toContain(`'${action}'`);
+    }
+  });
+
+  it('renders all four inspect-and-change sections', () => {
+    expect(KITCHEN).toContain('🧺 Pantry');
+    expect(KITCHEN).toContain('🛒 Grocery list');
+    expect(KITCHEN).toContain('🍲 Leftovers');
+    expect(KITCHEN).toContain('🥗 Dietary profile');
+    expect(KITCHEN).toContain('Save profile');
+  });
+
+  it('never renders kitchen UI while signed out', () => {
+    expect(KITCHEN).toContain("if (auth.state === 'ready' && !auth.user)");
+    expect(KITCHEN).toContain('Signing you in…');
   });
 });
