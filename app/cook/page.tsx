@@ -155,7 +155,7 @@ export default function CookPage() {
           <h1 className={styles.title}>Cook With Me</h1>
           <p className={styles.emptyText}>
             {cook.error ??
-              'No active cooking session. Tell me what you have (or what you are craving) and I will create a validated recipe you can start cooking right away.'}
+              "Let's cook. Tell me what you have (e.g. chicken, rice and onion) and I'll create a validated recipe — then we start cooking, step by step."}
           </p>
           <form
             className={styles.starterForm}
@@ -170,6 +170,7 @@ export default function CookPage() {
               onChange={(e) => setStarter((s) => ({ ...s, prompt: e.target.value }))}
               placeholder="e.g. chicken, rice and onion"
               aria-label="What do you have to cook with?"
+              autoFocus
               disabled={starter.creating || starter.starting}
             />
             <button
