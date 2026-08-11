@@ -1,5 +1,7 @@
 'use client';
 
+import { useRef } from 'react';
+import type { KeyboardEvent } from 'react';
 import styles from './constraint-details.module.css';
 
 export interface ConstraintDetailsProps {
@@ -21,14 +23,29 @@ export interface ConstraintDetailsProps {
  * the one-line summary.
  */
 export default function ConstraintDetails({ preferences }: ConstraintDetailsProps) {
+  const detailsRef = useRef<HTMLDetailsElement>(null);
   const hasConstraints =
     preferences.servings != null ||
     preferences.dietaryRestrictions.length > 0 ||
     preferences.allergies.length > 0;
   if (!hasConstraints) return null;
+
+  // Keyboard accessibility. Native <summary> keyboard activation is a
+  // browser-internal behavior (jsdom cannot simulate it, so it is untestable
+  // as-is). Handle Enter/Space explicitly with the standard disclosure
+  // pattern: preventDefault (which suppresses the native activation so there
+  // is EXACTLY one toggle per keypress) and flip `open` ourselves. Click
+  // activation stays native.
+  const onSummaryKeyDown = (e: KeyboardEvent<HTMLElement>) => {
+    if (e.key !== 'Enter' && e.key !== ' ') return;
+    e.preventDefault();
+    const details = detailsRef.current;
+    if (details) details.open = !details.open;
+  };
+
   return (
-    <details className={styles.constraintDetails} data-testid="constraint-details">
-      <summary className={styles.constraintSummary}>Generation constraints applied</summary>
+    <details ref={detailsRef} className={styles.constraintDetails} data-testid="constraint-details">
+      <summary className={styles.constraintSummary} onKeyDown={onSummaryKeyDown}>Generation constraints applied</summary>
       <ul className={styles.constraintList}>
         {preferences.servings != null && (
           <li>

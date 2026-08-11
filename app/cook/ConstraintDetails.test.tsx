@@ -64,6 +64,51 @@ describe('ConstraintDetails — expandable generation-constraints view', () => {
     expect(details).not.toHaveAttribute('open');
   });
 
+  it('toggles with the Enter key — keyboard accessibility, locked via keyDown', () => {
+    // jsdom cannot simulate native <summary> keyboard activation, so the
+    // component handles Enter/Space itself (preventDefault + flip open). This
+    // test locks that explicit handling: one Enter keydown opens, a second
+    // closes — the same contract a sighted user gets from the browser.
+    render(<ConstraintDetails preferences={PREFS} />);
+    const details = screen.getByTestId('constraint-details');
+    const summary = screen.getByText('Generation constraints applied');
+    fireEvent.keyDown(summary, { key: 'Enter', code: 'Enter' });
+    expect(details).toHaveAttribute('open');
+    fireEvent.keyDown(summary, { key: 'Enter', code: 'Enter' });
+    expect(details).not.toHaveAttribute('open');
+  });
+
+  it('toggles with the Space key — keyboard accessibility, locked via keyDown', () => {
+    render(<ConstraintDetails preferences={PREFS} />);
+    const details = screen.getByTestId('constraint-details');
+    const summary = screen.getByText('Generation constraints applied');
+    fireEvent.keyDown(summary, { key: ' ', code: 'Space' });
+    expect(details).toHaveAttribute('open');
+    fireEvent.keyDown(summary, { key: ' ', code: 'Space' });
+    expect(details).not.toHaveAttribute('open');
+  });
+
+  it('single keypress = exactly one toggle (preventDefault suppresses the native activation)', () => {
+    // Without preventDefault, browsers would ALSO run their native summary
+    // activation on top of the handler — double-toggle. The handler calls
+    // preventDefault for Enter/Space; a single keydown must land in exactly
+    // the open state, never flipped twice (which would end closed again).
+    render(<ConstraintDetails preferences={PREFS} />);
+    const details = screen.getByTestId('constraint-details');
+    fireEvent.keyDown(screen.getByText('Generation constraints applied'), { key: 'Enter', code: 'Enter' });
+    expect(details).toHaveAttribute('open');
+    expect(screen.getByText('Diet: vegetarian')).toBeInTheDocument();
+  });
+
+  it('ignores non-activation keys (Tab, letters) — the details stays put', () => {
+    render(<ConstraintDetails preferences={PREFS} />);
+    const details = screen.getByTestId('constraint-details');
+    const summary = screen.getByText('Generation constraints applied');
+    fireEvent.keyDown(summary, { key: 'Tab', code: 'Tab' });
+    fireEvent.keyDown(summary, { key: 'a', code: 'KeyA' });
+    expect(details).not.toHaveAttribute('open');
+  });
+
   it('maps only the constraints that were present', () => {
     render(
       <ConstraintDetails
