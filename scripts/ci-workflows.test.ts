@@ -314,10 +314,16 @@ describe('.github/workflows/verify-deployed.yml · deployment_status post-deploy
     expect(POST_DEPLOY).toContain('Deployment Protection');
   });
 
-  it('keeps the run-safety envelope (concurrency, 10-minute budget, Node 22)', () => {
+  it('keeps the run-safety envelope (concurrency, 30-minute budget, Node 22)', () => {
     expect(POST_DEPLOY).toContain('group: verify-deployed-${{ github.ref }}');
     expect(POST_DEPLOY).toContain('cancel-in-progress: false');
-    expect(POST_DEPLOY).toContain('timeout-minutes: 10');
+    // 30 minutes, not 10: the [3d] UI starter driver (2 attempts + 30s backoff)
+    // PLUS the [3e] live-voice driver (2 Chrome launches + 2 Gemini Live
+    // sessions, 420s budget each + 30s backoff) legitimately exceed a 10-min
+    // cap — the 10-min version cancelled the job mid-[3e]-retry and failed a
+    // healthy deploy. The retry budget is the load-bearing reason: shrinking
+    // the timeout below the gates' worst case fails here.
+    expect(POST_DEPLOY).toContain('timeout-minutes: 30');
     expect(POST_DEPLOY).toMatch(/node-version: 22/);
   });
 });

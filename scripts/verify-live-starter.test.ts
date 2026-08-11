@@ -163,21 +163,30 @@ describe('scripts/verify-live.mjs · starter-flow gate (create → validate → 
     expect(SRC).toContain('re-established for the agent turns');
   });
 
-  it('also settles leftover sessions whose recipe doc is GONE (slug-recipe probes the sweep cannot see)', () => {
+  it('also settles leftover sessions that can hijack the starter (slug probes the sweep cannot see)', () => {
     // The pre-run sweep only matches `verify-live-`-prefixed recipeIds — a
-    // session launched from a UI-created MODEL-SLUG recipe (e.g. an old
-    // drive-cook-screen-style probe) carries the slug id and escapes BOTH the
-    // sweep and the tracked-probe settle. An ACTIVE one hijacks /cook (seen
-    // live: [3d] failed because a stale `simple-chicken-and-rice-basic`
-    // session auto-resumed instead of the starter). The settle must therefore
-    // also delete any ACTIVE/PAUSED session whose recipe doc no longer
-    // exists — a safe probe-only discriminator, since a real owner session
-    // always references a real recipe doc.
-    expect(SRC).toContain('Also neutralize ANY leftover session whose recipe doc no longer exists');
+    // session launched from a UI-created MODEL-SLUG recipe carries the slug id
+    // and escapes BOTH the sweep and the tracked-probe settle. An ACTIVE one
+    // hijacks /cook (seen live: a stale `simple-chicken-and-rice-basic`
+    // session created by an earlier CI run auto-resumed and failed [3d] for
+    // two consecutive runs). The settle must therefore neutralize ANY
+    // ACTIVE/PAUSED leftover:
+    //   (a) recipe doc gone → delete (a real owner session always references a
+    //       real recipe doc, so this can never touch a live cook);
+    //   (b) stale (idle > 10 min) → archive as ABANDONED — a real cooking
+    //       session is minutes long and actively touched between steps, so an
+    //       idle one on the shared dev owner is a leftover probe; this also
+    //       backstops a hard-killed run whose probe recipe was cleaned but
+    //       whose session escaped.
+    expect(SRC).toContain('Also neutralize ANY leftover session that can hijack the starter');
     expect(SRC).toContain("db.collection('cooking_sessions').where('userId', '==', OWNER_UID).get()");
     expect(SRC).toContain("s.status !== 'ACTIVE' && s.status !== 'PAUSED'");
     expect(SRC).toContain("db.collection('recipes').doc(s.recipeId).get()");
-    expect(SRC).toContain('if (recipeSnap.exists) continue;');
+    expect(SRC).toContain('const idleCutoff = Date.now() - 10 * 60 * 1000;');
+    expect(SRC).toContain('const stale = lastActivity > 0 && lastActivity < idleCutoff;');
+    expect(SRC).toContain('if (recipeSnap.exists && !stale) continue;');
+    expect(SRC).toContain("await d.ref.update({ status: 'ABANDONED', lastActivityAt: Date.now() });");
+    expect(SRC).toContain('archived before the UI stage');
     expect(SRC).toContain("ok(`orphan-recipe session ${d.id.slice(0, 8)}… (recipe “${s.recipeId.slice(0, 30)}” gone) settled (+ ${events.size} events)`)");
   });
 });

@@ -445,30 +445,45 @@ try {
       note(`settle best-effort: ${e.message} — the driver will fail loudly if the starter is not shown`);
     }
   }
-  // Also neutralize ANY leftover session whose recipe doc no longer exists.
-  // The sweep's `verify-live-` discriminator only sees prefixed probe recipes;
-  // a session launched from a UI-created MODEL-SLUG recipe (e.g. an old
-  // drive-cook-screen-style probe) carries the slug id and escapes it — and
-  // an ACTIVE session is exactly what hijacks the /cook starter (seen live:
-  // [3d] failed because a stale slug-recipe session auto-resumed). A real
-  // owner session always references a real recipe doc, so "recipe doc gone"
-  // is a safe probe-only discriminator that can never touch a live cook.
+  // Also neutralize ANY leftover session that can hijack the starter:
+  //   (a) its recipe doc no longer exists (the sweep's `verify-live-`
+  //       discriminator only sees prefixed probe recipes; a session launched
+  //       from a UI-created MODEL-SLUG recipe carries the slug id and escapes
+  //       it — seen live: a stale `simple-chicken-and-rice-basic` session
+  //       auto-resumed and failed [3d] for two runs), or
+  //   (b) it is stale — idle over 10 minutes. A real cooking session is
+  //       minutes long and is actively touched between steps; anything idle
+  //       that long on the SHARED DEV owner is a leftover probe (the slug
+  //       session above was created by an earlier CI run and idle since). The
+  //       stale rule also backstops a hard-killed run whose probe recipe was
+  //       renamed/deleted but whose session escaped cleanup.
+  // Archive (ABANDONED) — never delete — for stale sessions, preserving the
+  // record; delete for recipe-gone sessions (their recipe is unrecoverable).
   try {
     const leftover = await db.collection('cooking_sessions').where('userId', '==', OWNER_UID).get();
+    const idleCutoff = Date.now() - 10 * 60 * 1000;
     for (const d of leftover.docs) {
       const s = d.data();
       if (s.status !== 'ACTIVE' && s.status !== 'PAUSED') continue;
       if (typeof s.recipeId !== 'string' || !s.recipeId) continue;
+      const lastActivity = typeof s.lastActivityAt === 'number' ? s.lastActivityAt : 0;
+      const stale = lastActivity > 0 && lastActivity < idleCutoff;
       const recipeSnap = await db.collection('recipes').doc(s.recipeId).get();
-      if (recipeSnap.exists) continue;
-      const events = await db.collection('cooking_session_events').where('sessionId', '==', d.id).get();
-      const deletes = events.docs.map((e) => e.ref.delete());
-      deletes.push(d.ref.delete());
-      await Promise.allSettled(deletes);
-      ok(`orphan-recipe session ${d.id.slice(0, 8)}… (recipe “${s.recipeId.slice(0, 30)}” gone) settled (+ ${events.size} events)`);
+      if (recipeSnap.exists && !stale) continue;
+      if (recipeSnap.exists) {
+        // Stale probe on a still-existing recipe — archive, keep the record.
+        await d.ref.update({ status: 'ABANDONED', lastActivityAt: Date.now() });
+        ok(`stale session ${d.id.slice(0, 8)}… (recipe “${s.recipeId.slice(0, 30)}”, idle ${Math.round((Date.now() - lastActivity) / 60000)}m) archived before the UI stage`);
+      } else {
+        const events = await db.collection('cooking_session_events').where('sessionId', '==', d.id).get();
+        const deletes = events.docs.map((e) => e.ref.delete());
+        deletes.push(d.ref.delete());
+        await Promise.allSettled(deletes);
+        ok(`orphan-recipe session ${d.id.slice(0, 8)}… (recipe “${s.recipeId.slice(0, 30)}” gone) settled (+ ${events.size} events)`);
+      }
     }
   } catch (e) {
-    note(`orphan-recipe settle best-effort: ${e.message}`);
+    note(`leftover settle best-effort: ${e.message}`);
   }
 
   // ── 3d. UI starter proof: preference-rich ready card + constraints view ──

@@ -46,7 +46,11 @@ jobs:
   verify-deployed-live:
     name: Verify deployed app after deploy (verify:live)
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    # The [3d] UI starter driver (2 attempts + 30s backoff) plus the [3e] live-voice
+    # driver (2 Chrome launches + 2 Gemini Live sessions, 420s budget each + 30s
+    # backoff) can legitimately run ~20 min on cold serverless — a 10-min cap
+    # cancels the job mid-retry and fails a healthy deploy.
+    timeout-minutes: 30
     # Environment gating: Vercel labels a deployment "Production" when ONE
     # project is linked to the repo, but "Production – <project-name>"
     # (en-dash, U+2013) when MULTIPLE projects share the repo. The dual form
