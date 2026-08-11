@@ -165,11 +165,25 @@ jobs:
       # deployment subdomain is Vercel-protected). The event ordering is what
       # guarantees "new build": this job only starts after a successful
       # production deploy, and checkout + npm ci outlast the alias promotion.
+      #
+      # Chrome: verify:live's [3c] stage drives the real /cook UI via
+      # scripts/drive-starter-prefs.mjs (headless CDP), so the runner needs a
+      # Chromium binary — same browser-actions/setup-chrome pattern as the
+      # portfolio repo's CDP gates. CHROME_PATH is threaded into the step so
+      # the driver's spawn finds the Linux binary (its Mac path fallback would
+      # crash here).
+      - name: Install Chrome for the UI starter driver
+        id: chrome
+        uses: browser-actions/setup-chrome@v2
+        with:
+          chrome-version: stable
+
       - name: Verify deployed app end to end (verify:live)
         if: ${{ env.NEXT_PUBLIC_FIREBASE_API_KEY != '' && env.FIREBASE_SERVICE_ACCOUNT != '' && env.APP_OWNER_UID != '' && env.GOOGLE_AI_API_KEY != '' }}
         run: npm run verify:live
         env:
           VERIFY_BASE_URL: https://cook-with-freebuff.vercel.app
+          CHROME_PATH: ${{ steps.chrome.outputs.chrome-path }}
           NEXT_PUBLIC_FIREBASE_API_KEY: ${{ secrets.NEXT_PUBLIC_FIREBASE_API_KEY }}
           FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
           APP_OWNER_UID: ${{ secrets.APP_OWNER_UID }}

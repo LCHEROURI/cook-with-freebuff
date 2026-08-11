@@ -198,6 +198,25 @@ describe('.github/workflows/verify-deployed.yml · deployment_status post-deploy
     expect(POST_DEPLOY).toContain(FOUR_SECRETS_GATE);
   });
 
+  it('installs Chrome and threads CHROME_PATH into the verify step (UI starter driver)', () => {
+    // verify:live's [3c] stage drives the real /cook UI via
+    // scripts/drive-starter-prefs.mjs (headless CDP), so the post-deploy
+    // runner needs a Chromium binary — the driver's macOS fallback path would
+    // crash on the Linux runner. The install step and the CHROME_PATH wiring
+    // are load-bearing: dropping either silently breaks the UI gate after
+    // every deploy, so a future workflow edit that removes them fails here.
+    expect(POST_DEPLOY).toContain('name: Install Chrome for the UI starter driver');
+    expect(POST_DEPLOY).toContain('uses: browser-actions/setup-chrome@v2');
+    expect(POST_DEPLOY).toContain('chrome-version: stable');
+    expect(POST_DEPLOY).toContain('id: chrome');
+    expect(POST_DEPLOY).toContain('CHROME_PATH: ${{ steps.chrome.outputs.chrome-path }}');
+    // The wiring must be INSIDE the verify:live step's env block (after the
+    // step name), not somewhere else in the file.
+    const verifyStart = POST_DEPLOY.indexOf('name: Verify deployed app end to end (verify:live)');
+    const verifyBlock = POST_DEPLOY.slice(verifyStart, POST_DEPLOY.indexOf('\n      #', verifyStart));
+    expect(verifyBlock).toContain('CHROME_PATH: ${{ steps.chrome.outputs.chrome-path }}');
+  });
+
   it('wires all four secrets into the job env, the loud guard, AND the verify step env (3 wirings each)', () => {
     // Counting (not a bare toContain) catches a wiring dropped on any ONE of
     // the three places that need it: the job-level env (feeds the step `if`),
