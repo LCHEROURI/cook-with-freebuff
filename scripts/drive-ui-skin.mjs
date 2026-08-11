@@ -13,7 +13,12 @@
 //   5. Exits 0 with RESULT: PASS (visual capture only — no assertions beyond
 //      the owner being signed in and each route rendering its heading).
 //
-// Usage: node scripts/drive-ui-skin.mjs [--out /tmp/cook-ui-skin] [--app URL]
+//   --dark: force prefers-color-scheme: dark via CDP media emulation BEFORE
+//   any navigation, so the app's own dark palette renders (it is NOT the
+//   browser's auto-darkening). The default out dir becomes /tmp/cook-ui-skin-dark
+//   so light and dark captures never overwrite each other.
+//
+// Usage: node scripts/drive-ui-skin.mjs [--out /tmp/cook-ui-skin] [--app URL] [--dark]
 // ============================================================================
 
 import { spawn } from 'node:child_process';
@@ -43,7 +48,8 @@ const flag = (name, fallback) => {
   return i >= 0 && args[i + 1] ? args[i + 1] : fallback;
 };
 const APP = (flag('--app', process.env.VERIFY_BASE_URL) ?? 'https://cook-with-freebuff.vercel.app').replace(/\/$/, '');
-const OUT = flag('--out', '/tmp/cook-ui-skin');
+const DARK = args.includes('--dark');
+const OUT = flag('--out', DARK ? '/tmp/cook-ui-skin-dark' : '/tmp/cook-ui-skin');
 const CHROME = process.env.CHROME_PATH ?? '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
 const PORT = 9474;
 const USER_DATA_DIR = `/tmp/cook-ui-skin-chrome-${process.pid}-${Date.now()}`;
@@ -136,8 +142,18 @@ const screenshot = async (name) => {
   note(`screenshot: ${name}.png`);
 };
 
-// ── 3. Inject the owner session ─────────────────────────────────────────────
-console.log(`\n[3] Injecting owner session → loading ${APP}/`);
+// ── 3. Force the color scheme (dark via CDP emulation) + inject session ─────
+if (DARK) {
+  console.log('\n[3] Forcing prefers-color-scheme: dark via CDP media emulation');
+  await send('Emulation.setEmulatedMedia', {
+    features: [{ name: 'prefers-color-scheme', value: 'dark' }],
+  });
+  const matched = await evaluate(`matchMedia('(prefers-color-scheme: dark)').matches`);
+  if (matched === true) ok('the emulated page sees prefers-color-scheme: dark');
+  else fail(`dark emulation did not apply (matchMedia returned ${matched})`);
+}
+
+console.log(`\n[4] Injecting owner session → loading ${APP}/`);
 await send('Page.navigate', { url: `${APP}/` });
 await sleep(4000);
 
@@ -183,7 +199,7 @@ await send('Page.reload', { ignoreCache: true });
 await sleep(3500);
 
 // ── 4. Capture the three screens ────────────────────────────────────────────
-console.log('\n[4] Capturing screens');
+console.log(`\n[5] Capturing screens (${DARK ? 'dark' : 'light'} mode)`);
 let text = await pageText();
 let sawCta = text.includes('Start cooking');
 for (let i = 0; i < 15 && !sawCta; i++) {
@@ -195,7 +211,7 @@ if (sawCta) ok('home page shows the signed-in CTA (Start cooking + My kitchen)')
 else fail(`home page did not show the CTA. Page text: ${text.slice(0, 250)}`);
 await screenshot('01-home');
 
-console.log('\n[5] /kitchen');
+console.log('\n[6] /kitchen');
 await send('Page.navigate', { url: `${APP}/kitchen` });
 await sleep(4000);
 text = await pageText();
@@ -209,7 +225,7 @@ if (sawKitchen) ok('/kitchen renders the kitchen surface');
 else fail(`/kitchen did not render. Page text: ${text.slice(0, 250)}`);
 await screenshot('02-kitchen');
 
-console.log('\n[6] /cook');
+console.log('\n[7] /cook');
 await send('Page.navigate', { url: `${APP}/cook` });
 await sleep(4000);
 text = await pageText();
