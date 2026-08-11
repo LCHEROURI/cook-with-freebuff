@@ -16,7 +16,7 @@ import { resolveUserId } from '@/lib/server/admin';
 import { buildProductionContext } from '@/lib/server/stores';
 import { createGuideService } from '@/lib/server/tools/guide-tools';
 import { generateRecipeTool } from '@/lib/server/tools/recipe-tools';
-import { extractIngredients } from '@/lib/agent/extract';
+import { extractIngredients, extractRecipePreferences } from '@/lib/agent/extract';
 import { validateRecipe } from '@/lib/recipe/validate';
 import type { Recipe } from '@/lib/domain/types';
 import { logError } from '@/lib/server/logger';
@@ -193,12 +193,32 @@ async function handle(userId: string, body: unknown): Promise<NextResponse> {
           { status: 400 },
         );
       }
+      // Parse servings / allergies / dietary restrictions out of the prompt
+      // FIRST ("for 4 people, no peanuts, vegetarian"), then strip the exact
+      // spans they consumed before ingredient extraction — otherwise "rice
+      // for 4 people" would become an ingredient name.
+      const prefs = extractRecipePreferences(prompt);
+      let ingredientsPrompt = prompt;
+      for (const span of prefs.matched) {
+        ingredientsPrompt = ingredientsPrompt.replace(
+          new RegExp(span.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi'),
+          ' ',
+        );
+      }
+      // A stripped span can leave a dangling separator ("rice — for 2" →
+      // "rice — ") or doubled commas. Collapse them so the residue reads as
+      // a plain list — otherwise the retry below could name an ingredient
+      // "rice —" instead of "rice".
+      ingredientsPrompt = ingredientsPrompt
+        .replace(/[—–]+/g, ',')
+        .replace(/,(\s*,)+/g, ',')
+        .replace(/^[\s,]+|[\s,]+$/g, '');
       // Parse what the user has. Plain lists ("chicken, rice and onion") need
       // the possession lead-in to trip the extractor's brain-dump gate; the
       // "I have …" retry covers that. Anything else that fails to parse is an
       // honest NO_INGREDIENTS, not a silent fallback.
-      let ingredients = extractIngredients(prompt);
-      if (ingredients.length === 0) ingredients = extractIngredients(`I have ${prompt.trim()}`);
+      let ingredients = extractIngredients(ingredientsPrompt);
+      if (ingredients.length === 0) ingredients = extractIngredients(`I have ${ingredientsPrompt.trim()}`);
       if (ingredients.length === 0) {
         return NextResponse.json(
           {
@@ -219,7 +239,12 @@ async function handle(userId: string, body: unknown): Promise<NextResponse> {
       // `undefined.length` because the direct handler call skips the
       // executeTool zod layer.
       const parsedInput = generateRecipeTool.inputSchema.safeParse({
-        request: { ingredientsAvailable: ingredients, servings: 2 },
+        request: {
+          ingredientsAvailable: ingredients,
+          servings: prefs.servings ?? 2,
+          allergies: prefs.allergies,
+          dietaryRestrictions: prefs.dietaryRestrictions,
+        },
       });
       if (!parsedInput.success) {
         return NextResponse.json(
@@ -258,6 +283,12 @@ async function handle(userId: string, body: unknown): Promise<NextResponse> {
           recipeId: recipe.id,
           title: recipe.title,
           servings: recipe.servings,
+          // Echo only the parsed preferences — never the internal `matched` spans.
+          preferences: {
+            servings: prefs.servings,
+            allergies: prefs.allergies,
+            dietaryRestrictions: prefs.dietaryRestrictions,
+          },
           validation: {
             valid: validation.valid,
             errors: validation.errors.slice(0, 5).map((e) => e.message),

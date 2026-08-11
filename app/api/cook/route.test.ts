@@ -369,6 +369,53 @@ describe('/api/cook', () => {
       expect(body.error.code).toBe('GENERATION_UNAVAILABLE');
     });
 
+    it('threads servings, allergies, and dietary restrictions into the generation request', async () => {
+      // The starter prompt can carry preferences: "…for 4 people, no peanuts,
+      // vegetarian" — create_recipe must parse them and pass them to the
+      // generator (the request the model actually reads).
+      let received: unknown = null;
+      registerRecipeGenerator('default', {
+        generate: async (request: unknown) => {
+          received = request;
+          return makeGeneratedRecipe();
+        },
+      });
+
+      const res = await post({
+        action: 'create_recipe',
+        prompt: 'I have chicken thighs and rice for 4 people, no peanuts, vegetarian',
+      });
+      expect(res.status).toBe(200);
+      const req = received as {
+        servings?: unknown;
+        allergies?: unknown;
+        dietaryRestrictions?: unknown;
+        ingredientsAvailable?: { name: string }[];
+      };
+      expect(req.servings).toBe(4);
+      expect(req.allergies).toEqual(['peanuts']);
+      expect(req.dietaryRestrictions).toEqual(['vegetarian']);
+      // The preference spans must be stripped BEFORE ingredient extraction —
+      // “rice for 4 people” would otherwise become an ingredient name.
+      expect(req.ingredientsAvailable?.map((i) => i.name)).toEqual(['chicken thighs', 'rice']);
+    });
+
+    it('echoes the parsed preferences in the response', async () => {
+      registerRecipeGenerator('default', { generate: async () => makeGeneratedRecipe() });
+
+      const res = await post({
+        action: 'create_recipe',
+        prompt: 'chicken thighs, rice — for 2, dairy-free, no sesame',
+      });
+      expect(res.status).toBe(200);
+      const body = await res.json();
+      expect(body.data.preferences).toEqual({
+        servings: 2,
+        allergies: ['sesame'],
+        dietaryRestrictions: ['dairy-free'],
+      });
+    });
+
     it('passes the generator a defaulted request (regression: undefined.length crash on deploy)', async () => {
       // The deployed route crashed with "Cannot read properties of undefined
       // (reading 'length')" because a raw { ingredientsAvailable, servings }

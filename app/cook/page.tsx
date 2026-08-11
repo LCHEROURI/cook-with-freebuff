@@ -27,7 +27,13 @@ export default function CookPage() {
     prompt: string;
     creating: boolean;
     error: string | null;
-    ready: { recipeId: string; title: string; servings: number; confirmations: string[] } | null;
+    ready: {
+      recipeId: string;
+      title: string;
+      servings: number;
+      confirmations: string[];
+      preferences: { servings: number | null; allergies: string[]; dietaryRestrictions: string[] };
+    } | null;
     starting: boolean;
   }>({ prompt: '', creating: false, error: null, ready: null, starting: false });
 
@@ -87,7 +93,13 @@ export default function CookPage() {
       });
       const body = (await res.json()) as {
         success: boolean;
-        data?: { recipeId: string; title: string; servings: number; validation: { valid: boolean; errors: string[]; confirmations: string[] } };
+        data?: {
+          recipeId: string;
+          title: string;
+          servings: number;
+          preferences: { servings: number | null; allergies: string[]; dietaryRestrictions: string[] };
+          validation: { valid: boolean; errors: string[]; confirmations: string[] };
+        };
         error?: { message?: string };
       };
       if (!res.ok || !body.success || !body.data) {
@@ -114,6 +126,7 @@ export default function CookPage() {
           title: body.data.title,
           servings: body.data.servings,
           confirmations: validation.confirmations,
+          preferences: body.data.preferences,
         },
         starting: false,
       });
@@ -221,7 +234,7 @@ export default function CookPage() {
               className={styles.starterInput}
               value={starter.prompt}
               onChange={(e) => setStarter((s) => ({ ...s, prompt: e.target.value }))}
-              placeholder="e.g. chicken, rice and onion"
+              placeholder="e.g. chicken, rice and onion — for 4, no peanuts, vegetarian"
               aria-label="What do you have to cook with?"
               autoFocus
               disabled={starter.creating || starter.starting}
@@ -244,6 +257,12 @@ export default function CookPage() {
               <p className={styles.starterReadyText}>
                 <strong>{starter.ready.title}</strong>
                 {starter.ready.servings > 1 ? ` · ${starter.ready.servings} servings` : ''}
+                {starter.ready.preferences.dietaryRestrictions.length > 0
+                  ? ` · ${starter.ready.preferences.dietaryRestrictions.join(', ')}`
+                  : ''}
+                {starter.ready.preferences.allergies.length > 0
+                  ? ` · no ${starter.ready.preferences.allergies.join(', no ')}`
+                  : ''}
                 {starter.ready.confirmations.length > 0
                   ? ` · you will also need: ${starter.ready.confirmations.join(', ')}`
                   : ''}

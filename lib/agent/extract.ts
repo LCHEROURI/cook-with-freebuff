@@ -245,3 +245,150 @@ function dedupe(items: ParsedIngredient[]): ParsedIngredient[] {
   }
   return out;
 }
+
+// ── Recipe preferences (the /cook starter prompt) ────────────────────────────
+// The starter prompt can carry more than ingredients: "I have chicken and rice
+// for 4 people, no peanuts, vegetarian". This parser extracts servings,
+// allergies and dietary restrictions so create_recipe can thread them into the
+// generation request. It also returns the EXACT spans it consumed — the caller
+// strips them BEFORE ingredient extraction, so "rice for 4 people" can never
+// become an ingredient name.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface RecipePreferences {
+  servings: number | null;
+  allergies: string[];
+  dietaryRestrictions: string[];
+  /** Exact substrings consumed from the utterance (lowercase). */
+  matched: string[];
+}
+
+const PREF_NUMBER_WORDS: Record<string, number> = {
+  one: 1, two: 2, three: 3, four: 4, five: 5, six: 6,
+  seven: 7, eight: 8, nine: 9, ten: 10, twelve: 12,
+};
+const PREF_NUMBER_ALT = Object.keys(PREF_NUMBER_WORDS).join('|');
+
+// Servings: "for 4", "for four people", "serves 2", "feeds 6", "4 servings".
+const SERVINGS_PATTERNS: RegExp[] = [
+  new RegExp(
+    `\\b(?:for|feeds?|serves?)\\s+(?:a\\s+)?(?:family\\s+of\\s+)?(${PREF_NUMBER_ALT}|\\d+)\\b(?:\\s*(?:people|persons|adults|guests|servings|folks))?`,
+    'gi',
+  ),
+  new RegExp(`\\b(\\d+)\\s*(?:servings?|portions?)\\b`, 'gi'),
+];
+
+// Allergen words — the ONLY thing "no X" may strip (never an ingredient).
+const ALLERGEN_WORDS = [
+  'peanuts', 'peanut', 'tree nuts', 'tree nut', 'nuts', 'nut', 'dairy', 'milk',
+  'eggs', 'egg', 'gluten', 'wheat', 'soy', 'soya', 'shellfish', 'fish', 'sesame',
+  'mustard', 'celery', 'lupin', 'sulfites', 'sulfite',
+];
+
+// Display-friendly canonical forms.
+const ALLERGEN_CANONICAL: Record<string, string> = {
+  peanut: 'peanuts', peanuts: 'peanuts', nut: 'nuts', nuts: 'nuts',
+  'tree nut': 'tree nuts', 'tree nuts': 'tree nuts',
+  dairy: 'dairy', milk: 'dairy', egg: 'eggs', eggs: 'eggs',
+  gluten: 'gluten', wheat: 'wheat', soy: 'soy', soya: 'soy',
+  shellfish: 'shellfish', fish: 'fish', sesame: 'sesame',
+  mustard: 'mustard', celery: 'celery', lupin: 'lupin',
+  sulfite: 'sulfites', sulfites: 'sulfites',
+};
+const canonicalAllergen = (w: string): string => ALLERGEN_CANONICAL[w] ?? w;
+
+// Dietary restriction terms — standalone words that are never ingredients.
+const DIET_TERMS = [
+  'vegetarian', 'vegan', 'pescatarian', 'flexitarian', 'gluten-free', 'dairy-free',
+  'keto', 'ketogenic', 'low-carb', 'low carb', 'paleo', 'halal', 'kosher',
+  'high-protein', 'sugar-free',
+];
+
+/** Longest-first contains match: "allergic to tree nuts" → "tree nuts". */
+function matchAllergen(candidate: string): string | null {
+  const sorted = [...ALLERGEN_WORDS].sort((a, b) => b.length - a.length);
+  for (const w of sorted) {
+    if (candidate === w || candidate.includes(w)) return canonicalAllergen(w);
+  }
+  return null;
+}
+
+/**
+ * Extract servings / allergies / dietary restrictions from a starter prompt.
+ *
+ * Returns the canonical values PLUS the exact consumed spans so the caller can
+ * strip them before ingredient extraction ("for 4 people" must not leak into
+ * "rice for 4 people"). Unknown/unparseable values are left null/empty — never
+ * invented.
+ */
+export function extractRecipePreferences(utterance: string): RecipePreferences {
+  const text = utterance.toLowerCase();
+  const matched: string[] = [];
+  const allergies: string[] = [];
+  const dietaryRestrictions: string[] = [];
+  let servings: number | null = null;
+
+  // Servings
+  for (const re of SERVINGS_PATTERNS) {
+    for (const m of text.matchAll(re)) {
+      const span = m[0];
+      if (matched.includes(span)) continue;
+      const raw = (m[1] ?? m[2])?.toLowerCase() ?? '';
+      const value = PREF_NUMBER_WORDS[raw] ?? (Number.isFinite(Number(raw)) ? Number(raw) : null);
+      if (value && value >= 1 && servings === null) servings = value;
+      matched.push(span);
+    }
+  }
+
+  // Allergies — "no peanuts", "allergic to tree nuts", "peanut allergy",
+  // "nut-free". The allergen list is the ONLY thing these may consume.
+  const noPattern = new RegExp(`\\bno\\s+(${ALLERGEN_WORDS.join('|')})\\b`, 'gi');
+  for (const m of text.matchAll(noPattern)) {
+    matched.push(m[0]);
+    allergies.push(canonicalAllergen(m[1]));
+  }
+
+  const allergicTo = /\ballergic\s+to\s+([a-z]+(?:\s+[a-z]+){0,2})\b/gi;
+  for (const m of text.matchAll(allergicTo)) {
+    const hit = matchAllergen(m[1]);
+    if (hit) {
+      matched.push(m[0]);
+      allergies.push(hit);
+    }
+  }
+
+  const allergyNoun = /\b([a-z]+(?:\s+[a-z]+){0,2})\s+allerg(?:y|ies)\b/gi;
+  for (const m of text.matchAll(allergyNoun)) {
+    const hit = matchAllergen(m[1]);
+    if (hit) {
+      matched.push(m[0]);
+      allergies.push(hit);
+    }
+  }
+
+  const free = new RegExp(`\\b(${ALLERGEN_WORDS.join('|')})-?free\\b`, 'gi');
+  for (const m of text.matchAll(free)) {
+    const canonical = canonicalAllergen(m[1]);
+    // dairy-free / gluten-free are DIET terms (already matched above) — never
+    // double-count them as an allergy on top of the dietary restriction.
+    if (canonical === 'dairy' || canonical === 'gluten') continue;
+    matched.push(m[0]);
+    allergies.push(canonical);
+  }
+
+  // Dietary restrictions — standalone diet terms.
+  for (const term of DIET_TERMS) {
+    const re = new RegExp(`\\b${term.replace(/\s+/g, '\\s+')}\\b`, 'gi');
+    for (const m of text.matchAll(re)) {
+      matched.push(m[0]);
+      dietaryRestrictions.push(term);
+    }
+  }
+
+  return {
+    servings,
+    allergies: [...new Set(allergies)],
+    dietaryRestrictions: [...new Set(dietaryRestrictions)],
+    matched: [...new Set(matched)],
+  };
+}

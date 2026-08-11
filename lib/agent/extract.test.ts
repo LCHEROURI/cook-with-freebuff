@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { extractIngredients, parseIngredientSegment } from './extract';
+import { extractIngredients, extractRecipePreferences, parseIngredientSegment } from './extract';
 
 describe('parseIngredientSegment', () => {
   it('parses a plain ingredient with unknown quantity', () => {
@@ -138,5 +138,70 @@ describe('extractIngredients — conversational gate', () => {
   it('treats an explicit question mark as a question', () => {
     expect(extractIngredients('can you make a salad with two tomatoes?')).toEqual([]);
     expect(extractIngredients('Do I need a pan for this?')).toEqual([]);
+  });
+});
+
+describe('extractRecipePreferences — servings', () => {
+  it('parses “for 4” / “for four people” / “serves 2” / “4 servings”', () => {
+    expect(extractRecipePreferences('chicken and rice for 4 people').servings).toBe(4);
+    expect(extractRecipePreferences('chicken and rice serves 2').servings).toBe(2);
+    expect(extractRecipePreferences('chicken and rice, 4 servings').servings).toBe(4);
+    expect(extractRecipePreferences('chicken and rice for a family of 6').servings).toBe(6);
+    expect(extractRecipePreferences('chicken and rice').servings).toBeNull();
+  });
+
+  it('records the consumed span so “for 4 people” cannot leak into an ingredient', () => {
+    const prefs = extractRecipePreferences('I have chicken and rice for 4 people');
+    expect(prefs.matched).toContain('for 4 people');
+  });
+});
+
+describe('extractRecipePreferences — allergies', () => {
+  it('parses “no peanuts”', () => {
+    const prefs = extractRecipePreferences('I have chicken and rice, no peanuts');
+    expect(prefs.allergies).toEqual(['peanuts']);
+    expect(prefs.matched).toContain('no peanuts');
+  });
+
+  it('parses “allergic to tree nuts” and “peanut allergy”', () => {
+    expect(extractRecipePreferences('allergic to tree nuts').allergies).toEqual(['tree nuts']);
+    expect(extractRecipePreferences('peanut allergy').allergies).toEqual(['peanuts']);
+  });
+
+  it('parses “nut-free” as an allergy but “dairy-free” as a diet term', () => {
+    // nut-free → allergy (nuts); dairy-free / gluten-free are DIET terms and
+    // must never be double-counted as an allergy on top of the restriction.
+    expect(extractRecipePreferences('nut-free').allergies).toEqual(['nuts']);
+    expect(extractRecipePreferences('dairy-free').allergies).toEqual([]);
+    expect(extractRecipePreferences('dairy-free').dietaryRestrictions).toEqual(['dairy-free']);
+    expect(extractRecipePreferences('gluten-free').allergies).toEqual([]);
+  });
+
+  it('does not treat a non-allergen after “no” as an allergy', () => {
+    // “no salt” is an ingredient statement (salt is not on the allergen list) —
+    // it must NOT be consumed as a preference.
+    const prefs = extractRecipePreferences('I have chicken and rice, no salt');
+    expect(prefs.allergies).toEqual([]);
+    expect(prefs.matched).not.toContain('no salt');
+  });
+});
+
+describe('extractRecipePreferences — dietary restrictions', () => {
+  it('parses standalone diet terms', () => {
+    expect(extractRecipePreferences('chicken and rice, vegetarian').dietaryRestrictions).toEqual(['vegetarian']);
+    expect(extractRecipePreferences('chicken and rice, vegan').dietaryRestrictions).toEqual(['vegan']);
+    expect(extractRecipePreferences('chicken and rice, gluten-free').dietaryRestrictions).toEqual(['gluten-free']);
+  });
+
+  it('dedupes repeated preferences', () => {
+    const prefs = extractRecipePreferences('chicken, vegetarian, vegetarian');
+    expect(prefs.dietaryRestrictions).toEqual(['vegetarian']);
+  });
+
+  it('combines servings, allergies and dietary restrictions from one prompt', () => {
+    const prefs = extractRecipePreferences('I have chicken and rice for 4 people, no peanuts, vegetarian');
+    expect(prefs.servings).toBe(4);
+    expect(prefs.allergies).toEqual(['peanuts']);
+    expect(prefs.dietaryRestrictions).toEqual(['vegetarian']);
   });
 });
