@@ -27,6 +27,15 @@
 //      discriminator) → launch it → must land in PREP_GUIDANCE step 1 (the
 //      one-tap "Start cooking" path). This is the CI gate that proves
 //      create → validate → start-cooking after every deploy.
+//   4c. UI STARTER PROOF: first settles the owner to the true empty state
+//      (deletes the probe sessions [3] and [3b] just launched — a fresh /cook
+//      load would otherwise show the CookScreen, not the starter), then
+//      spawns the committed driver scripts/drive-starter-prefs.mjs against the
+//      SAME deployed APP: headless Chrome types a preference-rich prompt into
+//      the real /cook input, clicks Create my recipe, asserts the ready card
+//      shows the parsed constraints ("4 servings · vegetarian · no peanuts"),
+//      expands the "Generation constraints applied" details view, and sweeps
+//      its own probe. A driver exit without RESULT: PASS fails the gate.
 //   5. One agent turn through /api/agent: a deterministic pantry command
 //      (proves tools + persistence live) and a free-form turn (proves the
 //      Gemini provider answers — SKIP, not fail, when GOOGLE_AI_API_KEY is
@@ -47,6 +56,7 @@
 // credentials + web API key + APP_OWNER_UID (see .env.example).
 // ============================================================================
 
+import { spawnSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { initializeApp, cert, getApps } from 'firebase-admin/app';
@@ -411,6 +421,65 @@ try {
     } else {
       fail(`launch of created recipe → ${starterLaunch.status} ${j(starterLaunch.body?.error ?? starterLaunch.body)}`);
     }
+  }
+
+  // ── 3c. UI starter proof: preference-rich ready card + constraints view ──
+  // The [3b] stage just launched an ACTIVE session — a fresh /cook load would
+  // show the CookScreen, not the starter. The UI driver must start from the
+  // TRUE empty state, so settle the owner first: delete the seeded + starter
+  // probe sessions (and their events) now; the final cleanup covers them
+  // regardless, and the stage below never depends on them.
+  console.log('\n[3c] Settling the owner to the clean starter (deleting probe sessions)');
+  for (const probeSid of [sid, starterSid].filter(Boolean)) {
+    try {
+      const events = await db.collection('cooking_session_events').where('sessionId', '==', probeSid).get();
+      const deletes = events.docs.map((d) => d.ref.delete());
+      deletes.push(db.collection('cooking_sessions').doc(probeSid).delete());
+      await Promise.allSettled(deletes);
+      ok(`probe session ${probeSid.slice(0, 8)}… settled before the UI stage (+ ${events.size} events)`);
+    } catch (e) {
+      note(`settle best-effort: ${e.message} — the driver will fail loudly if the starter is not shown`);
+    }
+  }
+
+  // ── 3d. UI starter proof: preference-rich ready card + constraints view ──
+  // The API-level [3b] stage proves create → validate → launch over HTTP.
+  // This stage drives the REAL /cook UI in headless Chrome — type the
+  // preference-rich prompt → Create my recipe → ready card shows the parsed
+  // constraints → expand the "Generation constraints applied" details view —
+  // by spawning the committed driver against the same deployed APP. The
+  // driver is self-contained: it mints its own owner session, asserts the
+  // card + details rows, screenshots them, and sweeps its own probe recipe
+  // (the owner list ends exactly as it started). Any driver exit without a
+  // RESULT: PASS — crash, timeout, or assertion failure — fails the gate.
+  console.log(`\n[3d] UI starter proof: preference-rich ready card + constraints view (${APP})`);
+  const driverOut = `/tmp/verify-live-driver-${t}`;
+  const driver = spawnSync('node', ['scripts/drive-starter-prefs.mjs', '--app', APP, '--out', driverOut], {
+    encoding: 'utf8',
+    timeout: 300_000, // Gemini generation + Chrome launch on cold serverless
+    env: process.env,
+  });
+  const driverLog = `${driver.stdout ?? ''}\n${driver.stderr ?? ''}`;
+  if (driver.status === 0 && /RESULT: PASS/.test(driverLog)) {
+    ok('UI starter driver → RESULT: PASS (ready card prefs + constraints view)');
+  } else if (driver.error?.code === 'ETIMEDOUT') {
+    fail('UI starter driver timed out after 300s');
+  } else {
+    const tail = driverLog.split('\n').filter(Boolean).slice(-6).join('\n');
+    fail(`UI starter driver → exit ${driver.status ?? 'crash'}${driver.error ? ` (${driver.error.message})` : ''}. Tail: ${tail}`);
+  }
+
+  // The [4] pantry flow rides on an ACTIVE session — every agent turn carries
+  // `sessionId: sid`. The settle above deleted the probe sessions so the UI
+  // driver saw the clean starter; re-establish `sid` by launching the seeded
+  // recipe (still in Firestore) fresh, so the pantry turns attach to a real,
+  // current session.
+  const relaunch = await cook('launch', { recipeId: seededRecipeId });
+  if (relaunch.status === 200 && relaunch.body?.success && relaunch.body?.data?.sessionId) {
+    sid = relaunch.body.data.sessionId;
+    ok(`fresh session ${sid.slice(0, 8)}… re-established for the agent turns`);
+  } else {
+    fail(`could not re-establish a session for the agent turns → ${relaunch.status} ${j(relaunch.body?.error ?? relaunch.body)}`);
   }
 
   // ── 4. Agent turns through the deployed /api/agent ──────────────────────

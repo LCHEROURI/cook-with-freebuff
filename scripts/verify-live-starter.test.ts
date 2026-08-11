@@ -96,4 +96,42 @@ describe('scripts/verify-live.mjs · starter-flow gate (create → validate → 
     expect(SRC).toContain("db.collection('cooking_sessions').doc(starterSid).delete()");
     expect(SRC).toContain("db.collection('cooking_session_events').where('sessionId', '==', starterSid).get()");
   });
+
+  it('spawns the UI starter driver (drive-starter-prefs) and requires RESULT: PASS', () => {
+    // The [3d] stage drives the REAL /cook UI (headless Chrome): type the
+    // preference-rich prompt → Create my recipe → ready card prefs → expand
+    // the constraints view. It must spawn the committed driver against the
+    // SAME deployed APP this script verifies, with a generous budget (Gemini
+    // generation + Chrome launch on cold serverless), and a driver exit
+    // WITHOUT `RESULT: PASS` must fail the gate — a UI regression in the
+    // ready-card/constraints flow can never silently pass.
+    expect(SRC).toContain("spawnSync('node', ['scripts/drive-starter-prefs.mjs', '--app', APP, '--out', driverOut], {");
+    expect(SRC).toContain('timeout: 300_000');
+    expect(SRC).toContain('driver.status === 0 && /RESULT: PASS/.test(driverLog)');
+    expect(SRC).toContain("ok('UI starter driver → RESULT: PASS (ready card prefs + constraints view)')");
+    expect(SRC).toContain("fail(`UI starter driver → exit ${driver.status ?? 'crash'}");
+    // The driver must be swept-account-safe: verify-live's pre-run sweep and
+    // this script's own cleanup must NOT be the driver's only safety net.
+    expect(SRC).toContain('sweeps its own probe recipe');
+  });
+
+  it('settles the owner to the clean starter BEFORE the UI stage (deletes probe sessions)', () => {
+    // Without this, the [3b] stage's freshly launched ACTIVE session would
+    // make the driver's fresh /cook load show the CookScreen instead of the
+    // starter — the UI gate would fail before it even started. The settle
+    // step must delete BOTH probe sessions (the seeded [3] launch and the
+    // [3b] starter launch) and their events, then the UI stage starts from
+    // the true empty state.
+    expect(SRC).toContain('Settling the owner to the clean starter (deleting probe sessions)');
+    expect(SRC).toContain('for (const probeSid of [sid, starterSid].filter(Boolean))');
+    expect(SRC).toContain("db.collection('cooking_session_events').where('sessionId', '==', probeSid).get()");
+    expect(SRC).toContain("db.collection('cooking_sessions').doc(probeSid).delete()");
+    expect(SRC).toContain('settled before the UI stage');
+    // The [4] pantry flow rides on an ACTIVE session (every agent turn sends
+    // sessionId: sid) — the settle deleted both probes, so the flow must
+    // re-establish sid by relaunching the seeded recipe before the agent
+    // turns, or the pantry confirm would fail with "No cooking session".
+    expect(SRC).toContain("cook('launch', { recipeId: seededRecipeId })");
+    expect(SRC).toContain('re-established for the agent turns');
+  });
 });
