@@ -20,11 +20,7 @@ const FEATURES = [
     title: 'Pantry intelligence',
     text: 'Tell it what you have; it tracks the pantry, flags expiring items and builds your grocery list.',
   },
-  {
-    icon: '🍲',
-    title: 'Leftovers, handled',
-    text: 'Finished a meal? It logs the leftovers and suggests what to cook next from what is actually in the kitchen.',
-  },
+
 ];
 
 export default function HomePage() {
