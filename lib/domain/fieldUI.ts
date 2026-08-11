@@ -12,7 +12,6 @@ import type { ZodObject, ZodRawShape } from 'zod';
 import {
   pantryItemSchema,
   leftoverSchema,
-  recipeSchema,
   dietaryProfileSchema,
 } from './schemas';
 
@@ -23,15 +22,17 @@ const PARAGRAPH = '\n' as const;
 /** Append voice utterances as comma separated items (natural for list fields). */
 const COMMA = ', ' as const;
 
-// ── Types ────────────────────────────────────────────────────────────────────
+type Separator = typeof PARAGRAPH | typeof COMMA;
 
-export type Separator = typeof PARAGRAPH | typeof COMMA;
+// ── Type ─────────────────────────────────────────────────────────────────────
 
 /** The annotation surface returned by makeFieldUIAnnotations. */
 export interface FieldUIAnnotations {
+  /**
+   * Resolve the voice separator for a schema field.
+   * Returns the separator string for annotated fields, `undefined` otherwise.
+   */
   resolve(field: string): Separator | undefined;
-  isVoiceAppend(field: string): boolean;
-  readonly fieldUI: ReadonlyMap<string, Separator>;
 }
 
 // ── Factory ──────────────────────────────────────────────────────────────────
@@ -49,26 +50,17 @@ export interface FieldUIAnnotations {
 export function makeFieldUIAnnotations<
   T extends ZodObject<ZodRawShape>,
 >(
-  _schema: T,
+  schema: T,
   commaListFields: readonly (keyof T['shape'] & string)[],
   paragraphFields: readonly (keyof T['shape'] & string)[],
 ): FieldUIAnnotations {
-  const entries: [string, Separator][] = [];
-  for (const f of commaListFields) {
-    entries.push([f, COMMA]);
-  }
-  for (const f of paragraphFields) {
-    entries.push([f, PARAGRAPH]);
-  }
-  const map = new Map<string, Separator>(entries);
+  const map = new Map<string, Separator>();
+  for (const f of commaListFields) map.set(f, COMMA);
+  for (const f of paragraphFields) map.set(f, PARAGRAPH);
 
   return {
-    fieldUI: map,
     resolve(field: string) {
       return map.get(field);
-    },
-    isVoiceAppend(field: string) {
-      return map.has(field);
     },
   };
 }
@@ -87,14 +79,6 @@ export const leftoverFieldUI = makeFieldUIAnnotations(
   leftoverSchema,
   [],
   ['notes'],
-);
-
-/** Recipe: `description` is free-text (paragraphs), `safetyNotes` are
- *  comma-separated items. */
-export const recipeFieldUI = makeFieldUIAnnotations(
-  recipeSchema,
-  ['safetyNotes'],
-  ['description'],
 );
 
 /** Dietary profile: allergy/restriction lists are comma-separated. */

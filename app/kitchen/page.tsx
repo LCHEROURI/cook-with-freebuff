@@ -317,7 +317,7 @@ export default function KitchenPage() {
             });
           }}
         >
-          <FormInput
+          <input
             className={styles.input}
             value={pantryName}
             onChange={(e) => setPantryName(e.target.value)}
@@ -325,7 +325,7 @@ export default function KitchenPage() {
             aria-label="Pantry item name"
             disabled={pending !== null}
           />
-          <FormInput
+          <input
             className={`${styles.input} ${styles.inputSmall}`}
             value={pantryQty}
             onChange={(e) => setPantryQty(e.target.value)}
@@ -333,7 +333,7 @@ export default function KitchenPage() {
             aria-label="Pantry item quantity"
             disabled={pending !== null}
           />
-          <FormInput
+          <input
             className={`${styles.input} ${styles.inputSmall}`}
             value={pantryUnit}
             onChange={(e) => setPantryUnit(e.target.value)}
@@ -507,7 +507,7 @@ export default function KitchenPage() {
             });
           }}
         >
-          <FormInput
+          <input
             className={styles.input}
             value={leftoverTitle}
             onChange={(e) => setLeftoverTitle(e.target.value)}
@@ -515,7 +515,7 @@ export default function KitchenPage() {
             aria-label="Leftover title"
             disabled={pending !== null}
           />
-          <FormInput
+          <input
             className={`${styles.input} ${styles.inputSmall}`}
             value={leftoverServings}
             onChange={(e) => setLeftoverServings(e.target.value)}

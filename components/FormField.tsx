@@ -31,7 +31,7 @@ interface BaseProps {
 
 // ── FormInput ────────────────────────────────────────────────────────────────
 
-export interface FormInputProps extends BaseProps {
+interface FormInputProps extends BaseProps {
   onChange: (e: ChangeEvent<HTMLInputElement>) => void;
   type?: 'text' | 'number';
 }
@@ -67,7 +67,7 @@ export function FormInput({
 
 // ── FormTextarea ─────────────────────────────────────────────────────────────
 
-export interface FormTextareaProps extends BaseProps {
+interface FormTextareaProps extends BaseProps {
   onChange: (e: ChangeEvent<HTMLTextAreaElement>) => void;
   rows?: number;
 }
