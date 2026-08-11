@@ -70,8 +70,13 @@ export const recipeSchema = z.object({
   dietaryTags: z.array(z.string()).default([]),
   allergens: z.array(z.string()).default([]),
   safetyNotes: z.array(z.string()).default([]),
-  generatedAt: z.number().int().positive(),
-  updatedAt: z.number().int().positive(),
+  // generatedAt/updatedAt are SERVER metadata — the model is never asked for
+  // them (the generation prompt's schema omits them), so real model output
+  // arrives without them. The function default stamps Date.now() at parse
+  // time while keeping the fields REQUIRED in the output type (consumers
+  // like transform.ts read them unconditionally).
+  generatedAt: z.number().int().positive().default(() => Date.now()),
+  updatedAt: z.number().int().positive().default(() => Date.now()),
 });
 
 // ── Cooking session ──────────────────────────────────────────────────────────

@@ -43,7 +43,8 @@ export const generateRecipeTool: ToolDefinition = {
         // Object-level ownership (K9 Part B): stamp the recipe with the
         // generating user before persisting — without userId the recipe is
         // ownerless (Firestore rules would block even its owner from reading
-        // it client-side) and no isolation exists.
+        // it client-side) and no isolation exists. generatedAt/updatedAt are
+        // filled by the schema's function defaults (server metadata).
         const owned = {
           ...parsed.data,
           userId: ctx.userId,

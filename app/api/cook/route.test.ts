@@ -281,7 +281,14 @@ describe('/api/cook', () => {
     });
 
     it('generates, validates and returns the recipe id for a parseable prompt', async () => {
-      registerRecipeGenerator('default', { generate: async () => makeGeneratedRecipe() });
+      // Realistic model output: the generator omits generatedAt/updatedAt
+      // (server metadata — the generation prompt never asks for them).
+      registerRecipeGenerator('default', {
+        generate: async () => {
+          const { generatedAt, updatedAt, ...modelOutput } = makeGeneratedRecipe();
+          return modelOutput as Recipe; // schema function defaults stamp the timestamps at parse
+        },
+      });
 
       const res = await post({ action: 'create_recipe', prompt: 'I have chicken thighs and rice' });
       expect(res.status).toBe(200);
@@ -303,13 +310,22 @@ describe('/api/cook', () => {
       expect(body.data.recipeId).toBe('recipe-generated-1');
     });
 
-    it('persists the generated recipe into the owner store', async () => {
-      registerRecipeGenerator('default', { generate: async () => makeGeneratedRecipe() });
+    it('persists the generated recipe into the owner store with stamped metadata', async () => {
+      registerRecipeGenerator('default', {
+        generate: async () => {
+          const { generatedAt, updatedAt, ...modelOutput } = makeGeneratedRecipe();
+          return modelOutput as Recipe;
+        },
+      });
 
       await post({ action: 'create_recipe', prompt: 'I have chicken thighs and rice' });
       const stored = await (ctx.recipeStore as InMemoryRecipeStore).getRecipe('recipe-generated-1');
       expect(stored).not.toBeNull();
       expect(stored?.userId).toBe('user-1'); // owner-stamped (K9 ownership)
+      // Server metadata stamped at persist time (the model never provides it).
+      expect(typeof stored?.generatedAt).toBe('number');
+      expect((stored?.generatedAt ?? 0)).toBeGreaterThan(0);
+      expect(typeof stored?.updatedAt).toBe('number');
     });
 
     it('reports GENERATION_UNAVAILABLE when no provider is registered', async () => {
