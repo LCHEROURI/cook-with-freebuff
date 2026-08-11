@@ -6,12 +6,14 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 // useVoiceInput — real microphone capture with speech-to-text for /cook.
 //
 // Wraps the browser's Web Speech API (SpeechRecognition / webkitSpeechRecognition):
-//   - walkie-talkie style: tap to start listening, recognition auto-stops after
-//     the utterance, the FINAL transcript is handed to `onFinal` — the caller
-//     sends it through the EXISTING /api/agent flow (the backend is untouched).
-//   - tap again while listening to cancel (barge-in) — `abort()` discards the
-//     partial utterance.
-//   - interim results stream live for the on-screen caption; errors map to
+//   - Continuous: tap to start listening, speak as long as you want (the
+//     recognition accumulates every utterance), tap again to stop and send the
+//     full transcript to `onFinal`. No per-word tapping.
+//   - The browser sometimes auto-stops continuous recognition after a silence;
+//     this hook restarts it transparently so the user never notices.
+//   - Tap while listening to cancel (barge-in) — the accumulated utterance is
+//     discarded and the mic stops.
+//   - Interim results stream live for the on-screen caption; errors map to
 //     human messages (permission denied, no speech heard, network).
 //   - `supported` is false when the browser has no SpeechRecognition (Firefox,
 //     some mobile browsers, headless CI) — the caller renders a disabled mic
@@ -20,9 +22,6 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 // Privacy: the Web Speech API sends audio to the browser vendor's speech
 // service (Google for Chrome). The transcript that lands in the app is what
 // the user said and is treated like any other utterance.
-//
-// The recognition instance is created fresh per toggle and aborted on unmount —
-// no dangling listeners, no cross-navigation state.
 // ─────────────────────────────────────────────────────────────────────────────
 
 /** Minimal structural type for the API — keeps the hook mockable and TS-safe. */
@@ -64,7 +63,7 @@ export function getSpeechRecognitionCtor(): SpeechRecognitionCtor | null {
 export interface UseVoiceInputOptions {
   /** BCP-47 tag; defaults to navigator.language (falls back to en-US). */
   lang?: string;
-  /** Called with the trimmed FINAL transcript — the caller sends it to the agent. */
+  /** Called with the full accumulated transcript when the user stops the mic. */
   onFinal?: (transcript: string) => void;
   /** Called with a human-readable message on a real (non-cancelled) error. */
   onError?: (message: string) => void;
@@ -78,6 +77,8 @@ export function useVoiceInput(options: UseVoiceInputOptions = {}) {
   const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
   const optionsRef = useRef(options);
   optionsRef.current = options;
+  // Accumulated final transcripts across utterances in a continuous session.
+  const bufferRef = useRef<string[]>([]);
 
   const createRecognition = useCallback((): SpeechRecognitionLike | null => {
     const Ctor = getSpeechRecognitionCtor();
@@ -89,29 +90,36 @@ export function useVoiceInput(options: UseVoiceInputOptions = {}) {
     rec.lang = lang;
     rec.interimResults = true;
     rec.maxAlternatives = 1;
-    // Single utterance per tap — the recognition ends after a pause in speech.
-    rec.continuous = false;
+    rec.continuous = true;
 
     rec.onresult = (event) => {
-      let transcript = '';
+      let raw = '';
       const results = event.results;
       for (let i = event.resultIndex; i < results.length; i++) {
-        transcript += results[i][0].transcript;
+        raw += results[i][0].transcript;
       }
       const last = results[results.length - 1];
       if (last?.isFinal) {
-        const finalText = transcript.trim();
+        const finalText = raw.trim();
         setInterim('');
-        if (finalText) optionsRef.current.onFinal?.(finalText);
+        if (finalText) bufferRef.current.push(finalText);
       } else {
-        setInterim(transcript);
+        setInterim(raw);
       }
     };
 
     rec.onend = () => {
-      // Recognition finished (final result delivered, or the user let it end).
-      setListening(false);
-      recognitionRef.current = null;
+      // If the user explicitly stopped (recognitionRef cleared), do nothing.
+      // Otherwise the browser timed out — restart transparently.
+      if (recognitionRef.current === rec) {
+        try {
+          rec.start();
+        } catch {
+          // Can't restart — clean up.
+          setListening(false);
+          recognitionRef.current = null;
+        }
+      }
     };
 
     rec.onerror = (event) => {
@@ -135,17 +143,22 @@ export function useVoiceInput(options: UseVoiceInputOptions = {}) {
 
   const toggle = useCallback(() => {
     setError(null);
-    // Already listening → cancel (barge-in: discard the partial utterance).
+    // Already listening → stop gracefully, flush the accumulated buffer.
     if (recognitionRef.current) {
-      recognitionRef.current.abort();
+      recognitionRef.current.stop();
       recognitionRef.current = null;
       setListening(false);
       setInterim('');
+      const fullText = bufferRef.current.join(' ').trim();
+      bufferRef.current = [];
+      if (fullText) optionsRef.current.onFinal?.(fullText);
       return;
     }
+    // Not listening → start fresh.
     const rec = createRecognition();
     if (!rec) return;
     recognitionRef.current = rec;
+    bufferRef.current = [];
     setListening(true);
     setInterim('');
     try {
@@ -158,7 +171,15 @@ export function useVoiceInput(options: UseVoiceInputOptions = {}) {
   }, [createRecognition]);
 
   const stop = useCallback(() => {
-    recognitionRef.current?.stop();
+    if (recognitionRef.current) {
+      recognitionRef.current.stop();
+      recognitionRef.current = null;
+    }
+    setListening(false);
+    setInterim('');
+    const fullText = bufferRef.current.join(' ').trim();
+    bufferRef.current = [];
+    if (fullText) optionsRef.current.onFinal?.(fullText);
   }, []);
 
   // No dangling recognition after unmount / navigation.

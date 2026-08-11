@@ -8,24 +8,28 @@ import type { SpeechRecognitionLike } from './useVoiceInput';
 // lib/hooks/useVoiceInput.test.ts — the real-microphone surface of /cook.
 // The Web Speech API is stubbed with a fake recognition object so the full
 // lifecycle is locked at the unit level: toggle → start, interim streaming,
-// final-transcript handoff (into the EXISTING voice.send path), auto-end,
-// barge-in cancel, error mapping, unsupported-browser fallback, unmount.
+// continuous accumulation, flush-on-stop, auto-restart on timeout,
+// error mapping, unsupported-browser fallback, unmount.
 // ============================================================================
 
 class FakeRecognition implements SpeechRecognitionLike {
   lang = '';
   interimResults = true;
   maxAlternatives = 1;
-  continuous = false;
+  continuous = true;
   onresult: SpeechRecognitionLike['onresult'] = null;
   onend: (() => void) | null = null;
   onerror: ((e: { error: string }) => void) | null = null;
   started = false;
+  stopped = false;
   aborted = false;
   start() {
     this.started = true;
+    this.stopped = false;
+    this.aborted = false;
   }
   stop() {
+    this.stopped = true;
     this.onend?.();
   }
   abort() {
@@ -78,15 +82,6 @@ describe('useVoiceInput', () => {
     act(() => result.current.toggle());
     expect(result.current.listening).toBe(true);
     expect(lastInstance?.started).toBe(true);
-    // After the recognition auto-ends (utterance delivered), the next tap
-    // creates a FRESH instance — never a reused/stale one.
-    const first = lastInstance;
-    act(() => {
-      lastInstance?.onend?.();
-    });
-    act(() => result.current.toggle());
-    expect(lastInstance).not.toBe(first);
-    expect(lastInstance?.started).toBe(true);
   });
 
   it('streams interim results live without firing onFinal', () => {
@@ -101,27 +96,73 @@ describe('useVoiceInput', () => {
     expect(onFinal).not.toHaveBeenCalled();
   });
 
-  it('fires onFinal with the trimmed transcript and clears the interim caption', () => {
+  it('accumulates final utterances in the buffer — does NOT call onFinal per utterance', () => {
+    installFake();
+    const onFinal = vi.fn();
+    const { result } = renderHook(() => useVoiceInput({ onFinal }));
+    act(() => result.current.toggle());
+
+    // First utterance finalises.
+    act(() => {
+      lastInstance?.onresult?.(resultEvent('done', true));
+    });
+    expect(onFinal).not.toHaveBeenCalled();
+    expect(result.current.interim).toBe('');
+
+    // Second utterance finalises — the real API fires with cumulative results.
+    const first = { isFinal: true, length: 1, 0: { transcript: 'done' } };
+    const second = { isFinal: true, length: 1, 0: { transcript: 'repeat' } };
+    act(() => {
+      lastInstance?.onresult?.({ resultIndex: 1, results: [first, second] });
+    });
+    expect(onFinal).not.toHaveBeenCalled();
+
+    // Buffer is flushed only on explicit stop.
+    act(() => result.current.toggle());
+    expect(onFinal).toHaveBeenCalledWith('done repeat');
+    expect(result.current.listening).toBe(false);
+  });
+
+  it('flushes the accumulated buffer on stop and fires onFinal once', () => {
     installFake();
     const onFinal = vi.fn();
     const { result } = renderHook(() => useVoiceInput({ onFinal }));
     act(() => result.current.toggle());
     act(() => {
-      lastInstance?.onresult?.(resultEvent('  done  ', true));
+      lastInstance?.onresult?.(resultEvent('chicken', true));
     });
-    expect(onFinal).toHaveBeenCalledWith('done');
-    expect(result.current.interim).toBe('');
+    const c = { isFinal: true, length: 1, 0: { transcript: 'chicken' } };
+    const r = { isFinal: true, length: 1, 0: { transcript: 'rice' } };
+    act(() => {
+      lastInstance?.onresult?.({ resultIndex: 1, results: [c, r] });
+    });
+    act(() => result.current.stop());
+    expect(onFinal).toHaveBeenCalledWith('chicken rice');
+    expect(onFinal).toHaveBeenCalledTimes(1);
   });
 
-  it('resets listening when the recognition ends (auto-stop after the utterance)', () => {
+  it('does not call onFinal when the buffer is empty on stop', () => {
+    installFake();
+    const onFinal = vi.fn();
+    const { result } = renderHook(() => useVoiceInput({ onFinal }));
+    act(() => result.current.toggle());
+    act(() => result.current.stop());
+    expect(onFinal).not.toHaveBeenCalled();
+  });
+
+  it('auto-restarts recognition on timeout instead of turning listening off', () => {
     installFake();
     const { result } = renderHook(() => useVoiceInput());
     act(() => result.current.toggle());
-    expect(result.current.listening).toBe(true);
+    expect(lastInstance?.started).toBe(true);
+    // Simulate a browser timeout (onend fires without explicit stop).
+    lastInstance!.started = false;
     act(() => {
       lastInstance?.onend?.();
     });
-    expect(result.current.listening).toBe(false);
+    // The hook restarted — still listening.
+    expect(result.current.listening).toBe(true);
+    expect(lastInstance?.started).toBe(true);
   });
 
   it('maps a permission denial to a human message and reports via onError', () => {
@@ -152,23 +193,6 @@ describe('useVoiceInput', () => {
     expect(result.current.error).toContain('you can type instead');
   });
 
-  it('a second toggle while listening aborts and discards the partial utterance', () => {
-    installFake();
-    const onFinal = vi.fn();
-    const { result } = renderHook(() => useVoiceInput({ onFinal }));
-    act(() => result.current.toggle());
-    act(() => {
-      lastInstance?.onresult?.(resultEvent('repeat the', false));
-    });
-    const first = lastInstance;
-    act(() => result.current.toggle());
-    expect(first?.aborted).toBe(true);
-    expect(result.current.listening).toBe(false);
-    expect(result.current.interim).toBe('');
-    // The partial utterance never reached the agent.
-    expect(onFinal).not.toHaveBeenCalled();
-  });
-
   it('unmount aborts the active recognition — no dangling listeners', () => {
     installFake();
     const { result, unmount } = renderHook(() => useVoiceInput());
@@ -188,5 +212,18 @@ describe('useVoiceInput', () => {
     });
     expect(result.current.error).toBeNull();
     expect(onError).not.toHaveBeenCalled();
+  });
+
+  it('creates a fresh recognition on each new listening session', () => {
+    installFake();
+    const { result } = renderHook(() => useVoiceInput());
+    act(() => result.current.toggle());
+    const first = lastInstance;
+    // Stop (flush).
+    act(() => result.current.toggle());
+    // Start a new session.
+    act(() => result.current.toggle());
+    expect(lastInstance).not.toBe(first);
+    expect(lastInstance?.started).toBe(true);
   });
 });
