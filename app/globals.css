@@ -1,8 +1,7 @@
 /* ═══════════════════════════════════════════════════════════════════════════
-   UNIVERSAL UI DESIGN SYSTEM — Consistent Product Skin
-   Visual layer only: colors, typography, spacing, borders, radii, shadows,
-   interaction states, motion. Never touches logic, routes, or data.
-   Light + deliberately-designed dark palette, Inter + IBM Plex Mono.
+   Warm Kitchen Design System — Cook With Me
+   Beige counters, sky blue windows, orange flame, mauve herbs.
+   Playfair Display for titles, Inter for body, IBM Plex Mono for timers.
    ═══════════════════════════════════════════════════════════════════════════ */
 
 /* ── Reset & base ───────────────────────────────────────────────────────── */
@@ -29,76 +28,84 @@ body {
   min-height: 100dvh;
 }
 
-/* ── Design tokens — light ───────────────────────────────────────────────── */
+/* ── Design tokens — light (warm kitchen) ────────────────────────────────── */
 :root {
-  /* Brand (primary) */
-  --color-brand: #3157d5;
-  --color-brand-hover: #2646b8;
-  --color-brand-active: #203a99;
-  --color-brand-subtle: #eef2ff;
-  --color-brand-subtle-border: #c7d2fe;
-  --color-brand-subtle-text: #2646b8;
+  /* Brand — sky blue: calm, clean, like a kitchen window */
+  --color-brand: #6B9FD4;
+  --color-brand-hover: #5A8EC3;
+  --color-brand-active: #4A7DB2;
+  --color-brand-subtle: #EFF5FB;
+  --color-brand-subtle-border: #CDDEF0;
+  --color-brand-subtle-text: #4A7DB2;
 
-  /* Accent */
-  --color-accent: #0f766e;
-  --color-accent-hover: #0b5f59;
-  --color-accent-subtle: #e8f7f4;
-  --color-accent-subtle-border: #b7e5dc;
-  --color-accent-subtle-text: #0b5f59;
+  /* Accent — warm orange: flame, citrus zest, energy */
+  --color-accent: #E8813B;
+  --color-accent-hover: #D4722E;
+  --color-accent-subtle: #FDF2E8;
+  --color-accent-subtle-border: #F5D5B8;
+  --color-accent-subtle-text: #B85E1F;
 
-  /* Surfaces */
-  --color-bg: #f7f8fa;
-  --color-surface: #ffffff;
-  --color-surface-secondary: #f1f3f6;
-  --color-surface-muted: #eceff3;
+  /* Mauve — dried herbs, soft warmth */
+  --color-mauve: #B8A0C8;
+  --color-mauve-hover: #A68DB8;
+  --color-mauve-subtle: #F7F3FA;
+  --color-mauve-subtle-border: #E2D5EC;
 
-  /* Text */
-  --color-text: #111827;
-  --color-text-secondary: #4b5563;
-  --color-text-muted: #6b7280;
-  --color-text-disabled: #9ca3af;
-  --color-text-on-brand: #ffffff;
-  --color-text-on-danger: #ffffff;
-  --color-text-on-warning: #ffffff;
+  /* Surfaces — warm, tactile */
+  --color-bg: #FBF7F0;
+  --color-surface: #FEFCF8;
+  --color-surface-secondary: #F5EFE6;
+  --color-surface-muted: #EDE6DA;
+
+  /* Text — deep brown, never harsh black */
+  --color-text: #3D3226;
+  --color-text-secondary: #6B5E52;
+  --color-text-muted: #8C7E72;
+  --color-text-disabled: #B5AA9E;
+  --color-text-on-brand: #FFFFFF;
+  --color-text-on-accent: #FFFFFF;
+  --color-text-on-danger: #FFFFFF;
+  --color-text-on-warning: #FFFFFF;
 
   /* Borders */
-  --color-border: #d8dee8;
-  --color-border-subtle: #e5e9f0;
-  --color-border-strong: #b8c0cc;
+  --color-border: #E0D8C8;
+  --color-border-subtle: #EBE4D4;
+  --color-border-strong: #C8BCA8;
 
-  /* Semantic */
-  --color-success: #16794a;
-  --color-success-bg: #ecfdf3;
-  --color-success-border: #bbe9ce;
-  --color-warning: #9a6700;
-  --color-warning-bg: #fff8e1;
-  --color-warning-border: #f0dfa9;
-  --color-danger: #b42318;
-  --color-danger-bg: #fef3f2;
-  --color-danger-border: #f5c9c4;
-  --color-info: #3157d5;
-  --color-info-bg: #eef2ff;
-  --color-info-border: #c7d2fe;
-  --color-neutral-bg: #f1f3f6;
-  --color-neutral-text: #4b5563;
-  --color-neutral-border: #d8dee8;
+  /* Semantic — kept distinct from the brand palette */
+  --color-success: #5B8C5A;
+  --color-success-bg: #EEF5ED;
+  --color-success-border: #C5DDC3;
+  --color-warning: #C2781A;
+  --color-warning-bg: #FDF3E4;
+  --color-warning-border: #F0D5A8;
+  --color-danger: #C44D3A;
+  --color-danger-bg: #FDF0EE;
+  --color-danger-border: #F0C8C0;
+  --color-info: #6B9FD4;
+  --color-info-bg: #EFF5FB;
+  --color-info-border: #CDDEF0;
+  --color-neutral-bg: #F5EFE6;
+  --color-neutral-text: #6B5E52;
+  --color-neutral-border: #E0D8C8;
 
   /* Focus */
-  --color-focus: #3157d5;
+  --color-focus: #6B9FD4;
 
-  /* Radii — restrained: 6 / 10 / 14 / 20 */
-  --radius-sm: 6px;
-  --radius-md: 10px;
-  --radius-lg: 14px;
-  --radius-xl: 20px;
+  /* Radii — soft, organic */
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+  --radius-xl: 24px;
 
-  /* Shadows — used sparingly, one consistent family */
-  --shadow-xs: 0 1px 2px rgba(16, 24, 40, 0.05);
-  --shadow-sm: 0 2px 8px rgba(16, 24, 40, 0.06);
-  --shadow-md: 0 8px 24px rgba(16, 24, 40, 0.1);
-  --shadow-lg: 0 16px 40px rgba(16, 24, 40, 0.14);
+  /* Shadows — warm, soft */
+  --shadow-xs: 0 1px 2px rgba(61, 50, 38, 0.04);
+  --shadow-sm: 0 2px 8px rgba(61, 50, 38, 0.06);
+  --shadow-md: 0 8px 24px rgba(61, 50, 38, 0.08);
+  --shadow-lg: 0 16px 40px rgba(61, 50, 38, 0.1);
 
   /* Typography */
+  --font-display: var(--font-display), 'Georgia', 'Times New Roman', serif;
   --font-sans: var(--font-inter), system-ui, -apple-system, BlinkMacSystemFont,
     'Segoe UI', sans-serif;
   --font-mono: var(--font-plex-mono), ui-monospace, 'SF Mono', Menlo, Consolas,
@@ -109,69 +116,75 @@ body {
   --duration-fast: 150ms;
   --duration-standard: 200ms;
 
-  /* App-specific layout */
+  /* Layout */
   --max-width: 480px;
 }
 
-/* ── Design tokens — dark (deliberately designed, not inverted) ──────────── */
+/* ── Design tokens — dark (warm kitchen at night) ────────────────────────── */
 @media (prefers-color-scheme: dark) {
   :root {
-    --color-brand: #6e8bff;
-    --color-brand-hover: #8aa1ff;
-    --color-brand-active: #a4b4ff;
-    --color-brand-subtle: #1b2850;
-    --color-brand-subtle-border: #2e3f6e;
-    --color-brand-subtle-text: #8aa1ff;
+    --color-brand: #7DB3E0;
+    --color-brand-hover: #92C0E6;
+    --color-brand-active: #A6CDEC;
+    --color-brand-subtle: #1E2B3A;
+    --color-brand-subtle-border: #2E4055;
+    --color-brand-subtle-text: #92C0E6;
 
-    --color-accent: #3ab7a8;
-    --color-accent-hover: #56cabb;
-    --color-accent-subtle: #0e2a27;
-    --color-accent-subtle-border: #1f4a45;
-    --color-accent-subtle-text: #56cabb;
+    --color-accent: #F09B5A;
+    --color-accent-hover: #F2AD78;
+    --color-accent-subtle: #3A2515;
+    --color-accent-subtle-border: #5C3A22;
+    --color-accent-subtle-text: #F2AD78;
 
-    --color-bg: #0d1117;
-    --color-surface: #151b23;
-    --color-surface-secondary: #202936;
-    --color-surface-muted: #273142;
+    --color-mauve: #C8B0D8;
+    --color-mauve-hover: #D4C2E0;
+    --color-mauve-subtle: #2A2230;
+    --color-mauve-subtle-border: #403248;
 
-    --color-text: #f3f4f6;
-    --color-text-secondary: #c3cad5;
-    --color-text-muted: #9ca6b5;
-    --color-text-disabled: #6b7280;
-    --color-text-on-brand: #0d1117;
-    --color-text-on-danger: #0d1117;
-    --color-text-on-warning: #0d1117;
+    --color-bg: #1E1814;
+    --color-surface: #28201A;
+    --color-surface-secondary: #322820;
+    --color-surface-muted: #3C3028;
 
-    --color-border: #303b4a;
-    --color-border-subtle: #273241;
-    --color-border-strong: #485466;
+    --color-text: #EDE6DA;
+    --color-text-secondary: #C8BCA8;
+    --color-text-muted: #A09080;
+    --color-text-disabled: #6B5E52;
+    --color-text-on-brand: #1E1814;
+    --color-text-on-accent: #1E1814;
+    --color-text-on-danger: #1E1814;
+    --color-text-on-warning: #1E1814;
 
-    --color-success: #45b97c;
-    --color-success-bg: #12291d;
-    --color-success-border: #1e4a33;
-    --color-warning: #d9a441;
-    --color-warning-bg: #2a2212;
-    --color-warning-border: #57461c;
-    --color-danger: #f97066;
-    --color-danger-bg: #2a1a1b;
-    --color-danger-border: #5c2a2b;
-    --color-info: #7c97ff;
-    --color-info-bg: #1b2850;
-    --color-info-border: #2e3f6e;
-    --color-neutral-bg: #202936;
-    --color-neutral-text: #c3cad5;
-    --color-neutral-border: #303b4a;
+    --color-border: #3C3028;
+    --color-border-subtle: #322820;
+    --color-border-strong: #5C4E3E;
 
-    --color-focus: #6e8bff;
+    --color-success: #6FA86E;
+    --color-success-bg: #1A2418;
+    --color-success-border: #2E402C;
+    --color-warning: #E09A3A;
+    --color-warning-bg: #302418;
+    --color-warning-border: #5C4028;
+    --color-danger: #E0705E;
+    --color-danger-bg: #30201C;
+    --color-danger-border: #5C3028;
+    --color-info: #7DB3E0;
+    --color-info-bg: #1E2B3A;
+    --color-info-border: #2E4055;
+    --color-neutral-bg: #322820;
+    --color-neutral-text: #C8BCA8;
+    --color-neutral-border: #3C3028;
 
-    --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.4);
-    --shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.4);
-    --shadow-md: 0 8px 24px rgba(0, 0, 0, 0.45);
-    --shadow-lg: 0 16px 40px rgba(0, 0, 0, 0.5);
+    --color-focus: #7DB3E0;
+
+    --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.3);
+    --shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.35);
+    --shadow-md: 0 8px 24px rgba(0, 0, 0, 0.4);
+    --shadow-lg: 0 16px 40px rgba(0, 0, 0, 0.45);
   }
 }
 
-/* ── Large touch targets (cooking mode + mobile) ─────────────────────────── */
+/* ── Large touch targets ─────────────────────────────────────────────────── */
 button,
 a,
 [role='button'] {
@@ -188,13 +201,13 @@ a,
     transform var(--duration-fast) var(--ease-standard);
 }
 
-/* ── Focus — always visible, never color-only ────────────────────────────── */
+/* ── Focus ───────────────────────────────────────────────────────────────── */
 :focus-visible {
   outline: 2px solid var(--color-focus);
   outline-offset: 2px;
 }
 
-/* ── Motion — state communication only, reduced-motion respected ─────────── */
+/* ── Motion ──────────────────────────────────────────────────────────────── */
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
@@ -206,7 +219,7 @@ a,
   }
 }
 
-/* ── Voice indicator ───────────────────────────────────────────────────── */
+/* ── Voice indicator ─────────────────────────────────────────────────────── */
 .voice-indicator {
   display: inline-flex;
   align-items: center;
@@ -229,7 +242,7 @@ a,
 
 .voice-indicator[data-status='LISTENING'] .voice-dot,
 .voice-indicator[data-status='SPEAKING'] .voice-dot {
-  background: var(--color-success);
+  background: var(--color-accent);
   animation: voice-pulse 1.2s ease-in-out infinite;
 }
 
@@ -255,7 +268,7 @@ a,
   }
 }
 
-/* ── Utility ────────────────────────────────────────────────────────────── */
+/* ── Utility ──────────────────────────────────────────────────────────────── */
 .sr-only {
   position: absolute;
   width: 1px;

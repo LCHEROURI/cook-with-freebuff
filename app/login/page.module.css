@@ -27,14 +27,16 @@
 }
 
 .title {
+  font-family: var(--font-display);
   font-size: 2rem;
-  font-weight: 700;
-  color: var(--color-brand);
+  font-weight: 500;
+  color: var(--color-text);
 }
 
 .subtitle {
   color: var(--color-text-secondary);
   font-size: 1.05rem;
+  font-style: italic;
   margin-top: -0.25rem;
 }
 
@@ -55,16 +57,18 @@
   font-size: 1rem;
   font-weight: 600;
   cursor: pointer;
-  transition: box-shadow 0.15s;
+  transition: box-shadow 0.15s, transform 0.15s;
 }
 
 .googleBtn:hover:not(:disabled) {
   background: var(--color-surface-secondary);
   border-color: var(--color-border-strong);
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-md);
 }
 
 .googleBtn:active:not(:disabled) {
-  transform: scale(0.98);
+  transform: translateY(0);
 }
 
 .googleBtn:disabled {

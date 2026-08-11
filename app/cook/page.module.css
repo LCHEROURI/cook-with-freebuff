@@ -24,18 +24,18 @@
 }
 
 .title {
-  font-size: 2rem;
-  font-weight: 700;
-  color: var(--color-brand);
+  font-family: var(--font-display);
+  font-size: 2.2rem;
+  font-weight: 500;
+  color: var(--color-text);
 }
 
 .emptyText {
   color: var(--color-text-secondary);
-  line-height: 1.5;
+  line-height: 1.6;
 }
 
-/* Recipe starter — the "start from scratch" stage: tell the agent what you
-   have, it creates + validates a recipe, then Start cooking launches it. */
+/* ── Recipe starter ──────────────────────────────────────────────────────── */
 .starterForm {
   display: flex;
   flex-direction: column;
@@ -44,7 +44,6 @@
   max-width: 26rem;
 }
 
-/* The starter's Live dictation mic sits next to the prompt input in a row. */
 .starterMicRow {
   display: flex;
   gap: 0.5rem;
@@ -158,9 +157,7 @@
   cursor: not-allowed;
 }
 
-/* Your recipes — the reusable list on the starter: every generated recipe the
-   owner can relaunch with one tap, newest first. Only rendered when there are
-   recipes, so a fresh user sees the creation form alone. */
+/* ── Your recipes ────────────────────────────────────────────────────────── */
 .recipesSection {
   width: 100%;
   max-width: 26rem;
@@ -172,7 +169,8 @@
 
 .recipesTitle {
   margin: 0;
-  font-size: 1.1rem;
+  font-family: var(--font-display);
+  font-size: 1.15rem;
   font-weight: 600;
   color: var(--color-text);
   text-align: left;
@@ -195,7 +193,7 @@
   padding: 0.85rem 1rem;
   background: var(--color-surface);
   border: 1px solid var(--color-border);
-  border-radius: var(--radius-lg);
+  border-radius: var(--radius-md);
   box-shadow: var(--shadow-xs);
   text-align: left;
 }
@@ -242,6 +240,7 @@
   cursor: not-allowed;
 }
 
+/* ── Cook screen header ──────────────────────────────────────────────────── */
 .header {
   display: flex;
   flex-direction: column;
@@ -263,11 +262,17 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  border-radius: var(--radius-sm);
+}
+
+.backLink:hover {
+  background: var(--color-surface-secondary);
 }
 
 .recipeTitle {
   flex: 1;
-  font-size: 1.25rem;
+  font-family: var(--font-display);
+  font-size: 1.3rem;
   font-weight: 600;
   color: var(--color-text);
 }
@@ -281,7 +286,7 @@
 .phaseChip {
   padding: 0.35rem 0.9rem;
   border-radius: 999px;
-  font-size: 0.9rem;
+  font-size: 0.85rem;
   font-weight: 600;
   letter-spacing: 0.02em;
   background: var(--color-surface-muted);
@@ -295,13 +300,13 @@
 
 .phase-COOKING_GUIDANCE,
 .phase-WAITING_FOR_TIMER {
-  background: var(--color-warning-bg);
-  color: var(--color-warning);
+  background: var(--color-accent-subtle);
+  color: var(--color-accent);
 }
 
 .phase-PLATING {
-  background: var(--color-info-bg);
-  color: var(--color-info);
+  background: var(--color-mauve-subtle);
+  color: var(--color-mauve);
 }
 
 .phase-COMPLETED {
@@ -315,6 +320,7 @@
   font-variant-numeric: tabular-nums;
 }
 
+/* ── Alert ───────────────────────────────────────────────────────────────── */
 .alert {
   display: flex;
   align-items: center;
@@ -323,7 +329,7 @@
   background: var(--color-warning-bg);
   border: 1px solid var(--color-warning-border);
   border-radius: var(--radius-md);
-  font-size: 1.1rem;
+  font-size: 1.05rem;
   font-weight: 600;
   color: var(--color-warning);
 }
@@ -352,21 +358,18 @@
   color: var(--color-danger);
 }
 
-/* The agent's last spoken response, surfaced on screen — users must SEE
-   what the app understood and said, not just hear it. */
+/* ── Agent response — the last thing the agent said ──────────────────────── */
 .agentResponse {
   display: flex;
   align-items: baseline;
   gap: 0.75rem;
   padding: 0.9rem 1.1rem;
-  background: var(--color-accent-subtle);
-  border: 1px solid var(--color-accent-subtle-border);
+  background: var(--color-mauve-subtle);
+  border: 1px solid var(--color-mauve-subtle-border);
   border-radius: var(--radius-sm);
-  color: var(--color-accent-subtle-text);
+  color: var(--color-text);
   font-size: 1.05rem;
   line-height: 1.45;
-  max-width: 42rem;
-  margin: 0 auto 1.25rem;
 }
 
 .agentResponseLabel {
@@ -375,11 +378,10 @@
   font-weight: 600;
   letter-spacing: 0.06em;
   text-transform: uppercase;
-  color: var(--color-accent);
+  color: var(--color-mauve);
 }
 
-/* The recent-turn transcript — a compact scrollable window so users can
-   re-read earlier exchanges without the screen turning into a chat log. */
+/* ── Transcript ──────────────────────────────────────────────────────────── */
 .transcript {
   max-height: 13rem;
   overflow-y: auto;
@@ -390,8 +392,6 @@
   display: flex;
   flex-direction: column;
   gap: 0.75rem;
-  max-width: 42rem;
-  margin: 0 auto 1.25rem;
 }
 
 .transcriptTurn {
@@ -412,10 +412,6 @@
   color: var(--color-text-secondary);
 }
 
-.transcriptAgent {
-  color: var(--color-text);
-}
-
 .transcriptLabel {
   display: inline-block;
   min-width: 7.5rem;
@@ -427,50 +423,54 @@
   color: var(--color-text-muted);
 }
 
+/* ── Action — the current instruction, large and prominent ───────────────── */
 .action {
   flex: 1;
   display: flex;
   flex-direction: column;
   justify-content: center;
   gap: 1rem;
-  padding: 2rem 0.5rem;
+  padding: 2.5rem 0.5rem;
   text-align: center;
 }
 
 .instruction {
-  font-size: clamp(1.6rem, 7vw, 2.6rem);
-  line-height: 1.25;
-  font-weight: 700;
+  font-family: var(--font-display);
+  font-size: clamp(1.7rem, 7vw, 2.8rem);
+  line-height: 1.2;
+  font-weight: 500;
   color: var(--color-text);
 }
 
 .safetyNote {
-  font-size: 1.1rem;
+  font-size: 1.05rem;
   font-weight: 600;
-  color: var(--color-warning);
+  color: var(--color-accent);
 }
 
+/* ── Safety gate — urgent but warm, not red-alarm harsh ──────────────────── */
 .safetyGate {
   margin-top: 1.5rem;
   padding: 1.5rem 1.25rem;
-  background: var(--color-danger-bg);
-  border: 2px solid var(--color-danger);
+  background: var(--color-accent-subtle);
+  border: 2px solid var(--color-accent);
   border-radius: var(--radius-lg);
   text-align: center;
 }
 
 .safetyGateTitle {
   margin: 0 0 0.5rem;
+  font-family: var(--font-display);
   font-size: 1.3rem;
-  font-weight: 800;
-  color: var(--color-danger);
+  font-weight: 600;
+  color: var(--color-accent);
 }
 
 .safetyGateNote {
   margin: 0;
   font-size: clamp(1.3rem, 5vw, 1.9rem);
   font-weight: 700;
-  color: var(--color-danger);
+  color: var(--color-text);
   line-height: 1.3;
 }
 
@@ -483,14 +483,13 @@
 .safetyGateConfirm {
   margin-top: 1.25rem;
   width: 100%;
-  background: var(--color-danger);
-  border-color: var(--color-danger);
-  color: var(--color-text-on-danger);
+  background: var(--color-accent);
+  border-color: var(--color-accent);
+  color: var(--color-text-on-accent);
 }
 
 .safetyGateConfirm:hover:not(:disabled) {
-  background: var(--color-danger);
-  opacity: 0.9;
+  background: var(--color-accent-hover);
 }
 
 .safetyGateWaiting {
@@ -501,6 +500,7 @@
   text-align: center;
 }
 
+/* ── Timers ──────────────────────────────────────────────────────────────── */
 .timers {
   display: flex;
   flex-direction: column;
@@ -512,15 +512,15 @@
   align-items: center;
   justify-content: space-between;
   padding: 1rem 1.25rem;
-  background: var(--color-warning-bg);
-  border: 1px solid var(--color-warning-border);
+  background: var(--color-accent-subtle);
+  border: 1px solid var(--color-accent-subtle-border);
   border-radius: var(--radius-md);
 }
 
 .timerLabel {
   font-size: 1rem;
   font-weight: 600;
-  color: var(--color-warning);
+  color: var(--color-accent);
 }
 
 .timerCount {
@@ -528,20 +528,23 @@
   font-weight: 600;
   font-family: var(--font-mono);
   font-variant-numeric: tabular-nums;
-  color: var(--color-warning);
+  color: var(--color-accent);
 }
 
+/* ── Completed ───────────────────────────────────────────────────────────── */
 .completed {
   text-align: center;
   padding: 1rem;
 }
 
 .completedText {
-  font-size: 1.5rem;
-  font-weight: 700;
+  font-family: var(--font-display);
+  font-size: 1.6rem;
+  font-weight: 500;
   color: var(--color-brand);
 }
 
+/* ── Controls ────────────────────────────────────────────────────────────── */
 .controls {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
@@ -592,6 +595,7 @@
   border-color: var(--color-brand-active);
 }
 
+/* ── Start over ──────────────────────────────────────────────────────────── */
 .startOver {
   margin-top: 0.75rem;
   width: 100%;
@@ -628,6 +632,7 @@
   opacity: 0.92;
 }
 
+/* ── Details / accordions ────────────────────────────────────────────────── */
 .details {
   border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
@@ -656,14 +661,13 @@
   color: var(--color-text);
 }
 
+/* ── Voice form (mic + input + send) ─────────────────────────────────────── */
 .voiceForm {
   display: flex;
   gap: 0.5rem;
   margin-top: 0.5rem;
 }
 
-/* Real microphone (Web Speech API) — walkie-talkie toggle, big touch target,
-   and a clear listening state. Disabled + text input when unsupported. */
 .micBtn {
   flex-shrink: 0;
   width: 48px;
@@ -693,33 +697,32 @@
 }
 
 .micListening {
-  background: var(--color-brand);
-  border-color: var(--color-brand);
-  color: var(--color-text-on-brand);
+  background: var(--color-accent);
+  border-color: var(--color-accent);
+  color: var(--color-text-on-accent);
   animation: mic-pulse 1.4s ease-in-out infinite;
 }
 
 .micListening:hover:not(:disabled) {
-  background: var(--color-brand-hover);
-  border-color: var(--color-brand-hover);
+  background: var(--color-accent-hover);
+  border-color: var(--color-accent-hover);
 }
 
 @keyframes mic-pulse {
   0%,
   100% {
-    box-shadow: 0 0 0 0 color-mix(in srgb, var(--color-brand) 35%, transparent);
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--color-accent) 35%, transparent);
   }
   50% {
-    box-shadow: 0 0 0 7px color-mix(in srgb, var(--color-brand) 0%, transparent);
+    box-shadow: 0 0 0 7px color-mix(in srgb, var(--color-accent) 0%, transparent);
   }
 }
 
-/* Live speech-to-text caption while the mic is capturing. */
 .micStatus {
   margin: 0.5rem 0 0;
   font-size: 0.95rem;
   font-weight: 600;
-  color: var(--color-brand);
+  color: var(--color-accent);
   text-align: center;
 }
 

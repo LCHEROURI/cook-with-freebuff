@@ -3,7 +3,7 @@
   flex-direction: column;
   align-items: center;
   min-height: 100dvh;
-  padding: 0 1rem 2rem;
+  padding: 0 1rem 3rem;
 }
 
 .topbar {
@@ -16,9 +16,11 @@
 }
 
 .brand {
-  font-weight: 700;
+  font-family: var(--font-display);
+  font-weight: 500;
   color: var(--color-brand);
-  font-size: 1.05rem;
+  font-size: 1.1rem;
+  letter-spacing: 0.01em;
 }
 
 .signInLink {
@@ -48,24 +50,47 @@
   color: var(--color-brand);
 }
 
+/* ── Hero — the signature: Playfair Display title with gradient line ─────── */
 .hero {
   text-align: center;
-  padding: 4rem 0 2.5rem;
-  max-width: 720px;
+  padding: 5rem 0 3rem;
+  max-width: 600px;
 }
 
 .title {
-  font-size: 2.6rem;
-  font-weight: 800;
-  color: var(--color-brand);
-  line-height: 1.1;
+  font-family: var(--font-display);
+  font-size: 3rem;
+  font-weight: 500;
+  color: var(--color-text);
+  line-height: 1.15;
+  letter-spacing: -0.01em;
+  position: relative;
+  display: inline-block;
+}
+
+/* The signature gradient underline */
+.title::after {
+  content: '';
+  position: absolute;
+  left: 10%;
+  right: 10%;
+  bottom: -0.25rem;
+  height: 3px;
+  border-radius: 2px;
+  background: linear-gradient(
+    90deg,
+    var(--color-accent),
+    var(--color-mauve) 50%,
+    var(--color-brand) 100%
+  );
 }
 
 .subtitle {
-  margin-top: 1rem;
+  margin-top: 1.25rem;
   color: var(--color-text-secondary);
-  font-size: 1.15rem;
-  line-height: 1.55;
+  font-size: 1.1rem;
+  line-height: 1.6;
+  font-style: italic;
 }
 
 .heroCta {
@@ -79,6 +104,34 @@
   gap: 0.75rem;
   justify-content: center;
   flex-wrap: wrap;
+}
+
+.primaryBtn {
+  display: inline-flex;
+  align-items: center;
+  min-height: 48px;
+  padding: 0.85rem 2rem;
+  background: var(--color-brand);
+  color: var(--color-text-on-brand);
+  border: none;
+  border-radius: var(--radius-md);
+  text-decoration: none;
+  font-size: 1.1rem;
+  font-weight: 600;
+  font-family: inherit;
+  box-shadow: var(--shadow-sm);
+  transition: background 0.15s, box-shadow 0.15s, transform 0.15s;
+}
+
+.primaryBtn:hover {
+  background: var(--color-brand-hover);
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-md);
+}
+
+.primaryBtn:active {
+  background: var(--color-brand-active);
+  transform: translateY(0);
 }
 
 .secondaryBtn {
@@ -95,7 +148,6 @@
   font-weight: 600;
   font-family: inherit;
   box-shadow: var(--shadow-sm);
-  transition: border-color 0.15s, background 0.15s;
 }
 
 .secondaryBtn:hover {
@@ -103,49 +155,40 @@
   background: var(--color-surface-secondary);
 }
 
-.primaryBtn {
-  display: inline-block;
-  min-height: 48px;
-  padding: 0.85rem 2rem;
-  background: var(--color-brand);
-  color: var(--color-text-on-brand);
-  border: none;
-  border-radius: var(--radius-md);
-  text-decoration: none;
-  font-size: 1.1rem;
-  font-weight: 600;
-  font-family: inherit;
-  box-shadow: var(--shadow-sm);
-  transition: background 0.15s, box-shadow 0.15s;
-}
-
-.primaryBtn:hover {
-  background: var(--color-brand-hover);
-  box-shadow: var(--shadow-sm);
-}
-
-.primaryBtn:active {
-  background: var(--color-brand-active);
-}
-
+/* ── Features — cards with a colored left accent bar ─────────────────────── */
 .features {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
   gap: 1rem;
   width: 100%;
   max-width: 960px;
-  padding-top: 1rem;
+  padding-top: 0.5rem;
 }
 
 .featureCard {
   display: flex;
   flex-direction: column;
   gap: 0.5rem;
-  padding: 1.5rem;
+  padding: 1.5rem 1.5rem 1.5rem 1.25rem;
   background: var(--color-surface);
   border: 1px solid var(--color-border);
-  border-radius: var(--radius-lg);
+  border-left: 3px solid var(--color-mauve);
+  border-radius: 0 var(--radius-lg) var(--radius-lg) 0;
+  box-shadow: var(--shadow-xs);
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+
+.featureCard:hover {
+  border-color: var(--color-border-strong);
   box-shadow: var(--shadow-sm);
+}
+
+.featureCard:nth-child(2) {
+  border-left-color: var(--color-brand);
+}
+
+.featureCard:nth-child(3) {
+  border-left-color: var(--color-accent);
 }
 
 .featureIcon {
@@ -153,19 +196,20 @@
 }
 
 .featureTitle {
-  font-size: 1.05rem;
-  font-weight: 700;
+  font-family: var(--font-display);
+  font-size: 1.1rem;
+  font-weight: 600;
   color: var(--color-text);
 }
 
 .featureText {
   color: var(--color-text-secondary);
   font-size: 0.95rem;
-  line-height: 1.5;
+  line-height: 1.55;
 }
 
 .footer {
   margin-top: 3rem;
-  color: var(--color-text-secondary);
+  color: var(--color-text-muted);
   font-size: 0.9rem;
 }
