@@ -58,6 +58,11 @@ describe('scripts/verify-live.mjs · live-voice gate [3e] (dictation + active-sc
     expect(LIVE).toContain("note('voice driver first attempt did not pass — waiting 30s and retrying once (transient backoff)')");
     expect(LIVE).toContain('await sleep(30_000);');
     expect(LIVE).toContain('voiceDriver = runVoiceDriver(2);');
+    // The retry path logs via `note` — the helper must exist or the retry
+    // branch itself crashes (`note is not defined`), failing the gate with a
+    // misleading crash instead of a clean verdict. Lock the definition so a
+    // future edit can't drop it.
+    expect(LIVE).toContain('const note = (m) => console.log(`  - ${m}`);');
   });
 
   it('asserts the key contract markers from the driver log (not a black box)', () => {

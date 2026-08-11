@@ -98,6 +98,7 @@ let failures = 0;
 const ok = (m) => console.log(`  ✓ ${m}`);
 const fail = (m) => { failures += 1; console.log(`  ✗ FAIL: ${m}`); };
 const skip = (m) => console.log(`  - SKIP: ${m}`);
+const note = (m) => console.log(`  - ${m}`);
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 // Safe pretty-print for fail messages — a non-JSON body (e.g. a Vercel
