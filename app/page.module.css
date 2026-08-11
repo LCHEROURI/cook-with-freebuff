@@ -25,6 +25,11 @@
   color: var(--color-brand);
   text-decoration: none;
   font-weight: 600;
+  border-radius: var(--radius-sm);
+}
+
+.signInLink:hover {
+  color: var(--color-brand-hover);
 }
 
 .signOutBtn {
@@ -45,8 +50,8 @@
 
 .hero {
   text-align: center;
-  padding: 3.5rem 0 2rem;
-  max-width: var(--max-width);
+  padding: 4rem 0 2.5rem;
+  max-width: 720px;
 }
 
 .title {
@@ -94,8 +99,8 @@
 }
 
 .secondaryBtn:hover {
-  border-color: var(--color-brand);
-  background: #f1f6ef;
+  border-color: var(--color-border-strong);
+  background: var(--color-surface-secondary);
 }
 
 .primaryBtn {
@@ -103,7 +108,7 @@
   min-height: 48px;
   padding: 0.85rem 2rem;
   background: var(--color-brand);
-  color: #fff;
+  color: var(--color-text-on-brand);
   border: none;
   border-radius: var(--radius-md);
   text-decoration: none;
@@ -115,16 +120,20 @@
 }
 
 .primaryBtn:hover {
-  background: var(--color-brand-light);
-  box-shadow: var(--shadow-md);
+  background: var(--color-brand-hover);
+  box-shadow: var(--shadow-sm);
+}
+
+.primaryBtn:active {
+  background: var(--color-brand-active);
 }
 
 .features {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
   gap: 1rem;
   width: 100%;
-  max-width: 720px;
+  max-width: 960px;
   padding-top: 1rem;
 }
 

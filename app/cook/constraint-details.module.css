@@ -5,8 +5,8 @@
 .constraintDetails {
   width: 100%;
   font-size: 0.92rem;
-  color: #2c4a24;
-  border-top: 1px dashed #c9dcc2;
+  color: var(--color-brand-subtle-text);
+  border-top: 1px dashed var(--color-brand-subtle-border);
   padding-top: 0.5rem;
 }
 
@@ -14,6 +14,11 @@
   cursor: pointer;
   font-weight: 600;
   padding: 0.25rem 0;
+  border-radius: var(--radius-sm);
+}
+
+.constraintSummary:hover {
+  color: var(--color-brand);
 }
 
 .constraintList {

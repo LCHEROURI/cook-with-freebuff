@@ -4,8 +4,8 @@
   "description": "Voice-first intelligent cooking companion",
   "start_url": "/cook",
   "display": "standalone",
-  "background_color": "#fff7ed",
-  "theme_color": "#e85d2c",
+  "background_color": "#f7f8fa",
+  "theme_color": "#3157d5",
   "orientation": "portrait",
   "icons": []
 }

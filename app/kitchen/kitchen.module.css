@@ -39,6 +39,11 @@
   align-items: center;
   justify-content: center;
   align-self: flex-start;
+  border-radius: var(--radius-sm);
+}
+
+.backLink:hover {
+  background: var(--color-surface-secondary);
 }
 
 .title {
@@ -57,10 +62,10 @@
 
 .errorNote {
   padding: 0.75rem 1rem;
-  background: #fdecec;
-  border: 1px solid #e0b4b4;
+  background: var(--color-danger-bg);
+  border: 1px solid var(--color-danger-border);
   border-radius: var(--radius-sm);
-  color: #9b1c1c;
+  color: var(--color-danger);
 }
 
 .card {
@@ -71,19 +76,19 @@
   background: var(--color-surface);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-lg);
-  box-shadow: var(--shadow-sm);
+  box-shadow: var(--shadow-xs);
 }
 
 .cardTitle {
   margin: 0;
   font-size: 1.15rem;
-  font-weight: 700;
+  font-weight: 600;
   color: var(--color-text);
 }
 
 .emptyText {
   margin: 0;
-  color: var(--color-text-secondary);
+  color: var(--color-text-muted);
   font-size: 0.95rem;
   line-height: 1.5;
 }
@@ -103,9 +108,16 @@
   justify-content: space-between;
   gap: 0.75rem;
   padding: 0.7rem 0.85rem;
-  background: #fff;
-  border: 1px solid var(--color-border);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border-subtle);
   border-radius: var(--radius-md);
+  transition: background-color var(--duration-fast) var(--ease-standard),
+    border-color var(--duration-fast) var(--ease-standard);
+}
+
+.row:hover {
+  background: var(--color-surface-secondary);
+  border-color: var(--color-border);
 }
 
 .rowInfo {
@@ -125,6 +137,7 @@
 .rowMeta {
   font-size: 0.85rem;
   color: var(--color-text-secondary);
+  font-variant-numeric: tabular-nums;
 }
 
 .badges {
@@ -140,23 +153,23 @@
   padding: 0.15rem 0.55rem;
   border-radius: 999px;
   font-size: 0.72rem;
-  font-weight: 700;
+  font-weight: 600;
   letter-spacing: 0.02em;
 }
 
 .badgeDanger {
-  background: #fdecec;
-  color: #b42318;
+  background: var(--color-danger-bg);
+  color: var(--color-danger);
 }
 
 .badgeWarn {
-  background: #fff4d6;
-  color: #7a5200;
+  background: var(--color-warning-bg);
+  color: var(--color-warning);
 }
 
 .badgeNeutral {
-  background: #eef1f4;
-  color: #4a5568;
+  background: var(--color-neutral-bg);
+  color: var(--color-neutral-text);
 }
 
 .sourceDepleted,
@@ -167,23 +180,23 @@
   padding: 0.15rem 0.55rem;
   border-radius: 999px;
   font-size: 0.72rem;
-  font-weight: 700;
+  font-weight: 600;
   letter-spacing: 0.02em;
 }
 
 .sourceDepleted {
-  background: #e8e6ff;
-  color: #4338a8;
+  background: var(--color-info-bg);
+  color: var(--color-info);
 }
 
 .sourceExpired {
-  background: #fdecec;
-  color: #b42318;
+  background: var(--color-danger-bg);
+  color: var(--color-danger);
 }
 
 .sourceManual {
-  background: #eef1f4;
-  color: #4a5568;
+  background: var(--color-neutral-bg);
+  color: var(--color-neutral-text);
 }
 
 .rowActions {
@@ -199,11 +212,20 @@
   font-weight: 600;
   font-family: inherit;
   color: var(--color-text);
-  background: #fff;
+  background: var(--color-surface);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
   cursor: pointer;
   -webkit-tap-highlight-color: transparent;
+}
+
+.smallBtn:hover:not(:disabled) {
+  background: var(--color-surface-secondary);
+  border-color: var(--color-border-strong);
+}
+
+.smallBtn:active:not(:disabled) {
+  transform: scale(0.97);
 }
 
 .smallBtn:disabled {
@@ -212,7 +234,7 @@
 }
 
 .dangerBtn {
-  color: #b42318;
+  color: var(--color-danger);
 }
 
 .addForm {
@@ -231,11 +253,19 @@
   font-size: 0.95rem;
   font-family: inherit;
   color: var(--color-text);
-  background: #fff;
+  background: var(--color-surface);
+  transition: border-color var(--duration-fast) var(--ease-standard),
+    box-shadow var(--duration-fast) var(--ease-standard);
 }
 
 .inputSmall {
   flex: 0 1 5.5rem;
+}
+
+.input:focus {
+  outline: none;
+  border-color: var(--color-brand);
+  box-shadow: 0 0 0 3px var(--color-brand-subtle);
 }
 
 .input:disabled {
@@ -247,7 +277,7 @@
   min-height: 44px;
   padding: 0.7rem 1.1rem;
   background: var(--color-brand);
-  color: #fff;
+  color: var(--color-text-on-brand);
   border: none;
   border-radius: var(--radius-md);
   cursor: pointer;
@@ -255,6 +285,16 @@
   font-weight: 600;
   font-family: inherit;
   -webkit-tap-highlight-color: transparent;
+}
+
+.addBtn:hover:not(:disabled),
+.saveBtn:hover:not(:disabled) {
+  background: var(--color-brand-hover);
+}
+
+.addBtn:active:not(:disabled),
+.saveBtn:active:not(:disabled) {
+  background: var(--color-brand-active);
 }
 
 .addBtn:disabled,

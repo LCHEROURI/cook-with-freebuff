@@ -21,8 +21,8 @@
   padding: 2.5rem 2rem;
   background: var(--color-surface);
   border: 1px solid var(--color-border);
-  border-radius: var(--radius-lg);
-  box-shadow: var(--shadow-md);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-sm);
   text-align: center;
 }
 
@@ -59,7 +59,12 @@
 }
 
 .googleBtn:hover:not(:disabled) {
-  box-shadow: var(--shadow-md);
+  background: var(--color-surface-secondary);
+  border-color: var(--color-border-strong);
+}
+
+.googleBtn:active:not(:disabled) {
+  transform: scale(0.98);
 }
 
 .googleBtn:disabled {
@@ -75,7 +80,7 @@
   height: 20px;
   border-radius: 50%;
   background: var(--color-brand);
-  color: #fff;
+  color: var(--color-text-on-brand);
   font-size: 0.85rem;
   font-weight: 700;
 }
@@ -89,9 +94,9 @@
 .error {
   width: 100%;
   padding: 0.75rem 1rem;
-  background: #fdecea;
-  color: var(--color-error);
-  border: 1px solid #f5c6c0;
+  background: var(--color-danger-bg);
+  color: var(--color-danger);
+  border: 1px solid var(--color-danger-border);
   border-radius: var(--radius-sm);
   font-size: 0.9rem;
   line-height: 1.45;
