@@ -262,6 +262,39 @@ describe('/api/cook', () => {
     expect(active?.id).toBe(body.data.sessionId);
   });
 
+  describe('list_recipes — the reusable “Your recipes” list', () => {
+    it('returns an empty list when the owner has no recipes', async () => {
+      const res = await post({ action: 'list_recipes' });
+      expect(res.status).toBe(200);
+      const body = await res.json();
+      expect(body.success).toBe(true);
+      expect(body.data.recipes).toEqual([]);
+    });
+
+    it('returns only the owner’s recipes as lightweight summaries, newest first', async () => {
+      const store = ctx.recipeStore as InMemoryRecipeStore;
+      await store.createRecipe({ ...makeRecipe(), id: 'recipe-old', title: 'Old Stew', updatedAt: 1000 });
+      await store.createRecipe({ ...makeRecipe(), id: 'recipe-new', title: 'Fresh Pasta', updatedAt: 5000 });
+      // Another user's recipe must never leak into the list (userId isolation).
+      await store.createRecipe({ ...makeRecipe(), id: 'recipe-other', userId: 'user-2', updatedAt: 9000 });
+
+      const res = await post({ action: 'list_recipes' });
+      expect(res.status).toBe(200);
+      const body = await res.json();
+      expect(body.data.recipes).toHaveLength(2);
+      expect(body.data.recipes.map((r: { recipeId: string }) => r.recipeId)).toEqual(['recipe-new', 'recipe-old']);
+      const first = body.data.recipes[0];
+      expect(first.title).toBe('Fresh Pasta');
+      expect(first.servings).toBe(2);
+      expect(first.totalMinutes).toBe(35);
+      expect(first.ingredientCount).toBe(1);
+      // The summary stays light — full step lists never leave the server.
+      expect(first).not.toHaveProperty('ingredients');
+      expect(first).not.toHaveProperty('cookingSteps');
+      expect(first).not.toHaveProperty('prepSteps');
+    });
+  });
+
   describe('create_recipe — the missing start-from-scratch stage', () => {
     it('returns NO_INGREDIENTS when the prompt has nothing parseable', async () => {
       // A craving with no ingredient list (and the question gate keeps the

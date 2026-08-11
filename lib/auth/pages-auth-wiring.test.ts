@@ -51,6 +51,15 @@ describe('app/cook/page.tsx · protected route', () => {
     expect(COOK).toContain('▶ Start cooking');
     expect(COOK).toContain('cook.launch(starter.ready.recipeId)');
   });
+
+  it('shows the owner’s reusable “Your recipes” list with one-tap relaunch', () => {
+    // Generated recipes must be reusable: the starter lists them (newest
+    // first) and each row launches a fresh session pinned to that recipe.
+    expect(COOK).toContain("action: 'list_recipes'");
+    expect(COOK).toContain('Your recipes');
+    expect(COOK).toContain('handleStartSavedRecipe(r.recipeId)');
+    expect(COOK).toContain('cook.launch(recipeId)');
+  });
 });
 
 describe('app/login/page.tsx · login page', () => {

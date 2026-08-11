@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import styles from './page.module.css';
@@ -30,6 +30,49 @@ export default function CookPage() {
     ready: { recipeId: string; title: string; servings: number; confirmations: string[] } | null;
     starting: boolean;
   }>({ prompt: '', creating: false, error: null, ready: null, starting: false });
+
+  // "Your recipes": the owner's generated recipes, reusable with one tap on
+  // the starter. Only shown when there ARE recipes — a fresh user sees the
+  // creation form alone, not an empty box.
+  interface RecipeSummary {
+    recipeId: string;
+    title: string;
+    servings: number;
+    totalMinutes: number;
+    ingredientCount: number;
+    updatedAt: number;
+  }
+  const [recipes, setRecipes] = useState<{ status: 'loading' | 'ready' | 'error'; items: RecipeSummary[] }>({
+    status: 'loading',
+    items: [],
+  });
+  const [startingId, setStartingId] = useState<string | null>(null);
+
+  const fetchRecipes = useCallback(async () => {
+    try {
+      const token = await auth.getToken();
+      const res = await fetch('/api/cook', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', ...(token ? { authorization: `Bearer ${token}` } : {}) },
+        body: JSON.stringify({ action: 'list_recipes' }),
+      });
+      const body = (await res.json()) as { success: boolean; data?: { recipes: RecipeSummary[] } };
+      if (!res.ok || !body.success || !body.data) {
+        setRecipes({ status: 'error', items: [] });
+        return;
+      }
+      setRecipes({ status: 'ready', items: body.data.recipes });
+    } catch {
+      setRecipes({ status: 'error', items: [] });
+    }
+  }, [auth]);
+
+  // Fetch the list whenever the starter (no active session) is on screen.
+  useEffect(() => {
+    if (cook.loading || snap?.found) return;
+    void fetchRecipes();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cook.loading, snap?.found, fetchRecipes]);
 
   const handleCreateRecipe = async (text: string) => {
     const trimmed = text.trim();
@@ -74,6 +117,8 @@ export default function CookPage() {
         },
         starting: false,
       });
+      // Keep "Your recipes" current — the just-created recipe is now reusable.
+      void fetchRecipes();
     } catch (e) {
       setStarter({
         prompt: trimmed,
@@ -90,6 +135,14 @@ export default function CookPage() {
     setStarter((s) => ({ ...s, starting: true }));
     await cook.launch(starter.ready.recipeId);
     // cook.launch swaps the snapshot — the CookScreen takes over from here.
+  };
+
+  // One-tap relaunch of a saved recipe from the "Your recipes" list.
+  const handleStartSavedRecipe = async (recipeId: string) => {
+    if (startingId) return;
+    setStartingId(recipeId);
+    await cook.launch(recipeId);
+    setStartingId(null);
   };
 
   // Protect the route: once auth settles with no user, go sign in.
@@ -204,6 +257,33 @@ export default function CookPage() {
                 {starter.starting ? 'Starting…' : '▶ Start cooking'}
               </button>
             </div>
+          )}
+          {recipes.status === 'ready' && recipes.items.length > 0 && (
+            <section className={styles.recipesSection} aria-label="Your recipes">
+              <h2 className={styles.recipesTitle}>Your recipes</h2>
+              <ul className={styles.recipesList}>
+                {recipes.items.map((r) => (
+                  <li key={r.recipeId} className={styles.recipeCard}>
+                    <div className={styles.recipeInfo}>
+                      <p className={styles.recipeName}>{r.title}</p>
+                      <p className={styles.recipeMeta}>
+                        {r.servings > 1 ? `${r.servings} servings · ` : ''}
+                        {r.totalMinutes} min · {r.ingredientCount} ingredients
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      className={styles.recipeStart}
+                      onClick={() => void handleStartSavedRecipe(r.recipeId)}
+                      disabled={startingId !== null}
+                      aria-label={`Start cooking ${r.title}`}
+                    >
+                      {startingId === r.recipeId ? 'Starting…' : '▶ Start cooking'}
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </section>
           )}
           <Link href="/" className={styles.backLink}>
             ← Back to start

@@ -24,7 +24,7 @@ import { logError } from '@/lib/server/logger';
 const ACTIONS = [
   'launch', 'status', 'done', 'repeat', 'back', 'pause', 'resume', 'timers',
   'start_over', 'substitute', 'apply_substitution', 'correct', 'recover', 'clear_recovery',
-  'create_recipe',
+  'create_recipe', 'list_recipes',
 ] as const;
 type CookAction = (typeof ACTIONS)[number];
 
@@ -164,6 +164,23 @@ async function handle(userId: string, body: unknown): Promise<NextResponse> {
     case 'clear_recovery': {
       const snapshot = await guide.clearRecovery(userId, sessionId, { correlationId });
       return NextResponse.json({ success: true, data: snapshot });
+    }
+    case 'list_recipes': {
+      // "Your recipes" on the /cook starter: the owner's generated recipes,
+      // newest first, as lightweight summaries (never the full step lists).
+      // One tap on a row launches a fresh session pinned to that recipe.
+      const owned = await ctx.recipeStore?.listRecipes(userId) ?? [];
+      const recipes = owned
+        .sort((a, b) => b.updatedAt - a.updatedAt)
+        .map((r) => ({
+          recipeId: r.id,
+          title: r.title,
+          servings: r.servings,
+          totalMinutes: r.totalMinutes,
+          ingredientCount: r.ingredients.length,
+          updatedAt: r.updatedAt,
+        }));
+      return NextResponse.json({ success: true, data: { recipes } });
     }
     case 'create_recipe': {
       // The missing "start" stage: turn "chicken, rice and onion" into a

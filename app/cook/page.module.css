@@ -116,6 +116,87 @@
   font-family: inherit;
 }
 
+/* Your recipes — the reusable list on the starter: every generated recipe the
+   owner can relaunch with one tap, newest first. Only rendered when there are
+   recipes, so a fresh user sees the creation form alone. */
+.recipesSection {
+  width: 100%;
+  max-width: 26rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  margin-top: 1.25rem;
+}
+
+.recipesTitle {
+  margin: 0;
+  font-size: 1.1rem;
+  font-weight: 700;
+  color: var(--color-text);
+  text-align: left;
+}
+
+.recipesList {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+
+.recipeCard {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.85rem 1rem;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  text-align: left;
+}
+
+.recipeInfo {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  min-width: 0;
+}
+
+.recipeName {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 700;
+  color: var(--color-text);
+  overflow-wrap: anywhere;
+}
+
+.recipeMeta {
+  margin: 0;
+  font-size: 0.85rem;
+  color: var(--color-text-secondary);
+}
+
+.recipeStart {
+  flex-shrink: 0;
+  min-height: 40px;
+  padding: 0.5rem 0.9rem;
+  background: var(--color-brand);
+  color: #fff;
+  border: none;
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  font-size: 0.95rem;
+  font-weight: 600;
+  font-family: inherit;
+}
+
+.recipeStart:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 .header {
   display: flex;
   flex-direction: column;

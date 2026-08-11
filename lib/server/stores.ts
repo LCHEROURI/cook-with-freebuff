@@ -48,6 +48,7 @@ export const firestoreRecipeStore: RecipeStore = {
   createRecipe: (r) => repo.createRecipe(r),
   getRecipe: (id) => repo.getRecipe(id),
   updateRecipe: (r) => repo.updateRecipe(r),
+  listRecipes: (userId) => repo.listRecipes(userId),
 };
 
 export const firestorePantryStore: PantryStore = {

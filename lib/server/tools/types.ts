@@ -79,6 +79,8 @@ export interface RecipeStore {
   getRecipe(id: string): Promise<Recipe | null>;
   /** Persist an updated recipe (e.g. after an ingredient substitution). */
   updateRecipe(recipe: Recipe): Promise<void>;
+  /** Every recipe owned by the user (the "Your recipes" list on /cook). */
+  listRecipes(userId: string): Promise<Recipe[]>;
 }
 
 export interface PantryStore {

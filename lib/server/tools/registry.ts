@@ -208,6 +208,10 @@ export class InMemoryRecipeStore implements RecipeStore {
   async updateRecipe(recipe: Recipe): Promise<void> {
     this.recipes.set(recipe.id, recipe);
   }
+
+  async listRecipes(userId: string): Promise<Recipe[]> {
+    return [...this.recipes.values()].filter((r) => r.userId === userId);
+  }
 }
 
 export class InMemoryPantryStore implements PantryStore {
