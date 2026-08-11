@@ -10,9 +10,41 @@ vi.mock('@/lib/server/stores', () => ({ buildProductionContext: vi.fn() }));
 
 import { resolveUserId } from '@/lib/server/admin';
 import { buildProductionContext } from '@/lib/server/stores';
+import { registerRecipeGenerator, resetProviders } from '@/lib/ai/provider';
 
 const mockResolve = resolveUserId as ReturnType<typeof vi.fn>;
 const mockBuild = buildProductionContext as ReturnType<typeof vi.fn>;
+
+// A self-consistent generated recipe (every step reference exists in the
+// ingredient list) so create_recipe's validation passes cleanly.
+function makeGeneratedRecipe(): Recipe {
+  const t = Date.now();
+  return {
+    id: 'recipe-generated-1',
+    title: 'Chicken Thighs with Rice',
+    description: 'Generated for the create_recipe test',
+    servings: 2,
+    estimatedPrepMinutes: 10,
+    estimatedCookMinutes: 20,
+    totalMinutes: 30,
+    ingredients: [
+      { id: 'g1', name: 'chicken thighs', quantity: 4, unit: 'pieces', optional: false },
+      { id: 'g2', name: 'rice', quantity: 2, unit: 'cups', optional: false },
+    ],
+    equipment: ['pan'],
+    prepSteps: [
+      { id: 'gp1', stepNumber: 1, instruction: 'Rinse the rice', spokenInstruction: 'Rinse the rice', estimatedSeconds: 60, ingredientsUsed: ['rice'], equipmentUsed: [] },
+    ],
+    cookingSteps: [
+      { id: 'gc1', stepNumber: 1, instruction: 'Cook the chicken 15 minutes', spokenInstruction: 'Cook the chicken fifteen minutes', estimatedSeconds: 900, timerSeconds: 900, ingredientsUsed: ['chicken thighs'], equipmentUsed: ['pan'] },
+    ],
+    dietaryTags: [],
+    allergens: [],
+    safetyNotes: [],
+    generatedAt: t,
+    updatedAt: t,
+  };
+}
 
 function makeRecipe(): Recipe {
   const t = Date.now();
@@ -73,6 +105,9 @@ describe('/api/cook', () => {
     mockResolve.mockResolvedValue('user-1');
     ctx = testContext('user-1');
     mockBuild.mockImplementation(() => ctx);
+    // No AI providers by default — each create_recipe test registers its own
+    // stub generator (the deployed app wires the real Gemini one).
+    resetProviders();
   });
 
   it('returns 401 without a valid token', async () => {
@@ -225,5 +260,64 @@ describe('/api/cook', () => {
     // The old session is archived (ABANDONED) — the fresh one is the active one.
     const active = await ctx.sessionService.getActiveSession('user-1');
     expect(active?.id).toBe(body.data.sessionId);
+  });
+
+  describe('create_recipe — the missing start-from-scratch stage', () => {
+    it('returns NO_INGREDIENTS when the prompt has nothing parseable', async () => {
+      // A craving with no ingredient list (and the question gate keeps the
+      // "I have …" retry from swallowing it either).
+      const res = await post({ action: 'create_recipe', prompt: 'what should I cook?' });
+      expect(res.status).toBe(400);
+      const body = await res.json();
+      expect(body.success).toBe(false);
+      expect(body.error.code).toBe('NO_INGREDIENTS');
+    });
+
+    it('returns INVALID_BODY without a prompt', async () => {
+      const res = await post({ action: 'create_recipe' });
+      expect(res.status).toBe(400);
+      const body = await res.json();
+      expect(body.error.code).toBe('INVALID_BODY');
+    });
+
+    it('generates, validates and returns the recipe id for a parseable prompt', async () => {
+      registerRecipeGenerator('default', { generate: async () => makeGeneratedRecipe() });
+
+      const res = await post({ action: 'create_recipe', prompt: 'I have chicken thighs and rice' });
+      expect(res.status).toBe(200);
+      const body = await res.json();
+      expect(body.success).toBe(true);
+      expect(body.data.recipeId).toBe('recipe-generated-1');
+      expect(body.data.title).toBe('Chicken Thighs with Rice');
+      expect(body.data.validation.valid).toBe(true);
+      expect(body.data.validation.confirmations).toEqual([]);
+    });
+
+    it('parses a bare list via the possession-lead-in retry', async () => {
+      registerRecipeGenerator('default', { generate: async () => makeGeneratedRecipe() });
+
+      const res = await post({ action: 'create_recipe', prompt: 'chicken thighs, rice' });
+      expect(res.status).toBe(200);
+      const body = await res.json();
+      expect(body.success).toBe(true);
+      expect(body.data.recipeId).toBe('recipe-generated-1');
+    });
+
+    it('persists the generated recipe into the owner store', async () => {
+      registerRecipeGenerator('default', { generate: async () => makeGeneratedRecipe() });
+
+      await post({ action: 'create_recipe', prompt: 'I have chicken thighs and rice' });
+      const stored = await (ctx.recipeStore as InMemoryRecipeStore).getRecipe('recipe-generated-1');
+      expect(stored).not.toBeNull();
+      expect(stored?.userId).toBe('user-1'); // owner-stamped (K9 ownership)
+    });
+
+    it('reports GENERATION_UNAVAILABLE when no provider is registered', async () => {
+      const res = await post({ action: 'create_recipe', prompt: 'I have chicken thighs' });
+      expect(res.status).toBe(400);
+      const body = await res.json();
+      expect(body.success).toBe(false);
+      expect(body.error.code).toBe('GENERATION_UNAVAILABLE');
+    });
   });
 });

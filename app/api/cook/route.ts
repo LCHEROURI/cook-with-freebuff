@@ -2,7 +2,7 @@
 // /api/cook — guided cooking ("Cook With Me")
 //
 // POST { action: 'launch'|'status'|'done'|'repeat'|'back'|'pause'|'resume'|'timers'|
-//                 'start_over', sessionId?, recipeId?, correlationId? }
+//                 'start_over'|'create_recipe', sessionId?, recipeId?, prompt?, correlationId? }
 // GET  → status of the active session
 // Auth: Bearer <Firebase ID token>
 //
@@ -15,11 +15,16 @@ import { NextResponse } from 'next/server';
 import { resolveUserId } from '@/lib/server/admin';
 import { buildProductionContext } from '@/lib/server/stores';
 import { createGuideService } from '@/lib/server/tools/guide-tools';
+import { generateRecipeTool } from '@/lib/server/tools/recipe-tools';
+import { extractIngredients } from '@/lib/agent/extract';
+import { validateRecipe } from '@/lib/recipe/validate';
+import type { Recipe } from '@/lib/domain/types';
 import { logError } from '@/lib/server/logger';
 
 const ACTIONS = [
   'launch', 'status', 'done', 'repeat', 'back', 'pause', 'resume', 'timers',
   'start_over', 'substitute', 'apply_substitution', 'correct', 'recover', 'clear_recovery',
+  'create_recipe',
 ] as const;
 type CookAction = (typeof ACTIONS)[number];
 
@@ -42,6 +47,7 @@ async function handle(userId: string, body: unknown): Promise<NextResponse> {
     errorCode?: unknown;
     errorMessage?: unknown;
     failedTool?: unknown;
+    prompt?: unknown;
   };
 
   const action: CookAction = isCookAction(parsed.action) ? parsed.action : 'status';
@@ -57,6 +63,7 @@ async function handle(userId: string, body: unknown): Promise<NextResponse> {
   const errorCode = typeof parsed.errorCode === 'string' ? parsed.errorCode : undefined;
   const errorMessage = typeof parsed.errorMessage === 'string' ? parsed.errorMessage : undefined;
   const failedTool = typeof parsed.failedTool === 'string' ? parsed.failedTool : undefined;
+  const prompt = typeof parsed.prompt === 'string' ? parsed.prompt : undefined;
 
   const ctx = buildProductionContext(userId, correlationId);
   const guide = createGuideService(ctx);
@@ -157,6 +164,70 @@ async function handle(userId: string, body: unknown): Promise<NextResponse> {
     case 'clear_recovery': {
       const snapshot = await guide.clearRecovery(userId, sessionId, { correlationId });
       return NextResponse.json({ success: true, data: snapshot });
+    }
+    case 'create_recipe': {
+      // The missing "start" stage: turn "chicken, rice and onion" into a
+      // validated, persisted recipe the user can immediately launch. This is
+      // the UI the /cook empty state now points at — before this, the only
+      // way to get a session was an already-existing recipeId.
+      if (!prompt || !prompt.trim()) {
+        return NextResponse.json(
+          { success: false, error: { code: 'INVALID_BODY', message: 'create_recipe requires a prompt', recoverable: false } },
+          { status: 400 },
+        );
+      }
+      // Parse what the user has. Plain lists ("chicken, rice and onion") need
+      // the possession lead-in to trip the extractor's brain-dump gate; the
+      // "I have …" retry covers that. Anything else that fails to parse is an
+      // honest NO_INGREDIENTS, not a silent fallback.
+      let ingredients = extractIngredients(prompt);
+      if (ingredients.length === 0) ingredients = extractIngredients(`I have ${prompt.trim()}`);
+      if (ingredients.length === 0) {
+        return NextResponse.json(
+          {
+            success: false,
+            error: {
+              code: 'NO_INGREDIENTS',
+              message: 'Tell me what you have to cook with, e.g. “chicken, rice and onion”.',
+              recoverable: true,
+            },
+          },
+          { status: 400 },
+        );
+      }
+      const result = await generateRecipeTool.handler(ctx, {
+        request: { ingredientsAvailable: ingredients, servings: 2 },
+      });
+      const generated = (result.data ?? {}) as { recipe?: Recipe };
+      if (!result.success || !generated.recipe) {
+        return NextResponse.json(
+          {
+            success: false,
+            error: result.error ?? { code: 'GENERATION_FAILED', message: 'Could not create a recipe from that.', recoverable: true },
+          },
+          { status: 400 },
+        );
+      }
+      const recipe = generated.recipe;
+      // Validate before offering "Start cooking" — the user never hears a
+      // recipe as approved until validation succeeds. Unavailable items are
+      // surfaced as confirmations ("you'll also need salt"), not hard errors.
+      const validation = validateRecipe(recipe, {
+        availableIngredients: ingredients.map((i) => i.name),
+      });
+      return NextResponse.json({
+        success: true,
+        data: {
+          recipeId: recipe.id,
+          title: recipe.title,
+          servings: recipe.servings,
+          validation: {
+            valid: validation.valid,
+            errors: validation.errors.slice(0, 5).map((e) => e.message),
+            confirmations: validation.missingConfirmations.slice(0, 8).map((c) => c.item),
+          },
+        },
+      });
     }
     default: {
       const snapshot = await guide.getCurrentAction(userId, sessionId);

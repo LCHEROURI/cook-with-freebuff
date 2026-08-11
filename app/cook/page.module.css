@@ -34,6 +34,75 @@
   line-height: 1.5;
 }
 
+/* Recipe starter — the "start from scratch" stage: tell the agent what you
+   have, it creates + validates a recipe, then Start cooking launches it. */
+.starterForm {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  width: 100%;
+  max-width: 26rem;
+}
+
+.starterInput {
+  min-height: 44px;
+  padding: 0.75rem;
+  border: 2px solid var(--color-border);
+  border-radius: var(--radius-md);
+  font-size: 1rem;
+  font-family: inherit;
+  color: var(--color-text);
+  background: var(--color-surface);
+}
+
+.starterBtn {
+  min-height: 44px;
+  padding: 0.75rem 1.25rem;
+  background: var(--color-brand);
+  color: #fff;
+  border: none;
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  font-size: 1.05rem;
+  font-family: inherit;
+}
+
+.starterBtn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.starterError {
+  margin: 0;
+  padding: 0.75rem 1rem;
+  background: #fdecec;
+  border: 1px solid #e0b4b4;
+  border-radius: var(--radius-sm);
+  color: #9b1c1c;
+  font-size: 0.95rem;
+  max-width: 26rem;
+}
+
+.starterReady {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.75rem;
+  width: 100%;
+  max-width: 26rem;
+  padding: 1rem 1.25rem;
+  background: #f1f6ef;
+  border: 1px solid #c9dcc2;
+  border-radius: var(--radius-md);
+}
+
+.starterReadyText {
+  margin: 0;
+  font-size: 1.05rem;
+  line-height: 1.5;
+  color: #2c4a24;
+}
+
 .primaryBtn {
   display: inline-block;
   min-height: 44px;

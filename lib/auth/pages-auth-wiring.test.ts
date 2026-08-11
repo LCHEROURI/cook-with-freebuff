@@ -39,6 +39,18 @@ describe('app/cook/page.tsx · protected route', () => {
   it('waits for the auth settle before showing the session state', () => {
     expect(COOK).toContain("if (auth.state === 'loading') {");
   });
+
+  it('gives the empty state a working start flow instead of a dead end', () => {
+    // The "Start cooking" entry used to dead-end: no session → a static
+    // "generate a recipe first" message with no way to do that. The starter
+    // turns the empty state into the missing stage: describe what you have →
+    // create_recipe (generate + validate) → Start cooking.
+    expect(COOK).toContain("action: 'create_recipe'");
+    expect(COOK).toContain('What do you have to cook with?');
+    expect(COOK).toContain('✨ Create my recipe');
+    expect(COOK).toContain('▶ Start cooking');
+    expect(COOK).toContain('cook.launch(starter.ready.recipeId)');
+  });
 });
 
 describe('app/login/page.tsx · login page', () => {

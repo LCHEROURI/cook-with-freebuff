@@ -19,6 +19,79 @@ export default function CookPage() {
   const [input, setInput] = useState('');
   const snap = cook.snapshot;
 
+  // Recipe-starter state (the "start from scratch" stage): the user tells us
+  // what they have, the agent generates + validates a recipe, then "Start
+  // cooking" launches it. Before this the empty state was a dead end — the
+  // only path into a session was an already-existing recipeId.
+  const [starter, setStarter] = useState<{
+    prompt: string;
+    creating: boolean;
+    error: string | null;
+    ready: { recipeId: string; title: string; servings: number; confirmations: string[] } | null;
+    starting: boolean;
+  }>({ prompt: '', creating: false, error: null, ready: null, starting: false });
+
+  const handleCreateRecipe = async (text: string) => {
+    const trimmed = text.trim();
+    if (!trimmed || starter.creating || starter.starting) return;
+    setStarter({ prompt: trimmed, creating: true, error: null, ready: null, starting: false });
+    try {
+      const token = await auth.getToken();
+      const res = await fetch('/api/cook', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', ...(token ? { authorization: `Bearer ${token}` } : {}) },
+        body: JSON.stringify({ action: 'create_recipe', prompt: trimmed }),
+      });
+      const body = (await res.json()) as {
+        success: boolean;
+        data?: { recipeId: string; title: string; servings: number; validation: { valid: boolean; errors: string[]; confirmations: string[] } };
+        error?: { message?: string };
+      };
+      if (!res.ok || !body.success || !body.data) {
+        setStarter({ prompt: trimmed, creating: false, error: body.error?.message ?? `Could not create the recipe (${res.status})`, ready: null, starting: false });
+        return;
+      }
+      const { validation } = body.data;
+      if (!validation.valid) {
+        setStarter({
+          prompt: trimmed,
+          creating: false,
+          error: `The recipe needs a few fixes before it is ready: ${validation.errors.join(' ')}`,
+          ready: null,
+          starting: false,
+        });
+        return;
+      }
+      setStarter({
+        prompt: trimmed,
+        creating: false,
+        error: null,
+        ready: {
+          recipeId: body.data.recipeId,
+          title: body.data.title,
+          servings: body.data.servings,
+          confirmations: validation.confirmations,
+        },
+        starting: false,
+      });
+    } catch (e) {
+      setStarter({
+        prompt: trimmed,
+        creating: false,
+        error: e instanceof Error ? e.message : 'Could not create the recipe.',
+        ready: null,
+        starting: false,
+      });
+    }
+  };
+
+  const handleStartCooking = async () => {
+    if (!starter.ready || starter.starting) return;
+    setStarter((s) => ({ ...s, starting: true }));
+    await cook.launch(starter.ready.recipeId);
+    // cook.launch swaps the snapshot — the CookScreen takes over from here.
+  };
+
   // Protect the route: once auth settles with no user, go sign in.
   useEffect(() => {
     if (auth.state === 'ready' && !auth.user) {
@@ -82,9 +155,56 @@ export default function CookPage() {
           <h1 className={styles.title}>Cook With Me</h1>
           <p className={styles.emptyText}>
             {cook.error ??
-              'No active cooking session. Generate a validated recipe first, then come back to cook it step by step.'}
+              'No active cooking session. Tell me what you have (or what you are craving) and I will create a validated recipe you can start cooking right away.'}
           </p>
-          <Link href="/" className={styles.primaryBtn}>
+          <form
+            className={styles.starterForm}
+            onSubmit={(e) => {
+              e.preventDefault();
+              void handleCreateRecipe(starter.prompt);
+            }}
+          >
+            <input
+              className={styles.starterInput}
+              value={starter.prompt}
+              onChange={(e) => setStarter((s) => ({ ...s, prompt: e.target.value }))}
+              placeholder="e.g. chicken, rice and onion"
+              aria-label="What do you have to cook with?"
+              disabled={starter.creating || starter.starting}
+            />
+            <button
+              type="submit"
+              className={styles.starterBtn}
+              disabled={starter.creating || starter.starting || starter.prompt.trim().length === 0}
+            >
+              {starter.creating ? 'Creating…' : '✨ Create my recipe'}
+            </button>
+          </form>
+          {starter.error && (
+            <p className={styles.starterError} role="alert">
+              {starter.error}
+            </p>
+          )}
+          {starter.ready && (
+            <div className={styles.starterReady}>
+              <p className={styles.starterReadyText}>
+                <strong>{starter.ready.title}</strong>
+                {starter.ready.servings > 1 ? ` · ${starter.ready.servings} servings` : ''}
+                {starter.ready.confirmations.length > 0
+                  ? ` · you will also need: ${starter.ready.confirmations.join(', ')}`
+                  : ''}
+              </p>
+              <button
+                className={styles.primaryBtn}
+                onClick={() => void handleStartCooking()}
+                disabled={starter.starting}
+                aria-label="Start cooking the created recipe"
+              >
+                {starter.starting ? 'Starting…' : '▶ Start cooking'}
+              </button>
+            </div>
+          )}
+          <Link href="/" className={styles.backLink}>
             ← Back to start
           </Link>
         </section>
