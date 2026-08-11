@@ -71,6 +71,20 @@ describe('app/cook/page.tsx · protected route', () => {
     expect(COOK).toContain("` · ${r.preferences.dietaryRestrictions.join(', ')}`");
     expect(COOK).toContain("` · no ${r.preferences.allergies.join(', no ')}`");
   });
+
+  it('shows an expandable constraint list on the ready card before Start cooking', () => {
+    // Transparency: the ready card can expand into a details view listing the
+    // generation constraints that were applied (servings, diet, allergens
+    // avoided). Only rendered when the prompt carried at least one constraint.
+    expect(COOK).toContain('<details className={styles.constraintDetails}>');
+    expect(COOK).toContain('Generation constraints applied');
+    expect(COOK).toContain("Servings: <strong>{starter.ready.preferences.servings}</strong>");
+    expect(COOK).toContain('Diet: {starter.ready.preferences.dietaryRestrictions.join(\', \')}');
+    expect(COOK).toContain('Allergens avoided: no {starter.ready.preferences.allergies.join(\', no \')}');
+    // The card stays minimal when no constraints were parsed.
+    expect(COOK).toContain("starter.ready.preferences.dietaryRestrictions.length > 0 ||");
+    expect(COOK).toContain("starter.ready.preferences.allergies.length > 0");
+  });
 });
 
 describe('app/login/page.tsx · login page', () => {
