@@ -50,6 +50,11 @@ export default function HomePage() {
 
       <section className={styles.hero}>
         <h1 className={styles.title}>Cook With Me</h1>
+        <p className={styles.heroMotif} aria-hidden="true">
+          <span className={styles.herb1}>🌿</span>
+          <span className={styles.herb2}>🌱</span>
+          <span className={styles.herb3}>🌿</span>
+        </p>
         <p className={styles.subtitle}>
           A voice-first cooking companion that guides you step by step — from
           “what do I have?” to a plated dinner.

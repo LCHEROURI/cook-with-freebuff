@@ -50,7 +50,7 @@
   color: var(--color-brand);
 }
 
-/* ── Hero — the signature: Playfair Display title with gradient line ─────── */
+/* ── Hero — the signature: Playfair Display title with herb motif ────────── */
 .hero {
   text-align: center;
   padding: 5rem 0 3rem;
@@ -64,25 +64,40 @@
   color: var(--color-text);
   line-height: 1.15;
   letter-spacing: -0.01em;
-  position: relative;
-  display: inline-block;
+  opacity: 0;
+  transform: translateY(12px);
+  animation: heroFadeUp 0.5s var(--ease-standard) forwards;
 }
 
-/* The signature gradient underline */
-.title::after {
-  content: '';
-  position: absolute;
-  left: 10%;
-  right: 10%;
-  bottom: -0.25rem;
-  height: 3px;
-  border-radius: 2px;
-  background: linear-gradient(
-    90deg,
-    var(--color-accent),
-    var(--color-mauve) 50%,
-    var(--color-brand) 100%
-  );
+@keyframes heroFadeUp {
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Herb motif — three emojis appear in staggered sequence */
+.heroMotif {
+  margin-top: 0.5rem;
+  font-size: 1.1rem;
+  letter-spacing: 0.15em;
+}
+
+.heroMotif span {
+  display: inline-block;
+  opacity: 0;
+  filter: grayscale(0.3);
+  animation: herbAppear 0.35s var(--ease-standard) forwards;
+}
+
+.herb1 { animation-delay: 0.2s; }
+.herb2 { animation-delay: 0.35s; }
+.herb3 { animation-delay: 0.5s; }
+
+@keyframes herbAppear {
+  to {
+    opacity: 0.5;
+  }
 }
 
 .subtitle {
@@ -91,6 +106,9 @@
   font-size: 1.1rem;
   line-height: 1.6;
   font-style: italic;
+  opacity: 0;
+  transform: translateY(8px);
+  animation: heroFadeUp 0.45s var(--ease-standard) 0.65s forwards;
 }
 
 .heroCta {
