@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { act, renderHook } from '@testing-library/react';
 import { useVoiceInput } from './useVoiceInput';
 import type { SpeechRecognitionLike } from './useVoiceInput';
@@ -8,8 +8,8 @@ import type { SpeechRecognitionLike } from './useVoiceInput';
 // lib/hooks/useVoiceInput.test.ts — the real-microphone surface of /cook.
 // The Web Speech API is stubbed with a fake recognition object so the full
 // lifecycle is locked at the unit level: toggle → start, interim streaming,
-// continuous accumulation, flush-on-stop, auto-restart on timeout,
-// error mapping, unsupported-browser fallback, unmount.
+// continuous accumulation, flush-on-stop, auto-restart on timeout/error,
+// fatal-only error surfacing, unsupported-browser fallback, unmount.
 // ============================================================================
 
 class FakeRecognition implements SpeechRecognitionLike {
@@ -64,8 +64,13 @@ function resultEvent(transcript: string, isFinal: boolean, resultIndex = 0) {
 
 beforeEach(() => {
   vi.restoreAllMocks();
+  vi.useFakeTimers();
   clearApi();
   lastInstance = null;
+});
+
+afterEach(() => {
+  vi.useRealTimers();
 });
 
 describe('useVoiceInput', () => {
@@ -102,14 +107,12 @@ describe('useVoiceInput', () => {
     const { result } = renderHook(() => useVoiceInput({ onFinal }));
     act(() => result.current.toggle());
 
-    // First utterance finalises.
     act(() => {
       lastInstance?.onresult?.(resultEvent('done', true));
     });
     expect(onFinal).not.toHaveBeenCalled();
     expect(result.current.interim).toBe('');
 
-    // Second utterance finalises — the real API fires with cumulative results.
     const first = { isFinal: true, length: 1, 0: { transcript: 'done' } };
     const second = { isFinal: true, length: 1, 0: { transcript: 'repeat' } };
     act(() => {
@@ -117,7 +120,6 @@ describe('useVoiceInput', () => {
     });
     expect(onFinal).not.toHaveBeenCalled();
 
-    // Buffer is flushed only on explicit stop.
     act(() => result.current.toggle());
     expect(onFinal).toHaveBeenCalledWith('done repeat');
     expect(result.current.listening).toBe(false);
@@ -150,22 +152,75 @@ describe('useVoiceInput', () => {
     expect(onFinal).not.toHaveBeenCalled();
   });
 
-  it('auto-restarts recognition on timeout instead of turning listening off', () => {
+  it('auto-restarts recognition on timeout after a short delay', () => {
     installFake();
     const { result } = renderHook(() => useVoiceInput());
     act(() => result.current.toggle());
     expect(lastInstance?.started).toBe(true);
-    // Simulate a browser timeout (onend fires without explicit stop).
     lastInstance!.started = false;
     act(() => {
       lastInstance?.onend?.();
     });
-    // The hook restarted — still listening.
+    // Not restarted yet — the 100ms timer hasn't fired.
+    expect(lastInstance?.started).toBe(false);
+    // Advance past the delay.
+    act(() => {
+      vi.advanceTimersByTime(150);
+    });
     expect(result.current.listening).toBe(true);
     expect(lastInstance?.started).toBe(true);
   });
 
-  it('maps a permission denial to a human message and reports via onError', () => {
+  it('does not restart on timeout if the user explicitly stopped first', () => {
+    installFake();
+    const { result } = renderHook(() => useVoiceInput());
+    act(() => result.current.toggle());
+    // User stops.
+    act(() => result.current.stop());
+    lastInstance!.started = false;
+    // A late onend fires after stop — should be ignored.
+    act(() => {
+      lastInstance?.onend?.();
+    });
+    act(() => {
+      vi.advanceTimersByTime(150);
+    });
+    expect(lastInstance?.started).toBe(false);
+  });
+
+  it('no-speech errors trigger a restart, not a fatal error', () => {
+    installFake();
+    const onError = vi.fn();
+    const { result } = renderHook(() => useVoiceInput({ onError }));
+    act(() => result.current.toggle());
+    act(() => {
+      lastInstance?.onerror?.({ error: 'no-speech' });
+    });
+    // No error surfaced, still listening.
+    expect(result.current.error).toBeNull();
+    expect(result.current.listening).toBe(true);
+    expect(onError).not.toHaveBeenCalled();
+    // Timer fires the restart.
+    act(() => {
+      vi.advanceTimersByTime(150);
+    });
+    expect(lastInstance?.started).toBe(true);
+  });
+
+  it('network errors trigger a restart, not a fatal error', () => {
+    installFake();
+    const onError = vi.fn();
+    const { result } = renderHook(() => useVoiceInput({ onError }));
+    act(() => result.current.toggle());
+    act(() => {
+      lastInstance?.onerror?.({ error: 'network' });
+    });
+    expect(result.current.error).toBeNull();
+    expect(result.current.listening).toBe(true);
+    expect(onError).not.toHaveBeenCalled();
+  });
+
+  it('permission denied is still a fatal error', () => {
     installFake();
     const onError = vi.fn();
     const { result } = renderHook(() => useVoiceInput({ onError }));
@@ -176,21 +231,6 @@ describe('useVoiceInput', () => {
     expect(result.current.error).toContain('Microphone permission denied');
     expect(result.current.listening).toBe(false);
     expect(onError).toHaveBeenCalled();
-  });
-
-  it('maps no-speech and network errors distinctly', () => {
-    installFake();
-    const { result } = renderHook(() => useVoiceInput());
-    act(() => result.current.toggle());
-    act(() => {
-      lastInstance?.onerror?.({ error: 'no-speech' });
-    });
-    expect(result.current.error).toContain('I did not hear anything');
-    act(() => result.current.toggle());
-    act(() => {
-      lastInstance?.onerror?.({ error: 'network' });
-    });
-    expect(result.current.error).toContain('you can type instead');
   });
 
   it('unmount aborts the active recognition — no dangling listeners', () => {
@@ -219,9 +259,7 @@ describe('useVoiceInput', () => {
     const { result } = renderHook(() => useVoiceInput());
     act(() => result.current.toggle());
     const first = lastInstance;
-    // Stop (flush).
     act(() => result.current.toggle());
-    // Start a new session.
     act(() => result.current.toggle());
     expect(lastInstance).not.toBe(first);
     expect(lastInstance?.started).toBe(true);

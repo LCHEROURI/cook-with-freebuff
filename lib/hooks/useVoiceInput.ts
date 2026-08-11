@@ -9,12 +9,12 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 //   - Continuous: tap to start listening, speak as long as you want (the
 //     recognition accumulates every utterance), tap again to stop and send the
 //     full transcript to `onFinal`. No per-word tapping.
-//   - The browser sometimes auto-stops continuous recognition after a silence;
-//     this hook restarts it transparently so the user never notices.
-//   - Tap while listening to cancel (barge-in) — the accumulated utterance is
-//     discarded and the mic stops.
-//   - Interim results stream live for the on-screen caption; errors map to
-//     human messages (permission denied, no speech heard, network).
+//   - Chrome's SpeechRecognition is fragile even with continuous: true — it
+//     fires no-speech errors on silence, onend on timeouts, and network errors
+//     on flaky connections. This hook treats all of those as retryable: it
+//     restarts transparently so the mic stays open until the user explicitly
+//     stops it. Only permission-denied and unrecoverable errors surface.
+//   - Interim results stream live for the on-screen caption.
 //   - `supported` is false when the browser has no SpeechRecognition (Firefox,
 //     some mobile browsers, headless CI) — the caller renders a disabled mic
 //     and the text input stays the fallback. Voice-first never means voice-only.
@@ -24,7 +24,6 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 // the user said and is treated like any other utterance.
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** Minimal structural type for the API — keeps the hook mockable and TS-safe. */
 export interface SpeechRecognitionResultItem {
   transcript: string;
 }
@@ -50,7 +49,6 @@ export interface SpeechRecognitionLike {
 
 export type SpeechRecognitionCtor = new () => SpeechRecognitionLike;
 
-/** The browser's SpeechRecognition constructor, or null when unsupported. */
 export function getSpeechRecognitionCtor(): SpeechRecognitionCtor | null {
   if (typeof window === 'undefined') return null;
   const w = window as unknown as {
@@ -61,11 +59,8 @@ export function getSpeechRecognitionCtor(): SpeechRecognitionCtor | null {
 }
 
 export interface UseVoiceInputOptions {
-  /** BCP-47 tag; defaults to navigator.language (falls back to en-US). */
   lang?: string;
-  /** Called with the full accumulated transcript when the user stops the mic. */
   onFinal?: (transcript: string) => void;
-  /** Called with a human-readable message on a real (non-cancelled) error. */
   onError?: (message: string) => void;
 }
 
@@ -77,8 +72,24 @@ export function useVoiceInput(options: UseVoiceInputOptions = {}) {
   const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
   const optionsRef = useRef(options);
   optionsRef.current = options;
-  // Accumulated final transcripts across utterances in a continuous session.
   const bufferRef = useRef<string[]>([]);
+  // Tracks whether the user explicitly stopped — prevents the onend handler
+  // from restarting after a deliberate stop() call.
+  const stoppedByUserRef = useRef(false);
+
+  const safeRestart = useCallback((rec: SpeechRecognitionLike) => {
+    if (stoppedByUserRef.current) return;
+    // Small delay to avoid tight restart loops on flaky browsers.
+    setTimeout(() => {
+      if (stoppedByUserRef.current || recognitionRef.current !== rec) return;
+      try {
+        rec.start();
+      } catch {
+        setListening(false);
+        recognitionRef.current = null;
+      }
+    }, 100);
+  }, []);
 
   const createRecognition = useCallback((): SpeechRecognitionLike | null => {
     const Ctor = getSpeechRecognitionCtor();
@@ -109,42 +120,40 @@ export function useVoiceInput(options: UseVoiceInputOptions = {}) {
     };
 
     rec.onend = () => {
-      // If the user explicitly stopped (recognitionRef cleared), do nothing.
-      // Otherwise the browser timed out — restart transparently.
-      if (recognitionRef.current === rec) {
-        try {
-          rec.start();
-        } catch {
-          // Can't restart — clean up.
-          setListening(false);
-          recognitionRef.current = null;
-        }
+      // Browser timed out or auto-stopped — restart transparently.
+      if (!stoppedByUserRef.current && recognitionRef.current === rec) {
+        safeRestart(rec);
       }
     };
 
     rec.onerror = (event) => {
-      if (event.error === 'aborted') return; // user-cancelled — not an error
+      if (event.error === 'aborted') return;
+      // Retryable: the browser hiccuped but the mic is still viable.
+      if (event.error === 'no-speech' || event.error === 'network' || event.error === 'audio-capture') {
+        if (!stoppedByUserRef.current && recognitionRef.current === rec) {
+          safeRestart(rec);
+        }
+        return;
+      }
+      // Fatal: permission denied or unrecognised error.
       setListening(false);
       recognitionRef.current = null;
       const message =
         event.error === 'not-allowed'
           ? 'Microphone permission denied — enable it in your browser to speak.'
-          : event.error === 'no-speech'
-            ? 'I did not hear anything — try again.'
-            : event.error === 'network'
-              ? 'Speech recognition is unavailable right now — you can type instead.'
-              : `Speech recognition failed (${event.error}).`;
+          : `Speech recognition failed (${event.error}).`;
       setError(message);
       optionsRef.current.onError?.(message);
     };
 
     return rec;
-  }, []);
+  }, [safeRestart]);
 
   const toggle = useCallback(() => {
     setError(null);
-    // Already listening → stop gracefully, flush the accumulated buffer.
     if (recognitionRef.current) {
+      // User explicitly stopping — flush the buffer.
+      stoppedByUserRef.current = true;
       recognitionRef.current.stop();
       recognitionRef.current = null;
       setListening(false);
@@ -154,7 +163,8 @@ export function useVoiceInput(options: UseVoiceInputOptions = {}) {
       if (fullText) optionsRef.current.onFinal?.(fullText);
       return;
     }
-    // Not listening → start fresh.
+    // Starting fresh.
+    stoppedByUserRef.current = false;
     const rec = createRecognition();
     if (!rec) return;
     recognitionRef.current = rec;
@@ -171,6 +181,7 @@ export function useVoiceInput(options: UseVoiceInputOptions = {}) {
   }, [createRecognition]);
 
   const stop = useCallback(() => {
+    stoppedByUserRef.current = true;
     if (recognitionRef.current) {
       recognitionRef.current.stop();
       recognitionRef.current = null;
@@ -182,9 +193,9 @@ export function useVoiceInput(options: UseVoiceInputOptions = {}) {
     if (fullText) optionsRef.current.onFinal?.(fullText);
   }, []);
 
-  // No dangling recognition after unmount / navigation.
   useEffect(
     () => () => {
+      stoppedByUserRef.current = true;
       recognitionRef.current?.abort();
       recognitionRef.current = null;
     },
