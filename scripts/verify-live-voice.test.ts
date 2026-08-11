@@ -109,6 +109,12 @@ describe('scripts/verify-live.mjs · live-voice gate [3e] (dictation + active-sc
     // mocks), and the handshake must mint the ephemeral token and connect the
     // constrained Live WebSocket.
     expect(DRIVER).toContain("execFileSync('say', ['-o', '/tmp/live-voice-speech.aiff', SPOKEN_PROMPT]");
+    // Cross-platform fallback: macOS `say` does not exist on the Linux CI
+    // runner — the committed fixture (scripts/fixtures/dictation-speech.wav)
+    // must back the fresh-synthesis path or the dictation stage fails with
+    // `say ENOENT` on every deploy run (seen live).
+    expect(DRIVER).toContain("copyFileSync(fileURLToPath(new URL('./fixtures/dictation-speech.wav', import.meta.url)), SPEECH_WAV)");
+    expect(DRIVER).toContain('macOS say unavailable — using the committed fixture');
     expect(DRIVER).toContain("button[aria-label=\"Speak your ingredients\"]");
     expect(DRIVER).toContain("minted ? ok('ephemeral token minted (POST /api/voice/token)')");
     expect(DRIVER).toContain("wsUrlA.includes('BidiGenerateContentConstrained') && wsUrlA.includes('access_token=')");

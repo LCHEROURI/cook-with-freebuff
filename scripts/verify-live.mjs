@@ -445,6 +445,31 @@ try {
       note(`settle best-effort: ${e.message} — the driver will fail loudly if the starter is not shown`);
     }
   }
+  // Also neutralize ANY leftover session whose recipe doc no longer exists.
+  // The sweep's `verify-live-` discriminator only sees prefixed probe recipes;
+  // a session launched from a UI-created MODEL-SLUG recipe (e.g. an old
+  // drive-cook-screen-style probe) carries the slug id and escapes it — and
+  // an ACTIVE session is exactly what hijacks the /cook starter (seen live:
+  // [3d] failed because a stale slug-recipe session auto-resumed). A real
+  // owner session always references a real recipe doc, so "recipe doc gone"
+  // is a safe probe-only discriminator that can never touch a live cook.
+  try {
+    const leftover = await db.collection('cooking_sessions').where('userId', '==', OWNER_UID).get();
+    for (const d of leftover.docs) {
+      const s = d.data();
+      if (s.status !== 'ACTIVE' && s.status !== 'PAUSED') continue;
+      if (typeof s.recipeId !== 'string' || !s.recipeId) continue;
+      const recipeSnap = await db.collection('recipes').doc(s.recipeId).get();
+      if (recipeSnap.exists) continue;
+      const events = await db.collection('cooking_session_events').where('sessionId', '==', d.id).get();
+      const deletes = events.docs.map((e) => e.ref.delete());
+      deletes.push(d.ref.delete());
+      await Promise.allSettled(deletes);
+      ok(`orphan-recipe session ${d.id.slice(0, 8)}… (recipe “${s.recipeId.slice(0, 30)}” gone) settled (+ ${events.size} events)`);
+    }
+  } catch (e) {
+    note(`orphan-recipe settle best-effort: ${e.message}`);
+  }
 
   // ── 3d. UI starter proof: preference-rich ready card + constraints view ──
   // The API-level [3b] stage proves create → validate → launch over HTTP.

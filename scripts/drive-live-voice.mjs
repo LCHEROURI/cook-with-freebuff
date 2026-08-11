@@ -24,12 +24,17 @@
 // can NEVER leave a stale ACTIVE session that hijacks the owner's /cook.
 //
 // Usage: node scripts/drive-live-voice.mjs [--out /tmp/live-voice-drive]
-//        Requires macOS (say + afconvert) for the fake speech audio.
+//        Cross-platform: macOS synthesizes FRESH speech via say/afconvert when
+//        available; anywhere else (e.g. the Linux CI runner) it falls back to
+//        the committed fixture scripts/fixtures/dictation-speech.wav — REAL
+//        recorded speech, so Gemini's inputAudioTranscription transcribes
+//        actual words on every platform.
 // ============================================================================
 
 import { spawn, execFileSync } from 'node:child_process';
 import { createSign } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { resolve as resolvePath } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { initializeApp, cert, getApps } from 'firebase-admin/app';
@@ -217,11 +222,15 @@ function makeSilenceWav(path, seconds = 2, rate = 16000) {
 }
 console.log(`\n[1b] Generating fake audio: speech (“${SPOKEN_PROMPT}”) + silence`);
 try {
+  // macOS: synthesize FRESH speech so the dictation stage hears today's voice.
   execFileSync('say', ['-o', '/tmp/live-voice-speech.aiff', SPOKEN_PROMPT], { stdio: 'ignore' });
   execFileSync('afconvert', ['-f', 'WAVE', '-d', 'LEI16@16000', '-c', '1', '/tmp/live-voice-speech.aiff', SPEECH_WAV], { stdio: 'ignore' });
-} catch (e) {
-  console.error(`✗ FAIL: could not synthesize speech audio (macOS say/afconvert): ${e.message}`);
-  process.exit(1);
+  ok('speech audio synthesized fresh (macOS say → 16 kHz PCM WAV)');
+} catch {
+  // Linux (CI runner) has no `say` — fall back to the committed fixture: the
+  // SAME real recorded speech, so the transcription path is platform-independent.
+  copyFileSync(fileURLToPath(new URL('./fixtures/dictation-speech.wav', import.meta.url)), SPEECH_WAV);
+  note(`macOS say unavailable — using the committed fixture (${readFileSync(SPEECH_WAV).length}b)`);
 }
 makeSilenceWav(SILENCE_WAV);
 existsSync(SPEECH_WAV) && existsSync(SILENCE_WAV)
