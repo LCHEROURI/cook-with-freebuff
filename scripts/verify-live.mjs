@@ -19,15 +19,24 @@
 //        launch → first prep action → done → safety-note step →
 //        done → SAFETY_WARNING gate surfaced → done (acknowledge) →
 //        timer auto-start on the first cooking step.
+//   4b. STARTER-FLOW PROOF: the /cook "start from scratch" chain against the
+//      deployed route — create_recipe (real Gemini generation through the
+//      deployed create_recipe action) → validation must pass → the created
+//      recipe must persist owner-stamped → rename the probe to a
+//      `verify-live-starter-` id (its model slug would not match the sweep's
+//      discriminator) → launch it → must land in PREP_GUIDANCE step 1 (the
+//      one-tap "Start cooking" path). This is the CI gate that proves
+//      create → validate → start-cooking after every deploy.
 //   5. One agent turn through /api/agent: a deterministic pantry command
 //      (proves tools + persistence live) and a free-form turn (proves the
 //      Gemini provider answers — SKIP, not fail, when GOOGLE_AI_API_KEY is
 //      absent locally).
 //   6. GUARANTEED cleanup: the whole flow runs inside try/finally and
 //      SIGINT/SIGTERM/unhandledRejection/uncaughtException handlers, so the
-//      seeded recipe, session, events, timers, and pantry item are removed on
-//      EVERY exit path — success, failure, signal, or crash. A killed run is
-//      still caught by the next run's pre-run sweep.
+//      seeded recipe, starter probe (recipe + session), session, events,
+//      timers, and pantry item are removed on EVERY exit path — success,
+//      failure, signal, or crash. A killed run is still caught by the next
+//      run's pre-run sweep.
 //
 // Usage:
 //   npm run verify:live                       # → https://cook-with-freebuff.vercel.app
@@ -82,7 +91,13 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 // protection 401 page) must print as `null`, never crash the verifier.
 const j = (v) => JSON.stringify(v ?? null).slice(0, 160);
 const fetchJson = async (url, init) => {
-  const res = await fetch(url, { ...init, signal: AbortSignal.timeout(30_000) });
+  // The default 30s budget covers every ordinary call; callers that drive
+  // Gemini generation (create_recipe) pass a longer timeoutMs — cold
+  // serverless generation can exceed 30s and a fetch abort would fail the
+  // gate on a transient, not a regression.
+  const timeoutMs = typeof init?.timeoutMs === 'number' ? init.timeoutMs : 30_000;
+  const { timeoutMs: _drop, ...rest } = init ?? {};
+  const res = await fetch(url, { ...rest, signal: AbortSignal.timeout(timeoutMs) });
   let body = null;
   try { body = await res.json(); } catch { /* non-JSON */ }
   return { status: res.status, body };
@@ -92,6 +107,11 @@ const fetchJson = async (url, init) => {
 let sid = null;
 let pantryItemId = null;
 let seededRecipeId = null;
+// Starter-flow probe artifacts: the recipe created via the deployed
+// create_recipe action (renamed to a sweep-compatible `verify-live-` id) and
+// the session launched from it — both must be removed on EVERY exit path.
+let starterRecipeId = null;
+let starterSid = null;
 let cleanupRan = false;
 
 async function cleanup() {
@@ -100,6 +120,7 @@ async function cleanup() {
   if (!db) return;
   const deletes = [];
   if (seededRecipeId) deletes.push(db.collection('recipes').doc(seededRecipeId).delete());
+  if (starterRecipeId) deletes.push(db.collection('recipes').doc(starterRecipeId).delete());
   if (pantryItemId) deletes.push(db.collection('pantry_items').doc(pantryItemId).delete());
   if (sid) {
     deletes.push(db.collection('cooking_sessions').doc(sid).delete());
@@ -110,9 +131,18 @@ async function cleanup() {
     events.forEach((d) => deletes.push(d.ref.delete()));
     timers.forEach((d) => deletes.push(d.ref.delete()));
   }
+  if (starterSid) {
+    deletes.push(db.collection('cooking_sessions').doc(starterSid).delete());
+    const [events, timers] = await Promise.all([
+      db.collection('cooking_session_events').where('sessionId', '==', starterSid).get(),
+      db.collection('timers').where('sessionId', '==', starterSid).get(),
+    ]);
+    events.forEach((d) => deletes.push(d.ref.delete()));
+    timers.forEach((d) => deletes.push(d.ref.delete()));
+  }
   try {
     await Promise.allSettled(deletes);
-    console.log('  ↳ seeded recipe, session, events, timers, and pantry probe removed');
+    console.log('  ↳ seeded recipe, starter probe (recipe + session), events, timers, and pantry probe removed');
   } catch {
     console.log('  ↳ cleanup best-effort (some docs may remain)');
   }
@@ -308,6 +338,79 @@ try {
     ok(`gate acknowledged → timer auto-started (“${ack.body.data.timerStarted.label}”)`);
   } else {
     fail(`expected WAITING_FOR_TIMER + timer, got ${ack.status} ${j(ack.body?.data)}`);
+  }
+
+  // ── 3b. Starter-flow proof: create → validate → start cooking ────────────
+  // The /cook starter is the missing start-from-scratch stage: the user says
+  // what they have, the agent generates + validates a recipe, then "Start
+  // cooking" launches it. This proves that whole chain against the DEPLOYED
+  // app (real Gemini generation through the deployed route), not just the
+  // seeded-recipe launch above. The created recipe gets renamed to a
+  // `verify-live-`-prefixed id (its own model-generated slug id would not
+  // match the pre-run sweep's discriminator), so a killed run's starter
+  // probe is swept by the next run exactly like the seeded one.
+  console.log(`\n[3b] Starter-flow proof: create_recipe → validate → start cooking (${APP}/api/cook)`);
+  // Gemini generation on cold serverless can exceed the shared 30s helper's
+  // budget — give the create call the same 120s the UI starter polls for.
+  const cookLong = (action, extra = {}) =>
+    fetchJson(`${APP}/api/cook`, { method: 'POST', headers: AUTH, body: JSON.stringify({ action, ...extra }), timeoutMs: 120_000 });
+  const starterCreated = await cookLong('create_recipe', { prompt: 'I have chicken thighs and rice' });
+  let createdRecipeId = null;
+  if (starterCreated.status !== 200 || !starterCreated.body?.success) {
+    fail(`create_recipe → ${starterCreated.status} ${j(starterCreated.body?.error ?? starterCreated.body)}`);
+  } else {
+    const { recipeId, title, validation } = starterCreated.body.data;
+    createdRecipeId = recipeId;
+    ok(`create_recipe → “${title}” (${recipeId})`);
+    validation?.valid === true
+      ? ok('created recipe validated (deterministic engine, no errors)')
+      : fail(`created recipe NOT validated: ${j(validation)}`);
+  }
+
+  // Persistence proof: the created recipe must exist in Firestore with the
+  // owner stamp (create_recipe persists via the recipe store, same as the
+  // seeded one). If it is there, rename it to a sweep-compatible id before
+  // launching — the launch below then exercises the EXACT persisted recipe.
+  if (createdRecipeId) {
+    try {
+      const createdSnap = await db.collection('recipes').doc(createdRecipeId).get();
+      if (!createdSnap.exists) {
+        fail(`created recipe ${createdRecipeId} missing from Firestore (persistence broken?)`);
+        createdRecipeId = null;
+      } else if (createdSnap.data()?.userId !== OWNER_UID) {
+        fail(`created recipe owner stamp is ${createdSnap.data()?.userId} (expected ${OWNER_UID})`);
+        createdRecipeId = null;
+      } else {
+        ok(`created recipe persisted to Firestore, owner-stamped (${OWNER_UID})`);
+        // Rename: copy under a `verify-live-starter-` id (inner id updated to
+        // match) and drop the model-generated slug doc, so the pre-run sweep
+        // and this script's cleanup both find the probe by the standard prefix.
+        starterRecipeId = `verify-live-starter-${t}`;
+        const renamed = { ...createdSnap.data(), id: starterRecipeId, updatedAt: Date.now() };
+        await db.collection('recipes').doc(starterRecipeId).set(renamed);
+        await db.collection('recipes').doc(createdRecipeId).delete();
+        ok(`probe recipe renamed to ${starterRecipeId} (sweep-compatible)`);
+      }
+    } catch (e) {
+      fail(`could not read/rename created recipe: ${e.message}`);
+      createdRecipeId = null;
+    }
+  }
+
+  // Start cooking the created recipe: the one-tap "Start cooking" launch on
+  // the persisted recipe must land in PREP_GUIDANCE step 1 (the guided flow
+  // the seeded launch above already proves end to end).
+  if (starterRecipeId) {
+    const starterLaunch = await cook('launch', { recipeId: starterRecipeId });
+    if (starterLaunch.status === 200 && starterLaunch.body?.success) {
+      starterSid = starterLaunch.body.data.sessionId;
+      const launchData = starterLaunch.body.data;
+      launchData.phase === 'PREP_GUIDANCE' && launchData.stepNumber === 1
+        ? ok(`created recipe launched → PREP_GUIDANCE step 1 (session ${starterSid.slice(0, 8)}…)`)
+        : fail(`expected PREP_GUIDANCE step 1, got ${launchData.phase} step ${launchData.stepNumber}`);
+    } else {
+      fail(`launch of created recipe → ${starterLaunch.status} ${j(starterLaunch.body?.error ?? starterLaunch.body)}`);
+    }
   }
 
   // ── 4. Agent turns through the deployed /api/agent ──────────────────────
