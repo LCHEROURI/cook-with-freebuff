@@ -115,6 +115,20 @@ describe('scripts/verify-live.mjs · starter-flow gate (create → validate → 
     expect(SRC).toContain('sweeps its own probe recipe');
   });
 
+  it('asserts the expanded constraints-view rows from the driver log (not a black box)', () => {
+    // The transparency half of the gate: verify:live must see the driver
+    // click the summary and render all three rows — a driver edit that drops
+    // the row assertions while still exiting 0 with RESULT: PASS fails HERE.
+    // The markers are deterministic (fixed prompt + extractRecipePreferences).
+    expect(SRC).toContain('driverLog.includes(marker)');
+    expect(SRC).toContain('ok(`constraints view: ${marker}`)');
+    expect(SRC).toContain('fail(`constraints view: missing “${marker}” in the driver log`)');
+    expect(SRC).toContain("'details expanded (clicked the summary)'");
+    expect(SRC).toContain("'constraint list shows “Servings: 4”'");
+    expect(SRC).toContain("'constraint list shows “Diet: vegetarian”'");
+    expect(SRC).toContain("'constraint list shows “Allergens avoided: no peanuts”'");
+  });
+
   it('settles the owner to the clean starter BEFORE the UI stage (deletes probe sessions)', () => {
     // Without this, the [3b] stage's freshly launched ACTIVE session would
     // make the driver's fresh /cook load show the CookScreen instead of the

@@ -35,7 +35,10 @@
 //      the real /cook input, clicks Create my recipe, asserts the ready card
 //      shows the parsed constraints ("4 servings · vegetarian · no peanuts"),
 //      expands the "Generation constraints applied" details view, and sweeps
-//      its own probe. A driver exit without RESULT: PASS fails the gate.
+//      its own probe. A driver exit without RESULT: PASS fails the gate, and
+//      verify:live itself asserts the driver's log contains the summary-click
+//      and the three expanded-row markers (the driver is not a black box — a
+//      future edit dropping the row assertions fails even on exit 0).
 //   5. One agent turn through /api/agent: a deterministic pantry command
 //      (proves tools + persistence live) and a free-form turn (proves the
 //      Gemini provider answers — SKIP, not fail, when GOOGLE_AI_API_KEY is
@@ -467,6 +470,23 @@ try {
   } else {
     const tail = driverLog.split('\n').filter(Boolean).slice(-6).join('\n');
     fail(`UI starter driver → exit ${driver.status ?? 'crash'}${driver.error ? ` (${driver.error.message})` : ''}. Tail: ${tail}`);
+  }
+
+  // The expanded constraints view is the transparency half of the gate.
+  // The driver is not a black box: verify:live must SEE the driver click the
+  // summary and render the three rows. A future driver edit that drops the
+  // row assertions (but still exits 0 with RESULT: PASS) must fail HERE —
+  // these markers are the driver's own ok() lines, deterministic because the
+  // prompt and the extractRecipePreferences parser are fixed.
+  for (const marker of [
+    'details expanded (clicked the summary)',
+    'constraint list shows “Servings: 4”',
+    'constraint list shows “Diet: vegetarian”',
+    'constraint list shows “Allergens avoided: no peanuts”',
+  ]) {
+    driverLog.includes(marker)
+      ? ok(`constraints view: ${marker}`)
+      : fail(`constraints view: missing “${marker}” in the driver log`);
   }
 
   // The [4] pantry flow rides on an ACTIVE session — every agent turn carries
