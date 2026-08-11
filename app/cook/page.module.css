@@ -44,6 +44,17 @@
   max-width: 26rem;
 }
 
+/* The starter's Live dictation mic sits next to the prompt input in a row. */
+.starterMicRow {
+  display: flex;
+  gap: 0.5rem;
+  align-items: stretch;
+}
+
+.starterMicRow .starterInput {
+  flex: 1;
+}
+
 .starterInput {
   min-height: 44px;
   padding: 0.75rem;

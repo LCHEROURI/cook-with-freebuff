@@ -43,6 +43,25 @@ describe('app/cook/page.tsx · protected route', () => {
     expect(COOK).toContain("voice.setStatus('LISTENING')");
   });
 
+  it('adds a Live dictation mic to the recipe starter (spoken ingredient brain-dumps)', () => {
+    // The STARTER has its own first-party voice entry: a tool-free Gemini Live
+    // session whose final transcription fills the starter prompt for review —
+    // the model can never act on a spoken prompt before the user confirms.
+    // The typed input stays the fallback (the mic renders disabled without
+    // Web Audio, exactly like the active-screen mic).
+    expect(COOK).toContain("import { useLiveDictation } from '@/lib/hooks/useLiveDictation'");
+    expect(COOK).toContain('const dictation = useLiveDictation({');
+    expect(COOK).toContain('getToken: auth.getToken');
+    // The final transcript lands in the starter prompt (append when the user
+    // already typed part of it).
+    expect(COOK).toMatch(/onFinal: \(text\) =>[\s\S]{0,120}setStarter\(\(s\) => \(\{/);
+    expect(COOK).toContain('prompt: s.prompt.trim() ? `${s.prompt.trim()} ${text.trim()}` : text.trim()');
+    expect(COOK).toContain('Speak your ingredients');
+    expect(COOK).toContain('dictation.listening');
+    expect(COOK).toContain('disabled={!dictation.available || starter.creating || starter.starting}');
+    expect(COOK).toContain('dictation.error');
+  });
+
   it('redirects to /login once auth settles with no user', () => {
     expect(COOK).toContain("router.replace('/login')");
     expect(COOK).toContain("if (auth.state === 'ready' && !auth.user)");

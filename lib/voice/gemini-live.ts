@@ -101,6 +101,8 @@ export interface GeminiLiveOptions {
   systemInstruction?: string;
   /** Gemini function declarations (lib/ai/tool-declarations). */
   tools?: readonly unknown[];
+  /** Reply modality. Default ['AUDIO'] (spoken replies); dictation uses ['TEXT']. */
+  responseModalities?: Array<'AUDIO' | 'TEXT'>;
   deps?: GeminiLiveDeps;
 }
 
@@ -169,7 +171,7 @@ export class GeminiLiveClient {
       this.send({
         setup: {
           model: `models/${model}`,
-          generationConfig: { responseModalities: ['AUDIO'] },
+          generationConfig: { responseModalities: this.opts.responseModalities ?? ['AUDIO'] },
           ...(this.opts.systemInstruction
             ? { systemInstruction: { parts: [{ text: this.opts.systemInstruction }] } }
             : {}),

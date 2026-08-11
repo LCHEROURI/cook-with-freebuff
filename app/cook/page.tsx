@@ -11,6 +11,7 @@ import { useAuthSession } from '@/lib/auth/useAuthSession';
 import { useVoiceSession } from '@/lib/hooks/useVoiceSession';
 import { useVoiceInput } from '@/lib/hooks/useVoiceInput';
 import { useGeminiLive } from '@/lib/hooks/useGeminiLive';
+import { useLiveDictation } from '@/lib/hooks/useLiveDictation';
 import { useCookingSession } from '@/lib/hooks/useCookingSession';
 
 export default function CookPage() {
@@ -30,6 +31,17 @@ export default function CookPage() {
   // First-party voice (Gemini Live) when the browser can do Web Audio; the
   // Web Speech mic stays as the fallback. Live receives the current session
   // context so its system instruction matches what the orchestrator would see.
+  // The recipe STARTER has its own dictation mic (Gemini Live, no tools):
+  // speaking the ingredient brain-dump fills the starter input for review,
+  // before anything is created. Typed input stays the fallback.
+  const dictation = useLiveDictation({
+    getToken: auth.getToken,
+    onFinal: (text) =>
+      setStarter((s) => ({
+        ...s,
+        prompt: s.prompt.trim() ? `${s.prompt.trim()} ${text.trim()}` : text.trim(),
+      })),
+  });
   const live = useGeminiLive({
     getToken: auth.getToken,
     systemContext: {
@@ -285,15 +297,48 @@ export default function CookPage() {
               void handleCreateRecipe(starter.prompt);
             }}
           >
-            <input
-              className={styles.starterInput}
-              value={starter.prompt}
-              onChange={(e) => setStarter((s) => ({ ...s, prompt: e.target.value }))}
-              placeholder="e.g. chicken, rice and onion — for 4, no peanuts, vegetarian"
-              aria-label="What do you have to cook with?"
-              autoFocus
-              disabled={starter.creating || starter.starting}
-            />
+            <div className={styles.starterMicRow}>
+              <input
+                className={styles.starterInput}
+                value={starter.prompt}
+                onChange={(e) => setStarter((s) => ({ ...s, prompt: e.target.value }))}
+                placeholder="e.g. chicken, rice and onion — for 4, no peanuts, vegetarian"
+                aria-label="What do you have to cook with?"
+                autoFocus
+                disabled={starter.creating || starter.starting}
+              />
+              <button
+                type="button"
+                className={`${styles.micBtn} ${dictation.listening ? styles.micListening : ''}`}
+                onClick={dictation.toggle}
+                disabled={!dictation.available || starter.creating || starter.starting}
+                aria-label={dictation.listening ? 'Stop listening' : 'Speak your ingredients'}
+                aria-pressed={dictation.listening}
+                title={
+                  dictation.available
+                    ? dictation.listening
+                      ? 'Tap to stop listening'
+                      : 'Tap, speak your ingredients — they land in the input for review'
+                    : 'Live voice not supported in this browser — type instead'
+                }
+              >
+                <svg
+                  width="20"
+                  height="20"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  aria-hidden="true"
+                >
+                  <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z" />
+                  <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
+                  <line x1="12" x2="12" y1="19" y2="22" />
+                </svg>
+              </button>
+            </div>
             <button
               type="submit"
               className={styles.starterBtn}
@@ -301,6 +346,19 @@ export default function CookPage() {
             >
               {starter.creating ? 'Creating…' : '✨ Create my recipe'}
             </button>
+            {dictation.listening && (
+              <p className={styles.micStatus} role="status" aria-live="polite">
+                🎙 Listening… speak your ingredients
+              </p>
+            )}
+            {dictation.error && (
+              <div className={styles.micError} role="alert">
+                <span>{dictation.error}</span>
+                <button className={styles.alertClose} onClick={dictation.clearError} aria-label="Dismiss microphone error">
+                  ×
+                </button>
+              </div>
+            )}
           </form>
           {starter.error && (
             <p className={styles.starterError} role="alert">

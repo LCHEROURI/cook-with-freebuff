@@ -150,6 +150,7 @@ See [`DEPLOYMENT.md`](./DEPLOYMENT.md) for the full operational story.
 - [x] `POST /api/agent` route — Firebase-auth-gated, routes through the orchestrator
 - [x] `POST /api/voice/token` — Firebase-auth-gated ephemeral Gemini Live token mint; the browser never sees `GOOGLE_AI_API_KEY` (single-use, 30-min session / 2-min start window)
 - [x] First-party live voice on `/cook` — the mic streams straight to Gemini Live (`BidiGenerateContentConstrained` + `access_token`) when Web Audio is available: spoken replies stream back as audio + transcription, tool calls execute through the same authenticated `/api/tools` registry, and the typed input + Web Speech mic remain as fallbacks
+- [x] Starter dictation mic — the recipe starter's mic is a TOOL-FREE Gemini Live session (TEXT modality, `useLiveDictation`): speaking “chicken, rice and onion — for 4, no peanuts, vegetarian” fills the prompt for review before anything is created, so the model can never act on a spoken brain-dump; the typed input stays the fallback
 - [x] Shared tool surface — `lib/ai/tool-declarations.ts` (SDK-free) is the ONE source of truth for both `/api/agent` function calling and the Live session, plus the shared `LIVE_SYSTEM_INSTRUCTION` rules text
 - [x] Voice UI: `VoiceIndicator` component + `useVoiceSession` hook wired into the landing page
 - [x] 46 new tests (commands, extraction + gate, voice status, orchestrator, route) — 169 total green + production build passes
