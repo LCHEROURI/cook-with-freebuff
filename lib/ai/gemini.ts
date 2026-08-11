@@ -98,6 +98,7 @@ function buildGenerationPrompt(request: RecipeRequest): string {
     '- Return STRICT JSON matching the schema below. No markdown, no prose outside JSON.',
     '- Separate prep steps (dicing, mincing, washing) from cooking steps (heating, searing, simmering).',
     '- Each step is ONE short spoken action. Provide a concise spokenInstruction.',
+    '- ingredientsUsed / equipmentUsed must use the EXACT names from the ingredients/equipment lists ("chicken thighs", never "chicken-thighs").',
     '- Ingredients with an unknown quantity must use null, never an invented number.',
     '- Respect servings, dietary restrictions, allergies, disliked ingredients, and available equipment.',
     '- Include equipment, dietary tags, allergens, and safety notes (hot oil, raw meat handling).',

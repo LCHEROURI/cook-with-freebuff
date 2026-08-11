@@ -74,6 +74,19 @@ describe('validateRecipe — ingredient consistency', () => {
     const result = validateRecipe(r);
     expect(result.valid).toBe(true);
   });
+
+  it('treats kebab-cased step references as the same ingredient (generated recipes)', () => {
+    // Real Gemini output references ingredients in kebab-case ("chicken-thighs")
+    // while the ingredient list uses spaces ("chicken thighs") — the
+    // separator-tolerant norm must not flag a false unknown-ingredient error.
+    const r = makeRecipe({
+      cookingSteps: [
+        { id: 'c1', stepNumber: 1, instruction: 'Cook the chicken-thighs 15 minutes', spokenInstruction: 'Cook the chicken thighs fifteen minutes', estimatedSeconds: 900, ingredientsUsed: ['chicken-thighs'], equipmentUsed: [] },
+      ],
+    });
+    const result = validateRecipe(r);
+    expect(result.errors.some((e) => e.message.includes('unknown ingredient'))).toBe(false);
+  });
 });
 
 describe('validateRecipe — quantity consistency', () => {

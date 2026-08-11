@@ -55,7 +55,16 @@ const RESTRICTION_MEAT: Record<string, string[]> = {
   kosher: ['pork', 'bacon', 'ham', 'shrimp', 'crab', 'lobster', 'scallop'],
 };
 
-const norm = (s: string) => s.toLowerCase().trim();
+// Name normalization: lowercase + separator-tolerant. Generated recipes often
+// reference ingredients in kebab-case ("chicken-thighs") while the ingredient
+// list uses spaces ("chicken thighs") — collapsing hyphens/underscores to a
+// single space treats them as the same ingredient instead of a false error.
+const norm = (s: string) =>
+  s
+    .toLowerCase()
+    .replace(/[-_]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
 
 export function validateRecipe(
   recipe: Recipe,
