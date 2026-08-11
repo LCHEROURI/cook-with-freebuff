@@ -59,10 +59,17 @@ const out = (r) => `${r.stdout ?? ''}${r.stderr ?? ''}`;
 // ── 1. Resolve the parent commit (HEAD~1) — the worktree the proof runs at. ─
 // An env override (VERIFY_GATE_STALE_HEAD) pins the compared-against commit
 // so the SKIP path is testable live (point it at the live sha itself).
-let parent = process.env.VERIFY_GATE_STALE_HEAD?.trim();
-if (!parent) {
-  parent = run('git', ['rev-parse', 'HEAD~1'], { cwd: ROOT }).stdout.trim();
-}
+//
+// IMPORTANT: check the exit STATUS, not just the stdout. On a shallow
+// checkout `git rev-parse HEAD~1` FAILS (exit 128) but still echoes its input
+// revision ('HEAD~1') to stdout — a stdout-only check would treat that echo
+// as a resolved parent, skip the deepen below, and run the probe with the
+// literal 'HEAD~1' (which can never reproduce a verdict).
+const revParent = () => {
+  const r = run('git', ['rev-parse', 'HEAD~1'], { cwd: ROOT });
+  return r.status === 0 ? r.stdout.trim() : '';
+};
+let parent = process.env.VERIFY_GATE_STALE_HEAD?.trim() || revParent();
 if (!parent) {
   // Shallow checkout (fetch-depth 1): deepen one level so HEAD~1 resolves.
   const deepen = run('git', ['fetch', '--deepen=1', 'origin'], { cwd: ROOT });
@@ -71,7 +78,7 @@ if (!parent) {
     console.log('  The teeth will be machine-re-proven on the next deploy — this skip is not a failure.');
     process.exit(0);
   }
-  parent = run('git', ['rev-parse', 'HEAD~1'], { cwd: ROOT }).stdout.trim();
+  parent = revParent();
   if (!parent) {
     console.log("\nSKIP: gate-stale proof could not resolve the pushed commit's parent even after deepening.");
     console.log('  The teeth will be machine-re-proven on the next deploy — this skip is not a failure.');
@@ -81,12 +88,18 @@ if (!parent) {
 
 // ── 2. Precondition probe: can the verdicts reproduce at all? ──────────────
 // The gate's OWN direction-aware logic decides (see header). The probe's
-// transcript is only echoed on the proceed path — the proof's own transcript
-// carries the detail — so the log stays lean.
+// transcript is echoed on BOTH paths: the proof's own transcript carries the
+// detail on the proceed path, and the skip path forwards it so the CI log
+// explains WHY it skipped.
 const probe = run(process.execPath, ['scripts/verify-deployed-hash-gate.mjs', '--stale-guard', '--head', parent], { cwd: ROOT });
 const blocked = probe.status === 1 && out(probe).includes('✗ STALE-HEAD BLOCK');
 
 if (!blocked) {
+  // Forward the probe's own transcript so the CI log shows WHY it skipped
+  // (deploy-lag verdicts, an API error, a missing sha) instead of a bare
+  // SKIP line — the skip must be explainable, never a mystery.
+  if (probe.stdout) process.stdout.write(probe.stdout);
+  if (probe.stderr) process.stderr.write(probe.stderr);
   const reason =
     probe.status === 0
       ? "live is not yet strictly ahead of the pushed commit's parent (alias promotion lag — the deploy may still be settling)"

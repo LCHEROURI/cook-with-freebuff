@@ -17,8 +17,15 @@ import { describe, expect, it } from 'vitest';
 const WRAPPER = readFileSync('scripts/verify-gate-stale-ci.mjs', 'utf8');
 
 describe('scripts/verify-gate-stale-ci.mjs · post-deploy teeth-proof wrapper', () => {
-  it('resolves the parent commit via HEAD~1, with the VERIFY_GATE_STALE_HEAD override for testability', () => {
-    expect(WRAPPER).toContain("run('git', ['rev-parse', 'HEAD~1'], { cwd: ROOT }).stdout.trim()");
+  it('resolves the parent commit via HEAD~1 by EXIT STATUS (a failed rev-parse echoes its input), with the VERIFY_GATE_STALE_HEAD override', () => {
+    // The status check is load-bearing: on a shallow checkout `git rev-parse
+    // HEAD~1` FAILS (exit 128) but still echoes 'HEAD~1' to stdout, so a
+    // stdout-only check would treat the echo as a resolved parent, skip the
+    // deepen, and run the probe with the literal 'HEAD~1' (which can never
+    // reproduce a verdict). The teeth runner already checks status; the
+    // wrapper must too.
+    expect(WRAPPER).toContain('return r.status === 0 ? r.stdout.trim() : \'\';');
+    expect(WRAPPER).toContain('still echoes its input');
     expect(WRAPPER).toContain('VERIFY_GATE_STALE_HEAD');
   });
 
