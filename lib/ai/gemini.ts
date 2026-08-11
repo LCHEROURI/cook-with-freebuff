@@ -48,6 +48,26 @@ function getModel(opts: GeminiOptions, role: 'generation' | 'validation'): Gener
   return getGeminiModel(opts, model);
 }
 
+/**
+ * Prune null-valued fields from a model JSON object, EXCEPT the fields that
+ * legitimately allow null (ingredient quantity/unit). Gemini habitually emits
+ * `"optionalField": null` (description, safetyNote, preparation, …) which
+ * zod's `.optional()` rejects — for the schema, missing and null are the same
+ * thing, so dropping the key is the faithful normalization.
+ */
+export function pruneNulls(value: unknown, allowNull: ReadonlySet<string> = new Set(['quantity', 'unit'])): unknown {
+  if (Array.isArray(value)) return value.map((v) => pruneNulls(v, allowNull));
+  if (value && typeof value === 'object') {
+    const out: Record<string, unknown> = {};
+    for (const [key, val] of Object.entries(value as Record<string, unknown>)) {
+      if (val === null && !allowNull.has(key)) continue; // null optional → omit
+      out[key] = pruneNulls(val, allowNull);
+    }
+    return out;
+  }
+  return value;
+}
+
 /** Extract the first balanced JSON object from a model response (handles ``` fences). */
 export function extractJson(text: string): unknown {
   let cleaned = text.trim();
@@ -99,6 +119,7 @@ function buildGenerationPrompt(request: RecipeRequest): string {
     '- Separate prep steps (dicing, mincing, washing) from cooking steps (heating, searing, simmering).',
     '- Each step is ONE short spoken action. Provide a concise spokenInstruction.',
     '- ingredientsUsed / equipmentUsed must use the EXACT names from the ingredients/equipment lists ("chicken thighs", never "chicken-thighs").',
+    '- Optional fields must be OMITTED when not applicable — never null (description, preparation, condition, safetyNote, temperature, temperatureUnit, heatLevel, estimatedSeconds on cooking steps). quantity/unit may be null when unknown.',
     '- Ingredients with an unknown quantity must use null, never an invented number.',
     '- Respect servings, dietary restrictions, allergies, disliked ingredients, and available equipment.',
     '- Include equipment, dietary tags, allergens, and safety notes (hot oil, raw meat handling).',
@@ -150,11 +171,15 @@ export function createGeminiRecipeGenerator(opts: GeminiOptions = {}): RecipeGen
       const response = await model.generateContent(buildGenerationPrompt(request));
       const text = response.response.text();
       const json = extractJson(text);
-      const parsed = recipeSchema.safeParse(json);
+      // Gemini nulls optional fields ("description": null, "safetyNote": null,
+      // …) which the schema treats as missing — prune before parsing.
+      const parsed = recipeSchema.safeParse(pruneNulls(json));
       if (!parsed.success) {
-        throw new Error(
-          `Gemini returned an invalid recipe: ${parsed.error.issues[0]?.message ?? 'schema error'}`,
-        );
+        const details = parsed.error.issues
+          .slice(0, 5)
+          .map((i) => `${i.path.join('.') || '(root)'}: ${i.message}`)
+          .join('; ');
+        throw new Error(`Gemini returned an invalid recipe: ${details || 'schema error'}`);
       }
       return parsed.data;
     },
