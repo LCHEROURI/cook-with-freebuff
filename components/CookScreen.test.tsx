@@ -44,6 +44,7 @@ function render(snap: GuideSnapshot, props: Partial<Parameters<typeof CookScreen
     onRepeat: vi.fn(),
     onBack: vi.fn(),
     onResume: vi.fn(),
+    onStartOver: vi.fn(),
     onDismissAlert: vi.fn(),
     onSend: vi.fn(),
     ...props,
@@ -140,7 +141,9 @@ describe('CookScreen', () => {
   it('surfaces the agent\'s last spoken response on screen (not just spoken)', () => {
     // The user must SEE what the app understood and said — a silent reply
     // leaves the screen looking stuck at "One moment…".
-    const html = render(snapshot(), { agentResponse: 'I heard: chicken. Is that right?' });
+    const html = render(snapshot(), {
+      turns: [{ utterance: 'chicken', response: 'I heard: chicken. Is that right?', toolCalls: [], status: 'LISTENING' }],
+    });
     expect(html).toContain('Kitchen Agent');
     expect(html).toContain('I heard: chicken. Is that right?');
     // The response region is announced politely, never interruptively.
@@ -148,8 +151,49 @@ describe('CookScreen', () => {
   });
 
   it('renders no response region when there is no agent reply yet', () => {
-    const html = render(snapshot(), { agentResponse: null });
+    const html = render(snapshot(), { turns: [] });
     expect(html).not.toContain('Kitchen Agent');
+  });
+
+  it('renders a scrollable transcript of the last five turns, oldest trimmed', () => {
+    const turns = Array.from({ length: 6 }, (_, i) => ({
+      utterance: `ingredient ${i + 1}`,
+      response: `got it — ${i + 1}`,
+      toolCalls: [],
+      status: 'LISTENING' as const,
+    }));
+    const html = render(snapshot(), { turns });
+    // The scrollable log region is present and the OLDEST turn is trimmed.
+    expect(html).toContain('role="log"');
+    expect(html).toContain('Conversation transcript');
+    expect(html).not.toContain('ingredient 1');
+    // The last five survive, each with the You / Kitchen Agent pairing.
+    for (let i = 2; i <= 6; i++) {
+      expect(html).toContain(`ingredient ${i}`);
+      expect(html).toContain(`got it — ${i}`);
+    }
+    expect(html).toContain('You');
+    expect(html).toContain('Kitchen Agent');
+  });
+
+  it('does not show the transcript for a single turn — the reply box already shows it', () => {
+    // One turn has nothing to re-read beyond the large reply box; the
+    // scrollable history appears only once there is history to scroll.
+    const html = render(snapshot(), {
+      turns: [{ utterance: 'chicken', response: 'I heard: chicken. Is that right?', toolCalls: [], status: 'LISTENING' }],
+    });
+    expect(html).toContain('I heard: chicken. Is that right?');
+    expect(html).not.toContain('role="log"');
+  });
+
+  it('renders the Start over reset button (un-armed, two-step confirm)', () => {
+    const html = render(snapshot());
+    // The reset control is present with its label and the UN-armed copy — the
+    // first click arms it ("Confirm — restart from step 1?") and only the
+    // second click fires onStartOver. Static markup renders the initial state.
+    expect(html).toContain('↺ Start over');
+    expect(html).toContain('aria-label="Start over"');
+    expect(html).not.toContain('Confirm — restart from step 1');
   });
 
   it('tells the user what to do in the collecting phase instead of a dead "One moment…"', () => {

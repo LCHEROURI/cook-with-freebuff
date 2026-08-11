@@ -97,15 +97,17 @@ export default function CookPage() {
       snapshot={snap}
       error={cook.error}
       alert={cook.alert}
-      // The agent's last spoken reply, surfaced on screen — without this the
-      // user only HEARS the response and the screen can look stuck at
-      // "One moment…" even though the agent answered.
-      agentResponse={voice.transcript.length > 0 ? voice.transcript[voice.transcript.length - 1].response : null}
+      // The turn transcript, surfaced on screen — without this the user only
+      // HEARS responses and the screen can look stuck at "One moment…" even
+      // though the agent answered. The last reply is shown large; older turns
+      // are re-readable in the scrollable transcript.
+      turns={voice.transcript}
       voiceStatus={voice.status}
       onDone={() => void cook.done()}
       onRepeat={() => void cook.repeat()}
       onBack={() => void cook.back()}
       onResume={() => void cook.resume()}
+      onStartOver={() => void cook.startOver()}
       onDismissAlert={cook.dismissAlert}
       onSend={(text) => {
         void voice.send(text);

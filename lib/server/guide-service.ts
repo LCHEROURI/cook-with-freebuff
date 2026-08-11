@@ -456,6 +456,45 @@ export class GuidedCookingService {
     return this.buildSnapshot(userId, updated);
   }
 
+  // ── Start over (archive + fresh session) ───────────────────────────────────
+
+  /**
+   * "Start over" — the user-facing reset. Archives the current session
+   * (ABANDONED, its running timers cancelled) and launches a FRESH session
+   * pinned to the SAME recipe, so the cook can restart from prep step 1
+   * without Firebase surgery. Returns the new session's snapshot.
+   *
+   * The old session is never deleted — it stays as an ABANDONED record (the
+   * same archive verify-live's pre-run sweep uses), so nothing is lost.
+   */
+  async startOver(
+    userId: string,
+    sessionId?: string,
+    options?: { correlationId?: string },
+  ): Promise<GuideSnapshot> {
+    const session = await this.resolveSession(userId, sessionId);
+    if (!session) throw new GuideError('No cooking session found for this user', 'SESSION_NOT_FOUND', true);
+    const recipe = await this.requireRecipe(session);
+
+    // Cancel the current session's running timers so no alert fires for the
+    // archived session (the new session has its own lifecycle).
+    const running = await this.timerStore.listActiveTimers(session.id);
+    for (const timer of running) {
+      await this.timerStore.updateTimer(timer.id, { status: 'CANCELLED', completedAt: Date.now() });
+    }
+
+    // Archive the current session (ABANDONED) — endSession is the only
+    // sanctioned way to end a session (never a raw status write).
+    await this.sessionService.endSession(session.id, session.version, {
+      correlationId: options?.correlationId,
+    });
+
+    // Launch a fresh session pinned to the same recipe, starting at prep step 1.
+    return this.launchCookWithMe(userId, recipe.id, undefined, {
+      correlationId: options?.correlationId,
+    });
+  }
+
   // ── Substitution (K7 Part A) ──────────────────────────────────────────────
 
   /**

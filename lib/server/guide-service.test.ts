@@ -433,6 +433,52 @@ describe('ownership and errors', () => {
   });
 });
 
+// ── Start over (archive + fresh session) ────────────────────────────────────
+
+describe('startOver', () => {
+  it('archives the current session (ABANDONED), cancels its timers, and starts a fresh session on the same recipe', async () => {
+    const { guide, store, timers } = await launch();
+
+    // Drive to a cooking step so a real timer is auto-started (the lifecycle
+    // startOver must clean up: the archived session's timer must be cancelled).
+    let snap = await guide.getCurrentAction('user-1');
+    snap = await guide.completeCurrentAction('user-1', snap.sessionId); // prep 1 → 2
+    snap = await guide.completeCurrentAction('user-1', snap.sessionId); // → WAITING_FOR_TIMER + timer
+    expect(snap.phase).toBe('WAITING_FOR_TIMER');
+    const oldSessionId = snap.sessionId!;
+    const [running] = await timers.listActiveTimers(oldSessionId);
+    expect(running?.status).toBe('RUNNING');
+
+    // Start over: archive old, launch fresh.
+    const fresh = await guide.startOver('user-1', oldSessionId);
+    expect(fresh.found).toBe(true);
+    expect(fresh.phase).toBe('PREP_GUIDANCE');
+    expect(fresh.stepNumber).toBe(1);
+    expect(fresh.recipeId).toBe('recipe-1');
+    expect(fresh.sessionId).not.toBe(oldSessionId);
+
+    // The old session is archived (ABANDONED) — never deleted, never active.
+    const old = await store.getSession(oldSessionId);
+    expect(old?.status).toBe('ABANDONED');
+    const active = await store.getActiveSession('user-1');
+    expect(active?.id).toBe(fresh.sessionId);
+    expect(active?.currentPhase).toBe('PREP_GUIDANCE');
+    expect(active?.recipeId).toBe('recipe-1');
+
+    // The old session's running timer was cancelled (no ghost alert for the
+    // archived session; the new session owns its own lifecycle).
+    const after = await timers.getTimer(running!.id);
+    expect(after?.status).toBe('CANCELLED');
+  });
+
+  it('fails with SESSION_NOT_FOUND when there is no session to restart', async () => {
+    const { guide } = makeContext();
+    await expect(guide.startOver('user-1')).rejects.toMatchObject({
+      code: 'SESSION_NOT_FOUND',
+    });
+  });
+});
+
 // ── Recipe consumption (K8) ──────────────────────────────────────────────────
 
 describe('recipe consumption on completion (K8)', () => {

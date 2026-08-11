@@ -112,6 +112,22 @@ export function useCookingSession(opts: UseCookingSessionOptions = {}) {
     [call],
   );
 
+  /**
+   * Start over: archives the current session (ABANDONED) and launches a fresh
+   * one pinned to the same recipe, from prep step 1. The screen swaps to the
+   * new session's snapshot immediately — no reload needed.
+   */
+  const startOver = useCallback(async () => {
+    try {
+      const snap = await call('start_over');
+      setSnapshot(snap);
+      setError(null);
+      setAlert(null);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not restart cooking');
+    }
+  }, [call]);
+
   // Initial load + timer polling.
   useEffect(() => {
     void refresh();
@@ -136,6 +152,7 @@ export function useCookingSession(opts: UseCookingSessionOptions = {}) {
     back: () => act('back'),
     pause: () => act('pause'),
     resume: () => act('resume'),
+    startOver,
     refresh,
   };
 }

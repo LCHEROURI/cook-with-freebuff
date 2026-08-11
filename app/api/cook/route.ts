@@ -1,8 +1,8 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // /api/cook — guided cooking ("Cook With Me")
 //
-// POST { action: 'launch'|'status'|'done'|'repeat'|'back'|'pause'|'resume'|'timers',
-//        sessionId?, recipeId?, correlationId? }
+// POST { action: 'launch'|'status'|'done'|'repeat'|'back'|'pause'|'resume'|'timers'|
+//                 'start_over', sessionId?, recipeId?, correlationId? }
 // GET  → status of the active session
 // Auth: Bearer <Firebase ID token>
 //
@@ -19,7 +19,7 @@ import { logError } from '@/lib/server/logger';
 
 const ACTIONS = [
   'launch', 'status', 'done', 'repeat', 'back', 'pause', 'resume', 'timers',
-  'substitute', 'apply_substitution', 'correct', 'recover', 'clear_recovery',
+  'start_over', 'substitute', 'apply_substitution', 'correct', 'recover', 'clear_recovery',
 ] as const;
 type CookAction = (typeof ACTIONS)[number];
 
@@ -95,6 +95,10 @@ async function handle(userId: string, body: unknown): Promise<NextResponse> {
     case 'timers': {
       const { alerts, snapshot } = await guide.checkTimers(userId, sessionId, { correlationId });
       return NextResponse.json({ success: true, data: { alerts, snapshot } });
+    }
+    case 'start_over': {
+      const snapshot = await guide.startOver(userId, sessionId, { correlationId });
+      return NextResponse.json({ success: true, data: snapshot });
     }
     case 'substitute': {
       if (!unavailableIngredient) {

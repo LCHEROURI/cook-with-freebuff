@@ -5,7 +5,7 @@ import Link from 'next/link';
 import styles from '@/app/cook/page.module.css';
 import { VoiceIndicator } from './VoiceIndicator';
 import type { ActiveTimerInfo, GuideSnapshot } from '@/lib/server/guide-service';
-import type { VoiceStatus } from '@/lib/agent';
+import type { AgentTurn, VoiceStatus } from '@/lib/agent';
 
 function formatCountdown(seconds: number): string {
   const s = Math.max(0, Math.floor(seconds));
@@ -35,13 +35,14 @@ export interface CookScreenProps {
   snapshot: GuideSnapshot;
   error?: string | null;
   alert?: string | null;
-  /** The agent's last spoken response — shown on screen so the user SEES what the app understood and said, instead of only hearing it. */
-  agentResponse?: string | null;
+  /** The turn transcript — the agent's replies are shown on screen so the user SEES what the app understood and said, instead of only hearing it. */
+  turns?: AgentTurn[];
   voiceStatus: VoiceStatus;
   onDone: () => void;
   onRepeat: () => void;
   onBack: () => void;
   onResume: () => void;
+  onStartOver: () => void;
   onDismissAlert: () => void;
   onSend: (text: string) => void;
 }
@@ -55,16 +56,25 @@ export function CookScreen({
   snapshot: snap,
   error,
   alert,
-  agentResponse,
+  turns,
   voiceStatus,
   onDone,
   onRepeat,
   onBack,
   onResume,
+  onStartOver,
   onDismissAlert,
   onSend,
 }: CookScreenProps) {
   const [input, setInput] = useState('');
+  // Two-step confirm for Start over — archiving the session is irreversible
+  // from the screen, so the first click arms the button, the second fires.
+  const [confirmingStartOver, setConfirmingStartOver] = useState(false);
+
+  // The most recent turns the user can re-read — a bounded window keeps the
+  // screen focused on the ONE current action, not a full chat log.
+  const recentTurns = turns && turns.length > 0 ? turns.slice(-5) : [];
+  const lastResponse = recentTurns.length > 0 ? recentTurns[recentTurns.length - 1].response : null;
 
   const phaseLabel =
     snap.phase === 'PREP_GUIDANCE'
@@ -133,11 +143,28 @@ export function CookScreen({
         {snap.safetyNote && !snap.safetyGate && <p className={styles.safetyNote}>⚠ {snap.safetyNote}</p>}
       </section>
 
-      {agentResponse && (
+      {lastResponse && (
         <div className={styles.agentResponse} role="status" aria-live="polite">
           <span className={styles.agentResponseLabel}>Kitchen Agent</span>
-          <span>{agentResponse}</span>
+          <span>{lastResponse}</span>
         </div>
+      )}
+
+      {recentTurns.length > 1 && (
+        <section className={styles.transcript} role="log" aria-label="Conversation transcript" aria-live="polite">
+          {recentTurns.map((turn, i) => (
+            <div className={styles.transcriptTurn} key={`${i}-${turn.utterance}`}>
+              <p className={styles.transcriptYou}>
+                <span className={styles.transcriptLabel}>You</span>
+                {turn.utterance}
+              </p>
+              <p className={styles.transcriptAgent}>
+                <span className={styles.transcriptLabel}>Kitchen Agent</span>
+                {turn.response}
+              </p>
+            </div>
+          ))}
+        </section>
       )}
 
       {snap.activeTimers.length > 0 && (
@@ -197,6 +224,22 @@ export function CookScreen({
           </>
         )}
       </section>
+
+      <button
+        className={`${styles.startOver} ${confirmingStartOver ? styles.startOverArmed : ''}`}
+        onClick={() => {
+          if (!confirmingStartOver) {
+            setConfirmingStartOver(true);
+            return;
+          }
+          setConfirmingStartOver(false);
+          onStartOver();
+        }}
+        onBlur={() => setConfirmingStartOver(false)}
+        aria-label="Start over"
+      >
+        {confirmingStartOver ? '✓ Confirm — restart from step 1?' : '↺ Start over'}
+      </button>
 
       <details className={styles.details}>
         <summary>Ingredients</summary>

@@ -205,4 +205,25 @@ describe('/api/cook', () => {
     expect(body.data.retryCount).toBe(1);
     expect(body.data.snapshot.phase).toBe('PREP_GUIDANCE');
   });
+
+  it('start_over archives the current session and returns a fresh one on the same recipe', async () => {
+    await (ctx.recipeStore as InMemoryRecipeStore).createRecipe(makeRecipe());
+
+    const first = await post({ action: 'launch', recipeId: 'recipe-1' });
+    const firstBody = await first.json();
+    const oldSessionId = firstBody.data.sessionId;
+
+    const res = await post({ action: 'start_over' });
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.success).toBe(true);
+    expect(body.data.phase).toBe('PREP_GUIDANCE');
+    expect(body.data.stepNumber).toBe(1);
+    expect(body.data.recipeId).toBe('recipe-1');
+    expect(body.data.sessionId).not.toBe(oldSessionId);
+
+    // The old session is archived (ABANDONED) — the fresh one is the active one.
+    const active = await ctx.sessionService.getActiveSession('user-1');
+    expect(active?.id).toBe(body.data.sessionId);
+  });
 });
