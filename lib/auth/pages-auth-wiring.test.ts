@@ -60,6 +60,17 @@ describe('app/cook/page.tsx · protected route', () => {
     expect(COOK).toContain('handleStartSavedRecipe(r.recipeId)');
     expect(COOK).toContain('cook.launch(recipeId)');
   });
+
+  it('surfaces the build preferences on each “Your recipes” row', () => {
+    // A saved recipe shows what it was built for: the row meta appends the
+    // dietary restrictions and allergy line (same copy style as the ready
+    // card — “· vegetarian · no peanuts”). The API summary carries them as
+    // `preferences` (old recipes get an empty shape, never undefined).
+    expect(COOK).toContain('r.preferences?.dietaryRestrictions?.length');
+    expect(COOK).toContain('r.preferences?.allergies?.length');
+    expect(COOK).toContain("` · ${r.preferences.dietaryRestrictions.join(', ')}`");
+    expect(COOK).toContain("` · no ${r.preferences.allergies.join(', no ')}`");
+  });
 });
 
 describe('app/login/page.tsx · login page', () => {

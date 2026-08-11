@@ -178,6 +178,9 @@ async function handle(userId: string, body: unknown): Promise<NextResponse> {
           servings: r.servings,
           totalMinutes: r.totalMinutes,
           ingredientCount: r.ingredients.length,
+          // What the recipe was built for (parsed from the creation prompt) —
+          // old/agent-generated recipes carry none and get a safe empty shape.
+          preferences: r.preferences ?? { servings: null, allergies: [], dietaryRestrictions: [] },
           updatedAt: r.updatedAt,
         }));
       return NextResponse.json({ success: true, data: { recipes } });

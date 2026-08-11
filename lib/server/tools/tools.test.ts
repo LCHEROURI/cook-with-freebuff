@@ -405,8 +405,9 @@ describe('recipe tools', () => {
     const result = await executeTool(registry, ctx, 'generate_recipe', {
       request: {
         ingredientsAvailable: [makeIngredient('chicken')],
-        dietaryRestrictions: [],
-        allergies: [],
+        servings: 4,
+        dietaryRestrictions: ['vegetarian'],
+        allergies: ['peanuts'],
         cuisinePreferences: [],
         dislikedIngredients: [],
         availableEquipment: [],
@@ -415,6 +416,14 @@ describe('recipe tools', () => {
     expect(result.success).toBe(true);
     const saved = await recipes.getRecipe('recipe-1');
     expect(saved).not.toBeNull();
+    // The user-provided build constraints are stamped onto the persisted
+    // recipe — a saved recipe records what it was built FOR (the /cook
+    // "Your recipes" rows surface them).
+    expect(saved!.preferences).toEqual({
+      servings: 4,
+      allergies: ['peanuts'],
+      dietaryRestrictions: ['vegetarian'],
+    });
   });
 
   it('generate_recipe reports GENERATION_UNAVAILABLE without a provider', async () => {

@@ -54,6 +54,18 @@ export interface CookingStep {
   safetyNote?: string;
 }
 
+/**
+ * The user-provided build constraints a recipe was created for (parsed from the
+ * starter prompt: "for 4, no peanuts, vegetarian"). Distinct from the
+ * model-derived `dietaryTags`/`allergens` — this records what the USER asked
+ * for, so a saved recipe shows what it was built for.
+ */
+export interface RecipePreferences {
+  servings: number | null;
+  allergies: string[];
+  dietaryRestrictions: string[];
+}
+
 export interface Recipe {
   id: string;
   userId?: string;
@@ -70,6 +82,7 @@ export interface Recipe {
   dietaryTags: string[];
   allergens: string[];
   safetyNotes: string[];
+  preferences?: RecipePreferences;
   generatedAt: EpochMs;
   updatedAt: EpochMs;
 }

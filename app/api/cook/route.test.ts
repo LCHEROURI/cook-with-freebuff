@@ -274,7 +274,13 @@ describe('/api/cook', () => {
     it('returns only the owner’s recipes as lightweight summaries, newest first', async () => {
       const store = ctx.recipeStore as InMemoryRecipeStore;
       await store.createRecipe({ ...makeRecipe(), id: 'recipe-old', title: 'Old Stew', updatedAt: 1000 });
-      await store.createRecipe({ ...makeRecipe(), id: 'recipe-new', title: 'Fresh Pasta', updatedAt: 5000 });
+      await store.createRecipe({
+        ...makeRecipe(),
+        id: 'recipe-new',
+        title: 'Fresh Pasta',
+        updatedAt: 5000,
+        preferences: { servings: 4, allergies: ['peanuts'], dietaryRestrictions: ['vegetarian'] },
+      });
       // Another user's recipe must never leak into the list (userId isolation).
       await store.createRecipe({ ...makeRecipe(), id: 'recipe-other', userId: 'user-2', updatedAt: 9000 });
 
@@ -288,6 +294,12 @@ describe('/api/cook', () => {
       expect(first.servings).toBe(2);
       expect(first.totalMinutes).toBe(35);
       expect(first.ingredientCount).toBe(1);
+      // The build constraints surface in the summary — the row shows what the
+      // recipe was built for.
+      expect(first.preferences).toEqual({ servings: 4, allergies: ['peanuts'], dietaryRestrictions: ['vegetarian'] });
+      // A recipe created without preferences gets a safe empty shape (never
+      // `undefined` — the client renders it unconditionally).
+      expect(body.data.recipes[1].preferences).toEqual({ servings: null, allergies: [], dietaryRestrictions: [] });
       // The summary stays light — full step lists never leave the server.
       expect(first).not.toHaveProperty('ingredients');
       expect(first).not.toHaveProperty('cookingSteps');

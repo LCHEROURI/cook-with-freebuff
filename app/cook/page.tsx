@@ -46,6 +46,13 @@ export default function CookPage() {
     servings: number;
     totalMinutes: number;
     ingredientCount: number;
+    // What the recipe was built for. Optional so a stale deployed API (before
+    // this field shipped) never crashes the row render.
+    preferences?: {
+      servings: number | null;
+      allergies: string[];
+      dietaryRestrictions: string[];
+    };
     updatedAt: number;
   }
   const [recipes, setRecipes] = useState<{ status: 'loading' | 'ready' | 'error'; items: RecipeSummary[] }>({
@@ -288,6 +295,12 @@ export default function CookPage() {
                       <p className={styles.recipeMeta}>
                         {r.servings > 1 ? `${r.servings} servings · ` : ''}
                         {r.totalMinutes} min · {r.ingredientCount} ingredients
+                        {r.preferences?.dietaryRestrictions?.length
+                          ? ` · ${r.preferences.dietaryRestrictions.join(', ')}`
+                          : ''}
+                        {r.preferences?.allergies?.length
+                          ? ` · no ${r.preferences.allergies.join(', no ')}`
+                          : ''}
                       </p>
                     </div>
                     <button

@@ -45,9 +45,18 @@ export const generateRecipeTool: ToolDefinition = {
         // ownerless (Firestore rules would block even its owner from reading
         // it client-side) and no isolation exists. generatedAt/updatedAt are
         // filled by the schema's function defaults (server metadata).
+        //
+        // Also stamp the user-provided build constraints (servings, allergies,
+        // dietary restrictions) from the request, so a saved recipe records
+        // what it was built FOR — the /cook "Your recipes" rows surface them.
         const owned = {
           ...parsed.data,
           userId: ctx.userId,
+          preferences: {
+            servings: args.request.servings ?? null,
+            allergies: args.request.allergies,
+            dietaryRestrictions: args.request.dietaryRestrictions,
+          },
           updatedAt: parsed.data.updatedAt,
         };
         await ctx.recipeStore.createRecipe(owned);
