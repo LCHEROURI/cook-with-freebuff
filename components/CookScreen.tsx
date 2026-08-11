@@ -35,6 +35,8 @@ export interface CookScreenProps {
   snapshot: GuideSnapshot;
   error?: string | null;
   alert?: string | null;
+  /** The agent's last spoken response — shown on screen so the user SEES what the app understood and said, instead of only hearing it. */
+  agentResponse?: string | null;
   voiceStatus: VoiceStatus;
   onDone: () => void;
   onRepeat: () => void;
@@ -53,6 +55,7 @@ export function CookScreen({
   snapshot: snap,
   error,
   alert,
+  agentResponse,
   voiceStatus,
   onDone,
   onRepeat,
@@ -118,9 +121,24 @@ export function CookScreen({
       )}
 
       <section className={styles.action} aria-live="polite" aria-atomic="true">
-        <p className={styles.instruction}>{snap.instruction ?? 'One moment…'}</p>
+        <p className={styles.instruction}>
+          {snap.instruction ??
+            // No step instruction yet: the collecting phase has nothing to
+            // DO yet, so instead of a dead "One moment…" tell the user how
+            // to move forward.
+            (snap.phase === 'COLLECTING_INGREDIENTS'
+              ? 'Tell me what ingredients you have — say “done” when you are ready.'
+              : 'One moment…')}
+        </p>
         {snap.safetyNote && !snap.safetyGate && <p className={styles.safetyNote}>⚠ {snap.safetyNote}</p>}
       </section>
+
+      {agentResponse && (
+        <div className={styles.agentResponse} role="status" aria-live="polite">
+          <span className={styles.agentResponseLabel}>Kitchen Agent</span>
+          <span>{agentResponse}</span>
+        </div>
+      )}
 
       {snap.activeTimers.length > 0 && (
         <section className={styles.timers}>

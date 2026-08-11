@@ -136,4 +136,32 @@ describe('CookScreen', () => {
     expect(html).toContain('Full recipe');
     expect(html).toContain('Sear the chicken four minutes');
   });
+
+  it('surfaces the agent\'s last spoken response on screen (not just spoken)', () => {
+    // The user must SEE what the app understood and said — a silent reply
+    // leaves the screen looking stuck at "One moment…".
+    const html = render(snapshot(), { agentResponse: 'I heard: chicken. Is that right?' });
+    expect(html).toContain('Kitchen Agent');
+    expect(html).toContain('I heard: chicken. Is that right?');
+    // The response region is announced politely, never interruptively.
+    expect(html).toContain('role="status"');
+  });
+
+  it('renders no response region when there is no agent reply yet', () => {
+    const html = render(snapshot(), { agentResponse: null });
+    expect(html).not.toContain('Kitchen Agent');
+  });
+
+  it('tells the user what to do in the collecting phase instead of a dead "One moment…"', () => {
+    // The collecting phase has no step instruction yet — a bare "One
+    // moment…" reads as a stuck screen. The screen must say what to do next.
+    const html = render(snapshot({ phase: 'COLLECTING_INGREDIENTS', instruction: undefined }));
+    expect(html).toContain('Tell me what ingredients you have');
+    expect(html).not.toContain('One moment');
+  });
+
+  it('keeps the "One moment…" fallback for other instruction-less phases', () => {
+    const html = render(snapshot({ phase: 'SAFETY_WARNING', instruction: undefined }));
+    expect(html).toContain('One moment');
+  });
 });

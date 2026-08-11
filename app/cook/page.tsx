@@ -97,6 +97,10 @@ export default function CookPage() {
       snapshot={snap}
       error={cook.error}
       alert={cook.alert}
+      // The agent's last spoken reply, surfaced on screen — without this the
+      // user only HEARS the response and the screen can look stuck at
+      // "One moment…" even though the agent answered.
+      agentResponse={voice.transcript.length > 0 ? voice.transcript[voice.transcript.length - 1].response : null}
       voiceStatus={voice.status}
       onDone={() => void cook.done()}
       onRepeat={() => void cook.repeat()}

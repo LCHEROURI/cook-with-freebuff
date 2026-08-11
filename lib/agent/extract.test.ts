@@ -124,4 +124,19 @@ describe('extractIngredients — conversational gate', () => {
   it('still extracts quantity-first brain-dumps without a lead-in', () => {
     expect(extractIngredients('two cups of flour and three eggs')).toHaveLength(2);
   });
+
+  it('never treats a question as a brain-dump — even with a number-word inside', () => {
+    // The user's exact report: "what is one good tip for seasoning chicken"
+    // used to trip the quantity gate ('one') and swallow the WHOLE sentence
+    // as a single fake ingredient. Questions must fall through to the
+    // free-form provider instead.
+    expect(extractIngredients('what is one good tip for seasoning chicken')).toEqual([]);
+    expect(extractIngredients('how do I make two servings of rice')).toEqual([]);
+    expect(extractIngredients('whats in my pantry')).toEqual([]);
+  });
+
+  it('treats an explicit question mark as a question', () => {
+    expect(extractIngredients('can you make a salad with two tomatoes?')).toEqual([]);
+    expect(extractIngredients('Do I need a pan for this?')).toEqual([]);
+  });
 });

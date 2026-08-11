@@ -155,6 +155,22 @@ export function parseIngredientSegment(raw: string): ParsedIngredient | null {
  * phrases ("salt and pepper" → two entries).
  */
 export function extractIngredients(utterance: string): Ingredient[] {
+  // Questions are NEVER brain-dumps: an utterance that looks like a question
+  // (ends with '?' or opens with a question word) falls straight through to
+  // the free-form provider instead of becoming a fake ingredient. This is
+  // load-bearing: number-words inside questions ("what is ONE good tip for
+  // seasoning chicken") would otherwise trip the quantity gate below and
+  // swallow the whole sentence as a single ingredient.
+  const trimmedUtterance = utterance.trim();
+  if (
+    trimmedUtterance.endsWith('?') ||
+    /^(?:what|whats|what's|how|why|when|where|which|who|can|could|do|does|is|are|should|would|will|tell me)\b/i.test(
+      trimmedUtterance,
+    )
+  ) {
+    return [];
+  }
+
   let text = utterance.toLowerCase().replace(/[.!?]+$/, '').trim();
 
   // Gate: only treat this as a brain-dump when there is explicit evidence —
