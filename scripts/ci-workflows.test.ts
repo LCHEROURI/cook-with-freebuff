@@ -179,7 +179,14 @@ describe('.github/workflows/verify-deployed.yml · deployment_status post-deploy
     expect(POST_DEPLOY).toContain('workflow_dispatch:');
     expect(POST_DEPLOY).toContain("github.event_name == 'workflow_dispatch'");
     expect(POST_DEPLOY).toContain("github.event.deployment_status.state == 'success'");
-    expect(POST_DEPLOY).toContain("github.event.deployment_status.environment == 'Production'");
+    // Environment gating is the DUAL form: Vercel labels a deployment
+    // "Production" when ONE project is linked to the repo, but
+    // "Production – <project-name>" (en-dash, U+2013) when MULTIPLE projects
+    // share it. A bare `== 'Production'` silently skips in the multi-project
+    // regime — the exact bug the portfolio repo hit. The lock asserts both
+    // arms so the gate fires in either regime and a revert to a bare literal
+    // fails here.
+    expect(POST_DEPLOY).toContain("(github.event.deployment_status.environment == 'Production' || startsWith(github.event.deployment_status.environment, 'Production – cook-with-freebuff'))");
     expect(POST_DEPLOY).toContain("github.event.deployment_status.target_url != ''");
   });
 
@@ -316,7 +323,11 @@ describe('.github/workflows/verify-deployed.yml · PR preview gate (branch-prote
     // hash + alias drift). The preview gate must not double-run them — the
     // environment filter is the load-bearing half.
     expect(previewBlock).toContain("github.event.deployment_status.state == 'success'");
-    expect(previewBlock).toContain("github.event.deployment_status.environment == 'Preview'");
+    // Same dual-form environment gating as the production job: bare "Preview"
+    // (single linked project) OR "Preview – cook-with-freebuff" (multi-project
+    // disambiguation) — so a future second linked project can never silently
+    // skip this gate.
+    expect(previewBlock).toContain("(github.event.deployment_status.environment == 'Preview' || startsWith(github.event.deployment_status.environment, 'Preview – cook-with-freebuff'))");
     expect(previewBlock).toContain("github.event.deployment_status.target_url != ''");
     expect(previewBlock).not.toContain("environment == 'Production'");
   });

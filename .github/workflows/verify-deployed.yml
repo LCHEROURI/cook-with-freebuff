@@ -47,11 +47,14 @@ jobs:
     name: Verify deployed app after deploy (verify:live)
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    if: >-
-      github.event_name == 'workflow_dispatch' ||
-      (github.event.deployment_status.state == 'success' &&
-       github.event.deployment_status.environment == 'Production' &&
-       github.event.deployment_status.target_url != '')
+    # Environment gating: Vercel labels a deployment "Production" when ONE
+    # project is linked to the repo, but "Production – <project-name>"
+    # (en-dash, U+2013) when MULTIPLE projects share the repo. The dual form
+    # fires in BOTH regimes — this repo currently sees the bare label, but a
+    # second linked project would silently flip it to the suffixed one, and a
+    # bare `== 'Production'` would then match nothing (the exact silent-skip
+    # bug the portfolio repo hit).
+    if: ${{ github.event_name == 'workflow_dispatch' || (github.event.deployment_status.state == 'success' && (github.event.deployment_status.environment == 'Production' || startsWith(github.event.deployment_status.environment, 'Production – cook-with-freebuff')) && github.event.deployment_status.target_url != '') }}
 
     env:
       NEXT_PUBLIC_FIREBASE_API_KEY: ${{ secrets.NEXT_PUBLIC_FIREBASE_API_KEY }}
@@ -187,10 +190,11 @@ jobs:
     name: Verify PR preview deploy (hash gate)
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    if: >-
-      github.event.deployment_status.state == 'success' &&
-      github.event.deployment_status.environment == 'Preview' &&
-      github.event.deployment_status.target_url != ''
+    # Same dual-form environment gating as the production job: bare "Preview"
+    # (single linked project) OR "Preview – cook-with-freebuff" (multi-project
+    # disambiguation) — so a future second project can never silently skip
+    # this gate.
+    if: ${{ github.event.deployment_status.state == 'success' && (github.event.deployment_status.environment == 'Preview' || startsWith(github.event.deployment_status.environment, 'Preview – cook-with-freebuff')) && github.event.deployment_status.target_url != '' }}
 
     env:
       VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
