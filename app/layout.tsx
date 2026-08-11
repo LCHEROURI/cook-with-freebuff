@@ -26,7 +26,8 @@ export const metadata: Metadata = {
 export const viewport: Viewport = {
   width: 'device-width',
   initialScale: 1,
-  maximumScale: 1,
+  // No maximumScale: pinching to zoom is a basic accessibility feature (axe
+  // meta-viewport). The layout is fluid, so zoom never breaks the UI.
   themeColor: '#3157d5',
 };
 
