@@ -50,6 +50,7 @@ export interface PantryItemInput {
   quantity?: number;
   unit?: string;
   source: PantryItemSource;
+  notes?: string;
 }
 
 export interface ConsumptionResult {
@@ -122,6 +123,7 @@ export class PantryService {
       confidence: input.source === 'RECIPE_USAGE' ? 0.6 : 0.9,
       source: input.source,
       lastConfirmedAt: Date.now(),
+      notes: input.notes,
     };
     await this.pantryStore.upsertItem(item);
     await this.logEvent(options?.sessionId, 'INGREDIENT_ADDED', {

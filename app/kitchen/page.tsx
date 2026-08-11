@@ -5,6 +5,8 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import styles from './kitchen.module.css';
 import { useAuthSession } from '@/lib/auth/useAuthSession';
+import { FormInput, FormTextarea } from '@/components/FormField';
+import { pantryFieldUI, leftoverFieldUI, profileFieldUI } from '@/lib/domain/fieldUI';
 import type { PantryItemView } from '@/lib/server/pantry-service';
 import type { GroceryItemSource, DietaryProfile } from '@/lib/domain/types';
 
@@ -80,6 +82,7 @@ export default function KitchenPage() {
   const [pantryName, setPantryName] = useState('');
   const [pantryQty, setPantryQty] = useState('');
   const [pantryUnit, setPantryUnit] = useState('');
+  const [pantryNotes, setPantryNotes] = useState('');
   // Grocery add form
   const [groceryName, setGroceryName] = useState('');
   const [groceryQty, setGroceryQty] = useState('');
@@ -87,6 +90,7 @@ export default function KitchenPage() {
   // Leftover log form
   const [leftoverTitle, setLeftoverTitle] = useState('');
   const [leftoverServings, setLeftoverServings] = useState('');
+  const [leftoverNotes, setLeftoverNotes] = useState('');
   // Profile form
   const [profileAllergies, setProfileAllergies] = useState('');
   const [profileRestrictions, setProfileRestrictions] = useState('');
@@ -304,14 +308,16 @@ export default function KitchenPage() {
               name: pantryName.trim(),
               quantity: qtyNum(pantryQty),
               unit: unitStr(pantryUnit),
+              notes: pantryNotes.trim() || undefined,
             }).then(() => {
               setPantryName('');
               setPantryQty('');
               setPantryUnit('');
+              setPantryNotes('');
             });
           }}
         >
-          <input
+          <FormInput
             className={styles.input}
             value={pantryName}
             onChange={(e) => setPantryName(e.target.value)}
@@ -319,7 +325,7 @@ export default function KitchenPage() {
             aria-label="Pantry item name"
             disabled={pending !== null}
           />
-          <input
+          <FormInput
             className={`${styles.input} ${styles.inputSmall}`}
             value={pantryQty}
             onChange={(e) => setPantryQty(e.target.value)}
@@ -327,13 +333,24 @@ export default function KitchenPage() {
             aria-label="Pantry item quantity"
             disabled={pending !== null}
           />
-          <input
+          <FormInput
             className={`${styles.input} ${styles.inputSmall}`}
             value={pantryUnit}
             onChange={(e) => setPantryUnit(e.target.value)}
             placeholder="Unit"
             aria-label="Pantry item unit"
             disabled={pending !== null}
+          />
+          <FormTextarea
+            fieldUI={pantryFieldUI}
+            field="notes"
+            className={styles.input}
+            value={pantryNotes}
+            onChange={(e) => setPantryNotes(e.target.value)}
+            placeholder="Notes e.g. bought at the farmers market"
+            aria-label="Pantry item notes"
+            disabled={pending !== null}
+            rows={2}
           />
           <button
             type="submit"
@@ -482,13 +499,15 @@ export default function KitchenPage() {
             void mutate('leftover_log', {
               title: leftoverTitle.trim(),
               servings: Number.isFinite(servings) && servings > 0 ? Math.floor(servings) : 1,
+              notes: leftoverNotes.trim() || undefined,
             }).then(() => {
               setLeftoverTitle('');
               setLeftoverServings('');
+              setLeftoverNotes('');
             });
           }}
         >
-          <input
+          <FormInput
             className={styles.input}
             value={leftoverTitle}
             onChange={(e) => setLeftoverTitle(e.target.value)}
@@ -496,13 +515,24 @@ export default function KitchenPage() {
             aria-label="Leftover title"
             disabled={pending !== null}
           />
-          <input
+          <FormInput
             className={`${styles.input} ${styles.inputSmall}`}
             value={leftoverServings}
             onChange={(e) => setLeftoverServings(e.target.value)}
             placeholder="Servings"
             aria-label="Leftover servings"
             disabled={pending !== null}
+          />
+          <FormTextarea
+            fieldUI={leftoverFieldUI}
+            field="notes"
+            className={styles.input}
+            value={leftoverNotes}
+            onChange={(e) => setLeftoverNotes(e.target.value)}
+            placeholder="Notes e.g. batch cooked, freeze half"
+            aria-label="Leftover notes"
+            disabled={pending !== null}
+            rows={2}
           />
           <button
             type="submit"
@@ -523,7 +553,9 @@ export default function KitchenPage() {
         <div className={styles.profileGrid}>
           <label className={styles.field}>
             <span className={styles.fieldLabel}>Allergies</span>
-            <input
+            <FormInput
+              fieldUI={profileFieldUI}
+              field="allergies"
               className={styles.input}
               value={profileAllergies}
               onChange={(e) => setProfileAllergies(e.target.value)}
@@ -533,7 +565,9 @@ export default function KitchenPage() {
           </label>
           <label className={styles.field}>
             <span className={styles.fieldLabel}>Dietary restrictions</span>
-            <input
+            <FormInput
+              fieldUI={profileFieldUI}
+              field="dietaryRestrictions"
               className={styles.input}
               value={profileRestrictions}
               onChange={(e) => setProfileRestrictions(e.target.value)}
@@ -543,7 +577,9 @@ export default function KitchenPage() {
           </label>
           <label className={styles.field}>
             <span className={styles.fieldLabel}>Disliked ingredients</span>
-            <input
+            <FormInput
+              fieldUI={profileFieldUI}
+              field="dislikedIngredients"
               className={styles.input}
               value={profileDisliked}
               onChange={(e) => setProfileDisliked(e.target.value)}
@@ -553,7 +589,9 @@ export default function KitchenPage() {
           </label>
           <label className={styles.field}>
             <span className={styles.fieldLabel}>Preferred cuisines</span>
-            <input
+            <FormInput
+              fieldUI={profileFieldUI}
+              field="preferredCuisines"
               className={styles.input}
               value={profileCuisines}
               onChange={(e) => setProfileCuisines(e.target.value)}

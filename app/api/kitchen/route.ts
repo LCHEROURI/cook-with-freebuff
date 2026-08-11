@@ -140,6 +140,7 @@ async function handle(userId: string, body: unknown): Promise<NextResponse> {
         quantity: num(parsed.quantity),
         unit: typeof parsed.unit === 'string' && parsed.unit.trim() ? parsed.unit.trim().slice(0, 50) : undefined,
         source: 'MANUAL',
+        notes: typeof parsed.notes === 'string' && parsed.notes.trim() ? parsed.notes.trim().slice(0, 500) : undefined,
       });
       return NextResponse.json({ success: true, data: { item: { id: item.id, name: item.name } } });
     }
