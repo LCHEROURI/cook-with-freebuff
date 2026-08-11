@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import styles from './page.module.css';
 import ConstraintDetails from './ConstraintDetails';
+import RecipeRowMeta from './RecipeRowMeta';
 import { CookScreen } from '@/components/CookScreen';
 import { useAuthSession } from '@/lib/auth/useAuthSession';
 import { useVoiceSession } from '@/lib/hooks/useVoiceSession';
@@ -294,16 +295,12 @@ export default function CookPage() {
                   <li key={r.recipeId} className={styles.recipeCard}>
                     <div className={styles.recipeInfo}>
                       <p className={styles.recipeName}>{r.title}</p>
-                      <p className={styles.recipeMeta}>
-                        {r.servings > 1 ? `${r.servings} servings · ` : ''}
-                        {r.totalMinutes} min · {r.ingredientCount} ingredients
-                        {r.preferences?.dietaryRestrictions?.length
-                          ? ` · ${r.preferences.dietaryRestrictions.join(', ')}`
-                          : ''}
-                        {r.preferences?.allergies?.length
-                          ? ` · no ${r.preferences.allergies.join(', no ')}`
-                          : ''}
-                      </p>
+                      <RecipeRowMeta
+                        servings={r.servings}
+                        totalMinutes={r.totalMinutes}
+                        ingredientCount={r.ingredientCount}
+                        preferences={r.preferences}
+                      />
                     </div>
                     <button
                       type="button"

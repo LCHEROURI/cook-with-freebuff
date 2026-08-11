@@ -172,12 +172,6 @@
   overflow-wrap: anywhere;
 }
 
-.recipeMeta {
-  margin: 0;
-  font-size: 0.85rem;
-  color: var(--color-text-secondary);
-}
-
 .recipeStart {
   flex-shrink: 0;
   min-height: 40px;

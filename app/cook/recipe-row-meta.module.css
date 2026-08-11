@@ -1,0 +1,7 @@
+/* The meta line under a "Your recipes" row title: servings · time ·
+   ingredient count · build constraints ("· vegetarian · no peanuts"). */
+.recipeMeta {
+  margin: 0;
+  font-size: 0.85rem;
+  color: var(--color-text-secondary);
+}
