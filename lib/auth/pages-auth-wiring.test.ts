@@ -72,18 +72,15 @@ describe('app/cook/page.tsx · protected route', () => {
     expect(COOK).toContain("` · no ${r.preferences.allergies.join(', no ')}`");
   });
 
-  it('shows an expandable constraint list on the ready card before Start cooking', () => {
-    // Transparency: the ready card can expand into a details view listing the
-    // generation constraints that were applied (servings, diet, allergens
-    // avoided). Only rendered when the prompt carried at least one constraint.
-    expect(COOK).toContain('<details className={styles.constraintDetails}>');
-    expect(COOK).toContain('Generation constraints applied');
-    expect(COOK).toContain("Servings: <strong>{starter.ready.preferences.servings}</strong>");
-    expect(COOK).toContain('Diet: {starter.ready.preferences.dietaryRestrictions.join(\', \')}');
-    expect(COOK).toContain('Allergens avoided: no {starter.ready.preferences.allergies.join(\', no \')}');
-    // The card stays minimal when no constraints were parsed.
-    expect(COOK).toContain("starter.ready.preferences.dietaryRestrictions.length > 0 ||");
-    expect(COOK).toContain("starter.ready.preferences.allergies.length > 0");
+  it('renders the extracted ConstraintDetails component on the ready card', () => {
+    // The expand/collapse behavior lives in app/cook/ConstraintDetails.tsx and
+    // is locked by a RENDERED component test (jsdom + testing-library) — the
+    // page only needs to wire the parsed preferences in. The component is the
+    // single source of truth: the page no longer carries the <details> markup.
+    expect(COOK).toContain("import ConstraintDetails from './ConstraintDetails'");
+    expect(COOK).toContain('<ConstraintDetails preferences={starter.ready.preferences} />');
+    // The inline <details> markup must NOT have drifted back into the page.
+    expect(COOK).not.toContain('constraintDetails}');
   });
 });
 

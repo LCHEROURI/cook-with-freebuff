@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import styles from './page.module.css';
+import ConstraintDetails from './ConstraintDetails';
 import { CookScreen } from '@/components/CookScreen';
 import { useAuthSession } from '@/lib/auth/useAuthSession';
 import { useVoiceSession } from '@/lib/hooks/useVoiceSession';
@@ -274,31 +275,7 @@ export default function CookPage() {
                   ? ` · you will also need: ${starter.ready.confirmations.join(', ')}`
                   : ''}
               </p>
-              {(starter.ready.preferences.servings != null ||
-                starter.ready.preferences.dietaryRestrictions.length > 0 ||
-                starter.ready.preferences.allergies.length > 0) && (
-                // Transparency before Start cooking: what generation
-                // constraints were applied. Only rendered when the prompt
-                // actually carried constraints — a plain “chicken, rice” card
-                // stays minimal. Closed by default; the rows spell out each
-                // constraint instead of trusting the one-line summary.
-                <details className={styles.constraintDetails}>
-                  <summary className={styles.constraintSummary}>Generation constraints applied</summary>
-                  <ul className={styles.constraintList}>
-                    {starter.ready.preferences.servings != null && (
-                      <li>
-                        Servings: <strong>{starter.ready.preferences.servings}</strong>
-                      </li>
-                    )}
-                    {starter.ready.preferences.dietaryRestrictions.length > 0 && (
-                      <li>Diet: {starter.ready.preferences.dietaryRestrictions.join(', ')}</li>
-                    )}
-                    {starter.ready.preferences.allergies.length > 0 && (
-                      <li>Allergens avoided: no {starter.ready.preferences.allergies.join(', no ')}</li>
-                    )}
-                  </ul>
-                </details>
-              )}
+              <ConstraintDetails preferences={starter.ready.preferences} />
               <button
                 className={styles.primaryBtn}
                 onClick={() => void handleStartCooking()}
