@@ -195,9 +195,29 @@ async function handle(userId: string, body: unknown): Promise<NextResponse> {
           { status: 400 },
         );
       }
-      const result = await generateRecipeTool.handler(ctx, {
+      // Parse through the tool's OWN inputSchema (not a raw object): the
+      // schema fills the defaulted arrays (dietaryRestrictions, allergies,
+      // …) that buildGenerationPrompt reads — a raw `{ ingredientsAvailable,
+      // servings }` object crashed the deployed route on
+      // `undefined.length` because the direct handler call skips the
+      // executeTool zod layer.
+      const parsedInput = generateRecipeTool.inputSchema.safeParse({
         request: { ingredientsAvailable: ingredients, servings: 2 },
       });
+      if (!parsedInput.success) {
+        return NextResponse.json(
+          {
+            success: false,
+            error: {
+              code: 'INVALID_BODY',
+              message: 'Could not build a recipe request from that input.',
+              recoverable: true,
+            },
+          },
+          { status: 400 },
+        );
+      }
+      const result = await generateRecipeTool.handler(ctx, parsedInput.data);
       const generated = (result.data ?? {}) as { recipe?: Recipe };
       if (!result.success || !generated.recipe) {
         return NextResponse.json(

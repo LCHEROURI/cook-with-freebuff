@@ -319,5 +319,31 @@ describe('/api/cook', () => {
       expect(body.success).toBe(false);
       expect(body.error.code).toBe('GENERATION_UNAVAILABLE');
     });
+
+    it('passes the generator a defaulted request (regression: undefined.length crash on deploy)', async () => {
+      // The deployed route crashed with "Cannot read properties of undefined
+      // (reading 'length')" because a raw { ingredientsAvailable, servings }
+      // object skipped the tool's zod defaults (dietaryRestrictions, allergies,
+      // …) that buildGenerationPrompt reads. The handler call must go through
+      // the tool's inputSchema so every defaulted array arrives filled.
+      let received: unknown = null;
+      registerRecipeGenerator('default', {
+        generate: async (request: unknown) => {
+          received = request;
+          return makeGeneratedRecipe();
+        },
+      });
+
+      const res = await post({ action: 'create_recipe', prompt: 'I have chicken thighs and rice' });
+      expect(res.status).toBe(200);
+      const req = received as { dietaryRestrictions?: unknown; allergies?: unknown; cuisinePreferences?: unknown; dislikedIngredients?: unknown; availableEquipment?: unknown; servings?: unknown };
+      expect(Array.isArray(req?.dietaryRestrictions)).toBe(true);
+      expect(Array.isArray(req?.allergies)).toBe(true);
+      expect(Array.isArray(req?.cuisinePreferences)).toBe(true);
+      expect(Array.isArray(req?.dislikedIngredients)).toBe(true);
+      expect(Array.isArray(req?.availableEquipment)).toBe(true);
+      expect(req?.servings).toBe(2);
+      expect((req as { ingredientsAvailable?: unknown[] })?.ingredientsAvailable).toHaveLength(2);
+    });
   });
 });
