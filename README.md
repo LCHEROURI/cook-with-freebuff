@@ -146,8 +146,11 @@ See [`DEPLOYMENT.md`](./DEPLOYMENT.md) for the full operational story.
 - [x] Ingredient brain-dump extraction (`lib/agent/extract.ts`) — structured quantities, unknown quantities stay `null`, extraction only fires on real brain-dumps (possession lead-in or quantity signal, so "hello" or "go ahead and start cooking" never become fake ingredients)
 - [x] `ConversationOrchestrator` (`lib/agent/orchestrator.ts`) — commands → extraction → provider fallback, always concise spoken responses, never claims success the backend didn't confirm
 - [x] Gemini conversation provider (`lib/ai/conversation.ts`) — function calling over the full 20-tool surface, tool calls executed by the backend executor
-- [x] Realtime voice provider boundary (`lib/voice/`) — Gemini Live WebRTC skeleton (`gemini-live.ts`) behind a swappable interface
+- [x] Realtime voice provider boundary (`lib/voice/`) — Gemini Live WebSocket client (`gemini-live.ts`) behind a swappable interface
 - [x] `POST /api/agent` route — Firebase-auth-gated, routes through the orchestrator
+- [x] `POST /api/voice/token` — Firebase-auth-gated ephemeral Gemini Live token mint; the browser never sees `GOOGLE_AI_API_KEY` (single-use, 30-min session / 2-min start window)
+- [x] First-party live voice on `/cook` — the mic streams straight to Gemini Live (`BidiGenerateContentConstrained` + `access_token`) when Web Audio is available: spoken replies stream back as audio + transcription, tool calls execute through the same authenticated `/api/tools` registry, and the typed input + Web Speech mic remain as fallbacks
+- [x] Shared tool surface — `lib/ai/tool-declarations.ts` (SDK-free) is the ONE source of truth for both `/api/agent` function calling and the Live session, plus the shared `LIVE_SYSTEM_INSTRUCTION` rules text
 - [x] Voice UI: `VoiceIndicator` component + `useVoiceSession` hook wired into the landing page
 - [x] 46 new tests (commands, extraction + gate, voice status, orchestrator, route) — 169 total green + production build passes
 

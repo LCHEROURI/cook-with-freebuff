@@ -10,6 +10,7 @@ import { CookScreen } from '@/components/CookScreen';
 import { useAuthSession } from '@/lib/auth/useAuthSession';
 import { useVoiceSession } from '@/lib/hooks/useVoiceSession';
 import { useVoiceInput } from '@/lib/hooks/useVoiceInput';
+import { useGeminiLive } from '@/lib/hooks/useGeminiLive';
 import { useCookingSession } from '@/lib/hooks/useCookingSession';
 
 export default function CookPage() {
@@ -26,8 +27,23 @@ export default function CookPage() {
       void voice.send(text);
     },
   });
+  // First-party voice (Gemini Live) when the browser can do Web Audio; the
+  // Web Speech mic stays as the fallback. Live receives the current session
+  // context so its system instruction matches what the orchestrator would see.
+  const live = useGeminiLive({
+    getToken: auth.getToken,
+    systemContext: {
+      currentPhase: cook.snapshot?.phase,
+      currentStep:
+        cook.snapshot?.stepNumber && cook.snapshot?.totalSteps
+          ? `${cook.snapshot.phase.toLowerCase().replace(/_/g, ' ')} step ${cook.snapshot.stepNumber} of ${cook.snapshot.totalSteps}`
+          : undefined,
+      activeTimerIds: cook.snapshot?.activeTimers.map((t) => t.timerId),
+    },
+  });
   const [input, setInput] = useState('');
   const snap = cook.snapshot;
+  const useLiveMic = live.available;
 
   // Recipe-starter state (the "start from scratch" stage): the user tells us
   // what they have, the agent generates + validates a recipe, then "Start
@@ -182,13 +198,15 @@ export default function CookPage() {
     }
   }, [auth.state, auth.user, router]);
 
-  // Keep the screen in sync with voice-driven changes (e.g. "done" spoken).
+  // Keep the screen in sync with voice-driven changes (e.g. "done" spoken) —
+  // whether the turn came through /api/agent (typed/Web Speech) or the Live
+  // session (tool-driven state changes like pantry adds / step completion).
   useEffect(() => {
-    if (voice.transcript.length > 0) {
+    if (voice.transcript.length > 0 || live.turns.length > 0) {
       void cook.refresh();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [voice.transcript.length]);
+  }, [voice.transcript.length, live.turns.length]);
 
   // While the mic is live, the indicator must honestly say LISTENING (the
   // recognition is capturing, not yet processing an utterance).
@@ -197,6 +215,18 @@ export default function CookPage() {
       voice.setStatus('LISTENING');
     }
   }, [voiceInput.listening, voice.setStatus]);
+
+  // Live-mode caption: no interim transcripts come from the Live API, so the
+  // caption reflects the honest capture/thinking state instead.
+  const liveCaption =
+    live.mode === 'live'
+      ? live.status === 'LISTENING'
+        ? 'Listening…'
+        : live.status === 'THINKING'
+          ? 'One moment…'
+          : ''
+      : '';
+  const liveVoiceStatus = live.mode !== 'off' ? (live.status === 'IDLE' ? 'LISTENING' : live.status) : voice.status;
 
   // Wait for the auth settle first, so the screen never flashes content for
   // a signed-out visitor before the redirect to /login fires.
@@ -349,14 +379,14 @@ export default function CookPage() {
       // HEARS responses and the screen can look stuck at "One moment…" even
       // though the agent answered. The last reply is shown large; older turns
       // are re-readable in the scrollable transcript.
-      turns={voice.transcript}
-      voiceStatus={voice.status}
-      micSupported={voiceInput.supported}
-      micListening={voiceInput.listening}
-      micInterim={voiceInput.interim}
-      micError={voiceInput.error}
-      onMicToggle={voiceInput.toggle}
-      onMicErrorClear={voiceInput.clearError}
+      turns={[...voice.transcript, ...live.turns]}
+      voiceStatus={liveVoiceStatus}
+      micSupported={useLiveMic ? true : voiceInput.supported}
+      micListening={useLiveMic ? live.mode !== 'off' : voiceInput.listening}
+      micInterim={useLiveMic ? liveCaption : voiceInput.interim}
+      micError={useLiveMic ? live.error : voiceInput.error}
+      onMicToggle={useLiveMic ? () => void live.toggle() : voiceInput.toggle}
+      onMicErrorClear={useLiveMic ? live.clearError : voiceInput.clearError}
       onDone={() => void cook.done()}
       onRepeat={() => void cook.repeat()}
       onBack={() => void cook.back()}
@@ -364,7 +394,10 @@ export default function CookPage() {
       onStartOver={() => void cook.startOver()}
       onDismissAlert={cook.dismissAlert}
       onSend={(text) => {
-        void voice.send(text);
+        // While a Live session is open, typed input flows into the SAME
+        // realtime conversation; otherwise it uses the /api/agent path.
+        if (live.mode === 'live') live.sendText(text);
+        else void voice.send(text);
         setInput('');
       }}
     />
