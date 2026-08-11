@@ -5,6 +5,12 @@
 // Proves the live stack (Vercel + Gemini + shared Firestore) works end to end:
 //   1. Loads env (process.env first, then .env.local — plain KEY=VALUE lines,
 //      surrounding quotes stripped).
+//   1b. PRE-RUN SWEEP: archives leftover probe sessions (recipeId starting
+//      with `verify-live-` — the exact prefix this script seeds) and deletes
+//      their orphaned recipes, so a run killed mid-flight (CI timeout, crash,
+//      SIGTERM) can NEVER leave a stale ACTIVE session that hijacks the
+//      owner's /cook screen. The next run cleans the previous one's leftovers
+//      before doing anything else.
 //   2. Seeds an owner-scoped recipe directly into Firestore via the admin SDK
 //      (rules are not the point here — the app's read path is).
 //   3. Mints a REAL owner ID token: admin createCustomToken(APP_OWNER_UID)
@@ -17,8 +23,11 @@
 //      (proves tools + persistence live) and a free-form turn (proves the
 //      Gemini provider answers — SKIP, not fail, when GOOGLE_AI_API_KEY is
 //      absent locally).
-//   6. Awaitable cleanup: deletes the seeded recipe, the created session,
-//      its events + timers, and the pantry item the agent turn added.
+//   6. GUARANTEED cleanup: the whole flow runs inside try/finally and
+//      SIGINT/SIGTERM/unhandledRejection/uncaughtException handlers, so the
+//      seeded recipe, session, events, timers, and pantry item are removed on
+//      EVERY exit path — success, failure, signal, or crash. A killed run is
+//      still caught by the next run's pre-run sweep.
 //
 // Usage:
 //   npm run verify:live                       # → https://cook-with-freebuff.vercel.app
@@ -109,6 +118,49 @@ async function cleanup() {
   }
 }
 
+// ── Pre-run sweep: never let a killed run's leftovers hijack the owner ──────
+// Every session this script ever creates carries a recipeId seeded with the
+// `verify-live-` prefix (see step 2), so leftover ACTIVE/PAUSED sessions with
+// that prefix are unambiguous probe artifacts — archiving them can never touch
+// a real cooking session. Orphaned probe recipes (no probe session left) are
+// deleted outright; they are pure throwaway seed data.
+async function sweepStaleProbes() {
+  if (!db) return { archived: 0, deleted: 0 };
+  const [sessionSnap, recipeSnap] = await Promise.all([
+    db.collection('cooking_sessions').where('userId', '==', OWNER_UID).get(),
+    db.collection('recipes').where('userId', '==', OWNER_UID).get(),
+  ]);
+
+  const probeSessions = sessionSnap.docs.filter((d) => {
+    const s = d.data();
+    return (
+      typeof s.recipeId === 'string' &&
+      s.recipeId.startsWith('verify-live-') &&
+      (s.status === 'ACTIVE' || s.status === 'PAUSED')
+    );
+  });
+
+  let archived = 0;
+  for (const d of probeSessions) {
+    await d.ref.update({ status: 'ABANDONED', lastActivityAt: Date.now() });
+    archived += 1;
+  }
+
+  // Delete orphaned probe recipes: `verify-live-*` recipes that no probe
+  // session references anymore (the current run seeds its own AFTER this
+  // sweep, so nothing live is ever touched here).
+  const liveProbeRecipeIds = new Set(probeSessions.map((d) => d.data().recipeId));
+  const deletes = recipeSnap.docs
+    .filter((d) => typeof d.id === 'string' && d.id.startsWith('verify-live-') && !liveProbeRecipeIds.has(d.id))
+    .map((d) => d.ref.delete());
+  await Promise.allSettled(deletes);
+
+  if (archived > 0 || deletes.length > 0) {
+    console.log(`  ↳ pre-run sweep: archived ${archived} stale probe session(s), deleted ${deletes.length} orphaned probe recipe(s)`);
+  }
+  return { archived, deleted: deletes.length };
+}
+
 // ── Admin init ──────────────────────────────────────────────────────────────
 if (!API_KEY) { console.error('✗ FAIL: NEXT_PUBLIC_FIREBASE_API_KEY is required'); process.exit(1); }
 if (!OWNER_UID) { console.error('✗ FAIL: APP_OWNER_UID is required (the owner Firebase Auth uid)'); process.exit(1); }
@@ -134,223 +186,265 @@ const app = apps[0] ?? initializeApp({
 });
 const db = getFirestore(app);
 
-// ── 1. Seed an owner recipe ─────────────────────────────────────────────────
-const t = Date.now();
-seededRecipeId = `verify-live-${t}`;
-const recipe = {
-  id: seededRecipeId,
-  userId: OWNER_UID,
-  title: 'Verify Live Chicken Rice',
-  description: 'One-pan dinner used by npm run verify:live',
-  servings: 2,
-  estimatedPrepMinutes: 5,
-  estimatedCookMinutes: 15,
-  totalMinutes: 20,
-  ingredients: [
-    { id: 'i1', name: 'chicken thighs', quantity: 4, unit: 'pieces', optional: false },
-    { id: 'i2', name: 'rice', quantity: 1, unit: 'cup', optional: false },
-  ],
-  equipment: ['pan', 'knife'],
-  prepSteps: [
-    { id: 'p1', stepNumber: 1, instruction: 'Dice the onion', spokenInstruction: 'Dice the onion', estimatedSeconds: 120, ingredientsUsed: ['onion'], equipmentUsed: ['knife'] },
-    { id: 'p2', stepNumber: 2, instruction: 'Heat the oil on high', spokenInstruction: 'Heat the oil on high', estimatedSeconds: 60, ingredientsUsed: [], equipmentUsed: ['pan'], safetyNote: 'Hot oil — keep children away' },
-  ],
-  cookingSteps: [
-    { id: 'c1', stepNumber: 1, instruction: 'Sear the chicken 4 minutes', spokenInstruction: 'Sear the chicken four minutes', estimatedSeconds: 240, timerSeconds: 240, ingredientsUsed: ['chicken thighs'], equipmentUsed: ['pan'] },
-  ],
-  dietaryTags: [],
-  allergens: [],
-  safetyNotes: ['Hot oil — keep children away'],
-  generatedAt: t,
-  updatedAt: t,
+// ── Guaranteed cleanup on every exit path ───────────────────────────────────
+// A bare `await cleanup()` at the end leaves the seeded recipe + session when
+// the run dies early (throw, signal, unhandled rejection). Register handlers
+// so a killed run still cleans up; the pre-run sweep above is the backstop
+// for a run that cannot clean up at all (e.g. SIGKILL / hard CI timeout).
+const exitWithCleanup = async (code, reason) => {
+  if (!cleanupRan) {
+    try { await cleanup(); } catch { /* best-effort */ }
+  }
+  console.error(reason);
+  process.exit(code);
 };
+process.on('SIGINT', () => void exitWithCleanup(130, 'verify-live interrupted (SIGINT) — cleanup ran'));
+process.on('SIGTERM', () => void exitWithCleanup(143, 'verify-live terminated (SIGTERM) — cleanup ran'));
+process.on('unhandledRejection', (e) => {
+  const msg = e && typeof e === 'object' && 'message' in e ? String(e.message) : String(e);
+  console.error(`✗ FAIL: unhandled rejection — ${msg}`);
+  void exitWithCleanup(1, 'verify-live crashed — cleanup ran');
+});
+process.on('uncaughtException', (e) => {
+  const msg = e && typeof e === 'object' && 'message' in e ? String(e.message) : String(e);
+  console.error(`✗ FAIL: uncaught exception — ${msg}`);
+  void exitWithCleanup(1, 'verify-live crashed — cleanup ran');
+});
 
-console.log(`\n[1] Seeding owner recipe → ${APP}`);
-await db.collection('recipes').doc(seededRecipeId).set(recipe);
-ok(`recipe ${seededRecipeId} seeded (owner ${OWNER_UID})`);
+// ── Main flow (try/finally so cleanup ALWAYS runs) ──────────────────────────
+let runExit = 0;
+try {
+  // Pre-run sweep FIRST — before seeding anything of our own.
+  await sweepStaleProbes();
 
-// ── 2. Mint a real owner ID token ───────────────────────────────────────────
-console.log(`\n[2] Minting owner ID token (custom token → identitytoolkit)`);
-const customToken = await getAuth(app).createCustomToken(OWNER_UID);
-const exchange = await fetchJson(
-  `https://identitytoolkit.googleapis.com/v1/accounts:signInWithCustomToken?key=${API_KEY}`,
-  {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ token: customToken, returnSecureToken: true }),
-  },
-);
-const idToken = exchange.body?.idToken;
-if (!idToken) {
-  console.error(`✗ FAIL: could not exchange owner token (${exchange.status}: ${JSON.stringify(exchange.body).slice(0, 200)})`);
-  await cleanup();
-  process.exit(1);
-}
-ok('owner ID token minted');
-const AUTH = { authorization: `Bearer ${idToken}`, 'content-type': 'application/json' };
+  // ── 1. Seed an owner recipe ─────────────────────────────────────────────
+  const t = Date.now();
+  seededRecipeId = `verify-live-${t}`;
+  const recipe = {
+    id: seededRecipeId,
+    userId: OWNER_UID,
+    title: 'Verify Live Chicken Rice',
+    description: 'One-pan dinner used by npm run verify:live',
+    servings: 2,
+    estimatedPrepMinutes: 5,
+    estimatedCookMinutes: 15,
+    totalMinutes: 20,
+    ingredients: [
+      { id: 'i1', name: 'chicken thighs', quantity: 4, unit: 'pieces', optional: false },
+      { id: 'i2', name: 'rice', quantity: 1, unit: 'cup', optional: false },
+    ],
+    equipment: ['pan', 'knife'],
+    prepSteps: [
+      { id: 'p1', stepNumber: 1, instruction: 'Dice the onion', spokenInstruction: 'Dice the onion', estimatedSeconds: 120, ingredientsUsed: ['onion'], equipmentUsed: ['knife'] },
+      { id: 'p2', stepNumber: 2, instruction: 'Heat the oil on high', spokenInstruction: 'Heat the oil on high', estimatedSeconds: 60, ingredientsUsed: [], equipmentUsed: ['pan'], safetyNote: 'Hot oil — keep children away' },
+    ],
+    cookingSteps: [
+      { id: 'c1', stepNumber: 1, instruction: 'Sear the chicken 4 minutes', spokenInstruction: 'Sear the chicken four minutes', estimatedSeconds: 240, timerSeconds: 240, ingredientsUsed: ['chicken thighs'], equipmentUsed: ['pan'] },
+    ],
+    dietaryTags: [],
+    allergens: [],
+    safetyNotes: ['Hot oil — keep children away'],
+    generatedAt: t,
+    updatedAt: t,
+  };
 
-// ── 3. Guided flow through the deployed /api/cook ───────────────────────────
-console.log(`\n[3] Driving guided cooking via ${APP}/api/cook`);
-const cook = (action, extra = {}) =>
-  fetchJson(`${APP}/api/cook`, { method: 'POST', headers: AUTH, body: JSON.stringify({ action, ...extra }) });
+  console.log(`\n[1] Seeding owner recipe → ${APP}`);
+  await db.collection('recipes').doc(seededRecipeId).set(recipe);
+  ok(`recipe ${seededRecipeId} seeded (owner ${OWNER_UID})`);
 
-const launch = await cook('launch', { recipeId: seededRecipeId });
-if (launch.status !== 200 || !launch.body?.success) {
-  fail(`launch → ${launch.status} ${JSON.stringify(launch.body?.error ?? launch.body).slice(0, 200)}`);
-} else {
-  ok(`launch → ${launch.body.data.phase} (“${(launch.body.data.instruction ?? '').slice(0, 40)}”)`);
-  sid = launch.body.data.sessionId;
-  launch.body.data.phase === 'PREP_GUIDANCE' && launch.body.data.stepNumber === 1
-    ? ok('starts at prep step 1')
-    : fail(`expected PREP_GUIDANCE step 1, got ${launch.body.data.phase} step ${launch.body.data.stepNumber}`);
-}
-
-// Step 1 → step 2 (the safety-note step).
-const done1 = await cook('done', { sessionId: sid });
-done1.status === 200 && done1.body?.data?.stepNumber === 2
-  ? ok('done → prep step 2')
-  : fail(`done (step 1) → ${done1.status} ${JSON.stringify(done1.body?.error ?? done1.body?.data).slice(0, 160)}`);
-
-// "done" on the note-carrying step must surface the SAFETY_WARNING gate, not complete it.
-const gated = await cook('done', { sessionId: sid });
-if (gated.status === 200 && gated.body?.data?.phase === 'SAFETY_WARNING' && gated.body?.data?.safetyGate?.note) {
-  ok(`safety gate surfaced: “${gated.body.data.safetyGate.note}” (step preserved at ${gated.body.data.stepNumber})`);
-} else {
-  fail(`expected SAFETY_WARNING gate, got ${gated.status} ${j(gated.body?.data)}`);
-}
-
-// Acknowledging the gate advances; the first cooking step auto-starts a timer.
-const ack = await cook('done', { sessionId: sid });
-if (ack.status === 200 && ack.body?.data?.phase === 'WAITING_FOR_TIMER' && ack.body?.data?.timerStarted) {
-  ok(`gate acknowledged → timer auto-started (“${ack.body.data.timerStarted.label}”)`);
-} else {
-  fail(`expected WAITING_FOR_TIMER + timer, got ${ack.status} ${j(ack.body?.data)}`);
-}
-
-// ── 4. Agent turns through the deployed /api/agent ──────────────────────────
-console.log(`\n[4] Agent turns via ${APP}/api/agent`);
-const agent = (utterance) =>
-  fetchJson(`${APP}/api/agent`, {
-    method: 'POST', headers: AUTH,
-    body: JSON.stringify({ utterance, sessionId: sid }),
-  });
-
-// Deterministic command: pantry persistence through the real tool layer.
-const pantryTurn = await agent('I always have olive oil');
-const pantryTool = pantryTurn.body?.toolCalls?.find((c) => c.tool === 'add_pantry_item');
-if (pantryTurn.status === 200 && pantryTool?.result?.success) {
-  ok(`“I always have olive oil” → add_pantry_item succeeded live`);
-  pantryItemId = pantryTool.result.data?.item?.id ?? null;
-} else {
-  fail(`pantry agent turn → ${pantryTurn.status} ${JSON.stringify(pantryTurn.body).slice(0, 200)}`);
-}
-
-// K8 confirmation: "yes" must confirm the pending pantry item (CONFIRM chain →
-// confirm_pending_pantry_items), raise its confidence to 1, and clear the
-// session's pending list — the persisted state read back from Firestore.
-const confirmTurn = await agent('yes');
-const confirmTool = confirmTurn.body?.toolCalls?.find((c) => c.tool === 'confirm_pending_pantry_items');
-if (confirmTurn.status === 200 && confirmTool?.result?.success) {
-  ok(`“yes” → confirm_pending_pantry_items succeeded live`);
-  const confirmed = confirmTool.result.data?.confirmed ?? [];
-  confirmed.some((c) => c.name === 'olive oil')
-    ? ok(`pending pantry item “olive oil” confirmed`)
-    : fail(`confirm_pending_pantry_items did not include olive oil (${JSON.stringify(confirmed).slice(0, 120)})`);
-} else {
-  fail(`confirm turn → ${confirmTurn.status} ${JSON.stringify(confirmTurn.body).slice(0, 200)}`);
-}
-
-// Persisted-state proof: the session's pending list must be empty and the
-// pantry doc must carry full confidence (the confirm contract, read back).
-if (sid) {
-  try {
-    const sessionSnap = await db.collection('cooking_sessions').doc(sid).get();
-    const pending = sessionSnap.data()?.pendingPantryItems ?? [];
-    pending.length === 0
-      ? ok('session pendingPantryItems cleared in Firestore')
-      : fail(`pendingPantryItems still has ${pending.length} item(s) after confirm`);
-  } catch (e) {
-    fail(`could not read session pending state back: ${e.message}`);
+  // ── 2. Mint a real owner ID token ───────────────────────────────────────
+  console.log(`\n[2] Minting owner ID token (custom token → identitytoolkit)`);
+  const customToken = await getAuth(app).createCustomToken(OWNER_UID);
+  const exchange = await fetchJson(
+    `https://identitytoolkit.googleapis.com/v1/accounts:signInWithCustomToken?key=${API_KEY}`,
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ token: customToken, returnSecureToken: true }),
+    },
+  );
+  const idToken = exchange.body?.idToken;
+  if (!idToken) {
+    console.error(`✗ FAIL: could not exchange owner token (${exchange.status}: ${JSON.stringify(exchange.body).slice(0, 200)})`);
+    runExit = 1;
+    throw new Error('abort — token exchange failed');
   }
-}
-if (pantryItemId) {
-  try {
-    const itemSnap = await db.collection('pantry_items').doc(pantryItemId).get();
-    const confidence = itemSnap.data()?.confidence;
-    confidence === 1
-      ? ok('pantry item confidence raised to 1 in Firestore')
-      : fail(`pantry item confidence is ${confidence} (expected 1)`);
-  } catch (e) {
-    fail(`could not read pantry item back: ${e.message}`);
-  }
-}
+  ok('owner ID token minted');
+  const AUTH = { authorization: `Bearer ${idToken}`, 'content-type': 'application/json' };
 
-// K8 pantry query: "what's in my pantry?" must route to the get_pantry tool
-// and list the just-confirmed item back (PANTRY_GET intent → tool → store).
-const queryTurn = await agent("what's in my pantry?");
-const queryTool = queryTurn.body?.toolCalls?.find((c) => c.tool === 'get_pantry');
-if (queryTurn.status === 200 && queryTool?.result?.success) {
-  ok(`"what's in my pantry?" → get_pantry succeeded live`);
-  const items = queryTool.result.data?.items ?? [];
-  items.some((i) => i.name === 'olive oil')
-    ? ok('pantry query lists the confirmed “olive oil” item')
-    : fail(`get_pantry did not list olive oil (${JSON.stringify(items.map((i) => i.name).slice(0, 5)).slice(0, 160)})`);
-} else {
-  fail(`pantry query turn → ${queryTurn.status} ${JSON.stringify(queryTurn.body).slice(0, 200)}`);
-}
+  // ── 3. Guided flow through the deployed /api/cook ───────────────────────
+  console.log(`\n[3] Driving guided cooking via ${APP}/api/cook`);
+  const cook = (action, extra = {}) =>
+    fetchJson(`${APP}/api/cook`, { method: 'POST', headers: AUTH, body: JSON.stringify({ action, ...extra }) });
 
-// K8 pantry remove: "remove olive oil from my pantry" must route to
-// remove_pantry_item (PANTRY_REMOVE intent, name resolution) — the item must
-// vanish from the store AND from the next query.
-const removeTurn = await agent('remove olive oil from my pantry');
-const removeTool = removeTurn.body?.toolCalls?.find((c) => c.tool === 'remove_pantry_item');
-if (removeTurn.status === 200 && removeTool?.result?.success) {
-  ok('“remove olive oil from my pantry” → remove_pantry_item succeeded live');
-} else {
-  fail(`pantry remove turn → ${removeTurn.status} ${JSON.stringify(removeTurn.body).slice(0, 200)}`);
-}
-if (pantryItemId) {
-  try {
-    const goneSnap = await db.collection('pantry_items').doc(pantryItemId).get();
-    !goneSnap.exists
-      ? ok('pantry item doc removed from Firestore')
-      : fail(`pantry item ${pantryItemId} still exists after remove`);
-  } catch (e) {
-    fail(`could not read pantry item after remove: ${e.message}`);
-  }
-}
-// Follow-up query proves the read path reflects the removal, not just the tool.
-const followUpTurn = await agent("what's in my pantry?");
-const followUpTool = followUpTurn.body?.toolCalls?.find((c) => c.tool === 'get_pantry');
-if (followUpTurn.status === 200 && followUpTool?.result?.success) {
-  const items = followUpTool.result.data?.items ?? [];
-  !items.some((i) => i.name === 'olive oil')
-    ? ok('follow-up pantry query no longer lists “olive oil”')
-    : fail(`get_pantry still lists olive oil after remove (${JSON.stringify(items.map((i) => i.name).slice(0, 5)).slice(0, 160)})`);
-} else {
-  fail(`follow-up pantry query → ${followUpTurn.status} ${JSON.stringify(followUpTurn.body).slice(0, 200)}`);
-}
-
-// Free-form turn: the Gemini provider must answer. A greeting is the clean
-// model-only path — food-phrase questions can be caught by the deterministic
-// ingredient extractor ("I heard: …") and never reach the model.
-if (process.env.GOOGLE_AI_API_KEY) {
-  const modelTurn = await agent('Hi there!');
-  const reply = modelTurn.body?.response ?? '';
-  const notModelPath =
-    reply.startsWith('Here is what I can do') || // HELP fallback (no provider)
-    reply.startsWith('I heard:') || // ingredient extraction, not the model
-    reply.startsWith('Sorry,'); // orchestrator honest-failure path
-  if (modelTurn.status === 200 && reply.length > 0 && !notModelPath) {
-    ok(`Gemini answered: “${reply.slice(0, 60)}…”`);
+  const launch = await cook('launch', { recipeId: seededRecipeId });
+  if (launch.status !== 200 || !launch.body?.success) {
+    fail(`launch → ${launch.status} ${JSON.stringify(launch.body?.error ?? launch.body).slice(0, 200)}`);
   } else {
-    fail(`model turn → ${modelTurn.status} ${notModelPath ? 'did not reach the provider (extractor/fallback path)' : JSON.stringify(modelTurn.body).slice(0, 200)}`);
+    ok(`launch → ${launch.body.data.phase} (“${(launch.body.data.instruction ?? '').slice(0, 40)}”)`);
+    sid = launch.body.data.sessionId;
+    launch.body.data.phase === 'PREP_GUIDANCE' && launch.body.data.stepNumber === 1
+      ? ok('starts at prep step 1')
+      : fail(`expected PREP_GUIDANCE step 1, got ${launch.body.data.phase} step ${launch.body.data.stepNumber}`);
   }
-} else {
-  skip('Gemini turn (GOOGLE_AI_API_KEY not set locally — provider check skipped, not failed)');
-}
 
-// ── 5. Result + cleanup (awaited) ───────────────────────────────────────────
-console.error(`\nRESULT: ${failures === 0 ? 'PASS' : `FAIL (${failures})`}`);
-await cleanup();
-process.exit(failures === 0 ? 0 : 1);
+  // Step 1 → step 2 (the safety-note step).
+  const done1 = await cook('done', { sessionId: sid });
+  done1.status === 200 && done1.body?.data?.stepNumber === 2
+    ? ok('done → prep step 2')
+    : fail(`done (step 1) → ${done1.status} ${JSON.stringify(done1.body?.error ?? done1.body?.data).slice(0, 160)}`);
+
+  // "done" on the note-carrying step must surface the SAFETY_WARNING gate, not complete it.
+  const gated = await cook('done', { sessionId: sid });
+  if (gated.status === 200 && gated.body?.data?.phase === 'SAFETY_WARNING' && gated.body?.data?.safetyGate?.note) {
+    ok(`safety gate surfaced: “${gated.body.data.safetyGate.note}” (step preserved at ${gated.body.data.stepNumber})`);
+  } else {
+    fail(`expected SAFETY_WARNING gate, got ${gated.status} ${j(gated.body?.data)}`);
+  }
+
+  // Acknowledging the gate advances; the first cooking step auto-starts a timer.
+  const ack = await cook('done', { sessionId: sid });
+  if (ack.status === 200 && ack.body?.data?.phase === 'WAITING_FOR_TIMER' && ack.body?.data?.timerStarted) {
+    ok(`gate acknowledged → timer auto-started (“${ack.body.data.timerStarted.label}”)`);
+  } else {
+    fail(`expected WAITING_FOR_TIMER + timer, got ${ack.status} ${j(ack.body?.data)}`);
+  }
+
+  // ── 4. Agent turns through the deployed /api/agent ──────────────────────
+  console.log(`\n[4] Agent turns via ${APP}/api/agent`);
+  const agent = (utterance) =>
+    fetchJson(`${APP}/api/agent`, {
+      method: 'POST', headers: AUTH,
+      body: JSON.stringify({ utterance, sessionId: sid }),
+    });
+
+  // Deterministic command: pantry persistence through the real tool layer.
+  const pantryTurn = await agent('I always have olive oil');
+  const pantryTool = pantryTurn.body?.toolCalls?.find((c) => c.tool === 'add_pantry_item');
+  if (pantryTurn.status === 200 && pantryTool?.result?.success) {
+    ok(`“I always have olive oil” → add_pantry_item succeeded live`);
+    pantryItemId = pantryTool.result.data?.item?.id ?? null;
+  } else {
+    fail(`pantry agent turn → ${pantryTurn.status} ${JSON.stringify(pantryTurn.body).slice(0, 200)}`);
+  }
+
+  // K8 confirmation: "yes" must confirm the pending pantry item (CONFIRM chain →
+  // confirm_pending_pantry_items), raise its confidence to 1, and clear the
+  // session's pending list — the persisted state read back from Firestore.
+  const confirmTurn = await agent('yes');
+  const confirmTool = confirmTurn.body?.toolCalls?.find((c) => c.tool === 'confirm_pending_pantry_items');
+  if (confirmTurn.status === 200 && confirmTool?.result?.success) {
+    ok(`“yes” → confirm_pending_pantry_items succeeded live`);
+    const confirmed = confirmTool.result.data?.confirmed ?? [];
+    confirmed.some((c) => c.name === 'olive oil')
+      ? ok(`pending pantry item “olive oil” confirmed`)
+      : fail(`confirm_pending_pantry_items did not include olive oil (${JSON.stringify(confirmed).slice(0, 120)})`);
+  } else {
+    fail(`confirm turn → ${confirmTurn.status} ${JSON.stringify(confirmTurn.body).slice(0, 200)}`);
+  }
+
+  // Persisted-state proof: the session's pending list must be empty and the
+  // pantry doc must carry full confidence (the confirm contract, read back).
+  if (sid) {
+    try {
+      const sessionSnap = await db.collection('cooking_sessions').doc(sid).get();
+      const pending = sessionSnap.data()?.pendingPantryItems ?? [];
+      pending.length === 0
+        ? ok('session pendingPantryItems cleared in Firestore')
+        : fail(`pendingPantryItems still has ${pending.length} item(s) after confirm`);
+    } catch (e) {
+      fail(`could not read session pending state back: ${e.message}`);
+    }
+  }
+  if (pantryItemId) {
+    try {
+      const itemSnap = await db.collection('pantry_items').doc(pantryItemId).get();
+      const confidence = itemSnap.data()?.confidence;
+      confidence === 1
+        ? ok('pantry item confidence raised to 1 in Firestore')
+        : fail(`pantry item confidence is ${confidence} (expected 1)`);
+    } catch (e) {
+      fail(`could not read pantry item back: ${e.message}`);
+    }
+  }
+
+  // K8 pantry query: "what's in my pantry?" must route to the get_pantry tool
+  // and list the just-confirmed item back (PANTRY_GET intent → tool → store).
+  const queryTurn = await agent("what's in my pantry?");
+  const queryTool = queryTurn.body?.toolCalls?.find((c) => c.tool === 'get_pantry');
+  if (queryTurn.status === 200 && queryTool?.result?.success) {
+    ok(`"what's in my pantry?" → get_pantry succeeded live`);
+    const items = queryTool.result.data?.items ?? [];
+    items.some((i) => i.name === 'olive oil')
+      ? ok('pantry query lists the confirmed “olive oil” item')
+      : fail(`get_pantry did not list olive oil (${JSON.stringify(items.map((i) => i.name).slice(0, 5)).slice(0, 160)})`);
+  } else {
+    fail(`pantry query turn → ${queryTurn.status} ${JSON.stringify(queryTurn.body).slice(0, 200)}`);
+  }
+
+  // K8 pantry remove: "remove olive oil from my pantry" must route to
+  // remove_pantry_item (PANTRY_REMOVE intent, name resolution) — the item must
+  // vanish from the store AND from the next query.
+  const removeTurn = await agent('remove olive oil from my pantry');
+  const removeTool = removeTurn.body?.toolCalls?.find((c) => c.tool === 'remove_pantry_item');
+  if (removeTurn.status === 200 && removeTool?.result?.success) {
+    ok('“remove olive oil from my pantry” → remove_pantry_item succeeded live');
+  } else {
+    fail(`pantry remove turn → ${removeTurn.status} ${JSON.stringify(removeTurn.body).slice(0, 200)}`);
+  }
+  if (pantryItemId) {
+    try {
+      const goneSnap = await db.collection('pantry_items').doc(pantryItemId).get();
+      !goneSnap.exists
+        ? ok('pantry item doc removed from Firestore')
+        : fail(`pantry item ${pantryItemId} still exists after remove`);
+    } catch (e) {
+      fail(`could not read pantry item after remove: ${e.message}`);
+    }
+  }
+  // Follow-up query proves the read path reflects the removal, not just the tool.
+  const followUpTurn = await agent("what's in my pantry?");
+  const followUpTool = followUpTurn.body?.toolCalls?.find((c) => c.tool === 'get_pantry');
+  if (followUpTurn.status === 200 && followUpTool?.result?.success) {
+    const items = followUpTool.result.data?.items ?? [];
+    !items.some((i) => i.name === 'olive oil')
+      ? ok('follow-up pantry query no longer lists “olive oil”')
+      : fail(`get_pantry still lists olive oil after remove (${JSON.stringify(items.map((i) => i.name).slice(0, 5)).slice(0, 160)})`);
+  } else {
+    fail(`follow-up pantry query → ${followUpTurn.status} ${JSON.stringify(followUpTurn.body).slice(0, 200)}`);
+  }
+
+  // Free-form turn: the Gemini provider must answer. A greeting is the clean
+  // model-only path — food-phrase questions can be caught by the deterministic
+  // ingredient extractor ("I heard: …") and never reach the model.
+  if (process.env.GOOGLE_AI_API_KEY) {
+    const modelTurn = await agent('Hi there!');
+    const reply = modelTurn.body?.response ?? '';
+    const notModelPath =
+      reply.startsWith('Here is what I can do') || // HELP fallback (no provider)
+      reply.startsWith('I heard:') || // ingredient extraction, not the model
+      reply.startsWith('Sorry,'); // orchestrator honest-failure path
+    if (modelTurn.status === 200 && reply.length > 0 && !notModelPath) {
+      ok(`Gemini answered: “${reply.slice(0, 60)}…”`);
+    } else {
+      fail(`model turn → ${modelTurn.status} ${notModelPath ? 'did not reach the provider (extractor/fallback path)' : JSON.stringify(modelTurn.body).slice(0, 200)}`);
+    }
+  } else {
+    skip('Gemini turn (GOOGLE_AI_API_KEY not set locally — provider check skipped, not failed)');
+  }
+} catch (e) {
+  // Only report if the token-exchange abort path hasn't already (that path
+  // sets runExit + throws with a specific message; everything else is a real
+  // crash the signal handlers would also catch — but the try/finally cleanup
+  // must still run, so swallow and let the RESULT line below reflect it).
+  if (!(e instanceof Error && e.message === 'abort — token exchange failed')) {
+    const msg = e && typeof e === 'object' && 'message' in e ? String(e.message) : String(e);
+    console.error(`✗ FAIL: ${msg}`);
+    runExit = 1;
+  }
+} finally {
+  // ── 5. Result + cleanup (GUARANTEED on every path) ──────────────────────
+  console.error(`\nRESULT: ${runExit === 0 && failures === 0 ? 'PASS' : `FAIL (${runExit !== 0 ? 'crash' : failures})`}`);
+  await cleanup();
+}
+process.exit(runExit === 0 && failures === 0 ? 0 : 1);
