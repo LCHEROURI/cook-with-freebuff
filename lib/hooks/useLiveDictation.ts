@@ -9,7 +9,9 @@
 // into text that lands in the starter input. Key differences:
 //   - NO tools are passed in setup — the model cannot act on the utterance
 //     (no pantry writes, no session creation) before the user reviews it.
-//   - TEXT reply modality — no audio reply is needed, so none is generated.
+//   - AUDIO reply modality — the constrained Live endpoint REJECTS TEXT
+//     modality (CLOSED(1007), proven live); the model's audio reply is
+//     irrelevant because the session disconnects on the final transcript.
 //   - Walkie-talkie + auto-stop: tap → speak → the FINAL input transcription
 //     is handed to `onFinal`, the session disconnects, and the caller fills
 //     the prompt for review. Tap again mid-listen to cancel (barge-in).
@@ -57,6 +59,9 @@ export function useLiveDictation(options: UseLiveDictationOptions = {}) {
 
   const clientRef = useRef<GeminiLiveClient | null>(null);
   const quietTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // True when WE close the session (barge-in, final transcript, unmount) — an
+  // unexpected server close must surface as an error, not silence.
+  const intentionalRef = useRef(false);
   const optionsRef = useRef(options);
   optionsRef.current = options;
 
@@ -69,6 +74,7 @@ export function useLiveDictation(options: UseLiveDictationOptions = {}) {
 
   const stop = useCallback(() => {
     clearQuietTimer();
+    intentionalRef.current = true;
     clientRef.current?.disconnect();
     clientRef.current = null;
     setStatus('IDLE');
@@ -88,6 +94,9 @@ export function useLiveDictation(options: UseLiveDictationOptions = {}) {
       return;
     }
 
+    // A fresh session starts with an EMPTY intentional flag — an unexpected
+    // server close in THIS session must surface as an error.
+    intentionalRef.current = false;
     const o = optionsRef.current;
     const client = new GeminiLiveClient({
       tokenUrl: o.tokenUrl ?? DEFAULT_TOKEN_URL,
@@ -96,7 +105,10 @@ export function useLiveDictation(options: UseLiveDictationOptions = {}) {
       // No tools: the model can never act on the spoken prompt — the user
       // reviews the transcribed text in the input before anything happens.
       tools: [],
-      responseModalities: ['TEXT'],
+      // AUDIO, not TEXT: the constrained Live endpoint rejects TEXT modality
+      // (CLOSED(1007), proven against the live API) — the audio reply is
+      // never used because the session closes on the final transcript.
+      responseModalities: ['AUDIO'],
     });
     clientRef.current = client;
 
@@ -113,7 +125,16 @@ export function useLiveDictation(options: UseLiveDictationOptions = {}) {
         clearQuietTimer();
         if (clientRef.current === client) {
           clientRef.current = null;
-          setStatus('IDLE');
+          if (intentionalRef.current) {
+            // We closed it (barge-in / final transcript / unmount) — clean idle.
+            intentionalRef.current = false;
+            setStatus('IDLE');
+          } else {
+            // The server dropped the session (e.g. a rejected setup) — never
+            // swallow that: the user must know they can type instead.
+            setStatus('ERROR');
+            setError('The voice session could not start — you can type your ingredients instead.');
+          }
         }
       }
     });
@@ -122,10 +143,11 @@ export function useLiveDictation(options: UseLiveDictationOptions = {}) {
       // stream in this API too, but the starter waits for the finished one.
       if (t.type !== 'final' || !t.text.trim()) return;
       clearQuietTimer();
+      intentionalRef.current = true;
       clientRef.current = null;
       optionsRef.current.onFinal?.(t.text.trim());
       // The dictation is one utterance per tap — close the session so the
-      // model's (unneeded) reply never streams or lingers.
+      // model's (unneeded) audio reply never streams or lingers.
       client.disconnect();
       setStatus('IDLE');
     });
@@ -156,6 +178,7 @@ export function useLiveDictation(options: UseLiveDictationOptions = {}) {
   useEffect(
     () => () => {
       clearQuietTimer();
+      intentionalRef.current = true;
       clientRef.current?.disconnect();
       clientRef.current = null;
     },

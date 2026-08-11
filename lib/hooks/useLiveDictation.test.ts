@@ -94,7 +94,7 @@ describe('useLiveDictation', () => {
     expect(result.current.available).toBe(false);
   });
 
-  it('toggle creates a TOOL-FREE dictation session (no tools, TEXT modality, dictation instruction)', async () => {
+  it('toggle creates a TOOL-FREE dictation session (no tools, AUDIO modality, dictation instruction)', async () => {
     const { result } = renderHook(() => useLiveDictation({ getToken: () => 'bearer' }));
     await act(async () => {
       await result.current.toggle();
@@ -108,7 +108,10 @@ describe('useLiveDictation', () => {
     // The cardinal rule: the dictation session exposes NO tools, so the model
     // can never act on a spoken prompt before the user reviews it.
     expect(Array.isArray(opts.tools) ? opts.tools.length : (opts.tools as readonly unknown[])?.length ?? 0).toBe(0);
-    expect(opts.responseModalities).toEqual(['TEXT']);
+    // AUDIO, not TEXT — the constrained Live endpoint rejects TEXT modality
+    // (CLOSED(1007)); the audio reply is unused because the session closes on
+    // the final transcript.
+    expect(opts.responseModalities).toEqual(['AUDIO']);
   });
 
   it('goes live on CONNECTED and starts mic capture', async () => {
@@ -161,6 +164,33 @@ describe('useLiveDictation', () => {
     expect(lastClient!.disconnectCalls).toBe(1);
     expect(onFinal).not.toHaveBeenCalled();
     expect(result.current.listening).toBe(false);
+    expect(result.current.error).toBeNull(); // barge-in close is a clean idle
+  });
+
+  it('an UNEXPECTED server close surfaces an honest error (never a silent idle)', async () => {
+    const { result } = renderHook(() => useLiveDictation());
+    await act(async () => {
+      await result.current.toggle();
+    });
+    // The server drops the session (e.g. a rejected setup) — we did not close it.
+    await act(async () => {
+      lastClient!.emit('status', 'DISCONNECTED');
+    });
+    expect(result.current.listening).toBe(false);
+    expect(result.current.error).toContain('type your ingredients');
+  });
+
+  it('a NEW session is not poisoned by a previous barge-in flag', async () => {
+    const { result } = renderHook(() => useLiveDictation());
+    await act(async () => {
+      await result.current.toggle();
+      await result.current.toggle(); // barge-in: intentional close
+    });
+    await act(async () => {
+      await result.current.toggle(); // fresh session
+      lastClient!.emit('status', 'DISCONNECTED'); // server drops IT unexpectedly
+    });
+    expect(result.current.error).toContain('type your ingredients');
   });
 
   it('maps a microphone error to a friendly permission message', async () => {

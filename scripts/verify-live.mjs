@@ -505,6 +505,57 @@ try {
       : fail(`constraints view: missing “${marker}” in the driver log`);
   }
 
+  // ── 3e. Live voice driver: starter DICTATION mic + active-screen mic ──────
+  // The committed driver (scripts/drive-live-voice.mjs) proves the whole
+  // first-party voice surface on the DEPLOYED app: it mints its own owner
+  // session, taps the STARTER dictation mic with real synthesized speech and
+  // asserts the tool-free session's final transcription fills the prompt,
+  // then launches a probe session and proves the ACTIVE-screen mic handshake
+  // + spoken replies render. It sweeps its own probes (the `verify-live-voice-`
+  // prefix, inside this script's sweep namespace) and deletes them on every
+  // exit path — the owner's data ends exactly as it started. Same
+  // retry-once-after-30s backoff as [3d] for cold-serverless transients.
+  console.log(`\n[3e] Live voice driver: dictation + active-screen mics (${APP})`);
+  const runVoiceDriver = (attempt) =>
+    spawnSync('node', ['scripts/drive-live-voice.mjs', '--app', APP, '--out', `/tmp/verify-live-voice-${t}-${attempt}`], {
+      encoding: 'utf8',
+      timeout: 420_000, // two Chrome launches + two Gemini Live sessions
+      env: process.env,
+    });
+  let voiceDriver = runVoiceDriver(1);
+  let voiceLog = `${voiceDriver.stdout ?? ''}\n${voiceDriver.stderr ?? ''}`;
+  if (!(voiceDriver.status === 0 && /RESULT: PASS/.test(voiceLog))) {
+    note('voice driver first attempt did not pass — waiting 30s and retrying once (transient backoff)');
+    await sleep(30_000);
+    voiceDriver = runVoiceDriver(2);
+    voiceLog = `${voiceDriver.stdout ?? ''}\n${voiceDriver.stderr ?? ''}`;
+  }
+  if (voiceDriver.status === 0 && /RESULT: PASS/.test(voiceLog)) {
+    ok('live voice driver → RESULT: PASS (dictation + active-screen mics)');
+  } else if (voiceDriver.error?.code === 'ETIMEDOUT') {
+    fail('live voice driver timed out after 420s (both attempts)');
+  } else {
+    const tail = voiceLog.split('\n').filter(Boolean).slice(-6).join('\n');
+    fail(`live voice driver → exit ${voiceDriver.status ?? 'crash'}${voiceDriver.error ? ` (${voiceDriver.error.message})` : ''}. Tail: ${tail}`);
+  }
+
+  // The driver is not a black box — verify:live must SEE the key contracts in
+  // its log: the tool-free dictation setup, the transcription filling the
+  // input, and the active-screen handshake + rendered replies. A future edit
+  // that drops any of these (while still exiting 0 with RESULT: PASS) fails
+  // HERE, at the gate that runs after every deploy.
+  for (const marker of [
+    'dictation mic tapped',
+    'tool-free dictation setup',
+    'spoken prompt filled the input',
+    'LISTENING state: mic aria-pressed',
+    'spoken reply rendered',
+  ]) {
+    voiceLog.includes(marker)
+      ? ok(`voice driver: ${marker}`)
+      : fail(`voice driver: missing “${marker}” in the driver log`);
+  }
+
   // The [4] pantry flow rides on an ACTIVE session — every agent turn carries
   // `sessionId: sid`. The settle above deleted the probe sessions so the UI
   // driver saw the clean starter; re-establish `sid` by launching the seeded
