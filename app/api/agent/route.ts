@@ -14,7 +14,8 @@ import { defaultToolRegistry } from '@/lib/server/tools';
 import { buildProductionContext } from '@/lib/server/stores';
 import { getConversationAgent } from '@/lib/ai/provider';
 import { ConversationOrchestrator } from '@/lib/agent';
-import { logError } from '@/lib/server/logger';
+import { logError, logInfo } from '@/lib/server/logger';
+import { generateCorrelationId, runWithContext } from '@/lib/server/requestContext';
 
 export async function POST(req: Request) {
   const auth = req.headers.get('authorization');
@@ -47,27 +48,44 @@ export async function POST(req: Request) {
   }
 
   const sessionId = typeof parsed.sessionId === 'string' ? parsed.sessionId : undefined;
-  const correlationId = typeof parsed.correlationId === 'string' ? parsed.correlationId : undefined;
-  const ctx = buildProductionContext(userId, correlationId);
-  const provider = getConversationAgent();
+  const correlationId =
+    (typeof parsed.correlationId === 'string' ? parsed.correlationId : undefined) ?? generateCorrelationId();
 
-  const orchestrator = new ConversationOrchestrator({ registry: defaultToolRegistry, context: ctx, provider });
-  let turn;
-  try {
-    turn = await orchestrator.process(parsed.utterance, sessionId);
-  } catch (e) {
-    // Observability (K9 Part C): an unexpected orchestrator failure is logged
-    // structurally with the correlation id, never as a raw stack to the user.
-    logError('api.agent.error', {
-      userId,
-      correlationId,
-      sessionId,
-      message: e instanceof Error ? e.message.slice(0, 300) : String(e).slice(0, 300),
-    });
-    return NextResponse.json(
-      { utterance: parsed.utterance, response: 'I had trouble with that. Please try again.', toolCalls: [], status: 'ERROR' },
-    );
-  }
+  const startedAt = Date.now();
+  logInfo('api.agent.request', {
+    correlationId,
+    userId: userId.slice(0, 10),
+    sessionId: sessionId?.slice(0, 10),
+    utteranceLen: parsed.utterance.length,
+  });
 
-  return NextResponse.json(turn);
+  return runWithContext(correlationId, async () => {
+    const ctx = buildProductionContext(userId, correlationId);
+    const provider = getConversationAgent();
+
+    const orchestrator = new ConversationOrchestrator({ registry: defaultToolRegistry, context: ctx, provider });
+    let turn;
+    try {
+      turn = await orchestrator.process(parsed.utterance as string, sessionId);
+    } catch (e) {
+      logError('api.agent.error', {
+        correlationId,
+        userId: userId.slice(0, 10),
+        sessionId: sessionId?.slice(0, 10),
+        message: e instanceof Error ? e.message.slice(0, 300) : String(e).slice(0, 300),
+        latencyMs: Date.now() - startedAt,
+      });
+      return NextResponse.json(
+        { utterance: parsed.utterance, response: 'I had trouble with that. Please try again.', toolCalls: [], status: 'ERROR' },
+      );
+    } finally {
+      logInfo('api.agent.response', {
+        correlationId,
+        latencyMs: Date.now() - startedAt,
+        status: (turn as { status?: string } | undefined)?.status ?? 'ERROR',
+      });
+    }
+
+    return NextResponse.json(turn);
+  });
 }

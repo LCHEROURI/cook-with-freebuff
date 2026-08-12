@@ -19,7 +19,8 @@ import { generateRecipeTool } from '@/lib/server/tools/recipe-tools';
 import { extractIngredients, extractRecipePreferences } from '@/lib/agent/extract';
 import { validateRecipe } from '@/lib/recipe/validate';
 import type { Recipe } from '@/lib/domain/types';
-import { logError } from '@/lib/server/logger';
+import { logError, logInfo } from '@/lib/server/logger';
+import { generateCorrelationId, runWithContext } from '@/lib/server/requestContext';
 
 const ACTIONS = [
   'launch', 'status', 'done', 'repeat', 'back', 'pause', 'resume', 'timers',
@@ -342,20 +343,41 @@ export async function POST(req: Request) {
     );
   }
 
-  try {
-    return await handle(userId, body);
-  } catch (e) {
-    const err = e as { code?: unknown; message?: unknown; recoverable?: unknown };
-    const code = typeof err.code === 'string' ? err.code : 'INTERNAL_ERROR';
-    const message = typeof err.message === 'string' ? err.message : 'Guided cooking request failed';
-    const recoverable = typeof err.recoverable === 'boolean' ? err.recoverable : true;
-    logError('api.cook.error', {
-      userId,
-      code,
-      message: message.slice(0, 300),
-    });
-    return NextResponse.json({ success: false, error: { code, message, recoverable } }, { status: 400 });
-  }
+  // Auto-generate correlation ID when the client doesn't supply one.
+  // This threads the same id through every logger call + tool log inside this request.
+  const rawCid = (body as Record<string, unknown> | null)?.correlationId;
+  const correlationId: string = (typeof rawCid === 'string' ? rawCid : undefined) ?? generateCorrelationId();
+
+  const startedAt = Date.now();
+  logInfo('api.cook.request', {
+    correlationId,
+    userId: userId.slice(0, 10),
+    action: String((body as Record<string, unknown>)?.action ?? 'status'),
+  });
+
+  return runWithContext(correlationId, async () => {
+    try {
+      return await handle(userId, body);
+    } catch (e) {
+      const err = e as { code?: unknown; message?: unknown; recoverable?: unknown };
+      const code: string = typeof err.code === 'string' ? err.code : 'INTERNAL_ERROR';
+      const msg: string = typeof err.message === 'string' ? err.message : 'Guided cooking request failed';
+      const recoverable = typeof err.recoverable === 'boolean' ? err.recoverable : true;
+      logError('api.cook.error', {
+        correlationId,
+        userId: userId.slice(0, 10),
+        code,
+        message: msg.slice(0, 300),
+        latencyMs: Date.now() - startedAt,
+      });
+      return NextResponse.json({ success: false, error: { code, message: msg, recoverable } }, { status: 400 });
+    } finally {
+      logInfo('api.cook.response', {
+        correlationId,
+        latencyMs: Date.now() - startedAt,
+      });
+    }
+  });
 }
 
 export async function GET(req: Request) {

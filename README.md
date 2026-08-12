@@ -218,6 +218,41 @@ See [`DEPLOYMENT.md`](./DEPLOYMENT.md) for the full operational story.
 - [x] Session events logged: `INGREDIENT_ADDED` / `INGREDIENT_REMOVED` / `INGREDIENT_CORRECTED` / `PANTRY_ITEM_CONFIRMED`
 - [x] 30 new tests (pantry service, pantry tools, commands, orchestrator flows, guide-service consumption, Gemini declarations) — 284 total green + production build passes
 
+## K9 — Camera readiness, security, observability, QA & production release
+
+### Part A — Camera architecture (provider interfaces)
+- [x] `VisualIngredientProvider` + `BarcodeProvider` interfaces (`lib/vision/types.ts`) — recognition results are confirmed before becoming trusted pantry state
+- [x] Gemini vision implementation (`lib/ai/gemini-vision.ts`) + `/api/vision/scan` route — snap a photo, identify ingredients, fill the starter
+
+### Part B — Security review
+- [x] Firestore rules default-deny with `auth.uid == userId` on every collection; union ruleset shared across both apps
+- [x] Object-level authorization: every API route resolves userId from the verified Bearer token, never from the request body
+- [x] Server-only secrets (Gemini key, service account) never in client bundles
+
+### Part C — Observability
+- [x] Structured JSON logging (`lib/server/logger.ts`) — one event per line, info/stdout vs warn-error/stderr split, GCP/Vercel native ingestion
+- [x] Correlation IDs (`lib/server/requestContext.ts`) — AsyncLocalStorage threads one id through voice → agent → tool → DB → response; auto-generated when the client omits it
+- [x] Request/response logging on `/api/cook`, `/api/agent`, `/api/tools` (latency + status + correlationId)
+- [x] `agent_tool_logs` capture sanitized args + latency + result per tool call, correlationId-keyed
+
+### Part D — Automated testing
+- [x] Unit: schemas, state machine, extraction, validation, substitutions, timers
+- [x] Integration: generate→validate, session lifecycle, pause→resume, substitution→resume, reconnect→recover
+- [x] E2E drivers (`scripts/drive-*.mjs`): home button, starter prefs, live voice, UI skin — wired into verify:live
+
+### Part E — Voice QA
+- [x] Realtime voice client (`lib/voice/gemini-live.ts`) + dictation hook, live driver, interruption/barge-in, LISTENING/THINKING/SPEAKING indicators
+- [x] Phase C continuous-voice contract locked (two input transcriptions) in CI
+
+### Part F — PWA / mobile QA
+- [x] Installable PWA (`manifest.json` + `sw.js`), standalone display, app-shell offline caching, large touch targets
+
+### Part G — Documentation
+- [x] README, ARCHITECTURE.md, DATA_MODEL.md, AGENT_TOOLS.md, STATE_MACHINE.md, VOICE_ARCHITECTURE.md, SECURITY.md, TESTING.md, DEPLOYMENT.md
+
+### Part H — Production readiness
+- [x] Build, tests, env config, Firestore indexes + rules, auth flows, secrets, reconnection, recovery, timers, validation, substitution, accessibility, logging, error handling — all verified
+
 ## K10 — Leftovers, grocery list & expiration awareness
 
 ### Leftovers tracking

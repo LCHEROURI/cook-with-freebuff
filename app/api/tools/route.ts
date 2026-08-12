@@ -12,6 +12,8 @@ import { NextResponse } from 'next/server';
 import { resolveUserId } from '@/lib/server/admin';
 import { defaultToolRegistry, executeTool } from '@/lib/server/tools';
 import { buildProductionContext } from '@/lib/server/stores';
+import { logInfo } from '@/lib/server/logger';
+import { generateCorrelationId, runWithContext } from '@/lib/server/requestContext';
 
 const TOOL_BODY_SCHEMA = {
   tool: (v: unknown): v is string => typeof v === 'string' && v.length > 0,
@@ -48,15 +50,34 @@ export async function POST(req: Request) {
     );
   }
 
-  const correlationId = typeof parsed.correlationId === 'string' ? parsed.correlationId : undefined;
-  const ctx = buildProductionContext(userId, correlationId);
+  const rawCid = parsed.correlationId;
+  const correlationId: string = (typeof rawCid === 'string' ? rawCid : undefined) ?? generateCorrelationId();
+  const toolName: string = parsed.tool as string;
 
-  const result = await executeTool(
-    defaultToolRegistry,
-    ctx,
-    parsed.tool,
-    parsed.arguments ?? {},
-  );
+  const startedAt = Date.now();
+  logInfo('api.tools.request', {
+    correlationId,
+    userId: userId.slice(0, 10),
+    tool: toolName,
+  });
 
-  return NextResponse.json(result, { status: result.success ? 200 : 400 });
+  return runWithContext(correlationId, async () => {
+    const ctx = buildProductionContext(userId, correlationId);
+
+    const result = await executeTool(
+      defaultToolRegistry,
+      ctx,
+      toolName,
+      parsed.arguments ?? {},
+    );
+
+    logInfo('api.tools.response', {
+      correlationId,
+      tool: toolName,
+      success: result.success,
+      latencyMs: Date.now() - startedAt,
+    });
+
+    return NextResponse.json(result, { status: result.success ? 200 : 400 });
+  });
 }
