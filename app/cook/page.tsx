@@ -231,14 +231,18 @@ export default function CookPage() {
   }, [voiceInput.listening, voice.setStatus]);
 
   // Live-mode caption: no interim transcripts come from the Live API, so the
-  // caption reflects the honest capture/thinking state instead.
+  // caption reflects the honest capture/thinking state instead. When the
+  // watchdog fires (listening but nothing heard for a while), the caption
+  // says so instead of a frozen "Listening…" that looks stuck.
   const liveCaption =
     live.mode === 'live'
-      ? live.status === 'LISTENING'
-        ? 'Listening…'
-        : live.status === 'THINKING'
-          ? 'One moment…'
-          : ''
+      ? live.awaiting
+        ? 'Say something, or tap to stop'
+        : live.status === 'LISTENING'
+          ? 'Listening…'
+          : live.status === 'THINKING'
+            ? 'One moment…'
+            : ''
       : '';
   const liveVoiceStatus = live.mode !== 'off' ? (live.status === 'IDLE' ? 'LISTENING' : live.status) : voice.status;
 

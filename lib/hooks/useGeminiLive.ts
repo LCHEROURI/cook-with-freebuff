@@ -35,7 +35,16 @@ export interface UseGeminiLiveOptions {
   toolsEndpoint?: string;
   /** Session context embedded in the Live system instruction (like the orchestrator's). */
   systemContext?: { currentPhase?: string; currentStep?: string; activeTimerIds?: string[] };
+  /**
+   * Watchdog: after this long of silence while listening (ms), surface the
+   * honest "say something or tap to stop" state instead of a frozen
+   * "Listening…". Any activity (a spoken turn, a reply, a tool call, a tap)
+   * resets it. Default 20000.
+   */
+  silentThresholdMs?: number;
 }
+
+const DEFAULT_SILENT_THRESHOLD_MS = 20000;
 
 interface PendingTurn {
   /** Index into the turns array — matching by text would break on repeats ("done" twice). */
@@ -61,6 +70,11 @@ export function useGeminiLive(opts: UseGeminiLiveOptions = {}) {
   const [status, setStatus] = useState<LiveStatus>('IDLE');
   const [error, setError] = useState<string | null>(null);
   const [turns, setTurns] = useState<AgentTurn[]>([]);
+  // Watchdog: true while the session is live and listening but nothing has
+  // been heard for silentThresholdMs — the caption swaps from the frozen
+  // "Listening…" to an honest "say something, or tap to stop".
+  const [awaiting, setAwaiting] = useState(false);
+  const lastActivityRef = useRef(0);
 
   const clientRef = useRef<GeminiLiveClient | null>(null);
   const pendingRef = useRef<PendingTurn | null>(null);
@@ -190,6 +204,13 @@ export function useGeminiLive(opts: UseGeminiLiveOptions = {}) {
     setError(null);
   }, []);
 
+  // Mark activity (a spoken turn, a reply, a tool call, a tap) — resets the
+  // silence watchdog so the awaiting state only appears after REAL quiet.
+  const markActivity = useCallback(() => {
+    lastActivityRef.current = Date.now();
+    setAwaiting(false);
+  }, []);
+
   const toggle = useCallback(async () => {
     setError(null);
     if (mode !== 'off') {
@@ -204,6 +225,7 @@ export function useGeminiLive(opts: UseGeminiLiveOptions = {}) {
 
     setMode('connecting');
     setStatus('LISTENING');
+    markActivity();
 
     const o = optsRef.current;
     const client = new GeminiLiveClient({
@@ -218,6 +240,7 @@ export function useGeminiLive(opts: UseGeminiLiveOptions = {}) {
       if (s === 'CONNECTED') {
         setMode('live');
         setStatus('LISTENING');
+        markActivity();
         void client.startListening();
       } else if (s === 'ERROR') {
         setMode('off');
@@ -229,18 +252,26 @@ export function useGeminiLive(opts: UseGeminiLiveOptions = {}) {
       }
     });
     client.on('transcript', (t) => {
-      if (t.type === 'final' && t.text.trim()) beginTurn(t.text.trim());
+      if (t.type === 'final' && t.text.trim()) {
+        markActivity();
+        beginTurn(t.text.trim());
+      }
     });
     client.on('agentSpeech', (text) => {
-      if (text.trim()) appendReply(text.trim());
+      if (text.trim()) {
+        markActivity();
+        appendReply(text.trim());
+      }
     });
     client.on('turn', (t) => {
       if (t.kind === 'end') {
+        markActivity();
         finalize();
         setStatus('LISTENING');
       }
     });
     client.on('toolcall', ({ functionCalls }) => {
+      markActivity();
       void executeToolCalls(functionCalls);
     });
     client.on('error', (e) => {
@@ -249,7 +280,7 @@ export function useGeminiLive(opts: UseGeminiLiveOptions = {}) {
     });
 
     void client.connect();
-  }, [available, mode, stop, beginTurn, appendReply, executeToolCalls, finalize]);
+  }, [available, mode, stop, beginTurn, appendReply, executeToolCalls, finalize, markActivity]);
 
   const sendText = useCallback(
     (text: string) => {
@@ -267,12 +298,29 @@ export function useGeminiLive(opts: UseGeminiLiveOptions = {}) {
 
   const clearError = useCallback(() => setError(null), []);
 
+  // Watchdog: poll while the session is live; if the mic is listening and
+  // nothing happened for silentThresholdMs, surface the awaiting state.
+  useEffect(() => {
+    if (mode !== 'live') {
+      setAwaiting(false);
+      return;
+    }
+    const threshold = optsRef.current.silentThresholdMs ?? DEFAULT_SILENT_THRESHOLD_MS;
+    const id = setInterval(() => {
+      if (status === 'LISTENING' && Date.now() - lastActivityRef.current >= threshold) {
+        setAwaiting(true);
+      }
+    }, 1000);
+    return () => clearInterval(id);
+  }, [mode, status]);
+
   return {
     available,
     mode,
     status,
     error,
     turns,
+    awaiting,
     toggle,
     stop,
     sendText,

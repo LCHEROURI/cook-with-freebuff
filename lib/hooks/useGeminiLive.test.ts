@@ -273,4 +273,72 @@ describe('useGeminiLive', () => {
     });
     expect(result.current.status).toBe('LISTENING');
   });
+
+  it('watchdog: awaiting turns on after silence while listening and clears on activity', async () => {
+    vi.useFakeTimers();
+    try {
+      const { result } = renderHook(() => useGeminiLive({ silentThresholdMs: 5000 }));
+      await act(async () => {
+        await result.current.toggle();
+        lastClient!.emit('status', 'CONNECTED');
+      });
+      expect(result.current.awaiting).toBe(false);
+
+      // 4s of silence: still under the 5s threshold.
+      await act(async () => {
+        vi.advanceTimersByTime(4000);
+      });
+      expect(result.current.awaiting).toBe(false);
+
+      // Cross the threshold: the honest state appears instead of a frozen mic.
+      await act(async () => {
+        vi.advanceTimersByTime(2000);
+      });
+      expect(result.current.awaiting).toBe(true);
+
+      // The user speaks: activity clears it. (Transcript → THINKING, so the
+      // mic is not "silent-listening" during the model's turn.)
+      await act(async () => {
+        lastClient!.emit('transcript', { type: 'final', text: 'set a timer' });
+        vi.advanceTimersByTime(1000);
+      });
+      expect(result.current.awaiting).toBe(false);
+
+      // The turn completes and the mic is back to listening… then silence
+      // brings the awaiting state back.
+      await act(async () => {
+        lastClient!.emit('turn', { kind: 'end' });
+      });
+      await act(async () => {
+        vi.advanceTimersByTime(6000);
+      });
+      expect(result.current.status).toBe('LISTENING');
+      expect(result.current.awaiting).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('watchdog: awaiting never fires while the model is replying (SPEAKING)', async () => {
+    vi.useFakeTimers();
+    try {
+      const { result } = renderHook(() => useGeminiLive({ silentThresholdMs: 5000 }));
+      await act(async () => {
+        await result.current.toggle();
+        lastClient!.emit('status', 'CONNECTED');
+        lastClient!.emit('transcript', { type: 'final', text: 'repeat the step' });
+        lastClient!.emit('agentSpeech', 'The next step is…');
+      });
+      expect(result.current.status).toBe('SPEAKING');
+      // A long pause while SPEAKING (model audio still streaming) must NOT
+      // surface the awaiting state — the session is not frozen, the mic is
+      // muted by design until the reply drains.
+      await act(async () => {
+        vi.advanceTimersByTime(20000);
+      });
+      expect(result.current.awaiting).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
