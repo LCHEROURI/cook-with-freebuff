@@ -5,6 +5,7 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
+    "deploy:apphosting": "firebase deploy --only apphosting",
     "start": "next start",
     "lint": "next lint",
     "typecheck": "tsc --noEmit",

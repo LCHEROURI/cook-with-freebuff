@@ -12,7 +12,7 @@ Voice-first / screen-light intelligent cooking companion.
 | AI | Provider boundary (Gemini ready, swappable) |
 | Validation | Zod (runtime input/output validation) |
 | Tests | Vitest |
-| Hosting | Vercel (or Cloud Run — Firebase Admin compatible) |
+| Hosting | Vercel + Firebase App Hosting (Cloud Run, SSR) |
 
 ## Architecture
 
@@ -283,10 +283,14 @@ npm test
 # Production build
 npm run build
 
+# Deploy to Firebase App Hosting (Cloud Run SSR, git push → deploy)
+npm run deploy:apphosting
+
 # End-to-end verification of the DEPLOYED app (seed recipe + owner token +
 # guided flow + safety gate + timer + Gemini turn, with cleanup)
 npm run verify:live
 # → https://cook-with-freebuff.vercel.app (override: npm run verify:live -- --app URL)
+# → https://cook-with-freebuff--portfolio-app-freebuff2.us-central1.hosted.app (Firebase App Hosting)
 
 # Same check against a LOCAL dev server — boots `next dev` on port 3100,
 # warms the routes, runs the full check, and tears the server down, all in

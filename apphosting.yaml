@@ -1,0 +1,61 @@
+# ── Cloud Run service config ──────────────────────────────────────────────
+runConfig:
+  cpu: 1
+  memoryMiB: 512
+  minInstances: 0
+  maxInstances: 10
+  concurrency: 80
+
+# ── Environment variables ─────────────────────────────────────────────────
+env:
+  # Firebase client config (safe to expose, available at build + runtime)
+  - variable: NEXT_PUBLIC_FIREBASE_API_KEY
+    value: AIzaSyDwSkl-FVO53Vuzeoo3ZjtWhtJumnjtQiU
+    availability:
+      - BUILD
+      - RUNTIME
+  - variable: NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN
+    value: portfolio-app-freebuff2.firebaseapp.com
+    availability:
+      - BUILD
+      - RUNTIME
+  - variable: NEXT_PUBLIC_FIREBASE_PROJECT_ID
+    value: portfolio-app-freebuff2
+    availability:
+      - BUILD
+      - RUNTIME
+  - variable: NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET
+    value: portfolio-app-freebuff2.appspot.com
+    availability:
+      - BUILD
+      - RUNTIME
+  - variable: NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID
+    value: "774744467587"
+    availability:
+      - BUILD
+      - RUNTIME
+  - variable: NEXT_PUBLIC_FIREBASE_APP_ID
+    value: 1:774744467587:web:80ea5d2dda479df6e9f7b6
+    availability:
+      - BUILD
+      - RUNTIME
+
+  # Feature toggles
+  - variable: NEXT_PUBLIC_ENABLE_AI_BRIEFINGS
+    value: "1"
+    availability:
+      - BUILD
+      - RUNTIME
+  - variable: NEXT_PUBLIC_LIVE_DEPLOYMENTS
+    value: "1"
+    availability:
+      - BUILD
+      - RUNTIME
+
+  # Google AI (Gemini) — secret reference
+  - variable: GOOGLE_AI_API_KEY
+    secret: GOOGLE_AI_API_KEY
+
+  # Firebase Admin service account — secret reference
+  - variable: FIREBASE_SERVICE_ACCOUNT
+    secret: FIREBASE_SERVICE_ACCOUNT
