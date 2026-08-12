@@ -318,7 +318,8 @@ npm test
 # Production build
 npm run build
 
-# Deploy to Firebase App Hosting (Cloud Run SSR, git push → deploy)
+# Deploy to Firebase App Hosting (Cloud Run SSR) — stamps commit-sha.txt
+# (read by /api/build-info) then uploads + rolls out to Cloud Run
 npm run deploy:apphosting
 
 # End-to-end verification of the DEPLOYED app (seed recipe + owner token +
@@ -337,9 +338,9 @@ npm run verify:live:local
 # and fails on any status-line divergence
 npm run verify:live:compare
 
-# Live commit vs local HEAD, before any deploy — reports the commit Vercel
-# is serving and fails unless it matches your local HEAD (exit 2 = the
-# VERCEL_TOKEN is invalid/revoked — paste a fresh one, it is NOT a gate fail)
+# Live commit vs local HEAD, before any deploy — reports the commit BOTH
+# Vercel and Firebase App Hosting are serving and fails unless each matches
+# your local HEAD (exit 2 = the VERCEL_TOKEN is invalid/revoked)
 npm run verify:deployed-hash
 ```
 
