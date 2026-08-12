@@ -313,6 +313,84 @@ describe('GeminiLiveClient — mic capture + playback plumbing', () => {
     expect(stopTrack).toHaveBeenCalled();
   });
 
+  it('mutes the mic while the model reply plays and resumes after it drains (no echo leak)', async () => {
+    // The mic must not stream while the model's audio reply is playing back:
+    // the reply coming out of the speakers IS speech to the mic, and the
+    // server's VAD would transcribe it as a phantom user turn. Capture
+    // resumes the moment the playback queue drains.
+    mintOk();
+    const procHolder: { fn: ((e: { inputBuffer: { getChannelData(c: number): Float32Array } }) => void) | null } = { fn: null };
+    const createdSources: { src: { onended: (() => void) | null; start: () => void; stop: () => void } | null } = { src: null };
+    const { client, getWs } = setupClient({
+      deps: {
+        createWebSocket: (url: string) => new FakeWebSocket(url),
+        getUserMedia: async () => ({ getTracks: () => [{ stop: vi.fn() }] }) as unknown as MediaStream,
+        createAudioContext: () =>
+          ({
+            sampleRate: 48000,
+            createMediaStreamSource: () => ({ connect: () => undefined }),
+            createScriptProcessor: () => ({
+              connect: () => undefined,
+              get onaudioprocess() {
+                return procHolder.fn;
+              },
+              set onaudioprocess(fn: ((e: { inputBuffer: { getChannelData(c: number): Float32Array } }) => void) | null) {
+                procHolder.fn = fn;
+              },
+            }),
+            createGain: () => ({ gain: { value: 0 }, connect: () => undefined }),
+            createBufferSource: () => {
+              const src = {
+                buffer: null,
+                onended: null as (() => void) | null,
+                start: () => undefined,
+                stop: () => undefined,
+                connect: () => undefined,
+              };
+              createdSources.src = src;
+              return src;
+            },
+            decodeAudioData: async () => {
+              throw new Error('raw');
+            },
+            destination: {},
+            close: async () => undefined,
+          }) as never,
+      },
+    });
+    await client.connect();
+    const ws = getWs();
+    ws.open();
+    await ws.receive({ setupComplete: {} });
+    await client.startListening();
+
+    const audioFrameCount = () => ws.sent.filter((s) => s.includes('realtimeInput') && s.includes('"audio"')).length;
+
+    // Mic live before any reply: a speech frame streams.
+    procHolder.fn?.({ inputBuffer: { getChannelData: () => new Float32Array(4096).fill(0.3) } });
+    expect(audioFrameCount()).toBe(1);
+
+    // The model starts replying: audio arrives and is queued for playback.
+    await ws.receive({
+      serverContent: { modelTurn: { parts: [{ inlineData: { data: btoa('not really pcm') } }] } },
+    });
+    // Playback has started (drainPlayback consumed the queue). While it plays,
+    // a speech frame must NOT be streamed — that would be the reply's echo.
+    procHolder.fn?.({ inputBuffer: { getChannelData: () => new Float32Array(4096).fill(0.3) } });
+    expect(audioFrameCount()).toBe(1);
+    procHolder.fn?.({ inputBuffer: { getChannelData: () => new Float32Array(4096).fill(0.3) } });
+    expect(audioFrameCount()).toBe(1);
+
+    // Playback finishes: capture resumes.
+    createdSources.src?.onended?.();
+    // Allow the drain promise to settle and flip playing=false.
+    await new Promise((r) => setTimeout(r, 0));
+    procHolder.fn?.({ inputBuffer: { getChannelData: () => new Float32Array(4096).fill(0.3) } });
+    expect(audioFrameCount()).toBe(2);
+
+    client.disconnect();
+  });
+
   it('auto-flushes audioStreamEnd after trailing silence so the FINAL input transcription is emitted', async () => {
     // Seen live: the Live server only emits the final input transcription once
     // the audio stream ends — without the flush the dictation hook waits

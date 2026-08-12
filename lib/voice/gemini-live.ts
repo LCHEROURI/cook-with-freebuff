@@ -271,6 +271,11 @@ export class GeminiLiveClient {
       this.flushSent = false;
 
       processor.onaudioprocess = (e) => {
+        // While the model's reply is playing back, don't stream the mic at
+        // all: the speaker's echo would otherwise reach the server's VAD as a
+        // phantom user turn (the reply playing from the speakers IS "speech"
+        // to the mic). Capture resumes the moment playback drains.
+        if (this.playing || this.playbackQueue.length > 0) return;
         const channel = e.inputBuffer.getChannelData(0);
         let rms = 0;
         for (let i = 0; i < channel.length; i++) rms += channel[i] * channel[i];
@@ -284,14 +289,10 @@ export class GeminiLiveClient {
         });
         // Only flush when real speech was heard since the last re-arm — a
         // flush on empty silence would consume the one-shot before the user
-        // ever spoke and kill the first real utterance. Also never flush while
-        // the model's own reply is playing: the speaker's echo into the mic
-        // would otherwise transcribe the model's words as a spurious user turn.
+        // ever spoke and kill the first real utterance.
         if (
           !this.flushSent &&
           this.flushLastSpeechMs > 0 &&
-          !this.playing &&
-          this.playbackQueue.length === 0 &&
           flushSilenceMs > 0 &&
           Date.now() - this.flushLastSpeechMs >= flushSilenceMs
         ) {
