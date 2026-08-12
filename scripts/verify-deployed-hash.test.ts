@@ -56,6 +56,7 @@ import {
   isInvalidToken,
   parseArgs,
   readToken,
+  resolveAppHostingCommit,
   resolveByHost,
 } from './verify-deployed-hash.mjs';
 
@@ -130,7 +131,7 @@ describe('parseArgs · --url / --expect / --compare-url handling', () => {
   it('parses all three flags in any order', () => {
     expect(
       parseArgs(['--compare-url', 'https://c.vercel.app', '--expect', 'abc123', '--url', 'https://u.vercel.app']),
-    ).toEqual({ expect: 'abc123', url: 'https://u.vercel.app', compareUrl: 'https://c.vercel.app' });
+    ).toEqual({ expect: 'abc123', url: 'https://u.vercel.app', compareUrl: 'https://c.vercel.app', apphostingUrl: null });
   });
 
   it('recovers flags that lost their leading position (GH Actions block-scalar trim)', () => {
@@ -138,20 +139,54 @@ describe('parseArgs · --url / --expect / --compare-url handling', () => {
     // into a literal backslash+space, so the arg arrives as ' --url'. Without
     // the trim, the flag is invisible and the script silently falls back to
     // the production-list branch — the exact trap the trim exists for.
-    expect(parseArgs([' --expect', 'abc123'])).toEqual({ expect: 'abc123', url: null, compareUrl: null });
+    expect(parseArgs([' --expect', 'abc123'])).toEqual({ expect: 'abc123', url: null, compareUrl: null, apphostingUrl: null });
     expect(parseArgs(['--url ', 'https://u.vercel.app '])).toEqual({
       expect: null,
       url: 'https://u.vercel.app',
       compareUrl: null,
+      apphostingUrl: null,
     });
   });
 
   it('returns null for a flag with no value (never an undefined comparison)', () => {
-    expect(parseArgs(['--expect'])).toEqual({ expect: null, url: null, compareUrl: null });
+    expect(parseArgs(['--expect'])).toEqual({ expect: null, url: null, compareUrl: null, apphostingUrl: null });
   });
 
   it('returns all-null when no flags are given (plain report mode)', () => {
-    expect(parseArgs([])).toEqual({ expect: null, url: null, compareUrl: null });
+    expect(parseArgs([])).toEqual({ expect: null, url: null, compareUrl: null, apphostingUrl: null });
+  });
+});
+
+describe('parseArgs · --apphosting-url', () => {
+  it('parses the apphosting URL flag', () => {
+    expect(parseArgs(['--apphosting-url', 'https://x.hosted.app']).apphostingUrl).toBe('https://x.hosted.app');
+  });
+
+  it('returns null when the apphosting flag is absent', () => {
+    expect(parseArgs([]).apphostingUrl).toBe(null);
+  });
+});
+
+describe('resolveAppHostingCommit · /api/build-info → commit sha', () => {
+  it('returns the commitSha from a healthy build-info response', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ commitSha: 'abc123def456', builtAt: '2026-08-12T00:00:00.000Z' }),
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const sha = await resolveAppHostingCommit('https://x.hosted.app');
+    expect(fetchMock).toHaveBeenCalledWith('https://x.hosted.app/api/build-info');
+    expect(sha).toBe('abc123def456');
+  });
+
+  it('returns empty when the route 404s or predates the endpoint', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false }));
+    expect(await resolveAppHostingCommit('https://x.hosted.app')).toBe('');
+  });
+
+  it('returns empty when the body has no commitSha', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: async () => ({}) }));
+    expect(await resolveAppHostingCommit('https://x.hosted.app')).toBe('');
   });
 });
 

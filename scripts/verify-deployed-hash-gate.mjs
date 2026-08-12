@@ -55,6 +55,7 @@ import { spawnSync } from 'node:child_process';
 import { resolve } from 'node:path';
 
 export const CANONICAL_URL = 'https://cook-with-freebuff.vercel.app';
+export const APPHOSTING_URL = 'https://cook-with-freebuff--portfolio-app-freebuff2.us-central1.hosted.app';
 export const STALE_GUARD = process.argv.includes('--stale-guard');
 const headArgIdx = process.argv.indexOf('--head');
 export const HEAD_ARG = headArgIdx !== -1 ? (process.argv[headArgIdx + 1] ?? '').trim() : '';
@@ -78,12 +79,13 @@ const headLabel = HEAD_ARG ? 'PR head' : 'local HEAD';
 console.log('\n=== verify:deployed-hash — live commit vs expected head (before any deploy) ===');
 console.log(`  ${headLabel}  ${LOCAL_HEAD}`);
 
-// ── 2. Run the shared hash driver against the live production alias ────────
+// ── 2. Run the shared hash driver against the live production alias + the
+// Firebase App Hosting URL (both asserted against the same expected head) ───
 // stdio piped so --stale-guard can parse the live commit from the report;
 // the child's output is forwarded verbatim either way.
 const child = spawnSync(
   process.execPath,
-  ['scripts/verify-deployed-hash.mjs', '--url', CANONICAL_URL, '--expect', LOCAL_HEAD],
+  ['scripts/verify-deployed-hash.mjs', '--url', CANONICAL_URL, '--apphosting-url', APPHOSTING_URL, '--expect', LOCAL_HEAD],
   { cwd: resolve(import.meta.dirname, '..'), stdio: ['ignore', 'pipe', 'pipe'], encoding: 'utf8' },
 );
 const childOut = `${child.stdout ?? ''}${child.stderr ?? ''}`;

@@ -110,7 +110,22 @@ export function parseArgs(rawArgs) {
     expect: flag('--expect'),
     url: flag('--url'),
     compareUrl: flag('--compare-url'),
+    apphostingUrl: flag('--apphosting-url'),
   };
+}
+
+/**
+ * Fetch the commit SHA a Firebase App Hosting build serves, via its
+ * `/api/build-info` endpoint (inlined NEXT_PUBLIC_APP_COMMIT_SHA at build
+ * time). Returns '' when the route is missing or the build predates the
+ * endpoint — the caller treats that as unverifiable, never a mismatch.
+ */
+export async function resolveAppHostingCommit(apphostingUrl) {
+  const url = `${apphostingUrl.replace(/\/$/, '')}/api/build-info`;
+  const res = await fetch(url);
+  if (!res.ok) return '';
+  const body = await res.json().catch(() => null);
+  return typeof body?.commitSha === 'string' ? body.commitSha : '';
 }
 
 /**
@@ -183,7 +198,28 @@ const invalidTokenExit = (err) => {
 };
 
 async function main() {
-  const { expect: EXPECT, url: URL_TARGET, compareUrl: COMPARE_URL } = parseArgs(process.argv.slice(2));
+  const { expect: EXPECT, url: URL_TARGET, compareUrl: COMPARE_URL, apphostingUrl: APPHOSTING_URL } = parseArgs(process.argv.slice(2));
+
+  // ── Firebase App Hosting commit (independent of Vercel's API) ──────────────
+  // When --apphosting-url is passed, the commit the App Hosting build serves
+  // is read from its /api/build-info route and asserted against --expect.
+  // This runs BEFORE the Vercel token gate so the Firebase half never depends
+  // on a Vercel credential.
+  if (APPHOSTING_URL) {
+    console.log(`\nFirebase App Hosting: ${APPHOSTING_URL}`);
+    const sha = await resolveAppHostingCommit(APPHOSTING_URL);
+    console.log(`  commit  ${sha || '(unknown — /api/build-info missing or predates the endpoint)'}`);
+    if (EXPECT) {
+      if (!sha) {
+        console.log('  ⚠ no commit exposed by the App Hosting build — cannot verify against --expect (not a mismatch)');
+      } else if (sha.startsWith(EXPECT.toLowerCase())) {
+        console.log(`  ✓ App Hosting commit matches --expect ${EXPECT}`);
+      } else {
+        console.error(`  ✗ App Hosting commit ${sha} does not match --expect ${EXPECT}`);
+        process.exit(1);
+      }
+    }
+  }
 
   const token = readToken();
   if (!token) {

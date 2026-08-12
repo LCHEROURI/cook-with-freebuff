@@ -90,6 +90,11 @@ const flag = (name, fallback) => {
   return i >= 0 && process.argv[i + 1] ? process.argv[i + 1] : fallback;
 };
 const APP = (flag('--app', process.env.VERIFY_BASE_URL) ?? 'https://cook-with-freebuff.vercel.app').replace(/\/$/, '');
+// Second production target: Firebase App Hosting (Cloud Run SSR). The full
+// driver stages above run against APP; this URL gets a lightweight smoke
+// check (landing page + /api/build-info commit) so BOTH hosts are confirmed
+// every run without doubling the heavy Gemini/Chrome budget.
+const APPHOSTING_APP = 'https://cook-with-freebuff--portfolio-app-freebuff2.us-central1.hosted.app';
 const API_KEY = process.env.NEXT_PUBLIC_FIREBASE_API_KEY;
 const OWNER_UID = process.env.APP_OWNER_UID;
 const SA_JSON = process.env.FIREBASE_SERVICE_ACCOUNT;
@@ -731,6 +736,44 @@ try {
     }
   } else {
     skip('Gemini turn (GOOGLE_AI_API_KEY not set locally — provider check skipped, not failed)');
+  }
+
+  // ── 4b. Second target smoke: Firebase App Hosting ─────────────────────────
+  // The primary flow above proves the Vercel stack end to end. This stage
+  // confirms the Firebase App Hosting build serves the SAME app (landing page
+  // + /api/build-info commit), so both production hosts are covered by one
+  // run. Lightweight by design — no Gemini/Chrome budget — and a host outage
+  // is a FAIL here, never a silent skip.
+  console.log(`\n[4b] Second target smoke: Firebase App Hosting (${APPHOSTING_APP})`);
+  const landingRes = await fetch(APPHOSTING_APP, { signal: AbortSignal.timeout(30_000) });
+  let landingHtml = '';
+  try { landingHtml = await landingRes.text(); } catch { /* non-text */ }
+  if (landingRes.status === 200 && /Kitchen Agent/.test(landingHtml)) {
+    ok(`App Hosting landing → 200 “Kitchen Agent”`);
+  } else {
+    fail(`App Hosting landing → ${landingRes.status} (expected 200 + “Kitchen Agent”)`);
+  }
+
+  const buildInfoRes = await fetch(`${APPHOSTING_APP}/api/build-info`, { signal: AbortSignal.timeout(30_000) });
+  const buildInfo = await buildInfoRes.json().catch(() => null);
+  const apphostingSha = typeof buildInfo?.commitSha === 'string' ? buildInfo.commitSha : '';
+  if (buildInfoRes.status === 200 && apphostingSha) {
+    ok(`App Hosting /api/build-info → commit ${apphostingSha.slice(0, 12)}…`);
+  } else {
+    fail(`App Hosting /api/build-info → ${buildInfoRes.status} (commit ${apphostingSha || 'missing'})`);
+  }
+
+  // Same-app proof: the App Hosting build must also answer /api/cook (the
+  // auth-gated surface both hosts share). Reuse the owner token minted above.
+  const apphostingCook = await fetchJson(`${APPHOSTING_APP}/api/cook`, {
+    method: 'POST',
+    headers: AUTH,
+    body: JSON.stringify({ action: 'status' }),
+  });
+  if (apphostingCook.status === 200) {
+    ok(`App Hosting /api/cook → 200 (owner session accepted)`);
+  } else {
+    fail(`App Hosting /api/cook → ${apphostingCook.status}`);
   }
 } catch (e) {
   // Only report if the token-exchange abort path hasn't already (that path
