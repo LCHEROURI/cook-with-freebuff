@@ -92,6 +92,14 @@ export function getAdminAuth(): Auth | null {
   return cachedAuth;
 }
 
+// settings() may only be called ONCE per Firestore instance. When this module
+// is evaluated more than once (dev HMR, or duplicate import specifiers in a
+// server bundle), each copy keeps its own cachedDb but getFirestore(app)
+// returns the SAME underlying instance — a second settings() call throws
+// "Firestore has already been initialized" and breaks every API route that
+// touches the db (seen live in dev). swallow the idempotent re-apply: the
+// flag is already on, so a duplicate module copy calling settings() again is
+// a no-op in intent, not a real conflict.
 export function getAdminDb(): Firestore | null {
   if (cachedDb) return cachedDb;
   const app = getAdminApp();
@@ -99,7 +107,13 @@ export function getAdminDb(): Firestore | null {
   // Optional fields (e.g. correlationId) are passed through as `undefined` in
   // write payloads — Firestore rejects undefined values unless this flag is on.
   const db = getFirestore(app);
-  db.settings({ ignoreUndefinedProperties: true });
+  try {
+    db.settings({ ignoreUndefinedProperties: true });
+  } catch (e) {
+    // settings() may only be called once per instance; a duplicate module copy
+    // already applied it (the flag is on) — this is not a real conflict.
+    if (!(e instanceof Error) || !e.message.includes('already been initialized')) throw e;
+  }
   cachedDb = db;
   return cachedDb;
 }
