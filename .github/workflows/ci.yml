@@ -99,6 +99,58 @@ jobs:
         env:
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
 
+  # Firebase App Hosting sync: deploy the Firebase Hosting side after every
+  # push to main, so it stops drifting behind Vercel (which auto-deploys on
+  # push while App Hosting had to be deployed manually via `npm run
+  # deploy:apphosting`). Runs AFTER validate passes (never deploy broken code)
+  # and authenticates with the Firebase service account via
+  # GOOGLE_APPLICATION_CREDENTIALS — the same FIREBASE_SERVICE_ACCOUNT secret
+  # the post-deploy verify:live gate uses, so no new credential is required.
+  # write-commit.mjs stamps the CI HEAD into commit-sha.txt first (the source
+  # ZIP excludes .git), so /api/build-info reports the exact pushed commit.
+  # Gated on FIREBASE_SERVICE_ACCOUNT (skip-not-fail on forks/unconfigured
+  # repos); the loud guard below turns a missing secret on a canonical main
+  # push into a failure. Pull requests never deploy.
+  deploy-apphosting:
+    name: Deploy Firebase App Hosting
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: validate
+    if: ${{ github.event_name == 'push' || github.event_name == 'workflow_dispatch' }}
+
+    env:
+      FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v5
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Fail loudly if FIREBASE_SERVICE_ACCOUNT is missing (main push)
+        if: ${{ github.event_name == 'push' && github.repository == 'LCHEROURI/cook-with-freebuff' && env.FIREBASE_SERVICE_ACCOUNT == '' }}
+        run: |
+          echo "::error::FIREBASE_SERVICE_ACCOUNT secret missing — the App Hosting deploy cannot run."
+          echo "Add it under GitHub -> Settings -> Secrets and variables -> Actions, then re-run."
+          exit 1
+
+      - name: Deploy to Firebase App Hosting
+        if: ${{ env.FIREBASE_SERVICE_ACCOUNT != '' }}
+        run: |
+          echo "$FIREBASE_SERVICE_ACCOUNT" > /tmp/firebase-sa.json
+          node scripts/write-commit.mjs
+          npx -y firebase-tools@latest deploy --only apphosting --non-interactive --project portfolio-app-freebuff2
+        env:
+          GOOGLE_APPLICATION_CREDENTIALS: /tmp/firebase-sa.json
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+
   # NOTE: the post-deploy verify:live gate NO LONGER lives here. It used to run
   # in this push-triggered job, where it RACED the Vercel build — hitting the
   # previous deployment or a 502 mid-deploy. It now runs from

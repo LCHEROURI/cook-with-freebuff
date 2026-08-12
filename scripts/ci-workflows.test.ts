@@ -39,11 +39,12 @@ const FOUR_SECRETS_GATE =
 const SECRET_WIRING = (name: string) => name + ': ${{ secrets.' + name + ' }}';
 
 describe('.github/workflows/ci.yml · push-time validate contract', () => {
-  // validate is now the ONLY job in ci.yml — the post-deploy gate moved out.
-  // The block runs from the job key to end of file; a non-empty guard turns
-  // a future restructure into a legible failure instead of confusing toContain
-  // misses.
-  const validateBlock = CI.slice(CI.indexOf('\n  validate:'));
+  // validate is the FIRST job in ci.yml (deploy-apphosting now follows it);
+  // the post-deploy gate moved out. The block runs from the validate key to
+  // the deploy-apphosting key; a non-empty guard turns a future restructure
+  // into a legible failure instead of confusing toContain misses.
+  const deployStart = CI.indexOf('\n  deploy-apphosting:');
+  const validateBlock = CI.slice(CI.indexOf('\n  validate:'), deployStart === -1 ? undefined : deployStart);
 
   it('keeps the four push-time checks (typecheck · lint · test · build)', () => {
     expect(validateBlock.length).toBeGreaterThan(0);
@@ -62,10 +63,11 @@ describe('.github/workflows/ci.yml · push-time validate contract', () => {
     // race bug can never silently return. The prose NOTE at the bottom of the
     // jobs section is what must document the move instead.
     expect(validateBlock).not.toContain('run: npm run verify:live');
-    // The move must stay documented in the workflow, so a future edit that
-    // re-adds the gate without consciously re-deciding fails here.
-    expect(validateBlock).toContain('post-deploy verify:live gate NO LONGER lives here');
-    expect(validateBlock).toContain('.github/workflows/verify-deployed.yml');
+    // The move must stay documented in the workflow (the NOTE lives AFTER the
+    // deploy-apphosting job, so it is checked against the whole file), so a
+    // future edit that re-adds the gate without consciously re-deciding fails.
+    expect(CI).toContain('post-deploy verify:live gate NO LONGER lives here');
+    expect(CI).toContain('.github/workflows/verify-deployed.yml');
   });
 
   it('runs the stale-head guard on pushes, gated on VERCEL_TOKEN', () => {
@@ -170,6 +172,47 @@ describe('.github/workflows/ci.yml · push-time validate contract', () => {
     const loudBlock = validateBlock.slice(loudStart, validateBlock.indexOf('name: Verify pushed head', loudStart));
     expect(loudBlock).toContain("github.event_name == 'push'");
     expect(loudBlock).not.toContain('pull_request');
+  });
+});
+
+describe('.github/workflows/ci.yml · deploy-apphosting auto-sync job', () => {
+  // The App Hosting side used to deploy only manually (npm run
+  // deploy:apphosting), so it drifted behind Vercel on every push. This job
+  // closes that gap: it deploys to Firebase App Hosting after validate
+  // passes, authenticating with the FIREBASE_SERVICE_ACCOUNT via
+  // GOOGLE_APPLICATION_CREDENTIALS. The load-bearing contracts below are the
+  // parts a future edit could silently break.
+  const deployStart = CI.indexOf('\n  deploy-apphosting:');
+  const deployBlock = CI.slice(deployStart);
+
+  it('deploys after validate passes and never on pull_request', () => {
+    expect(deployBlock.length).toBeGreaterThan(0);
+    expect(deployBlock).toContain('name: Deploy Firebase App Hosting');
+    // validate must pass first — never deploy broken code.
+    expect(deployBlock).toContain('needs: validate');
+    // Push + manual re-sync only; PRs must never deploy.
+    expect(deployBlock).toContain("github.event_name == 'push' || github.event_name == 'workflow_dispatch'");
+    expect(deployBlock).not.toContain('pull_request');
+  });
+
+  it('authenticates with the service account (GOOGLE_APPLICATION_CREDENTIALS) and stamps the commit', () => {
+    // The deploy must use the FIREBASE_SERVICE_ACCOUNT secret (no new
+    // credential), write it to a temp file, and run write-commit.mjs BEFORE
+    // the firebase deploy so /api/build-info reports the pushed commit (the
+    // source ZIP excludes .git).
+    expect(deployBlock).toContain('echo "$FIREBASE_SERVICE_ACCOUNT" > /tmp/firebase-sa.json');
+    expect(deployBlock).toContain('node scripts/write-commit.mjs');
+    expect(deployBlock).toContain('GOOGLE_APPLICATION_CREDENTIALS: /tmp/firebase-sa.json');
+    expect(deployBlock).toContain('npx -y firebase-tools@latest deploy --only apphosting --non-interactive --project portfolio-app-freebuff2');
+  });
+
+  it('gates on FIREBASE_SERVICE_ACCOUNT with a loud guard on the canonical repo', () => {
+    // A missing secret must skip-not-fail on forks but fail loudly on a
+    // canonical main push — a skipped deploy must never masquerade as a
+    // green auto-sync.
+    expect(deployBlock).toContain('name: Fail loudly if FIREBASE_SERVICE_ACCOUNT is missing (main push)');
+    expect(deployBlock).toContain("env.FIREBASE_SERVICE_ACCOUNT == ''");
+    expect(deployBlock).toContain('FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}');
   });
 });
 
