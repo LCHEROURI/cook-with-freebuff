@@ -145,6 +145,67 @@ export default function CookPage() {
     starting: boolean;
   }>({ prompt: '', creating: false, error: null, ready: null, starting: false });
 
+  // Camera scan state — snap a photo of the fridge/pantry, Gemini identifies
+  // what's there, and the results fill the starter input for review.
+  const [scan, setScan] = useState<{
+    scanning: boolean;
+    error: string | null;
+    items: { name: string; quantity?: number; unit?: string }[];
+  }>({ scanning: false, error: null, items: [] });
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const handleCameraCapture = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setScan({ scanning: true, error: null, items: [] });
+    try {
+      // Read the file as a base64 data URI.
+      const dataUri = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result as string);
+        reader.onerror = () => reject(new Error('Could not read the image'));
+        reader.readAsDataURL(file);
+      });
+
+      const token = await auth.getToken();
+      const res = await fetch('/api/vision/scan', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', ...(token ? { authorization: `Bearer ${token}` } : {}) },
+        body: JSON.stringify({ image: dataUri }),
+      });
+      const body = await res.json() as {
+        success: boolean;
+        data?: { ingredients: { name: string; quantity?: number; unit?: string; confidence: number }[] };
+        error?: { message?: string };
+      };
+      if (!res.ok || !body.success || !body.data) {
+        setScan({ scanning: false, error: body.error?.message ?? 'Could not scan the image', items: [] });
+        return;
+      }
+      const items = body.data.ingredients
+        .filter((i) => i.confidence >= 0.4) // Skip very-low-confidence guesses.
+        .map((i) => ({ name: i.name, quantity: i.quantity, unit: i.unit }));
+      if (items.length === 0) {
+        setScan({ scanning: false, error: "I couldn't identify any ingredients in that photo. Try a clearer shot of your fridge or pantry.", items: [] });
+        return;
+      }
+      setScan({ scanning: false, error: null, items });
+    } catch (e) {
+      setScan({ scanning: false, error: e instanceof Error ? e.message : 'Could not scan the image', items: [] });
+    }
+    // Reset the input so the same file can be re-selected.
+    if (fileInputRef.current) fileInputRef.current.value = '';
+  };
+
+  const handleUseScannedIngredients = () => {
+    if (scan.items.length === 0) return;
+    const text = scan.items
+      .map((i) => (i.quantity ? `${i.quantity} ${i.unit ?? ''} ${i.name}` : i.name).trim())
+      .join(', ');
+    setStarter((s) => ({ ...s, prompt: s.prompt.trim() ? `${s.prompt.trim()}, ${text}` : text }));
+    setScan({ scanning: false, error: null, items: [] });
+  };
+
   // "Your recipes": the owner's generated recipes, reusable with one tap on
   // the starter. Only shown when there ARE recipes — a fresh user sees the
   // creation form alone, not an empty box.
@@ -416,6 +477,38 @@ export default function CookPage() {
                   <line x1="12" x2="12" y1="19" y2="22" />
                 </svg>
               </button>
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/*"
+                capture="environment"
+                className={styles.cameraInput}
+                onChange={handleCameraCapture}
+                aria-label="Take a photo of your fridge or pantry"
+              />
+              <button
+                type="button"
+                className={styles.micBtn}
+                onClick={() => fileInputRef.current?.click()}
+                disabled={scan.scanning || starter.creating || starter.starting}
+                aria-label="Take a photo of your fridge or pantry"
+                title="Snap a photo of your fridge or pantry — Gemini identifies what you have"
+              >
+                <svg
+                  width="20"
+                  height="20"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  aria-hidden="true"
+                >
+                  <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z" />
+                  <circle cx="12" cy="13" r="4" />
+                </svg>
+              </button>
             </div>
             <button
               type="submit"
@@ -424,6 +517,35 @@ export default function CookPage() {
             >
               {starter.creating ? 'Creating…' : '✨ Create my recipe'}
             </button>
+            {scan.scanning && (
+              <p className={styles.scanStatus} role="status" aria-live="polite">
+                <span className={styles.spinner} aria-hidden="true" /> Scanning your photo…
+              </p>
+            )}
+            {scan.error && (
+              <p className={styles.starterError} role="alert">
+                {scan.error}
+              </p>
+            )}
+            {scan.items.length > 0 && (
+              <div className={styles.scanResults}>
+                <p className={styles.scanResultsLabel}>I can see:</p>
+                <ul className={styles.scanResultsList}>
+                  {scan.items.map((item, i) => (
+                    <li key={i} className={styles.scanResultItem}>
+                      {item.quantity ? `${item.quantity} ${item.unit ?? ''} ` : ''}{item.name}
+                    </li>
+                  ))}
+                </ul>
+                <button
+                  type="button"
+                  className={styles.primaryBtn}
+                  onClick={handleUseScannedIngredients}
+                >
+                  Use these ingredients
+                </button>
+              </div>
+            )}
             {dictation.listening && (
               <p
                 className={styles.micStatus}
