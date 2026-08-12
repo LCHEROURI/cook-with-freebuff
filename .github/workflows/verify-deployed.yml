@@ -182,11 +182,26 @@ jobs:
         with:
           chrome-version: stable
 
+      # Firebase App Hosting commit report: the Firebase Hosting side is a
+      # SECOND production target deployed out-of-band (npm run
+      # deploy:apphosting), so it legitimately lags Vercel on a fresh push.
+      # This step REPORTS the App Hosting commit (no --expect assertion) so
+      # the runner log always shows both hosts side by side; the hard
+      # assertion on the Firebase side happens in verify:live's [4b] stage
+      # (the app must SERVE and answer, not necessarily match the new head).
+      - name: Report the Firebase App Hosting commit
+        run: |
+          node scripts/verify-deployed-hash.mjs \
+            --apphosting-url "https://cook-with-freebuff--portfolio-app-freebuff2.us-central1.hosted.app"
+
       - name: Verify deployed app end to end (verify:live)
         if: ${{ env.NEXT_PUBLIC_FIREBASE_API_KEY != '' && env.FIREBASE_SERVICE_ACCOUNT != '' && env.APP_OWNER_UID != '' && env.GOOGLE_AI_API_KEY != '' }}
         run: npm run verify:live
         env:
           VERIFY_BASE_URL: https://cook-with-freebuff.vercel.app
+          # verify:live's [4b] stage asserts this host serves the app + answers
+          # /api/cook, so the Firebase side is proven on every post-deploy run.
+          VERIFY_APPHOSTING_URL: https://cook-with-freebuff--portfolio-app-freebuff2.us-central1.hosted.app
           CHROME_PATH: ${{ steps.chrome.outputs.chrome-path }}
           NEXT_PUBLIC_FIREBASE_API_KEY: ${{ secrets.NEXT_PUBLIC_FIREBASE_API_KEY }}
           FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}

@@ -217,6 +217,23 @@ describe('.github/workflows/verify-deployed.yml · deployment_status post-deploy
     expect(verifyBlock).toContain('CHROME_PATH: ${{ steps.chrome.outputs.chrome-path }}');
   });
 
+  it('asserts the Firebase App Hosting side (commit report + VERIFY_APPHOSTING_URL in verify:live)', () => {
+    // The App Hosting URL is the second production target. Two load-bearing
+    // wirings prove it on every post-deploy run: (1) the commit-report step
+    // shows both hosts side by side in the runner log, and (2) the
+    // VERIFY_APPHOSTING_URL env feeds verify:live's [4b] stage, which
+    // hard-asserts the Firebase side serves the app + answers /api/cook.
+    // Dropping either fails here.
+    expect(POST_DEPLOY).toContain('name: Report the Firebase App Hosting commit');
+    expect(POST_DEPLOY).toContain('--apphosting-url "https://cook-with-freebuff--portfolio-app-freebuff2.us-central1.hosted.app"');
+    expect(POST_DEPLOY).toContain('VERIFY_APPHOSTING_URL: https://cook-with-freebuff--portfolio-app-freebuff2.us-central1.hosted.app');
+    // The VERIFY_APPHOSTING_URL wiring must be INSIDE the verify:live step's
+    // env block, not anywhere else in the file.
+    const verifyStart = POST_DEPLOY.indexOf('name: Verify deployed app end to end (verify:live)');
+    const verifyBlock = POST_DEPLOY.slice(verifyStart, POST_DEPLOY.indexOf('\n      #', verifyStart));
+    expect(verifyBlock).toContain('VERIFY_APPHOSTING_URL: https://cook-with-freebuff--portfolio-app-freebuff2.us-central1.hosted.app');
+  });
+
   it('wires all four secrets into the job env, the loud guard, AND the verify step env (3 wirings each)', () => {
     // Counting (not a bare toContain) catches a wiring dropped on any ONE of
     // the three places that need it: the job-level env (feeds the step `if`),

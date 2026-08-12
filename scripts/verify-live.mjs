@@ -93,8 +93,10 @@ const APP = (flag('--app', process.env.VERIFY_BASE_URL) ?? 'https://cook-with-fr
 // Second production target: Firebase App Hosting (Cloud Run SSR). The full
 // driver stages above run against APP; this URL gets a lightweight smoke
 // check (landing page + /api/build-info commit) so BOTH hosts are confirmed
-// every run without doubling the heavy Gemini/Chrome budget.
-const APPHOSTING_APP = 'https://cook-with-freebuff--portfolio-app-freebuff2.us-central1.hosted.app';
+// every run without doubling the heavy Gemini/Chrome budget. Env-overridable
+// (VERIFY_APPHOSTING_URL) so the CI workflow can pin it explicitly and a
+// custom-domain migration never requires a script edit.
+const APPHOSTING_APP = (flag('--apphosting', process.env.VERIFY_APPHOSTING_URL) ?? 'https://cook-with-freebuff--portfolio-app-freebuff2.us-central1.hosted.app').replace(/\/$/, '');
 const API_KEY = process.env.NEXT_PUBLIC_FIREBASE_API_KEY;
 const OWNER_UID = process.env.APP_OWNER_UID;
 const SA_JSON = process.env.FIREBASE_SERVICE_ACCOUNT;
