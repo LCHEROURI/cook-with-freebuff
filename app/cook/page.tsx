@@ -55,7 +55,9 @@ export default function CookPage() {
   });
   const [input, setInput] = useState('');
   const snap = cook.snapshot;
-  const useLiveMic = live.available;
+  // Prefer Gemini Live, but fall through to Web Speech when it errors out
+  // (e.g. token endpoint unavailable) instead of leaving the mic dead.
+  const useLiveMic = live.available && live.status !== 'ERROR';
 
   // Recipe-starter state (the "start from scratch" stage): the user tells us
   // what they have, the agent generates + validates a recipe, then "Start
