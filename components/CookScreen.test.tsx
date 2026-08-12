@@ -247,6 +247,15 @@ describe('CookScreen', () => {
     expect(html).toContain('Listening… speak now');
   });
 
+  it('renders the speak-now pulse dot and the tap-to-stop hint while listening', () => {
+    // The one-tap-continuous flow must be discoverable: a live pulsing dot
+    // (capture in progress) plus the "tap to stop" affordance on the status
+    // line itself, so the user knows the mic stays open and how to end it.
+    const html = render(snapshot(), { micSupported: true, micListening: true, micInterim: '', onMicToggle: vi.fn() });
+    expect(html).toContain('micStatusDot');
+    expect(html).toContain('· tap to stop');
+  });
+
   it('surfaces mic errors with a dismiss control', () => {
     const html = render(snapshot(), {
       micError: 'Microphone permission denied — enable it in your browser to speak.',

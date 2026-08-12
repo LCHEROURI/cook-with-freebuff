@@ -724,6 +724,38 @@
   font-weight: 600;
   color: var(--color-accent);
   text-align: center;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.45rem;
+}
+
+/* The "speak now" cue: a live pulsing dot that reads as capture-in-progress
+   even without reading the words, distinct from the static error/alert dots. */
+.micStatusDot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--color-accent);
+  flex-shrink: 0;
+  animation: mic-dot-pulse 1.3s ease-in-out infinite;
+}
+
+@keyframes mic-dot-pulse {
+  0%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.35;
+    transform: scale(0.65);
+  }
+}
+
+.micStatusHint {
+  color: var(--color-text-muted);
+  font-weight: 400;
 }
 
 .micError {

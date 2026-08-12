@@ -339,7 +339,9 @@ export function CookScreen({
       </form>
       {micListening && (
         <p className={styles.micStatus} role="status" aria-live="polite">
-          🎙 {micInterim || 'Listening… speak now'}
+          <span className={styles.micStatusDot} aria-hidden="true" />
+          <span>🎙 {micInterim || 'Listening… speak now'}</span>
+          <span className={styles.micStatusHint}>· tap to stop</span>
         </p>
       )}
       {micError && (

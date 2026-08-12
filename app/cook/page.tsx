@@ -233,11 +233,13 @@ export default function CookPage() {
   // Live-mode caption: no interim transcripts come from the Live API, so the
   // caption reflects the honest capture/thinking state instead. When the
   // watchdog fires (listening but nothing heard for a while), the caption
-  // says so instead of a frozen "Listening…" that looks stuck.
+  // says so instead of a frozen "Listening…" that looks stuck. The "tap to
+  // stop" hint is rendered by the status line itself, so it is not repeated
+  // here.
   const liveCaption =
     live.mode === 'live'
       ? live.awaiting
-        ? 'Say something, or tap to stop'
+        ? 'Say something…'
         : live.status === 'LISTENING'
           ? 'Listening…'
           : live.status === 'THINKING'
@@ -354,7 +356,8 @@ export default function CookPage() {
             </button>
             {dictation.listening && (
               <p className={styles.micStatus} role="status" aria-live="polite">
-                🎙 Listening… speak your ingredients
+                <span className={styles.micStatusDot} aria-hidden="true" />
+                <span>🎙 Listening… speak your ingredients</span>
               </p>
             )}
             {dictation.error && (
