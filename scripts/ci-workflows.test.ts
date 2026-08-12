@@ -213,6 +213,27 @@ describe('.github/workflows/ci.yml · deploy-apphosting auto-sync job', () => {
     expect(deployBlock).not.toContain('FIREBASE_SERVICE_ACCOUNT');
   });
 
+  it('retries the deploy on a 409 queue-conflict with backoff (never on other errors)', () => {
+    // A deploy landing while the previous commit's rollout is still building
+    // gets "HTTP Error: 409, unable to queue the operation", so a burst of
+    // quick pushes red-ed the job. The step must retry that specific
+    // transient with a growing backoff and give up only after a bounded
+    // number of attempts, so the pushes converge instead of failing. Non-409
+    // failures (a genuine build or rollout error) must NOT be retried:
+    // retrying them cannot help and would burn the 15-minute budget masking
+    // a real break. Each marker below is load-bearing.
+    expect(deployBlock).toContain('unable to queue the operation');
+    expect(deployBlock).toContain("grep -qE '409|unable to queue the operation'");
+    expect(deployBlock).toContain('max_attempts=5');
+    expect(deployBlock).toContain('wait_s=$((attempt * 30))');
+    expect(deployBlock).toContain('sleep "$wait_s"');
+    expect(deployBlock).toContain('attempt=$((attempt + 1))');
+    // The bounded give-up must fail loudly, not loop forever.
+    expect(deployBlock).toContain('still 409-conflicted after');
+    // Non-409 must exit immediately with a distinct message (not retried).
+    expect(deployBlock).toContain('non-409 error');
+  });
+
   it('gates on FIREBASE_TOKEN with a loud guard on the canonical repo', () => {
     // A missing token must skip-not-fail on forks but fail loudly on a
     // canonical main push — a skipped deploy must never masquerade as a

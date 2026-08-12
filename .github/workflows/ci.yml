@@ -148,7 +148,38 @@ jobs:
         if: ${{ env.FIREBASE_TOKEN != '' }}
         run: |
           node scripts/write-commit.mjs
-          npx -y firebase-tools@latest deploy --only apphosting --non-interactive --project portfolio-app-freebuff2
+
+          # App Hosting accepts ONE rollout at a time. A deploy landing while
+          # the previous commit's rollout is still building is rejected with
+          # "HTTP Error: 409, unable to queue the operation", so a burst of
+          # quick pushes (docs + fix commits in a row) red-ed the job. Retry
+          # that specific transient with a growing backoff so the pushes
+          # converge. Only the 409 is retried: a genuine build or rollout
+          # failure exits immediately because retrying it cannot help.
+          attempt=1
+          max_attempts=5
+          while true; do
+            log="$RUNNER_TEMP/apphosting-deploy.log"
+            if npx -y firebase-tools@latest deploy --only apphosting --non-interactive --project portfolio-app-freebuff2 >"$log" 2>&1; then
+              cat "$log"
+              echo "App Hosting rollout succeeded (attempt $attempt)"
+              break
+            fi
+            cat "$log"
+            if grep -qE '409|unable to queue the operation' "$log"; then
+              if [ "$attempt" -ge "$max_attempts" ]; then
+                echo "::error::App Hosting deploy still 409-conflicted after $max_attempts attempts. Another rollout is stuck in flight. Investigate, then re-run the job."
+                exit 1
+              fi
+              wait_s=$((attempt * 30))
+              echo "::warning::App Hosting rollout already in flight (409). Retrying in ${wait_s}s (attempt $attempt/$max_attempts)..."
+              sleep "$wait_s"
+              attempt=$((attempt + 1))
+            else
+              echo "::error::App Hosting deploy failed with a non-409 error. Not retrying. See the log above."
+              exit 1
+            fi
+          done
         env:
           FIREBASE_TOKEN: ${{ secrets.FIREBASE_TOKEN }}
 
