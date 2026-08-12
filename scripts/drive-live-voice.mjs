@@ -571,20 +571,28 @@ if (launch.status === 200 && launch.body?.success && launch.body?.data?.sessionI
 await cdpB.send('Page.reload', { ignoreCache: true });
 await sleep(3500);
 text = await pageText(evB);
-let sawActive = text.includes('Verify Live Voice Chicken Rice') || (text.includes('Chicken Rice') && !text.includes('Create my recipe'));
+// Gate on the ACTIVE screen's own signal — the "Speak a command" mic — not
+// the probe recipe title, which also appears in the starter's "Your recipes"
+// list (a reload that lands on the starter would false-pass on the title and
+// then find no active-screen mic).
+let sawActive = await evB(`!!document.querySelector('button[aria-label="Speak a command"]')`);
 for (let i = 0; i < 15 && !sawActive; i++) {
   await sleep(1000);
-  text = await pageText(evB);
-  sawActive = text.includes('Verify Live Voice Chicken Rice') || (text.includes('Chicken Rice') && !text.includes('Create my recipe'));
+  sawActive = await evB(`!!document.querySelector('button[aria-label="Speak a command"]')`);
 }
-sawActive ? ok('active guided screen shown on /cook (“Chicken Rice” + step)') : fail(`active screen not shown. Page text: ${text.slice(0, 300)}`);
+sawActive ? ok('active guided screen shown on /cook (active-screen mic present)') : fail(`active screen not shown. Page text: ${text.slice(0, 300)}`);
 
 const micPreB = await evB(`(() => {
   const mic = document.querySelector('button[aria-label="Speak a command"]');
   return { mic: !!mic, disabled: mic ? mic.disabled : null };
 })()`);
 if (micPreB.mic && !micPreB.disabled) ok('active-screen mic renders enabled (Web Audio available)');
-else fail(`active mic precondition not met: ${JSON.stringify(micPreB)}`);
+else {
+  fail(`active mic precondition not met: ${JSON.stringify(micPreB)}`);
+  console.log(`  - DIAG: buttons=${JSON.stringify(await evB("([...document.querySelectorAll('button')].map(b => b.getAttribute('aria-label')).filter(Boolean))"))}`);
+  console.log(`  - DIAG: voiceIndicator=${JSON.stringify(await evB("document.querySelector('.voice-indicator')?.getAttribute('data-status') ?? null"))}`);
+  console.log(`  - DIAG: text=${JSON.stringify((await pageText(evB)).slice(0, 220))}`);
+}
 
 console.log(`\n[4] Tapping the active-screen mic (Gemini Live)`);
 netB.length = 0;
