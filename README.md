@@ -354,6 +354,14 @@ npm run verify:live
 # one command (port override: VERIFY_LOCAL_PORT=3105)
 npm run verify:live:local
 
+# Same guided-flow check against the LOCAL Firestore + Auth emulators — boots
+# the emulators (reusing them if already running), boots `next dev` pointed at
+# them, and runs the deterministic flow (seed → launch → safety gate → timer)
+# with ZERO production traffic. No .env.local, service account, or Gemini key
+# required. Reuses the `--emulator` mode in scripts/verify-live.mjs, which
+# skips the Gemini/Chrome/live-host stages.
+npm run verify:live:emulator
+
 # Diff the local stack against the deployed stack on the FULL lifecycle —
 # runs both checks, normalizes ephemeral content (ids, timings, Gemini text),
 # and fails on any status-line divergence

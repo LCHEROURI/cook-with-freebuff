@@ -54,9 +54,13 @@
 //   npm run verify:live                       # → https://cook-with-freebuff.vercel.app
 //   npm run verify:live -- --app http://localhost:3000
 //   VERIFY_BASE_URL=... node scripts/verify-live.mjs
+//   npm run verify:live:emulator              # guided flow vs the LOCAL emulators
 //
 // Exit code 0 = PASS, 1 = FAIL. Requires .env.local with the Firebase admin
-// credentials + web API key + APP_OWNER_UID (see .env.example).
+// credentials + web API key + APP_OWNER_UID (see .env.example) — except in
+// `--emulator` mode (set by verify-live-emulator.mjs), which is self-contained:
+// it needs only FIRESTORE_EMULATOR_HOST + FIREBASE_AUTH_EMULATOR_HOST and runs
+// the deterministic guided flow ([1]–[3]) against the local emulators.
 // ============================================================================
 
 import { spawnSync } from 'node:child_process';
@@ -97,8 +101,14 @@ const APP = (flag('--app', process.env.VERIFY_BASE_URL) ?? 'https://cook-with-fr
 // (VERIFY_APPHOSTING_URL) so the CI workflow can pin it explicitly and a
 // custom-domain migration never requires a script edit.
 const APPHOSTING_APP = (flag('--apphosting', process.env.VERIFY_APPHOSTING_URL) ?? 'https://cook-with-freebuff--portfolio-app-freebuff2.us-central1.hosted.app').replace(/\/$/, '');
-const API_KEY = process.env.NEXT_PUBLIC_FIREBASE_API_KEY;
-const OWNER_UID = process.env.APP_OWNER_UID;
+// Emulator mode: run the deterministic guided flow against the LOCAL
+// Firestore + Auth emulators instead of production. Enabled via the
+// `--emulator` flag or VERIFY_EMULATOR=1 (set by verify-live-emulator.mjs).
+const EMULATOR = process.argv.includes('--emulator') || process.env.VERIFY_EMULATOR === '1';
+const EMULATOR_PROJECT_ID = 'demo-cook-with-freebuff';
+const AUTH_EMULATOR_HOST = process.env.FIREBASE_AUTH_EMULATOR_HOST || 'localhost:9099';
+let API_KEY = process.env.NEXT_PUBLIC_FIREBASE_API_KEY;
+let OWNER_UID = process.env.APP_OWNER_UID;
 const SA_JSON = process.env.FIREBASE_SERVICE_ACCOUNT;
 
 let failures = 0;
@@ -213,28 +223,40 @@ async function sweepStaleProbes() {
 }
 
 // ── Admin init ──────────────────────────────────────────────────────────────
-if (!API_KEY) { console.error('✗ FAIL: NEXT_PUBLIC_FIREBASE_API_KEY is required'); process.exit(1); }
-if (!OWNER_UID) { console.error('✗ FAIL: APP_OWNER_UID is required (the owner Firebase Auth uid)'); process.exit(1); }
-if (!SA_JSON) { console.error('✗ FAIL: FIREBASE_SERVICE_ACCOUNT (inline JSON) is required'); process.exit(1); }
-
-let sa;
-try {
-  // Parse RAW — the env value is already JSON-escaped; unescaping before
-  // parse would corrupt embedded \n sequences ("Bad control character").
-  sa = JSON.parse(SA_JSON);
-} catch {
-  console.error('✗ FAIL: FIREBASE_SERVICE_ACCOUNT is not valid JSON');
-  process.exit(1);
+if (EMULATOR) {
+  // The auth emulator ignores the API key and the demo owner uid is arbitrary
+  // (it only needs to be stable within a run). No service account is needed:
+  // firebase-admin auto-routes Firestore + Auth to the local emulators via
+  // FIRESTORE_EMULATOR_HOST / FIREBASE_AUTH_EMULATOR_HOST (see lib/server/admin.ts).
+  if (!API_KEY) API_KEY = 'emulator-fake-api-key';
+  if (!OWNER_UID) OWNER_UID = 'verify-live-emulator-owner';
+} else {
+  if (!API_KEY) { console.error('✗ FAIL: NEXT_PUBLIC_FIREBASE_API_KEY is required'); process.exit(1); }
+  if (!OWNER_UID) { console.error('✗ FAIL: APP_OWNER_UID is required (the owner Firebase Auth uid)'); process.exit(1); }
+  if (!SA_JSON) { console.error('✗ FAIL: FIREBASE_SERVICE_ACCOUNT (inline JSON) is required'); process.exit(1); }
 }
 
-const apps = getApps();
-const app = apps[0] ?? initializeApp({
-  credential: cert({
-    projectId: sa.project_id,
-    clientEmail: sa.client_email,
-    privateKey: sa.private_key.replace(/\\n/g, '\n'), // same as lib/server/admin.ts
-  }),
-});
+let app;
+if (EMULATOR) {
+  app = getApps()[0] ?? initializeApp({ projectId: EMULATOR_PROJECT_ID });
+} else {
+  let sa;
+  try {
+    // Parse RAW — the env value is already JSON-escaped; unescaping before
+    // parse would corrupt embedded \n sequences ("Bad control character").
+    sa = JSON.parse(SA_JSON);
+  } catch {
+    console.error('✗ FAIL: FIREBASE_SERVICE_ACCOUNT is not valid JSON');
+    process.exit(1);
+  }
+  app = getApps()[0] ?? initializeApp({
+    credential: cert({
+      projectId: sa.project_id,
+      clientEmail: sa.client_email,
+      privateKey: sa.private_key.replace(/\\n/g, '\n'), // same as lib/server/admin.ts
+    }),
+  });
+}
 const db = getFirestore(app);
 
 // ── Guaranteed cleanup on every exit path ───────────────────────────────────
@@ -304,19 +326,49 @@ try {
   ok(`recipe ${seededRecipeId} seeded (owner ${OWNER_UID})`);
 
   // ── 2. Mint a real owner ID token ───────────────────────────────────────
-  console.log(`\n[2] Minting owner ID token (custom token → identitytoolkit)`);
-  const customToken = await getAuth(app).createCustomToken(OWNER_UID);
-  const exchange = await fetchJson(
-    `https://identitytoolkit.googleapis.com/v1/accounts:signInWithCustomToken?key=${API_KEY}`,
-    {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ token: customToken, returnSecureToken: true }),
-    },
-  );
-  const idToken = exchange.body?.idToken;
+  let idToken;
+  let exchange;
+  if (EMULATOR) {
+    // The auth emulator signs its own tokens (there is no real service account
+    // to mint a custom token from). Create the demo owner user (idempotent) and
+    // exchange a password for an ID token through the emulator's local
+    // identitytoolkit endpoint — the same verifier the app's resolveUserId
+    // talks to via FIREBASE_AUTH_EMULATOR_HOST.
+    console.log(`\n[2] Minting owner ID token (auth emulator signInWithPassword)`);
+    const auth = getAuth(app);
+    const OWNER_EMAIL = 'verify-live-owner@emulator.test';
+    const OWNER_PASSWORD = 'verify-live-owner-password';
+    try {
+      await auth.createUser({ uid: OWNER_UID, email: OWNER_EMAIL, password: OWNER_PASSWORD });
+      ok(`demo owner user created in the auth emulator (${OWNER_UID})`);
+    } catch (e) {
+      if (!/already/i.test(String(e?.message ?? e?.code ?? e))) throw e;
+      note(`demo owner user already exists in the auth emulator — reusing`);
+    }
+    exchange = await fetchJson(
+      `http://${AUTH_EMULATOR_HOST}/identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=${API_KEY}`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ email: OWNER_EMAIL, password: OWNER_PASSWORD, returnSecureToken: true }),
+      },
+    );
+    idToken = exchange.body?.idToken;
+  } else {
+    console.log(`\n[2] Minting owner ID token (custom token → identitytoolkit)`);
+    const customToken = await getAuth(app).createCustomToken(OWNER_UID);
+    exchange = await fetchJson(
+      `https://identitytoolkit.googleapis.com/v1/accounts:signInWithCustomToken?key=${API_KEY}`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ token: customToken, returnSecureToken: true }),
+      },
+    );
+    idToken = exchange.body?.idToken;
+  }
   if (!idToken) {
-    console.error(`✗ FAIL: could not exchange owner token (${exchange.status}: ${JSON.stringify(exchange.body).slice(0, 200)})`);
+    console.error(`✗ FAIL: could not exchange owner token (${exchange?.status}: ${JSON.stringify(exchange?.body).slice(0, 200)})`);
     runExit = 1;
     throw new Error('abort — token exchange failed');
   }
@@ -361,6 +413,7 @@ try {
     fail(`expected WAITING_FOR_TIMER + timer, got ${ack.status} ${j(ack.body?.data)}`);
   }
 
+  if (!EMULATOR) {
   // ── 3b. Starter-flow proof: create → validate → start cooking ────────────
   // The /cook starter is the missing start-from-scratch stage: the user says
   // what they have, the agent generates + validates a recipe, then "Start
@@ -776,6 +829,13 @@ try {
     ok(`App Hosting /api/cook → 200 (owner session accepted)`);
   } else {
     fail(`App Hosting /api/cook → ${apphostingCook.status}`);
+  }
+  } else {
+    // Emulator mode proves the deterministic guided flow [1]–[3] only. These
+    // stages each need a production-only dependency — real Gemini generation
+    // ([3b], [4]), headless Chrome + Gemini Live ([3d], [3e]), and the live
+    // hosts ([4b]) — so they are skipped rather than run against prod.
+    skip('starter flow, UI/voice drivers, agent turns, and App Hosting smoke — emulator mode runs the deterministic guided flow only');
   }
 } catch (e) {
   // Only report if the token-exchange abort path hasn't already (that path
