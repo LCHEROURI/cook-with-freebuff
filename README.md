@@ -318,8 +318,10 @@ npm test
 # Production build
 npm run build
 
-# Deploy to Firebase App Hosting (Cloud Run SSR) — stamps commit-sha.txt
-# (read by /api/build-info) then uploads + rolls out to Cloud Run
+# MANUAL deploy to Firebase App Hosting (Cloud Run SSR) — stamps commit-sha.txt
+# (read by /api/build-info) then uploads + rolls out to Cloud Run. CI now runs
+# this automatically on every push to main (see "Firebase App Hosting
+# auto-deploy" below); this command is the manual fallback / local deploy.
 npm run deploy:apphosting
 
 # End-to-end verification of the DEPLOYED app (seed recipe + owner token +
@@ -343,6 +345,40 @@ npm run verify:live:compare
 # your local HEAD (exit 2 = the VERCEL_TOKEN is invalid/revoked)
 npm run verify:deployed-hash
 ```
+
+## Firebase App Hosting auto-deploy (CI)
+
+Every push to `main` deploys the Firebase Hosting side automatically, so it
+stops drifting behind Vercel (which auto-deploys on push while App Hosting
+used to need a manual `npm run deploy:apphosting`). The `deploy-apphosting`
+job in `.github/workflows/ci.yml` runs **after** `validate` passes (broken
+code never deploys), stamps the pushed commit into `commit-sha.txt` (the
+App Hosting source ZIP excludes `.git`, so `/api/build-info` can report the
+exact commit), then rolls out to Cloud Run.
+
+**Auth is a `FIREBASE_TOKEN` refresh token from `firebase login:ci` run as
+the project OWNER — not the service account.** The reason is IAM, not
+aesthetics: `firebase deploy --only apphosting` is the "deploy from source as
+a human" path and provisions resources on first deploy — it creates a
+service account and sets the project IAM policy for the App Hosting agents.
+Those calls need owner-level IAM (`iam.serviceAccounts.create`,
+`resourcemanager.projects.setIamPolicy`). The restricted Admin SDK service
+account the verify gates use (`FIREBASE_SERVICE_ACCOUNT`, role set
+`firebase.sdkAdminServiceAgent` + `firebaseauth.admin` + `iam.serviceAccountTokenCreator`)
+does not have those permissions and **must never be widened to them** —
+granting it `setIamPolicy` is equivalent to making it an owner, and its key
+lives in a CI secret.
+
+Set up or rotate the token:
+
+```bash
+npx -y firebase-tools@latest login:ci      # sign in as the project owner, click Allow
+# paste the printed token into GitHub → Settings → Secrets and variables → Actions → FIREBASE_TOKEN
+```
+
+The job is gated on `FIREBASE_TOKEN`: fork PRs and unconfigured repos skip
+(never deploy), and a missing token on a canonical `main` push fails loudly
+so a skipped deploy can never masquerade as a green auto-sync.
 
 ## Pre-push hook — live-vs-HEAD surfacing before production pushes
 
