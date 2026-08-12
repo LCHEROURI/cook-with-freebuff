@@ -724,6 +724,127 @@ receivedFrames(netB).some((f) => f.includes('turnComplete'))
   : note('no turnComplete frame observed');
 await shotB('04-live-spoken-replies');
 
+// ── PHASE C: continuous voice — TWO spoken bursts through the active mic ────
+// The user's actual complaint: "mic drops after the first phrase". The active
+// mic is fed the SPEECH+silence WAV (loops: speech → 3s silence → speech → …)
+// so the flush-on-silence fires once per burst. The wire must show TWO input
+// transcriptions — the second only appears if the flush re-arms after the
+// first turn (the one-shot-flush bug would stop at exactly one).
+console.log(`\n=== PHASE C — continuous voice: two spoken bursts through the active mic ===`);
+const c = launchChrome(SPEECH_WAV, 9475);
+let cdpC;
+try {
+  cdpC = await connectCdp(9475);
+} catch (e) {
+  console.error(`✗ FAIL: ${e.message}`); c.kill(); c.dropProfile(); process.exit(1);
+}
+const { evaluate: evC, networkEvents: netC } = cdpC;
+await cdpC.send('Page.navigate', { url: `${APP}/cook` });
+await sleep(4000);
+await injectSession(evC);
+await cdpC.send('Page.reload', { ignoreCache: true });
+await sleep(3500);
+
+text = await pageText(evC);
+let sawOwnerC = text.includes('Create my recipe') || text.includes('Start over');
+for (let i = 0; i < 15 && !sawOwnerC; i++) {
+  await sleep(1000);
+  text = await pageText(evC);
+  sawOwnerC = text.includes('Create my recipe') || text.includes('Start over');
+}
+sawOwnerC ? ok('signed in as the owner on /cook') : fail(`owner session did not land. Page text: ${text.slice(0, 250)}`);
+
+// Seed + launch a fresh probe session (Phase B's was cleaned up).
+const t2 = Date.now();
+seededRecipeId = `${PROBE_PREFIX}${t2}`;
+await getAdminDb().collection('recipes').doc(seededRecipeId).set({
+  id: seededRecipeId,
+  userId: OWNER_UID,
+  title: 'Verify Live Voice Chicken Rice',
+  description: 'One-pan dinner used by drive-live-voice.mjs',
+  servings: 2,
+  estimatedPrepMinutes: 5,
+  estimatedCookMinutes: 15,
+  totalMinutes: 20,
+  ingredients: [
+    { id: 'i1', name: 'chicken thighs', quantity: 4, unit: 'pieces', optional: false },
+    { id: 'i2', name: 'rice', quantity: 1, unit: 'cup', optional: false },
+  ],
+  equipment: ['pan', 'knife'],
+  prepSteps: [
+    { id: 'p1', stepNumber: 1, instruction: 'Dice the onion', spokenInstruction: 'Dice the onion', estimatedSeconds: 120, ingredientsUsed: ['onion'], equipmentUsed: ['knife'] },
+    { id: 'p2', stepNumber: 2, instruction: 'Heat the oil on high', spokenInstruction: 'Heat the oil on high', estimatedSeconds: 60, ingredientsUsed: [], equipmentUsed: ['pan'], safetyNote: 'Hot oil — keep children away' },
+  ],
+  cookingSteps: [
+    { id: 'c1', stepNumber: 1, instruction: 'Sear the chicken 4 minutes', spokenInstruction: 'Sear the chicken four minutes', estimatedSeconds: 240, timerSeconds: 240, ingredientsUsed: ['chicken thighs'], equipmentUsed: ['pan'] },
+  ],
+  dietaryTags: [],
+  allergens: [],
+  safetyNotes: ['Hot oil — keep children away'],
+  source: 'probe',
+  createdAt: Date.now(),
+  updatedAt: Date.now(),
+});
+const launchC = await fetch(`${APP}/api/cook`, {
+  method: 'POST', headers: AUTH,
+  body: JSON.stringify({ action: 'launch', recipeId: seededRecipeId }),
+}).then(async (r) => ({ status: r.status, body: await r.json().catch(() => null) }));
+if (launchC.status === 200 && launchC.body?.success && launchC.body?.data?.sessionId) {
+  probeSids.add(launchC.body.data.sessionId);
+  ok(`launch → ${launchC.body.data.phase} step ${launchC.body.data.stepNumber} (session ${launchC.body.data.sessionId.slice(0, 8)}…)`);
+} else {
+  fail(`launch → ${launchC.status} ${JSON.stringify(launchC.body ?? '').slice(0, 200)}`);
+}
+await cdpC.send('Page.reload', { ignoreCache: true });
+await sleep(3500);
+let micC = await evC(`!!document.querySelector('button[aria-label="Speak a command"]')`);
+for (let i = 0; i < 15 && !micC; i++) {
+  await sleep(1000);
+  micC = await evC(`!!document.querySelector('button[aria-label="Speak a command"]')`);
+}
+micC ? ok('active guided screen shown (active-screen mic present)') : fail('active screen not shown in Phase C');
+
+console.log(`\n[C] Tapping the active-screen mic with speech fake-audio — waiting for TWO input transcriptions`);
+netC.length = 0;
+const tappedC = await evC(`(() => {
+  const mic = document.querySelector('button[aria-label="Speak a command"]');
+  if (!mic) return 'no-mic';
+  mic.click();
+  return 'tapped';
+})()`);
+tappedC === 'tapped' ? ok('mic tapped') : fail(`mic not found (${tappedC})`);
+let wsUrlC = wsUrlObserved(netC);
+for (let i = 0; i < 30 && !wsUrlC; i++) { await sleep(1000); wsUrlC = wsUrlObserved(netC); }
+wsUrlC && wsUrlC.includes('BidiGenerateContentConstrained')
+  ? ok('Live WebSocket connected')
+  : fail(`WS not observed: ${(wsUrlC ?? '').slice(0, 90)}`);
+let setupC = sawReceived(netC, 'setupComplete');
+for (let i = 0; i < 30 && !setupC; i++) { await sleep(1000); setupC = sawReceived(netC, 'setupComplete'); }
+setupC ? ok('server acknowledged setup (setupComplete)') : fail('no setupComplete frame');
+
+// The speech WAV loops ~5.7s per cycle; each burst + 1.2s silence flush yields
+// one inputTranscription. Two bursts ≈ 2 transcriptions within ~45s.
+const transcriptions = () =>
+  receivedFrames(netC)
+    .filter((f) => f.includes('inputTranscription'))
+    .map((f) => {
+      try { return JSON.parse(f).serverContent?.inputTranscription?.text ?? ''; } catch { return ''; }
+    })
+    .filter((t) => t.trim().length > 0);
+let got2 = false;
+let seen = [];
+for (let i = 0; i < 90 && !got2; i++) {
+  await sleep(1000);
+  seen = transcriptions();
+  got2 = seen.length >= 2;
+}
+if (got2) {
+  ok(`TWO spoken bursts transcribed through the active mic — “${seen[0]}” / “${seen[1]}”`);
+} else {
+  fail(`only ${seen.length} transcription(s) after 90s: ${JSON.stringify(seen.slice(-3))}`);
+}
+c.kill(); c.dropProfile(); cdpC.ws.close();
+
 // ── 6. Cleanup (idempotent; the handlers above also run it) ─────────────────
 console.log(`\n[6] Cleanup probe session + recipe`);
 b.kill(); b.dropProfile(); cdpB.ws.close();
