@@ -21,6 +21,8 @@ export const LIVE_WS_URL =
   'wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContentConstrained';
 export const DEFAULT_LIVE_MODEL = 'gemini-3.1-flash-live-preview';
 export const DEFAULT_TOKEN_URL = '/api/voice/token';
+/** Hard-fail deadline for connect() — see GeminiLiveOptions.connectTimeoutMs. */
+export const DEFAULT_CONNECT_TIMEOUT_MS = 5000;
 
 /** Live input format: raw 16-bit PCM, mono, 16 kHz. Output is 24 kHz. */
 const INPUT_RATE = 16000;
@@ -116,6 +118,8 @@ export interface VoiceSessionDiagnostics {
   flushesSent: number;
   framesSent: number;
   playbackStalls: number;
+  /** The effective connect deadline in use (see connectTimeoutMs). */
+  connectTimeoutMs: number;
   micStarted: boolean;
   micError: string | null;
   lastError: string | null;
@@ -146,7 +150,8 @@ export interface GeminiLiveOptions {
    * Hard-fail deadline for connect(): if the session has not reached
    * CONNECTED (token mint + socket open + setup ack) within this many ms,
    * the client fails with a clear reason instead of hanging on a silent
-   * drop (missing key, blocked WebSocket, unresponsive server). Default 8000.
+   * drop (missing key, blocked WebSocket, unresponsive server). Default
+   * DEFAULT_CONNECT_TIMEOUT_MS (5000).
    */
   connectTimeoutMs?: number;
   deps?: GeminiLiveDeps;
@@ -211,6 +216,7 @@ export class GeminiLiveClient {
     flushesSent: 0,
     framesSent: 0,
     playbackStalls: 0,
+    connectTimeoutMs: DEFAULT_CONNECT_TIMEOUT_MS,
     micStarted: false,
     micError: null,
     lastError: null,
@@ -225,6 +231,7 @@ export class GeminiLiveClient {
   getDiagnostics(): VoiceSessionDiagnostics {
     return {
       ...this.diag,
+      connectTimeoutMs: this.opts.connectTimeoutMs ?? DEFAULT_CONNECT_TIMEOUT_MS,
       hearing: this.hearing,
       connected: this.connected,
       playing: this.playing,
@@ -264,7 +271,7 @@ export class GeminiLiveClient {
    */
   async connect(): Promise<void> {
     this.emit('status', 'CONNECTING');
-    const timeoutMs = this.opts.connectTimeoutMs ?? 8000;
+    const timeoutMs = this.opts.connectTimeoutMs ?? DEFAULT_CONNECT_TIMEOUT_MS;
     this.connectTimer = setTimeout(() => {
       if (this.status === 'CONNECTED' || this.status === 'ERROR') return;
       const socketOpened = this.ws !== null && this.ws.readyState === 1;

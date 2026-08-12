@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import {
+  DEFAULT_CONNECT_TIMEOUT_MS,
   GeminiLiveClient,
   LIVE_WS_URL,
   decodeFrame,
@@ -684,20 +685,41 @@ describe('GeminiLiveClient — mic capture + playback plumbing', () => {
     vi.useRealTimers();
   });
 
-  it('hard-fails with a clear reason when the voice socket never opens (blocked WebSocket)', async () => {
+  it('hard-fails after the 5s default when the voice socket never opens (blocked WebSocket)', async () => {
     mintOk();
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-01-01T00:00:00Z'));
-    const { client, getWs } = setupClient({ connectTimeoutMs: 8000 });
+    const { client, getWs } = setupClient(); // no explicit option — the 5s default applies
     const errors: string[] = [];
     client.on('error', (e) => errors.push(e.message));
+    expect(client.getDiagnostics().connectTimeoutMs).toBe(DEFAULT_CONNECT_TIMEOUT_MS);
     await client.connect();
     expect(getWs()).toBeDefined(); // socket created but never opens
-    vi.setSystemTime(new Date('2026-01-01T00:00:08.100Z'));
-    await vi.advanceTimersByTimeAsync(8500);
+    // Under the 5s default: still connecting at 4s, fails just past 5s.
+    vi.setSystemTime(new Date('2026-01-01T00:00:04Z'));
+    await vi.advanceTimersByTimeAsync(4500);
+    expect(errors.length).toBe(0);
+    vi.setSystemTime(new Date('2026-01-01T00:00:05.100Z'));
+    await vi.advanceTimersByTimeAsync(600);
     expect(errors.length).toBe(1);
     expect(errors[0]).toMatch(/could not open the voice connection/);
     expect(client.getDiagnostics().lastError).toMatch(/could not open the voice connection/);
+    vi.useRealTimers();
+  });
+
+  it('honors a custom connectTimeoutMs and reports it in diagnostics (tunable)', async () => {
+    mintOk();
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-01-01T00:00:00Z'));
+    const { client } = setupClient({ connectTimeoutMs: 3000 });
+    expect(client.getDiagnostics().connectTimeoutMs).toBe(3000);
+    const errors: string[] = [];
+    client.on('error', (e) => errors.push(e.message));
+    await client.connect();
+    vi.setSystemTime(new Date('2026-01-01T00:00:03.100Z'));
+    await vi.advanceTimersByTimeAsync(3500);
+    expect(errors.length).toBe(1);
+    expect(errors[0]).toMatch(/could not open the voice connection/);
     vi.useRealTimers();
   });
 

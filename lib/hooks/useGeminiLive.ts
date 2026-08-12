@@ -19,9 +19,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   GeminiLiveClient,
+  DEFAULT_CONNECT_TIMEOUT_MS,
   DEFAULT_TOKEN_URL,
   type GeminiLiveFunctionResponse,
 } from '@/lib/voice/gemini-live';
+import { composeHopReason, runVoiceSelfCheck } from '@/lib/voice/self-check';
 import { TOOL_DECLARATIONS, buildLiveSystemInstruction } from '@/lib/ai/tool-declarations';
 import type { AgentTurn, ExecutedToolCall } from '@/lib/agent/types';
 import type { ToolResult } from '@/lib/server/tools/types';
@@ -33,6 +35,8 @@ export interface UseGeminiLiveOptions {
   getToken?: () => Promise<string | null> | string | null;
   tokenUrl?: string;
   toolsEndpoint?: string;
+  /** Hard-fail deadline for connect() — forwarded to the client. Default 5000. */
+  connectTimeoutMs?: number;
   /** Session context embedded in the Live system instruction (like the orchestrator's). */
   systemContext?: { currentPhase?: string; currentStep?: string; activeTimerIds?: string[] };
   /**
@@ -131,6 +135,9 @@ export function useGeminiLive(opts: UseGeminiLiveOptions = {}) {
   const lastActivityRef = useRef(0);
 
   const clientRef = useRef<GeminiLiveClient | null>(null);
+  // The error message currently on screen, so an async self-check can enrich
+  // it without resurrecting a banner the user already dismissed.
+  const lastErrorRef = useRef<string | null>(null);
   const pendingRef = useRef<PendingTurn | null>(null);
   const turnsRef = useRef<AgentTurn[]>([]);
   // Monotonic turn counter — React state updates apply lazily, so a ref that
@@ -280,6 +287,7 @@ export function useGeminiLive(opts: UseGeminiLiveOptions = {}) {
     setMode('connecting');
     setStatus('LISTENING');
     setHearing(false);
+    lastErrorRef.current = null;
     markActivity();
 
     const o = optsRef.current;
@@ -288,6 +296,7 @@ export function useGeminiLive(opts: UseGeminiLiveOptions = {}) {
       getToken: o.getToken,
       systemInstruction: buildLiveSystemInstruction(o.systemContext ?? {}),
       tools: TOOL_DECLARATIONS,
+      ...(o.connectTimeoutMs !== undefined ? { connectTimeoutMs: o.connectTimeoutMs } : {}),
     });
     clientRef.current = client;
 
@@ -334,8 +343,22 @@ export function useGeminiLive(opts: UseGeminiLiveOptions = {}) {
       void executeToolCalls(functionCalls);
     });
     client.on('error', (e) => {
+      const immediate = fallbackReason(e.message);
       setStatus('ERROR');
-      setError(fallbackReason(e.message));
+      setError(immediate);
+      lastErrorRef.current = immediate;
+      // Probe the two hops independently (token endpoint + Live WebSocket) so
+      // the banner names the exact failing hop — a rejected request (bad
+      // key), an unreachable endpoint, or a blocked socket.
+      void runVoiceSelfCheck({
+        tokenUrl: optsRef.current.tokenUrl ?? DEFAULT_TOKEN_URL,
+        getToken: optsRef.current.getToken,
+      }).then((check) => {
+        if (lastErrorRef.current !== immediate) return; // dismissed or superseded
+        const enriched = composeHopReason(immediate, check);
+        lastErrorRef.current = enriched;
+        setError(enriched);
+      });
     });
 
     void client.connect();
@@ -355,7 +378,10 @@ export function useGeminiLive(opts: UseGeminiLiveOptions = {}) {
   // No dangling live session after navigation.
   useEffect(() => () => clientRef.current?.disconnect(), []);
 
-  const clearError = useCallback(() => setError(null), []);
+  const clearError = useCallback(() => {
+    lastErrorRef.current = null;
+    setError(null);
+  }, []);
 
   // Snapshot for the "copy voice details" affordance: hook state + client
   // session diagnostics + browser capabilities, so a dropped mic can be
@@ -373,6 +399,7 @@ export function useGeminiLive(opts: UseGeminiLiveOptions = {}) {
       status,
       hearing,
       awaiting,
+      connectTimeoutMs: optsRef.current.connectTimeoutMs ?? DEFAULT_CONNECT_TIMEOUT_MS,
       error: error ?? null,
       client: clientRef.current?.getDiagnostics() ?? null,
       browser: {

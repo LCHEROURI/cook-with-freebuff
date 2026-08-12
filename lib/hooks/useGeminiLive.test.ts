@@ -2,6 +2,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { act, renderHook } from '@testing-library/react';
 import { useGeminiLive, shouldAutoFallbackToWebSpeech, type LiveStatus } from './useGeminiLive';
+import { runVoiceSelfCheck } from '@/lib/voice/self-check';
 
 // ============================================================================
 // lib/hooks/useGeminiLive.test.ts — the Live voice session lifecycle, with the
@@ -64,6 +65,21 @@ vi.mock('@/lib/voice/gemini-live', async (importOriginal) => {
     ...actual,
     GeminiLiveClient: ctorSpy,
     DEFAULT_TOKEN_URL: '/api/voice/token',
+  };
+});
+
+// The self-check probes run on every failure; in hook tests they resolve to a
+// healthy-but-inconclusive result by default (token ok + socket opens), so
+// composeHopReason leaves the session message unchanged and the existing
+// assertions still hold. Tests that want hop detail override it per call.
+vi.mock('@/lib/voice/self-check', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/voice/self-check')>();
+  return {
+    ...actual,
+    runVoiceSelfCheck: vi.fn().mockResolvedValue({
+      token: { ok: true, httpStatus: 200, error: null },
+      websocket: { opened: true, closeCode: null, error: null },
+    }),
   };
 });
 
@@ -159,6 +175,53 @@ describe('useGeminiLive', () => {
     expect(result.current.mode).toBe('live');
     expect(result.current.status).toBe('LISTENING');
     expect(lastClient!.startListeningCalls).toBe(1);
+  });
+
+  it('enriches the failure banner with the exact failing hop from the self-check', async () => {
+    vi.mocked(runVoiceSelfCheck).mockResolvedValueOnce({
+      token: { ok: false, httpStatus: 503, error: null },
+      websocket: { opened: true, closeCode: null, error: null },
+    });
+    const { result } = renderHook(() => useGeminiLive());
+    await act(async () => {
+      await result.current.toggle();
+    });
+    // Immediate reason shows first (fallback fires fast)…
+    await act(async () => {
+      lastClient!.emit('error', new Error('Could not open the voice connection.'));
+      lastClient!.emit('status', 'ERROR');
+    });
+    // …then the probes land and the banner names the failing hop.
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(result.current.error).toContain('HTTP 503');
+    expect(result.current.error).toContain('built-in speech fallback');
+  });
+
+  it('does not resurrect a dismissed banner with a late self-check result', async () => {
+    const { result } = renderHook(() => useGeminiLive());
+    await act(async () => {
+      await result.current.toggle();
+    });
+    await act(async () => {
+      lastClient!.emit('error', new Error('Could not open the voice connection.'));
+      lastClient!.emit('status', 'ERROR');
+    });
+    await act(async () => {
+      result.current.clearError();
+    });
+    expect(result.current.error).toBeNull();
+    await act(async () => {
+      await Promise.resolve();
+    });
+    // The dismissed banner stays dismissed even after the probes resolve.
+    expect(result.current.error).toBeNull();
+  });
+
+  it('reports the effective connect timeout in the diagnostics blob (5s default)', () => {
+    const { result } = renderHook(() => useGeminiLive());
+    expect(result.current.getDiagnostics().connectTimeoutMs).toBe(5000);
   });
 
   it('exposes live speech energy (hearing) and clears it when the session errors', async () => {
