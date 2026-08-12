@@ -25,7 +25,7 @@ import { generateCorrelationId, runWithContext } from '@/lib/server/requestConte
 const ACTIONS = [
   'launch', 'status', 'done', 'repeat', 'back', 'pause', 'resume', 'timers',
   'start_over', 'substitute', 'apply_substitution', 'correct', 'recover', 'clear_recovery',
-  'create_recipe', 'list_recipes',
+  'create_recipe', 'list_recipes', 'delete_recipe',
 ] as const;
 type CookAction = (typeof ACTIONS)[number];
 
@@ -166,6 +166,34 @@ async function handle(userId: string, body: unknown): Promise<NextResponse> {
     case 'clear_recovery': {
       const snapshot = await guide.clearRecovery(userId, sessionId, { correlationId });
       return NextResponse.json({ success: true, data: snapshot });
+    }
+    case 'delete_recipe': {
+      // Remove a saved recipe from the browser — the UI's delete action, so
+      // users don't need Firebase surgery to prune their "Your recipes" list.
+      // Ownership is verified HERE (never trust the id alone): a user must
+      // only ever delete their own recipe.
+      if (!recipeId) {
+        return NextResponse.json(
+          { success: false, error: { code: 'INVALID_BODY', message: 'delete_recipe requires a recipeId', recoverable: false } },
+          { status: 400 },
+        );
+      }
+      const recipeStore = ctx.recipeStore;
+      if (!recipeStore) {
+        return NextResponse.json(
+          { success: false, error: { code: 'UNAVAILABLE', message: 'Recipe store not available', recoverable: false } },
+          { status: 500 },
+        );
+      }
+      const recipe = await recipeStore.getRecipe(recipeId);
+      if (!recipe || recipe.userId !== userId) {
+        return NextResponse.json(
+          { success: false, error: { code: 'NOT_FOUND', message: 'Recipe not found', recoverable: false } },
+          { status: 404 },
+        );
+      }
+      await recipeStore.deleteRecipe(recipeId);
+      return NextResponse.json({ success: true, data: { deleted: recipeId } });
     }
     case 'list_recipes': {
       // "Your recipes" on the /cook starter: the owner's generated recipes,

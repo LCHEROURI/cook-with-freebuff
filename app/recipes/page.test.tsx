@@ -76,9 +76,15 @@ const RECIPES: RecipeSummary[] = [
 
 function mockFetch() {
   const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
-    const body = JSON.parse(String(init?.body ?? '{}')) as { action?: string };
+    const body = JSON.parse(String(init?.body ?? '{}')) as { action?: string; recipeId?: string };
     if (body.action === 'launch') {
       return new Response(JSON.stringify({ success: true }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    }
+    if (body.action === 'delete_recipe') {
+      return new Response(JSON.stringify({ success: true, data: { deleted: body.recipeId } }), {
         status: 200,
         headers: { 'content-type': 'application/json' },
       });
@@ -200,5 +206,81 @@ describe('app/recipes/page.tsx · rendered behavior', () => {
       action: 'launch',
       recipeId: 'chicken-rice',
     });
+  });
+
+  it('renders a Delete button on each saved-recipe row', async () => {
+    render(<RecipesPage />);
+    await screen.findByText('Simple Chicken and Rice');
+    expect(screen.getByRole('button', { name: 'Delete Simple Chicken and Rice' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Delete Beef Stew' })).toBeInTheDocument();
+  });
+
+  it('arms a confirm on Delete and Cancel reverts without deleting', async () => {
+    const fetchMock = mockFetch();
+    render(<RecipesPage />);
+    await screen.findByText('Simple Chicken and Rice');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Delete Simple Chicken and Rice' }));
+    // The single Delete button is replaced by Cancel + Confirm.
+    expect(screen.getByRole('button', { name: 'Cancel delete Simple Chicken and Rice' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Confirm delete Simple Chicken and Rice' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Delete Simple Chicken and Rice' })).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel delete Simple Chicken and Rice' }));
+    expect(screen.getByRole('button', { name: 'Delete Simple Chicken and Rice' })).toBeInTheDocument();
+    // No delete request ever fired.
+    expect(
+      fetchMock.mock.calls.some(([, init]) =>
+        JSON.parse(String(init?.body ?? '{}')).action === 'delete_recipe',
+      ),
+    ).toBe(false);
+  });
+
+  it('confirms a delete: posts delete_recipe and removes the row', async () => {
+    const fetchMock = mockFetch();
+    render(<RecipesPage />);
+    await screen.findByText('Simple Chicken and Rice');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Delete Simple Chicken and Rice' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm delete Simple Chicken and Rice' }));
+
+    await waitFor(() => expect(screen.queryByText('Simple Chicken and Rice')).not.toBeInTheDocument());
+    expect(screen.getByText('Beef Stew')).toBeInTheDocument();
+
+    const delCall = fetchMock.mock.calls.find(([, init]) =>
+      JSON.parse(String(init?.body ?? '{}')).action === 'delete_recipe',
+    );
+    expect(delCall).toBeDefined();
+    expect(JSON.parse(String(delCall?.[1]?.body ?? '{}'))).toEqual({
+      action: 'delete_recipe',
+      recipeId: 'chicken-rice',
+    });
+  });
+
+  it('surfaces a delete failure and keeps the row', async () => {
+    const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body ?? '{}')) as { action?: string };
+      if (body.action === 'delete_recipe') {
+        return new Response(
+          JSON.stringify({ success: false, error: { message: 'Could not delete recipe (500)' } }),
+          { status: 500, headers: { 'content-type': 'application/json' } },
+        );
+      }
+      return new Response(JSON.stringify({ success: true, data: { recipes: RECIPES } }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    render(<RecipesPage />);
+    await screen.findByText('Simple Chicken and Rice');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Delete Simple Chicken and Rice' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm delete Simple Chicken and Rice' }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('Could not delete recipe (500)');
+    expect(screen.getByText('Simple Chicken and Rice')).toBeInTheDocument();
+    // The confirm UI resets so the user can retry.
+    expect(screen.getByRole('button', { name: 'Delete Simple Chicken and Rice' })).toBeInTheDocument();
   });
 });

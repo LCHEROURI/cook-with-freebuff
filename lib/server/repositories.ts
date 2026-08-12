@@ -135,6 +135,10 @@ export async function listRecipes(userId: UserId): Promise<Recipe[]> {
   return docs.map((d) => d.data);
 }
 
+export async function deleteRecipe(id: string): Promise<void> {
+  await deleteDoc(RECIPES, id);
+}
+
 // ── Cooking session repository (with optimistic concurrency) ─────────────────
 
 const SESSIONS = 'cooking_sessions';

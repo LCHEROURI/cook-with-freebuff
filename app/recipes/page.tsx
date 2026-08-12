@@ -38,6 +38,9 @@ export default function RecipesPage() {
   const [sort, setSort] = useState<RecipeSort>('newest');
   const [startingId, setStartingId] = useState<string | null>(null);
   const [startError, setStartError] = useState<string | null>(null);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [confirmingId, setConfirmingId] = useState<string | null>(null);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
 
   // auth.getToken is a stable callback (reads the live session via a ref), so
   // this fetch never re-runs in a loop — it fires once when auth settles.
@@ -100,6 +103,40 @@ export default function RecipesPage() {
     }
   };
 
+  // Delete a saved recipe: confirm-first (the row arms to Cancel/Delete before
+  // the destructive call), then remove it locally so the list updates without
+  // a refetch. Ownership is enforced server-side — this only sends the id.
+  const handleDelete = async (recipeId: string) => {
+    if (deletingId) return;
+    setDeletingId(recipeId);
+    setDeleteError(null);
+    try {
+      const token = await getToken();
+      const res = await fetch('/api/cook', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', ...(token ? { authorization: `Bearer ${token}` } : {}) },
+        body: JSON.stringify({ action: 'delete_recipe', recipeId }),
+      });
+      const body = (await res.json()) as { success: boolean; error?: { message?: string } };
+      if (!res.ok || !body.success) {
+        setDeleteError(body.error?.message ?? `Could not delete recipe (${res.status})`);
+        setConfirmingId(null);
+        return;
+      }
+      setRecipes((prev) =>
+        prev.status === 'ready'
+          ? { ...prev, items: prev.items.filter((r) => r.recipeId !== recipeId) }
+          : prev,
+      );
+      setConfirmingId(null);
+    } catch (e) {
+      setDeleteError(e instanceof Error ? e.message : 'Could not delete recipe.');
+      setConfirmingId(null);
+    } finally {
+      setDeletingId(null);
+    }
+  };
+
   const categories = useMemo(() => availableCategories(recipes.items), [recipes.items]);
   const visible = useMemo(
     () => filterAndSortRecipes(recipes.items, { query, protein, sort }),
@@ -156,6 +193,12 @@ export default function RecipesPage() {
       {startError && (
         <div className={styles.errorNote} role="alert">
           {startError}
+        </div>
+      )}
+
+      {deleteError && (
+        <div className={styles.errorNote} role="alert">
+          {deleteError}
         </div>
       )}
 
@@ -279,15 +322,49 @@ export default function RecipesPage() {
                   preferences={r.preferences}
                 />
               </div>
-              <button
-                type="button"
-                className={styles.startBtn}
-                onClick={() => void handleStart(r.recipeId)}
-                disabled={startingId !== null}
-                aria-label={`Start cooking ${r.title}`}
-              >
-                {startingId === r.recipeId ? 'Starting…' : '▶ Start'}
-              </button>
+              <div className={styles.actions}>
+                <button
+                  type="button"
+                  className={styles.startBtn}
+                  onClick={() => void handleStart(r.recipeId)}
+                  disabled={startingId !== null || deletingId !== null}
+                  aria-label={`Start cooking ${r.title}`}
+                >
+                  {startingId === r.recipeId ? 'Starting…' : '▶ Start'}
+                </button>
+                {confirmingId === r.recipeId ? (
+                  <>
+                    <button
+                      type="button"
+                      className={styles.cancelBtn}
+                      onClick={() => setConfirmingId(null)}
+                      disabled={deletingId !== null}
+                      aria-label={`Cancel delete ${r.title}`}
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="button"
+                      className={styles.deleteConfirmBtn}
+                      onClick={() => void handleDelete(r.recipeId)}
+                      disabled={deletingId !== null}
+                      aria-label={`Confirm delete ${r.title}`}
+                    >
+                      {deletingId === r.recipeId ? 'Deleting…' : 'Delete'}
+                    </button>
+                  </>
+                ) : (
+                  <button
+                    type="button"
+                    className={styles.deleteBtn}
+                    onClick={() => setConfirmingId(r.recipeId)}
+                    disabled={startingId !== null || deletingId !== null}
+                    aria-label={`Delete ${r.title}`}
+                  >
+                    Delete
+                  </button>
+                )}
+              </div>
             </li>
           ))}
         </ul>

@@ -81,6 +81,8 @@ export interface RecipeStore {
   updateRecipe(recipe: Recipe): Promise<void>;
   /** Every recipe owned by the user (the "Your recipes" list on /cook). */
   listRecipes(userId: string): Promise<Recipe[]>;
+  /** Delete a recipe by id. Callers verify ownership BEFORE calling. */
+  deleteRecipe(id: string): Promise<void>;
 }
 
 export interface PantryStore {

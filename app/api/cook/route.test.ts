@@ -307,6 +307,49 @@ describe('/api/cook', () => {
     });
   });
 
+  describe('delete_recipe — removing a saved recipe from the browser', () => {
+    it('returns 400 without a recipeId', async () => {
+      const res = await post({ action: 'delete_recipe' });
+      expect(res.status).toBe(400);
+      const body = await res.json();
+      expect(body.error.code).toBe('INVALID_BODY');
+    });
+
+    it('deletes the owner’s recipe and returns the id', async () => {
+      const store = ctx.recipeStore as InMemoryRecipeStore;
+      await store.createRecipe(makeRecipe());
+
+      const res = await post({ action: 'delete_recipe', recipeId: 'recipe-1' });
+      expect(res.status).toBe(200);
+      const body = await res.json();
+      expect(body.success).toBe(true);
+      expect(body.data.deleted).toBe('recipe-1');
+      // The recipe is gone from the store (list reflects the deletion).
+      expect(await store.getRecipe('recipe-1')).toBeNull();
+      expect(await store.listRecipes('user-1')).toEqual([]);
+    });
+
+    it('refuses to delete another user’s recipe (ownership is enforced)', async () => {
+      const store = ctx.recipeStore as InMemoryRecipeStore;
+      await store.createRecipe({ ...makeRecipe(), id: 'recipe-other', userId: 'user-2' });
+
+      const res = await post({ action: 'delete_recipe', recipeId: 'recipe-other' });
+      expect(res.status).toBe(404);
+      const body = await res.json();
+      expect(body.success).toBe(false);
+      expect(body.error.code).toBe('NOT_FOUND');
+      // The other user's recipe survives untouched.
+      expect(await store.getRecipe('recipe-other')).not.toBeNull();
+    });
+
+    it('returns 404 when the recipe does not exist', async () => {
+      const res = await post({ action: 'delete_recipe', recipeId: 'missing-recipe' });
+      expect(res.status).toBe(404);
+      const body = await res.json();
+      expect(body.error.code).toBe('NOT_FOUND');
+    });
+  });
+
   describe('create_recipe — the missing start-from-scratch stage', () => {
     it('returns NO_INGREDIENTS when the prompt has nothing parseable', async () => {
       // A craving with no ingredient list (and the question gate keeps the

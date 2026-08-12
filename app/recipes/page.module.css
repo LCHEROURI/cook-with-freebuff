@@ -232,6 +232,72 @@
   cursor: not-allowed;
 }
 
+/* ── Row actions (Start + Delete) ──────────────────────────────────────── */
+.actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-shrink: 0;
+}
+
+.deleteBtn {
+  min-height: 40px;
+  padding: 0.5rem 0.9rem;
+  background: transparent;
+  border: 1px solid var(--color-danger-border);
+  color: var(--color-danger);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  font-size: 0.9rem;
+  font-weight: 600;
+  font-family: inherit;
+}
+
+.deleteBtn:hover:not(:disabled) {
+  background: var(--color-danger-bg);
+}
+
+.cancelBtn {
+  min-height: 40px;
+  padding: 0.5rem 0.9rem;
+  background: transparent;
+  border: 1px solid var(--color-border-strong);
+  color: var(--color-text-secondary);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  font-size: 0.9rem;
+  font-weight: 600;
+  font-family: inherit;
+}
+
+.cancelBtn:hover:not(:disabled) {
+  background: var(--color-surface-secondary);
+}
+
+.deleteConfirmBtn {
+  min-height: 40px;
+  padding: 0.5rem 0.9rem;
+  background: var(--color-danger);
+  border: 1px solid var(--color-danger);
+  color: #fff;
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  font-size: 0.9rem;
+  font-weight: 600;
+  font-family: inherit;
+}
+
+.deleteConfirmBtn:hover:not(:disabled) {
+  opacity: 0.9;
+}
+
+.deleteBtn:disabled,
+.cancelBtn:disabled,
+.deleteConfirmBtn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 /* ── Empty / CTAs ───────────────────────────────────────────────────────── */
 .empty {
   display: flex;
