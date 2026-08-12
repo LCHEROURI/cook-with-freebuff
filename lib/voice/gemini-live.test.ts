@@ -809,6 +809,137 @@ describe('GeminiLiveClient — mic capture + playback plumbing', () => {
     vi.useRealTimers();
   });
 
+  it('re-arms the flush on a FINAL input transcription so a second burst in a pure input session gets its own audioStreamEnd', async () => {
+    // The continuous-voice bug (drive-live-voice.mjs PHASE C): in a session
+    // with no model turn in flight the server never sends turnComplete or
+    // interrupted, so the one-shot flush stayed latched and the SECOND spoken
+    // burst was never transcribed (seen live: exactly 1 transcription across
+    // two bursts). The FINAL input transcription only arrives after the
+    // client's audioStreamEnd flush, so its arrival must re-arm the flush for
+    // the next utterance.
+    mintOk();
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-01-01T00:00:00Z'));
+    const procHolder: { fn: ((e: { inputBuffer: { getChannelData(c: number): Float32Array } }) => void) | null } = { fn: null };
+    const { client, getWs } = setupClient({
+      flushOnSilenceMs: 1200,
+      deps: {
+        createWebSocket: (url: string) => new FakeWebSocket(url),
+        getUserMedia: async () => ({ getTracks: () => [{ stop: vi.fn() }] }) as unknown as MediaStream,
+        createAudioContext: () =>
+          ({
+            sampleRate: 48000,
+            createMediaStreamSource: () => ({ connect: () => undefined }),
+            createScriptProcessor: () => ({
+              connect: () => undefined,
+              get onaudioprocess() {
+                return procHolder.fn;
+              },
+              set onaudioprocess(fn: ((e: { inputBuffer: { getChannelData(c: number): Float32Array } }) => void) | null) {
+                procHolder.fn = fn;
+              },
+            }),
+            createGain: () => ({ gain: { value: 0 }, connect: () => undefined }),
+            createBufferSource: () => ({ buffer: null, onended: null, start: () => undefined, stop: () => undefined, connect: () => undefined }),
+            decodeAudioData: async () => {
+              throw new Error('raw');
+            },
+            destination: {},
+            close: async () => undefined,
+          }) as never,
+      },
+    });
+    await client.connect();
+    const ws = getWs();
+    ws.open();
+    await ws.receive({ setupComplete: {} });
+    await client.startListening();
+
+    // Utterance 1: speech, then 1.3s silence → first flush.
+    procHolder.fn?.({ inputBuffer: { getChannelData: () => new Float32Array(4096).fill(0.3) } });
+    vi.setSystemTime(new Date('2026-01-01T00:00:01.300Z'));
+    procHolder.fn?.({ inputBuffer: { getChannelData: () => new Float32Array(4096) } });
+    expect(ws.sent.filter((s) => s.includes('audioStreamEnd')).length).toBe(1);
+
+    // The server answers with the FINAL input transcription (no turnComplete
+    // in a pure input session) — this must re-arm the flush.
+    await ws.receive({ serverContent: { inputTranscription: { text: 'first burst', final: true } } });
+
+    // Long silence with NO new speech: must NOT flush (nothing to flush).
+    vi.setSystemTime(new Date('2026-01-01T00:00:05.000Z'));
+    procHolder.fn?.({ inputBuffer: { getChannelData: () => new Float32Array(4096) } });
+    expect(ws.sent.filter((s) => s.includes('audioStreamEnd')).length).toBe(1);
+
+    // Utterance 2: fresh speech, then 1.3s silence → the SECOND flush.
+    procHolder.fn?.({ inputBuffer: { getChannelData: () => new Float32Array(4096).fill(0.25) } });
+    vi.setSystemTime(new Date('2026-01-01T00:00:06.300Z'));
+    procHolder.fn?.({ inputBuffer: { getChannelData: () => new Float32Array(4096) } });
+    const ends = ws.sent.filter((s) => s.includes('audioStreamEnd'));
+    expect(ends.length).toBe(2);
+
+    client.disconnect();
+    vi.useRealTimers();
+  });
+
+  it('does NOT re-arm the flush on a provisional (final: false) input transcription', async () => {
+    // A provisional frame mid-utterance must never allow a second flush for
+    // the SAME utterance — the re-arm is guarded by final !== false.
+    mintOk();
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-01-01T00:00:00Z'));
+    const procHolder: { fn: ((e: { inputBuffer: { getChannelData(c: number): Float32Array } }) => void) | null } = { fn: null };
+    const { client, getWs } = setupClient({
+      flushOnSilenceMs: 1200,
+      deps: {
+        createWebSocket: (url: string) => new FakeWebSocket(url),
+        getUserMedia: async () => ({ getTracks: () => [{ stop: vi.fn() }] }) as unknown as MediaStream,
+        createAudioContext: () =>
+          ({
+            sampleRate: 48000,
+            createMediaStreamSource: () => ({ connect: () => undefined }),
+            createScriptProcessor: () => ({
+              connect: () => undefined,
+              get onaudioprocess() {
+                return procHolder.fn;
+              },
+              set onaudioprocess(fn: ((e: { inputBuffer: { getChannelData(c: number): Float32Array } }) => void) | null) {
+                procHolder.fn = fn;
+              },
+            }),
+            createGain: () => ({ gain: { value: 0 }, connect: () => undefined }),
+            createBufferSource: () => ({ buffer: null, onended: null, start: () => undefined, stop: () => undefined, connect: () => undefined }),
+            decodeAudioData: async () => {
+              throw new Error('raw');
+            },
+            destination: {},
+            close: async () => undefined,
+          }) as never,
+      },
+    });
+    await client.connect();
+    const ws = getWs();
+    ws.open();
+    await ws.receive({ setupComplete: {} });
+    await client.startListening();
+
+    // Utterance 1: speech, then 1.3s silence → flush #1 (latched).
+    procHolder.fn?.({ inputBuffer: { getChannelData: () => new Float32Array(4096).fill(0.3) } });
+    vi.setSystemTime(new Date('2026-01-01T00:00:01.300Z'));
+    procHolder.fn?.({ inputBuffer: { getChannelData: () => new Float32Array(4096) } });
+    expect(ws.sent.filter((s) => s.includes('audioStreamEnd')).length).toBe(1);
+
+    // A provisional transcription of the SAME utterance arrives — it must NOT
+    // re-arm (final === false), so more speech cannot double-flush.
+    await ws.receive({ serverContent: { inputTranscription: { text: 'first', final: false } } });
+    procHolder.fn?.({ inputBuffer: { getChannelData: () => new Float32Array(4096).fill(0.3) } });
+    vi.setSystemTime(new Date('2026-01-01T00:00:02.300Z'));
+    procHolder.fn?.({ inputBuffer: { getChannelData: () => new Float32Array(4096) } });
+    expect(ws.sent.filter((s) => s.includes('audioStreamEnd')).length).toBe(1);
+
+    client.disconnect();
+    vi.useRealTimers();
+  });
+
   it('disconnect() flushes an un-flushed utterance before closing (dictation quiet-timeout path)', async () => {
     // The dictation deadlock: the quiet-timeout called disconnect() directly
     // (never stopListening), the socket closed WITHOUT audioStreamEnd, and the

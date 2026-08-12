@@ -492,7 +492,7 @@ if (stA.prompt) {
   fail(`dictation did not fill the input after 60s — ${errMsg}`);
 }
 await shotA('02-dictation-prompt-filled');
-a.kill(); a.dropProfile(); cdp.ws.close();
+a.kill(); a.dropProfile(); try { cdp.ws.close(); } catch { /* socket already gone */ }
 
 // ── PHASE B: active-screen Live mic ─────────────────────────────────────────
 console.log(`\n=== PHASE B — active-screen Live mic (silence fake-audio) ===`);
@@ -843,11 +843,11 @@ if (got2) {
 } else {
   fail(`only ${seen.length} transcription(s) after 90s: ${JSON.stringify(seen.slice(-3))}`);
 }
-c.kill(); c.dropProfile(); cdpC.ws.close();
+c.kill(); c.dropProfile(); try { cdpC.ws.close(); } catch { /* socket already gone */ }
 
 // ── 6. Cleanup (idempotent; the handlers above also run it) ─────────────────
 console.log(`\n[6] Cleanup probe session + recipe`);
-b.kill(); b.dropProfile(); cdpB.ws.close();
+b.kill(); b.dropProfile(); try { cdpB.ws.close(); } catch { /* socket already gone */ }
 await cleanup();
 ok('the owner account stays clean');
 

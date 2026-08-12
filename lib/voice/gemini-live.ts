@@ -574,7 +574,7 @@ export class GeminiLiveClient {
 
     const sc = msg.serverContent as
       | {
-          inputTranscription?: { text?: string };
+          inputTranscription?: { text?: string; final?: boolean };
           outputTranscription?: { text?: string };
           interrupted?: boolean;
           turnComplete?: boolean;
@@ -586,6 +586,17 @@ export class GeminiLiveClient {
         this.diag.transcripts += 1;
         this.emit('transcript', { type: 'final', text: sc.inputTranscription.text });
         this.emit('turn', { kind: 'start' });
+        // Re-arm the end-of-utterance flush when a FINAL input transcription
+        // lands. The server only emits the FINAL transcription after the
+        // client's audioStreamEnd flush, so its arrival proves the current
+        // utterance is done — the NEXT spoken burst must get its OWN flush.
+        // Without this, a pure input session (no model turn in flight) never
+        // sends turnComplete/interrupted, so the one-shot flush stays latched
+        // and every later utterance is never transcribed (seen live: exactly
+        // one transcription across two spoken bursts). Guarded by final !==
+        // false so a provisional frame (final: false) cannot re-arm
+        // mid-utterance.
+        if (sc.inputTranscription.final !== false) this.rearmFlush();
       }
       if (sc.outputTranscription?.text) {
         this.diag.agentSpeech += 1;
