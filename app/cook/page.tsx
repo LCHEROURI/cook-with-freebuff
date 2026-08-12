@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import styles from './page.module.css';
@@ -10,7 +10,7 @@ import { CookScreen } from '@/components/CookScreen';
 import { useAuthSession } from '@/lib/auth/useAuthSession';
 import { useVoiceSession } from '@/lib/hooks/useVoiceSession';
 import { useVoiceInput } from '@/lib/hooks/useVoiceInput';
-import { useGeminiLive } from '@/lib/hooks/useGeminiLive';
+import { useGeminiLive, shouldAutoFallbackToWebSpeech } from '@/lib/hooks/useGeminiLive';
 import { useLiveDictation } from '@/lib/hooks/useLiveDictation';
 import { useCookingSession } from '@/lib/hooks/useCookingSession';
 
@@ -58,6 +58,49 @@ export default function CookPage() {
   // Prefer Gemini Live, but fall through to Web Speech when it errors out
   // (e.g. token endpoint unavailable) instead of leaving the mic dead.
   const useLiveMic = live.available && live.status !== 'ERROR';
+
+  // Auto-fallback on the SAME tap: when the user tapped the Gemini mic and it
+  // hard-fails (missing key, blocked WebSocket, connect timeout), start the
+  // Web Speech fallback immediately and keep the failure reason visible.
+  const [fallbackNotice, setFallbackNotice] = useState<string | null>(null);
+  const geminiTapRef = useRef(false);
+  const fellBackRef = useRef(false);
+
+  // Which voice engine the mic uses — surfaced as a small on-screen badge (and
+  // logged once per load) so a session that landed on the Web Speech fallback
+  // is diagnosable at a glance instead of silently behaving differently.
+  const voiceEngine: 'gemini-live' | 'web-speech' | 'none' = useLiveMic
+    ? 'gemini-live'
+    : voiceInput.supported
+      ? 'web-speech'
+      : 'none';
+
+  useEffect(() => {
+    console.info(`[voice] engine: ${voiceEngine}`);
+  }, [voiceEngine]);
+
+  // Hard-fail to the Web Speech fallback faster: a Gemini tap that fails
+  // (missing key, blocked WebSocket, connect timeout) immediately continues
+  // into the built-in fallback on the SAME tap, and the reason stays visible
+  // in the error banner instead of a silent drop. Guarded so it fires once
+  // per manual tap and never for mid-session drops.
+  useEffect(() => {
+    if (
+      !shouldAutoFallbackToWebSpeech({
+        geminiTapped: geminiTapRef.current,
+        alreadyFellBack: fellBackRef.current,
+        liveStatus: live.status,
+        liveMode: live.mode,
+        webSpeechSupported: voiceInput.supported,
+      })
+    ) {
+      return;
+    }
+    geminiTapRef.current = false;
+    fellBackRef.current = true;
+    setFallbackNotice(live.error ?? 'Gemini Live could not start — using the built-in speech fallback instead.');
+    void voiceInput.toggle();
+  }, [live.status, live.mode, live.error, voiceInput]);
 
   // Recipe-starter state (the "start from scratch" stage): the user tells us
   // what they have, the agent generates + validates a recipe, then "Start
@@ -355,9 +398,17 @@ export default function CookPage() {
               {starter.creating ? 'Creating…' : '✨ Create my recipe'}
             </button>
             {dictation.listening && (
-              <p className={styles.micStatus} role="status" aria-live="polite">
-                <span className={styles.micStatusDot} aria-hidden="true" />
-                <span>🎙 Listening… speak your ingredients</span>
+              <p
+                className={styles.micStatus}
+                role="status"
+                aria-live="polite"
+                data-hearing={dictation.hearing ? 'true' : 'false'}
+              >
+                <span
+                  className={dictation.hearing ? styles.micStatusDotHearing : styles.micStatusDot}
+                  aria-hidden="true"
+                />
+                <span>🎙 {dictation.hearing ? 'Hearing you…' : 'Listening… speak your ingredients'}</span>
               </p>
             )}
             {dictation.error && (
@@ -369,6 +420,14 @@ export default function CookPage() {
               </div>
             )}
           </form>
+          {dictation.available && (
+            <span
+              className={`${styles.voiceEngineBadge} ${styles.voiceEngineBadgeLive}`}
+              data-engine="gemini-live"
+            >
+              ⚡ Gemini Live
+            </span>
+          )}
           {starter.error && (
             <p className={styles.starterError} role="alert">
               {starter.error}
@@ -437,6 +496,29 @@ export default function CookPage() {
     );
   }
 
+  // One-click "copy voice details": whatever the active mic engine (Gemini
+  // Live or the Web Speech fallback), the blob carries the hook + client
+  // session state plus browser capabilities, so a dropped mic can be shared
+  // for diagnosis without console access. Both engines are included — the
+  // fallback state matters even when the user is on Gemini.
+  const copyMicDiagnostics = useCallback(() => {
+    return JSON.stringify(
+      {
+        active: useLiveMic ? 'gemini-live' : 'web-speech',
+        capturedAt: new Date().toISOString(),
+        gemini: live.getDiagnostics(),
+        webSpeech: {
+          supported: voiceInput.supported,
+          listening: voiceInput.listening,
+          interim: voiceInput.interim,
+          error: voiceInput.error ?? null,
+        },
+      },
+      null,
+      2,
+    );
+  }, [useLiveMic, live, voiceInput]);
+
   return (
     <CookScreen
       snapshot={snap}
@@ -451,9 +533,29 @@ export default function CookPage() {
       micSupported={useLiveMic ? true : voiceInput.supported}
       micListening={useLiveMic ? live.mode !== 'off' : voiceInput.listening}
       micInterim={useLiveMic ? liveCaption : voiceInput.interim}
-      micError={useLiveMic ? live.error : voiceInput.error}
-      onMicToggle={useLiveMic ? () => void live.toggle() : voiceInput.toggle}
-      onMicErrorClear={useLiveMic ? live.clearError : voiceInput.clearError}
+      micHearing={useLiveMic ? live.hearing : false}
+      voiceEngine={voiceEngine}
+      micError={useLiveMic ? live.error : (fallbackNotice ?? voiceInput.error)}
+      onMicToggle={
+        useLiveMic
+          ? () => {
+              // A fresh manual tap re-arms the one-shot auto-fallback.
+              geminiTapRef.current = true;
+              fellBackRef.current = false;
+              setFallbackNotice(null);
+              void live.toggle();
+            }
+          : voiceInput.toggle
+      }
+      onMicErrorClear={
+        useLiveMic
+          ? live.clearError
+          : () => {
+              voiceInput.clearError();
+              setFallbackNotice(null);
+            }
+      }
+      onCopyDiagnostics={copyMicDiagnostics}
       onDone={() => void cook.done()}
       onRepeat={() => void cook.repeat()}
       onBack={() => void cook.back()}

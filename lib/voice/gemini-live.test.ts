@@ -155,6 +155,20 @@ describe('GeminiLiveClient — connect + setup', () => {
     expect(getWs().sent).toHaveLength(0);
     client.disconnect();
   });
+
+  it('records a rejected token mint in diagnostics (no socket opened)', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({ ok: false, status: 503, json: async () => ({ success: false }) }),
+    );
+    const { client } = setupClient();
+    await client.connect();
+    const diag = client.getDiagnostics();
+    expect(diag.tokenHttpStatus).toBe(503);
+    expect(diag.tokenError).toContain('503');
+    expect(diag.lastError).toBe('Could not start a voice session.');
+    expect(diag.wsOpens).toBe(0);
+  });
 });
 
 describe('GeminiLiveClient — transcripts, tool calls, responses', () => {
@@ -391,6 +405,87 @@ describe('GeminiLiveClient — mic capture + playback plumbing', () => {
     client.disconnect();
   });
 
+  it('forces the mic back on when reply playback stalls and never drains', async () => {
+    // If the model's audio reply never finishes (browser blocked the
+    // playback, a source that never ends), the mute-during-playback guard
+    // would hold the mic hostage forever — the "first burst transcribed,
+    // then the mic goes dead" signature. The stall watchdog must force the
+    // playback down so capture resumes.
+    mintOk();
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-01-01T00:00:00Z'));
+    const procHolder: { fn: ((e: { inputBuffer: { getChannelData(c: number): Float32Array } }) => void) | null } = { fn: null };
+    const createdSources: { src: { onended: (() => void) | null; start: () => void; stop: () => void } | null } = { src: null };
+    const { client, getWs } = setupClient({
+      deps: {
+        createWebSocket: (url: string) => new FakeWebSocket(url),
+        getUserMedia: async () => ({ getTracks: () => [{ stop: vi.fn() }] }) as unknown as MediaStream,
+        createAudioContext: () =>
+          ({
+            sampleRate: 48000,
+            createMediaStreamSource: () => ({ connect: () => undefined }),
+            createScriptProcessor: () => ({
+              connect: () => undefined,
+              get onaudioprocess() {
+                return procHolder.fn;
+              },
+              set onaudioprocess(fn: ((e: { inputBuffer: { getChannelData(c: number): Float32Array } }) => void) | null) {
+                procHolder.fn = fn;
+              },
+            }),
+            createGain: () => ({ gain: { value: 0 }, connect: () => undefined }),
+            createBufferSource: () => {
+              const src = {
+                buffer: null,
+                onended: null as (() => void) | null,
+                start: () => undefined,
+                stop: () => undefined,
+                connect: () => undefined,
+              };
+              createdSources.src = src;
+              return src;
+            },
+            decodeAudioData: async () => {
+              throw new Error('raw');
+            },
+            destination: {},
+            close: async () => undefined,
+          }) as never,
+      },
+    });
+    await client.connect();
+    const ws = getWs();
+    ws.open();
+    await ws.receive({ setupComplete: {} });
+    await client.startListening();
+
+    const audioFrameCount = () => ws.sent.filter((s) => s.includes('realtimeInput') && s.includes('"audio"')).length;
+
+    // Mic live before any reply.
+    procHolder.fn?.({ inputBuffer: { getChannelData: () => new Float32Array(4096).fill(0.3) } });
+    expect(audioFrameCount()).toBe(1);
+
+    // The model replies; the source NEVER ends, so playback stays "playing"
+    // and the mic stays muted.
+    await ws.receive({
+      serverContent: { modelTurn: { parts: [{ inlineData: { data: btoa('not really pcm') } }] } },
+    });
+    procHolder.fn?.({ inputBuffer: { getChannelData: () => new Float32Array(4096).fill(0.3) } });
+    expect(audioFrameCount()).toBe(1);
+
+    // 16s later — past the 15s stall threshold — the watchdog fires: the
+    // muted frame triggers the force-down (playbackStalls recorded), and the
+    // NEXT frame streams again.
+    vi.setSystemTime(new Date('2026-01-01T00:00:16Z'));
+    procHolder.fn?.({ inputBuffer: { getChannelData: () => new Float32Array(4096).fill(0.3) } });
+    expect(client.getDiagnostics().playbackStalls).toBe(1);
+    procHolder.fn?.({ inputBuffer: { getChannelData: () => new Float32Array(4096).fill(0.3) } });
+    expect(audioFrameCount()).toBe(2);
+
+    client.disconnect();
+    vi.useRealTimers();
+  });
+
   it('auto-flushes audioStreamEnd after trailing silence so the FINAL input transcription is emitted', async () => {
     // Seen live: the Live server only emits the final input transcription once
     // the audio stream ends — without the flush the dictation hook waits
@@ -453,6 +548,172 @@ describe('GeminiLiveClient — mic capture + playback plumbing', () => {
     expect(ws.sent.filter((s) => s.includes('audioStreamEnd')).length).toBe(1);
 
     client.disconnect();
+    vi.useRealTimers();
+  });
+
+  it('accumulates session diagnostics across a live exchange (drop diagnosis)', async () => {
+    mintOk();
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-01-01T00:00:00Z'));
+    const procHolder: { fn: ((e: { inputBuffer: { getChannelData(c: number): Float32Array } }) => void) | null } = { fn: null };
+    const { client, getWs } = setupClient({
+      flushOnSilenceMs: 1200,
+      deps: {
+        createWebSocket: (url: string) => new FakeWebSocket(url),
+        getUserMedia: async () => ({ getTracks: () => [{ stop: vi.fn() }] }) as unknown as MediaStream,
+        createAudioContext: () =>
+          ({
+            sampleRate: 48000,
+            createMediaStreamSource: () => ({ connect: () => undefined }),
+            createScriptProcessor: () => ({
+              connect: () => undefined,
+              get onaudioprocess() {
+                return procHolder.fn;
+              },
+              set onaudioprocess(fn: ((e: { inputBuffer: { getChannelData(c: number): Float32Array } }) => void) | null) {
+                procHolder.fn = fn;
+              },
+            }),
+            createGain: () => ({ gain: { value: 0 }, connect: () => undefined }),
+            createBufferSource: () => ({ buffer: null, onended: null, start: () => undefined, stop: () => undefined, connect: () => undefined }),
+            decodeAudioData: async () => {
+              throw new Error('raw');
+            },
+            destination: {},
+            close: async () => undefined,
+          }) as never,
+      },
+    });
+    await client.connect();
+    const ws = getWs();
+    ws.open();
+    await ws.receive({ setupComplete: {} });
+
+    let diag = client.getDiagnostics();
+    expect(diag.tokenHttpStatus).toBe(200);
+    expect(diag.wsOpens).toBe(1);
+    expect(diag.connected).toBe(true);
+
+    await client.startListening();
+    // Speech then silence crosses the flush threshold.
+    procHolder.fn?.({ inputBuffer: { getChannelData: () => new Float32Array(4096).fill(0.3) } });
+    vi.setSystemTime(new Date('2026-01-01T00:00:01.300Z'));
+    procHolder.fn?.({ inputBuffer: { getChannelData: () => new Float32Array(4096) } });
+    await ws.receive({ serverContent: { inputTranscription: { text: 'add salt' }, turnComplete: true } });
+
+    diag = client.getDiagnostics();
+    expect(diag.micStarted).toBe(true);
+    expect(diag.framesSent).toBe(2);
+    expect(diag.flushesSent).toBe(1);
+    expect(diag.transcripts).toBe(1);
+    expect(diag.turnCompletes).toBe(1);
+    expect(diag.lastError).toBeNull();
+
+    // A hard close records the close code — the first thing to check when a
+    // live mic "drops" mid-conversation.
+    ws.onclose?.({ code: 1006, reason: 'abnormal closure' });
+    diag = client.getDiagnostics();
+    expect(diag.wsCloses).toBe(1);
+    expect(diag.wsLastCloseCode).toBe(1006);
+    expect(diag.connected).toBe(false);
+
+    vi.useRealTimers();
+  });
+
+  it('emits hearing while speech is present and drops it after a silence gap (waiting vs hearing)', async () => {
+    mintOk();
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-01-01T00:00:00Z'));
+    const procHolder: { fn: ((e: { inputBuffer: { getChannelData(c: number): Float32Array } }) => void) | null } = { fn: null };
+    const { client, getWs } = setupClient({
+      deps: {
+        createWebSocket: (url: string) => new FakeWebSocket(url),
+        getUserMedia: async () => ({ getTracks: () => [{ stop: vi.fn() }] }) as unknown as MediaStream,
+        createAudioContext: () =>
+          ({
+            sampleRate: 48000,
+            createMediaStreamSource: () => ({ connect: () => undefined }),
+            createScriptProcessor: () => ({
+              connect: () => undefined,
+              get onaudioprocess() {
+                return procHolder.fn;
+              },
+              set onaudioprocess(fn: ((e: { inputBuffer: { getChannelData(c: number): Float32Array } }) => void) | null) {
+                procHolder.fn = fn;
+              },
+            }),
+            createGain: () => ({ gain: { value: 0 }, connect: () => undefined }),
+            createBufferSource: () => ({ buffer: null, onended: null, start: () => undefined, stop: () => undefined, connect: () => undefined }),
+            decodeAudioData: async () => {
+              throw new Error('raw');
+            },
+            destination: {},
+            close: async () => undefined,
+          }) as never,
+      },
+    });
+    const heard: boolean[] = [];
+    client.on('hearing', (h) => heard.push(h));
+
+    await client.connect();
+    const ws = getWs();
+    ws.open();
+    await ws.receive({ setupComplete: {} });
+    await client.startListening();
+    expect(heard).toHaveLength(0);
+
+    // Real speech → hearing fires immediately.
+    procHolder.fn?.({ inputBuffer: { getChannelData: () => new Float32Array(4096).fill(0.3) } });
+    expect(heard).toEqual([true]);
+    // A short in-sentence pause (< 300 ms gap) keeps hearing true.
+    vi.setSystemTime(new Date('2026-01-01T00:00:00.200Z'));
+    procHolder.fn?.({ inputBuffer: { getChannelData: () => new Float32Array(4096) } });
+    expect(heard).toEqual([true]);
+    // Silence past the gap drops it back to "waiting".
+    vi.setSystemTime(new Date('2026-01-01T00:00:00.600Z'));
+    procHolder.fn?.({ inputBuffer: { getChannelData: () => new Float32Array(4096) } });
+    expect(heard).toEqual([true, false]);
+    expect(client.getDiagnostics().hearing).toBe(false);
+    // Speaking again re-arms it.
+    procHolder.fn?.({ inputBuffer: { getChannelData: () => new Float32Array(4096).fill(0.3) } });
+    expect(heard).toEqual([true, false, true]);
+    expect(client.getDiagnostics().hearing).toBe(true);
+
+    client.disconnect();
+    expect(client.getDiagnostics().hearing).toBe(false);
+    vi.useRealTimers();
+  });
+
+  it('hard-fails with a clear reason when the voice socket never opens (blocked WebSocket)', async () => {
+    mintOk();
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-01-01T00:00:00Z'));
+    const { client, getWs } = setupClient({ connectTimeoutMs: 8000 });
+    const errors: string[] = [];
+    client.on('error', (e) => errors.push(e.message));
+    await client.connect();
+    expect(getWs()).toBeDefined(); // socket created but never opens
+    vi.setSystemTime(new Date('2026-01-01T00:00:08.100Z'));
+    await vi.advanceTimersByTimeAsync(8500);
+    expect(errors.length).toBe(1);
+    expect(errors[0]).toMatch(/could not open the voice connection/);
+    expect(client.getDiagnostics().lastError).toMatch(/could not open the voice connection/);
+    vi.useRealTimers();
+  });
+
+  it('hard-fails when the socket opens but the server never acks setup', async () => {
+    mintOk();
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-01-01T00:00:00Z'));
+    const { client, getWs } = setupClient({ connectTimeoutMs: 8000 });
+    const errors: string[] = [];
+    client.on('error', (e) => errors.push(e.message));
+    await client.connect();
+    getWs().open(); // socket opens, but no setupComplete ever arrives
+    vi.setSystemTime(new Date('2026-01-01T00:00:08.100Z'));
+    await vi.advanceTimersByTimeAsync(8500);
+    expect(errors.length).toBe(1);
+    expect(errors[0]).toMatch(/did not respond/);
     vi.useRealTimers();
   });
 

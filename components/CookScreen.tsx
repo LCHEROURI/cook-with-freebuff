@@ -43,9 +43,21 @@ export interface CookScreenProps {
   micSupported?: boolean;
   micListening?: boolean;
   micInterim?: string;
+  /** Live speech energy — true while the user is actually speaking, so the
+   *  status dot can widen into a solid recording bar ("hearing you") instead
+   *  of the waiting pulse. */
+  micHearing?: boolean;
+  /** Which voice engine the mic uses — surfaced as a small badge so a
+   *  session that silently landed on the Web Speech fallback is visible at a
+   *  glance instead of behaving differently without saying why. */
+  voiceEngine?: 'gemini-live' | 'web-speech' | 'none';
   micError?: string | null;
   onMicToggle: () => void;
   onMicErrorClear?: () => void;
+  /** Returns a diagnostics blob for the active mic (engine, session state,
+   *  errors, browser capabilities) — surfaced as a one-click "copy voice
+   *  details" so mic problems can be shared without console access. */
+  onCopyDiagnostics?: () => string;
   onDone: () => void;
   onRepeat: () => void;
   onBack: () => void;
@@ -69,9 +81,12 @@ export function CookScreen({
   micSupported = false,
   micListening = false,
   micInterim = '',
+  micHearing = false,
+  voiceEngine = 'none',
   micError,
   onMicToggle,
   onMicErrorClear,
+  onCopyDiagnostics,
   onDone,
   onRepeat,
   onBack,
@@ -84,6 +99,32 @@ export function CookScreen({
   // Two-step confirm for Start over — archiving the session is irreversible
   // from the screen, so the first click arms the button, the second fires.
   const [confirmingStartOver, setConfirmingStartOver] = useState(false);
+  const [copiedDetails, setCopiedDetails] = useState(false);
+
+  const copyMicDiagnostics = async () => {
+    if (!onCopyDiagnostics) return;
+    const text = onCopyDiagnostics();
+    try {
+      await navigator.clipboard.writeText(text);
+    } catch {
+      // Clipboard API unavailable (older browsers, non-secure context) —
+      // fall back to a hidden textarea + execCommand.
+      const ta = document.createElement('textarea');
+      ta.value = text;
+      ta.style.position = 'fixed';
+      ta.style.opacity = '0';
+      document.body.appendChild(ta);
+      ta.select();
+      try {
+        document.execCommand('copy');
+      } catch {
+        // execCommand missing (jsdom, some webviews) — nothing more to try.
+      }
+      ta.remove();
+    }
+    setCopiedDetails(true);
+    window.setTimeout(() => setCopiedDetails(false), 2000);
+  };
 
   // The most recent turns the user can re-read — a bounded window keeps the
   // screen focused on the ONE current action, not a full chat log.
@@ -337,10 +378,26 @@ export function CookScreen({
           Send
         </button>
       </form>
+      {voiceEngine !== 'none' && (
+        <span
+          className={`${styles.voiceEngineBadge} ${voiceEngine === 'gemini-live' ? styles.voiceEngineBadgeLive : styles.voiceEngineBadgeFallback}`}
+          data-engine={voiceEngine}
+        >
+          {voiceEngine === 'gemini-live' ? '⚡ Gemini Live' : '🔄 Web Speech'}
+        </span>
+      )}
       {micListening && (
-        <p className={styles.micStatus} role="status" aria-live="polite">
-          <span className={styles.micStatusDot} aria-hidden="true" />
-          <span>🎙 {micInterim || 'Listening… speak now'}</span>
+        <p
+          className={styles.micStatus}
+          role="status"
+          aria-live="polite"
+          data-hearing={micHearing ? 'true' : 'false'}
+        >
+          <span
+            className={micHearing ? styles.micStatusDotHearing : styles.micStatusDot}
+            aria-hidden="true"
+          />
+          <span>🎙 {micHearing ? 'Hearing you…' : micInterim || 'Listening… speak now'}</span>
           <span className={styles.micStatusHint}>· tap to stop</span>
         </p>
       )}
@@ -353,6 +410,16 @@ export function CookScreen({
             </button>
           )}
         </div>
+      )}
+      {onCopyDiagnostics && (micListening || micError) && (
+        <button
+          type="button"
+          className={styles.voiceDiagBtn}
+          onClick={() => void copyMicDiagnostics()}
+          aria-label="Copy voice session details"
+        >
+          {copiedDetails ? '✓ copied voice details' : 'ⓘ copy voice details'}
+        </button>
       )}
     </main>
   );

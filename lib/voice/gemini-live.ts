@@ -46,6 +46,10 @@ export interface GeminiLiveEventMap {
   agentSpeech: string;
   turn: { kind: 'start' | 'end' };
   toolcall: { functionCalls: GeminiLiveFunctionCall[] };
+  /** Live speech energy: true while the user is actually speaking (RMS above
+   *  the speech threshold), false after a short silence gap. Lets the UI show
+   *  a "hearing you" recording bar that differs from the waiting pulse. */
+  hearing: boolean;
   error: Error;
 }
 
@@ -94,6 +98,33 @@ export interface BufferSourceLike extends AudioNodeLike {
   stop(): void;
 }
 
+/**
+ * Session state snapshot for diagnosing a dropped/never-starting mic. Returned
+ * by GeminiLiveClient.getDiagnostics() and surfaced to the user via the
+ * "copy voice details" affordance in the mic UI.
+ */
+export interface VoiceSessionDiagnostics {
+  tokenHttpStatus: number | null;
+  tokenError: string | null;
+  wsOpens: number;
+  wsCloses: number;
+  wsLastCloseCode: number | null;
+  wsErrors: number;
+  transcripts: number;
+  agentSpeech: number;
+  turnCompletes: number;
+  flushesSent: number;
+  framesSent: number;
+  playbackStalls: number;
+  micStarted: boolean;
+  micError: string | null;
+  lastError: string | null;
+  hearing: boolean;
+  connected: boolean;
+  playing: boolean;
+  playbackQueueLength: number;
+}
+
 export interface GeminiLiveOptions {
   tokenUrl?: string;
   getToken?: () => Promise<string | null> | string | null;
@@ -111,6 +142,13 @@ export interface GeminiLiveOptions {
    * flush).
    */
   flushOnSilenceMs?: number;
+  /**
+   * Hard-fail deadline for connect(): if the session has not reached
+   * CONNECTED (token mint + socket open + setup ack) within this many ms,
+   * the client fails with a clear reason instead of hanging on a silent
+   * drop (missing key, blocked WebSocket, unresponsive server). Default 8000.
+   */
+  connectTimeoutMs?: number;
   deps?: GeminiLiveDeps;
 }
 
@@ -139,7 +177,66 @@ export class GeminiLiveClient {
   private currentSource: BufferSourceLike | null = null;
   private playbackCtx: AudioContextLike | null = null;
 
+  // Live speech-energy state (see the hearing event): the timestamp of the
+  // last frame with real signal, so "hearing you" stays true across the short
+  // pauses inside a sentence and only drops after a real silence gap.
+  private lastSpeechAt = 0;
+  private hearing = false;
+
+  // Connect hard-fail watchdog (see connectTimeoutMs): fires if the session
+  // never reaches CONNECTED in time, so a missing key or blocked WebSocket
+  // becomes a visible error instead of an endless "Listening…".
+  private connectTimer: ReturnType<typeof setTimeout> | null = null;
+
+  // Playback-stall watchdog: the mic is muted while the model's reply plays,
+  // so a reply whose audio never finishes (browser blocked playback, a stuck
+  // source) would leave the mic muted forever — the reported "first burst
+  // transcribed, then the mic goes dead" signature. If playback has been
+  // "playing" longer than this without draining, force it down.
+  private playbackStartedAt = 0;
+  private readonly PLAYBACK_STALL_MS = 15000;
+
+  // Session diagnostics — populated at every lifecycle point so a dropped mic
+  // can be diagnosed from the client alone (see getDiagnostics).
+  private diag: VoiceSessionDiagnostics = {
+    tokenHttpStatus: null,
+    tokenError: null,
+    wsOpens: 0,
+    wsCloses: 0,
+    wsLastCloseCode: null,
+    wsErrors: 0,
+    transcripts: 0,
+    agentSpeech: 0,
+    turnCompletes: 0,
+    flushesSent: 0,
+    framesSent: 0,
+    playbackStalls: 0,
+    micStarted: false,
+    micError: null,
+    lastError: null,
+    hearing: false,
+    connected: false,
+    playing: false,
+    playbackQueueLength: 0,
+  };
+
   constructor(private readonly opts: GeminiLiveOptions = {}) {}
+
+  getDiagnostics(): VoiceSessionDiagnostics {
+    return {
+      ...this.diag,
+      hearing: this.hearing,
+      connected: this.connected,
+      playing: this.playing,
+      playbackQueueLength: this.playbackQueue.length,
+    };
+  }
+
+  private setHearing(value: boolean): void {
+    if (this.hearing === value) return;
+    this.hearing = value;
+    this.emit('hearing', value);
+  }
 
   get connected(): boolean {
     return this.ws !== null && this.ws.readyState === 1;
@@ -167,8 +264,20 @@ export class GeminiLiveClient {
    */
   async connect(): Promise<void> {
     this.emit('status', 'CONNECTING');
+    const timeoutMs = this.opts.connectTimeoutMs ?? 8000;
+    this.connectTimer = setTimeout(() => {
+      if (this.status === 'CONNECTED' || this.status === 'ERROR') return;
+      const socketOpened = this.ws !== null && this.ws.readyState === 1;
+      this.fail(
+        socketOpened
+          ? 'Gemini Live did not respond — the voice service may be blocked.'
+          : 'Gemini Live could not open the voice connection — a firewall or network may be blocking it.',
+      );
+    }, timeoutMs);
     const token = await this.mintToken();
-    if (!token) return;
+    // A failure (including the connect timeout firing while the token fetch
+    // hung) has already emitted ERROR — do not keep building the session.
+    if (!token || this.status === 'ERROR') return;
 
     // The ephemeral token is server-issued (letters/digits/slash/dash) and is
     // consumed verbatim as the access_token query param — verified working
@@ -184,9 +293,23 @@ export class GeminiLiveClient {
       this.fail('Could not open the voice connection.');
       return;
     }
-    this.ws = ws;
-
+    this.ws = ws;    ws.onclose = (e: { code?: number; reason?: string }) => {
+      this.clearConnectTimer();
+      this.diag.wsCloses += 1;
+      this.diag.wsLastCloseCode = e.code ?? null;
+      // A live session ending on a non-clean close is the first thing to
+      // check when the mic "stops working" mid-conversation.
+      if (e.code !== undefined && e.code !== 1000 && e.code !== 1001) {
+        console.error(`[voice] WebSocket closed with code ${e.code} (${e.reason ?? 'no reason'})`);
+      }
+      if (this.ws === ws) {
+        this.teardownMic();
+        this.ws = null;
+        this.emit('status', 'DISCONNECTED');
+      }
+    };
     ws.onopen = () => {
+      this.diag.wsOpens += 1;
       this.send({
         setup: {
           model: `models/${model}`,
@@ -202,16 +325,11 @@ export class GeminiLiveClient {
         },
       });
     };
-    ws.onclose = () => {
-      if (this.ws === ws) {
-        this.teardownMic();
-        this.ws = null;
-        this.emit('status', 'DISCONNECTED');
-      }
-    };
     ws.onerror = () => {
+      this.diag.wsErrors += 1;
       // The close event follows with the real reason; surface a plain error
       // in case it never arrives.
+      console.error('[voice] WebSocket error — the voice connection dropped.');
       this.emit('error', new Error('The voice connection dropped.'));
     };
     ws.onmessage = (e) => this.handleMessage(e.data);
@@ -249,6 +367,8 @@ export class GeminiLiveClient {
       const ctx = createCtx();
       this.mediaStream = stream;
       this.audioContext = ctx;
+      this.diag.micStarted = true;
+      this.diag.micError = null;
 
       const source = ctx.createMediaStreamSource(stream);
       const processor = ctx.createScriptProcessor(4096, 1, 1);
@@ -266,7 +386,9 @@ export class GeminiLiveClient {
       // state is instance-level so turnComplete/interrupted can re-arm it
       // (handleMessage) — every utterance, not just the first, gets flushed.
       const flushSilenceMs = this.opts.flushOnSilenceMs ?? 1200;
+      // Same speech threshold drives the flush and the "hearing you" state.
       const SPEECH_RMS = 0.012;
+      const HEARING_GAP_MS = 300;
       this.flushLastSpeechMs = 0;
       this.flushSent = false;
 
@@ -275,18 +397,43 @@ export class GeminiLiveClient {
         // all: the speaker's echo would otherwise reach the server's VAD as a
         // phantom user turn (the reply playing from the speakers IS "speech"
         // to the mic). Capture resumes the moment playback drains.
-        if (this.playing || this.playbackQueue.length > 0) return;
+        if (this.playing || this.playbackQueue.length > 0) {
+          // Stall watchdog: if the reply's audio never finishes (browser
+          // blocked the playback, the source never ended), the mute above
+          // would hold the mic hostage forever. Force the playback down so
+          // capture resumes and the user can speak again.
+          if (
+            this.playing &&
+            this.playbackStartedAt > 0 &&
+            Date.now() - this.playbackStartedAt > this.PLAYBACK_STALL_MS
+          ) {
+            this.diag.playbackStalls += 1;
+            console.error('[voice] reply playback stalled — forcing the mic back on');
+            this.stopPlayback();
+            this.playing = false;
+            this.playbackStartedAt = 0;
+            this.flushLastSpeechMs = 0;
+            this.setHearing(false);
+          }
+          return;
+        }
         const channel = e.inputBuffer.getChannelData(0);
         let rms = 0;
         for (let i = 0; i < channel.length; i++) rms += channel[i] * channel[i];
         rms = Math.sqrt(rms / channel.length);
-        if (rms > SPEECH_RMS) this.flushLastSpeechMs = Date.now();
+        if (rms > SPEECH_RMS) {
+          this.flushLastSpeechMs = Date.now();
+          this.lastSpeechAt = Date.now();
+          this.setHearing(true);
+        } else if (this.hearing && Date.now() - this.lastSpeechAt > HEARING_GAP_MS) {
+          this.setHearing(false);
+        }
         const chunk = resample(channel, inputRate, INPUT_RATE);
-        if (chunk.length === 0) return;
-        const pcm = floatTo16BitPCM(chunk);
+        if (chunk.length === 0) return;      const pcm = floatTo16BitPCM(chunk);
         this.send({
           realtimeInput: { audio: { data: pcmToBase64(pcm), mimeType: 'audio/pcm;rate=16000' } },
         });
+        this.diag.framesSent += 1;
         // Only flush when real speech was heard since the last re-arm — a
         // flush on empty silence would consume the one-shot before the user
         // ever spoke and kill the first real utterance.
@@ -297,6 +444,7 @@ export class GeminiLiveClient {
           Date.now() - this.flushLastSpeechMs >= flushSilenceMs
         ) {
           this.flushSent = true;
+          this.diag.flushesSent += 1;
           this.send({ realtimeInput: { audioStreamEnd: true } });
         }
       };
@@ -308,7 +456,9 @@ export class GeminiLiveClient {
       source.connect(processor);
       processor.connect(zero);
       zero.connect(ctx.destination);
-    } catch {
+    } catch (e) {
+      this.diag.micError = e instanceof Error ? e.message : 'mic capture threw';
+      console.error(`[voice] mic capture failed: ${this.diag.micError}`);
       this.teardownMic();
       this.fail('Microphone unavailable — check your browser permission.');
     }
@@ -321,6 +471,7 @@ export class GeminiLiveClient {
   }
 
   disconnect(): void {
+    this.clearConnectTimer();
     this.stopPlayback();
     // Flush any un-flushed utterance before closing — otherwise the server
     // never emits the pending final input transcription (dictation deadlock
@@ -348,16 +499,21 @@ export class GeminiLiveClient {
         method: 'POST',
         headers: { ...(bearer ? { authorization: `Bearer ${bearer}` } : {}) },
       });
+      this.diag.tokenHttpStatus = res.status;
       const body = (await res.json()) as {
         success?: boolean;
         data?: { token?: unknown };
       };
       if (!res.ok || !body.success || typeof body.data?.token !== 'string' || body.data.token.length === 0) {
+        this.diag.tokenError = `token endpoint rejected (HTTP ${res.status})`;
+        console.error(`[voice] token endpoint rejected (HTTP ${res.status})`);
         this.fail('Could not start a voice session.');
         return null;
       }
       return body.data.token;
-    } catch {
+    } catch (e) {
+      this.diag.tokenError = e instanceof Error ? e.message : 'token fetch threw';
+      console.error(`[voice] token endpoint unreachable: ${this.diag.tokenError}`);
       this.fail('Could not reach the voice service.');
       return null;
     }
@@ -373,8 +529,17 @@ export class GeminiLiveClient {
   }
 
   private fail(message: string): void {
+    this.clearConnectTimer();
+    this.diag.lastError = message;
     this.emit('error', new Error(message));
     this.emit('status', 'ERROR');
+  }
+
+  private clearConnectTimer(): void {
+    if (this.connectTimer) {
+      clearTimeout(this.connectTimer);
+      this.connectTimer = null;
+    }
   }
 
   /** Allow the end-of-utterance flush to fire again for the next utterance. */
@@ -395,6 +560,7 @@ export class GeminiLiveClient {
     }
 
     if (msg.setupComplete !== undefined) {
+      this.clearConnectTimer();
       this.emit('status', 'CONNECTED');
       return;
     }
@@ -410,10 +576,12 @@ export class GeminiLiveClient {
       | undefined;
     if (sc) {
       if (sc.inputTranscription?.text) {
+        this.diag.transcripts += 1;
         this.emit('transcript', { type: 'final', text: sc.inputTranscription.text });
         this.emit('turn', { kind: 'start' });
       }
       if (sc.outputTranscription?.text) {
+        this.diag.agentSpeech += 1;
         this.emit('agentSpeech', sc.outputTranscription.text);
       }
       if (sc.interrupted) {
@@ -423,6 +591,7 @@ export class GeminiLiveClient {
         if (part.inlineData?.data) this.queuePlayback(part.inlineData.data);
       }
       if (sc.turnComplete) {
+        this.diag.turnCompletes += 1;
         // The turn is over — the user may speak again. Re-arm the flush so
         // the NEXT utterance gets its own audioStreamEnd instead of the
         // one-shot flush leaving every later burst untranscribed.
@@ -453,6 +622,7 @@ export class GeminiLiveClient {
   // ── Mic teardown ───────────────────────────────────────────────────────────
 
   private teardownMic(): void {
+    this.setHearing(false);
     this.mediaStream?.getTracks().forEach((t) => t.stop());
     this.mediaStream = null;
     try {
@@ -467,6 +637,9 @@ export class GeminiLiveClient {
   // ── Audio playback (24 kHz PCM16 → AudioContext) ───────────────────────────
 
   private queuePlayback(base64: string): void {
+    // Playback mutes the mic (see onaudioprocess) — the model's reply is not
+    // "the user hearing", so drop the hearing state the moment it starts.
+    if (this.playbackQueue.length === 0) this.setHearing(false);
     try {
       const bin = atob(base64);
       const buf = new ArrayBuffer(bin.length);
@@ -482,6 +655,7 @@ export class GeminiLiveClient {
   private async drainPlayback(): Promise<void> {
     if (this.playing) return;
     this.playing = true;
+    this.playbackStartedAt = Date.now();
     try {
       while (this.playbackQueue.length > 0) {
         const chunk = this.playbackQueue.shift()!;

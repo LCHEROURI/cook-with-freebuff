@@ -35,11 +35,13 @@ describe('app/cook/page.tsx · protected route', () => {
     expect(COOK).toContain('const voiceInput = useVoiceInput({');
     expect(COOK).toContain('onFinal: (text) => {');
     expect(COOK).toContain('void voice.send(text);');
-    expect(COOK).toContain("import { useGeminiLive } from '@/lib/hooks/useGeminiLive'");
+    expect(COOK).toContain("import { useGeminiLive, shouldAutoFallbackToWebSpeech } from '@/lib/hooks/useGeminiLive'");
     expect(COOK).toContain('const live = useGeminiLive({');
     expect(COOK).toContain('useLiveMic ? true : voiceInput.supported');
     expect(COOK).toContain('useLiveMic ? live.mode !== \'off\' : voiceInput.listening');
-    expect(COOK).toContain('onMicToggle={useLiveMic ? () => void live.toggle() : voiceInput.toggle}');
+    expect(COOK).toContain('geminiTapRef.current = true;');
+    expect(COOK).toContain('void live.toggle();');
+    expect(COOK).toContain('shouldAutoFallbackToWebSpeech');
     expect(COOK).toContain("voice.setStatus('LISTENING')");
   });
 

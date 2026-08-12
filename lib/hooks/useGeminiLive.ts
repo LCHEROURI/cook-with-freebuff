@@ -46,6 +46,57 @@ export interface UseGeminiLiveOptions {
 
 const DEFAULT_SILENT_THRESHOLD_MS = 20000;
 
+export interface AutoFallbackDecision {
+  /** The user just tapped the Gemini mic (the attempt this failure belongs to). */
+  geminiTapped: boolean;
+  /** The one-shot fallback already fired for this tap. */
+  alreadyFellBack: boolean;
+  liveStatus: LiveStatus;
+  liveMode: LiveMode;
+  webSpeechSupported: boolean;
+}
+
+/**
+ * The page's one-shot hard-fail: a Gemini mic tap that errors (missing key,
+ * blocked WebSocket, connect timeout) continues into the Web Speech fallback
+ * on the SAME tap — exactly once, and only when the tap initiated the attempt
+ * (never for a mid-session drop the user didn't just trigger).
+ */
+export function shouldAutoFallbackToWebSpeech(d: AutoFallbackDecision): boolean {
+  return (
+    d.geminiTapped &&
+    !d.alreadyFellBack &&
+    d.liveStatus === 'ERROR' &&
+    d.liveMode === 'off' &&
+    d.webSpeechSupported
+  );
+}
+
+/**
+ * Turn a client failure into a clear, actionable banner: name the cause
+ * (missing key, blocked WebSocket, timeout, drop) and tell the user the
+ * built-in fallback took over — never a silent "session could not start".
+ */
+function fallbackReason(message: string): string {
+  const m = message.toLowerCase();
+  if (m.includes('token endpoint rejected')) {
+    return "Gemini Live couldn't start — the voice service rejected the request (check the API key). Using the built-in speech fallback instead.";
+  }
+  if (m.includes('token endpoint unreachable') || m.includes('could not reach the voice service')) {
+    return "Gemini Live couldn't reach the voice service (missing API key or network block). Using the built-in speech fallback instead.";
+  }
+  if (m.includes('could not open the voice connection')) {
+    return "Gemini Live couldn't open the voice connection — a firewall, VPN, or network policy may be blocking it. Using the built-in speech fallback instead.";
+  }
+  if (m.includes('timed out') || m.includes('did not respond')) {
+    return "Gemini Live timed out connecting (slow or blocked network). Using the built-in speech fallback instead.";
+  }
+  if (m.includes('dropped') || m.includes('failed')) {
+    return `Gemini Live's voice connection ${m.includes('dropped') ? 'dropped' : 'failed'}. Using the built-in speech fallback instead.`;
+  }
+  return `${message} Using the built-in speech fallback instead.`;
+}
+
 interface PendingTurn {
   /** Index into the turns array — matching by text would break on repeats ("done" twice). */
   turnIndex: number;
@@ -70,6 +121,9 @@ export function useGeminiLive(opts: UseGeminiLiveOptions = {}) {
   const [status, setStatus] = useState<LiveStatus>('IDLE');
   const [error, setError] = useState<string | null>(null);
   const [turns, setTurns] = useState<AgentTurn[]>([]);
+  // Live speech energy from the client — true while the user is actually
+  // speaking, so the mic status can show a recording bar vs the waiting pulse.
+  const [hearing, setHearing] = useState(false);
   // Watchdog: true while the session is live and listening but nothing has
   // been heard for silentThresholdMs — the caption swaps from the frozen
   // "Listening…" to an honest "say something, or tap to stop".
@@ -225,6 +279,7 @@ export function useGeminiLive(opts: UseGeminiLiveOptions = {}) {
 
     setMode('connecting');
     setStatus('LISTENING');
+    setHearing(false);
     markActivity();
 
     const o = optsRef.current;
@@ -243,14 +298,18 @@ export function useGeminiLive(opts: UseGeminiLiveOptions = {}) {
         markActivity();
         void client.startListening();
       } else if (s === 'ERROR') {
+        // The error event (fired just before this) owns the message — do not
+        // clobber the specific reason with a generic one here.
         setMode('off');
         setStatus('ERROR');
-        setError('The voice session could not start — try the typed chat instead.');
+        setHearing(false);
       } else if (s === 'DISCONNECTED') {
         setMode((m) => (m === 'live' || m === 'connecting' ? 'off' : m));
         setStatus('IDLE');
+        setHearing(false);
       }
     });
+    client.on('hearing', (h) => setHearing(h));
     client.on('transcript', (t) => {
       if (t.type === 'final' && t.text.trim()) {
         markActivity();
@@ -276,7 +335,7 @@ export function useGeminiLive(opts: UseGeminiLiveOptions = {}) {
     });
     client.on('error', (e) => {
       setStatus('ERROR');
-      setError(e.message);
+      setError(fallbackReason(e.message));
     });
 
     void client.connect();
@@ -298,6 +357,33 @@ export function useGeminiLive(opts: UseGeminiLiveOptions = {}) {
 
   const clearError = useCallback(() => setError(null), []);
 
+  // Snapshot for the "copy voice details" affordance: hook state + client
+  // session diagnostics + browser capabilities, so a dropped mic can be
+  // diagnosed without the user opening the console.
+  const getDiagnostics = useCallback(() => {
+    const w = window as unknown as {
+      SpeechRecognition?: unknown;
+      webkitSpeechRecognition?: unknown;
+      AudioContext?: unknown;
+      webkitAudioContext?: unknown;
+    };
+    return {
+      engine: 'gemini-live',
+      mode,
+      status,
+      hearing,
+      awaiting,
+      error: error ?? null,
+      client: clientRef.current?.getDiagnostics() ?? null,
+      browser: {
+        userAgent: navigator.userAgent,
+        webSpeech: Boolean(w.SpeechRecognition || w.webkitSpeechRecognition),
+        audioContext: Boolean(w.AudioContext || w.webkitAudioContext),
+        webSocket: typeof WebSocket !== 'undefined',
+      },
+    };
+  }, [mode, status, hearing, awaiting, error]);
+
   // Watchdog: poll while the session is live; if the mic is listening and
   // nothing happened for silentThresholdMs, surface the awaiting state.
   useEffect(() => {
@@ -318,6 +404,7 @@ export function useGeminiLive(opts: UseGeminiLiveOptions = {}) {
     available,
     mode,
     status,
+    hearing,
     error,
     turns,
     awaiting,
@@ -325,5 +412,6 @@ export function useGeminiLive(opts: UseGeminiLiveOptions = {}) {
     stop,
     sendText,
     clearError,
+    getDiagnostics,
   };
 }

@@ -731,7 +731,10 @@
 }
 
 /* The "speak now" cue: a live pulsing dot that reads as capture-in-progress
-   even without reading the words, distinct from the static error/alert dots. */
+   even without reading the words, distinct from the static error/alert dots.
+   While the user is actually speaking the dot widens into a solid recording
+   bar (micStatusDotHearing) so "waiting to hear you" and "hearing you" read
+   differently at a glance. */
 .micStatusDot {
   width: 9px;
   height: 9px;
@@ -739,6 +742,7 @@
   background: var(--color-accent);
   flex-shrink: 0;
   animation: mic-dot-pulse 1.3s ease-in-out infinite;
+  transition: width 0.15s ease, height 0.15s ease, border-radius 0.15s ease;
 }
 
 @keyframes mic-dot-pulse {
@@ -753,9 +757,68 @@
   }
 }
 
+/* Solid "recording" bar while speech is actually being heard — steady, no
+   pulse, so it reads as live capture rather than waiting. */
+.micStatusDotHearing {
+  width: 18px;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--color-accent);
+  flex-shrink: 0;
+  animation: none;
+  transition: width 0.15s ease, height 0.15s ease, border-radius 0.15s ease;
+}
+
 .micStatusHint {
   color: var(--color-text-muted);
   font-weight: 400;
+}
+
+/* Engine badge — which voice path the mic uses, visible at a glance so a
+   session on the Web Speech fallback never masquerades as Gemini Live. */
+.voiceEngineBadge {
+  display: inline-flex;
+  align-items: center;
+  margin-top: 0.45rem;
+  font-size: 0.7rem;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--color-text-muted);
+  background: color-mix(in srgb, var(--color-text-muted) 10%, transparent);
+  border-radius: 999px;
+  padding: 2px 9px;
+  line-height: 1.4;
+}
+
+.voiceEngineBadgeLive {
+  color: var(--color-accent);
+  background: color-mix(in srgb, var(--color-accent) 12%, transparent);
+}
+
+.voiceEngineBadgeFallback {
+  color: var(--color-warning-text, var(--color-accent-hover));
+  background: color-mix(in srgb, var(--color-warning-text, var(--color-accent-hover)) 12%, transparent);
+}
+
+/* One-click "copy voice details" — mic drops get diagnosed from the session
+   blob without the user ever opening the browser console. */
+.voiceDiagBtn {
+  margin: 0.5rem auto 0;
+  display: block;
+  background: none;
+  border: none;
+  padding: 0;
+  font: inherit;
+  font-size: 0.8rem;
+  color: var(--color-text-muted);
+  text-decoration: underline dotted;
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+
+.voiceDiagBtn:hover {
+  color: var(--color-text);
 }
 
 .micError {

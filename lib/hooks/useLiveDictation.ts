@@ -56,6 +56,7 @@ export function useLiveDictation(options: UseLiveDictationOptions = {}) {
 
   const [status, setStatus] = useState<LiveDictationStatus>('IDLE');
   const [error, setError] = useState<string | null>(null);
+  const [hearing, setHearing] = useState(false);
 
   const clientRef = useRef<GeminiLiveClient | null>(null);
   const quietTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -117,12 +118,15 @@ export function useLiveDictation(options: UseLiveDictationOptions = {}) {
         setStatus('LISTENING');
         void client.startListening();
       } else if (s === 'ERROR') {
+        // The error event (fired just before this) owns the message — do not
+        // clobber the specific reason with a generic one here.
         clearQuietTimer();
         clientRef.current = null;
         setStatus('ERROR');
-        setError('The voice session could not start — you can type your ingredients instead.');
+        setHearing(false);
       } else if (s === 'DISCONNECTED') {
         clearQuietTimer();
+        setHearing(false);
         if (clientRef.current === client) {
           clientRef.current = null;
           if (intentionalRef.current) {
@@ -138,10 +142,12 @@ export function useLiveDictation(options: UseLiveDictationOptions = {}) {
         }
       }
     });
+    client.on('hearing', (h) => setHearing(h));
     client.on('transcript', (t) => {
       // Only the FINAL input transcription is a real utterance — partials
       // stream in this API too, but the starter waits for the finished one.
       if (t.type !== 'final' || !t.text.trim()) return;
+      setHearing(false);
       clearQuietTimer();
       intentionalRef.current = true;
       clientRef.current = null;
@@ -159,12 +165,13 @@ export function useLiveDictation(options: UseLiveDictationOptions = {}) {
       clearQuietTimer();
       const message = e.message.includes('Microphone')
         ? 'Microphone permission denied — enable it in your browser, or type your ingredients instead.'
-        : 'The voice session could not start — you can type your ingredients instead.';
+        : `Gemini Live couldn't start: ${e.message} — you can type your ingredients instead.`;
       setStatus('ERROR');
       setError(message);
     });
 
     setStatus('LISTENING');
+    setHearing(false);
     void client.connect();
 
     // Quiet timeout: nothing spoken → stop with an honest message.
@@ -195,6 +202,7 @@ export function useLiveDictation(options: UseLiveDictationOptions = {}) {
     available,
     status,
     listening: status === 'LISTENING',
+    hearing,
     error,
     toggle,
     stop,

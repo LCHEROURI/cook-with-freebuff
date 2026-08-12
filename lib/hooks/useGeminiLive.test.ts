@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { act, renderHook } from '@testing-library/react';
-import { useGeminiLive, type LiveStatus } from './useGeminiLive';
+import { useGeminiLive, shouldAutoFallbackToWebSpeech, type LiveStatus } from './useGeminiLive';
 
 // ============================================================================
 // lib/hooks/useGeminiLive.test.ts — the Live voice session lifecycle, with the
@@ -104,6 +104,26 @@ afterEach(() => {
 });
 
 describe('useGeminiLive', () => {
+  describe('shouldAutoFallbackToWebSpeech', () => {
+    const base = {
+      geminiTapped: true,
+      alreadyFellBack: false,
+      liveStatus: 'ERROR' as const,
+      liveMode: 'off' as const,
+      webSpeechSupported: true,
+    };
+    it('fires only for a fresh Gemini tap that hard-failed with Web Speech available', () => {
+      expect(shouldAutoFallbackToWebSpeech(base)).toBe(true);
+    });
+    it('never fires without the initiating tap, after the one-shot fired, mid-session, or without Web Speech', () => {
+      expect(shouldAutoFallbackToWebSpeech({ ...base, geminiTapped: false })).toBe(false);
+      expect(shouldAutoFallbackToWebSpeech({ ...base, alreadyFellBack: true })).toBe(false);
+      expect(shouldAutoFallbackToWebSpeech({ ...base, liveStatus: 'LISTENING' })).toBe(false);
+      expect(shouldAutoFallbackToWebSpeech({ ...base, liveMode: 'live' })).toBe(false);
+      expect(shouldAutoFallbackToWebSpeech({ ...base, webSpeechSupported: false })).toBe(false);
+    });
+  });
+
   it('is unavailable without Web Audio', () => {
     removeAudioContext();
     const { result } = renderHook(() => useGeminiLive());
@@ -139,6 +159,31 @@ describe('useGeminiLive', () => {
     expect(result.current.mode).toBe('live');
     expect(result.current.status).toBe('LISTENING');
     expect(lastClient!.startListeningCalls).toBe(1);
+  });
+
+  it('exposes live speech energy (hearing) and clears it when the session errors', async () => {
+    const { result } = renderHook(() => useGeminiLive());
+    await act(async () => {
+      await result.current.toggle();
+    });
+    await act(async () => {
+      lastClient!.emit('status', 'CONNECTED');
+    });
+    expect(result.current.hearing).toBe(false);
+    await act(async () => {
+      lastClient!.emit('hearing', true);
+    });
+    expect(result.current.hearing).toBe(true);
+    await act(async () => {
+      lastClient!.emit('hearing', false);
+    });
+    expect(result.current.hearing).toBe(false);
+    // A session error must not leave a stale "hearing you" on screen.
+    await act(async () => {
+      lastClient!.emit('status', 'ERROR');
+    });
+    expect(result.current.hearing).toBe(false);
+    expect(result.current.mode).toBe('off');
   });
 
   it('builds a THINKING turn from a final transcript, streams the reply, and finalizes on turn end', async () => {
@@ -244,15 +289,19 @@ describe('useGeminiLive', () => {
     expect(result.current.status).toBe('IDLE');
   });
 
-  it('maps an ERROR status to a recoverable error state', async () => {
+  it('maps a hard failure to a clear, actionable reason (blocked WebSocket)', async () => {
     const { result } = renderHook(() => useGeminiLive());
     await act(async () => {
       await result.current.toggle();
+      lastClient!.emit('error', new Error('Could not open the voice connection.'));
       lastClient!.emit('status', 'ERROR');
     });
     expect(result.current.mode).toBe('off');
     expect(result.current.status).toBe('ERROR');
-    expect(result.current.error).toContain('typed chat');
+    // The specific reason survives the status transition — never a generic
+    // "session could not start", and the fallback is named explicitly.
+    expect(result.current.error).toContain('firewall');
+    expect(result.current.error).toContain('built-in speech fallback');
   });
 
   it('unmount disconnects the live session — no dangling socket', async () => {
