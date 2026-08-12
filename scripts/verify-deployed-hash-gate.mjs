@@ -115,13 +115,23 @@ if (!live) {
   process.exit(1);
 }
 
-// Ensure both commits are present locally before the ancestry check. The CI
-// checkout is shallow (fetch-depth 1), so the live commit — and on PRs the
-// head commit — is usually NOT in the object store. Fetching by sha from
-// origin (GitHub allows reachable-sha fetches) makes the direction decision
-// real, never a missing-object accident. Without it, `git merge-base` on a
-// missing object exits 128 and would block EVERY forward PR — or, worse, a
-// future git behavior change could silently flip the verdict.
+// Ensure the ancestry check has a real object graph to walk. The CI checkout
+// is shallow (fetch-depth 1): HEAD is a boundary with NO parents, so
+// `git merge-base --is-ancestor live HEAD` can never walk back to live and
+// would falsely block EVERY forward push (the direction call sees HEAD as a
+// root and concludes "not ahead"). Unshallow first — GitHub serves full
+// history — so HEAD's parent chain exists; then fetch each commit by sha as a
+// fallback for the PR-head case, where the head lives on an unmerged branch
+// not reachable from origin/main. Without either, `git merge-base` on a
+// missing object exits 128 (or a future git change silently flips the
+// verdict) — and a silently-green broken guard is the failure this exists to
+// prevent.
+if (spawnSync('git', ['rev-parse', '--is-shallow-repository'], { encoding: 'utf8' }).stdout.trim() === 'true') {
+  if (spawnSync('git', ['fetch', '--quiet', '--unshallow', 'origin']).status !== 0) {
+    console.error('✗ FAIL: could not deepen the shallow checkout for the ancestry check — cannot guard against a stale-head push.');
+    process.exit(1);
+  }
+}
 const ensureCommit = (sha) => {
   if (spawnSync('git', ['cat-file', '-e', sha]).status === 0) return true;
   return spawnSync('git', ['fetch', '--quiet', 'origin', sha]).status === 0;

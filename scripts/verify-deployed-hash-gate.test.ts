@@ -164,12 +164,33 @@ describe('scripts/verify-deployed-hash-gate.mjs · --head (PR-time variant)', ()
     expect(SRC).toContain("'--expect', LOCAL_HEAD");
   });
 
+  it('unshallows the checkout before the ancestry check (shallow CI checkout)', () => {
+    // The CI checkout is fetch-depth 1: HEAD is a shallow boundary with NO
+    // parents, so `git merge-base --is-ancestor live HEAD` can never walk
+    // back to live and would falsely block EVERY forward push. The gate must
+    // detect the shallow repo (rev-parse --is-shallow-repository) and deepen
+    // it (fetch --unshallow origin) before the merge-base call — the
+    // cat-file-then-fetch fallback alone only fetches missing OBJECTS, it
+    // cannot restore HEAD's missing parent chain.
+    expect(SRC).toContain("spawnSync('git', ['rev-parse', '--is-shallow-repository']");
+    expect(SRC).toContain("spawnSync('git', ['fetch', '--quiet', '--unshallow', 'origin'])");
+    // The unshallow step must run BEFORE the ancestry check.
+    const unshallowIdx = SRC.indexOf("['fetch', '--quiet', '--unshallow', 'origin']");
+    const ancIdx = SRC.indexOf("['merge-base', '--is-ancestor', live, LOCAL_HEAD]");
+    expect(unshallowIdx).toBeGreaterThan(-1);
+    expect(ancIdx).toBeGreaterThan(unshallowIdx);
+  });
+
+  it('fails loudly when the shallow checkout cannot be deepened', () => {
+    expect(SRC).toContain('could not deepen the shallow checkout for the ancestry check');
+    expect(SRC).toContain('process.exit(1);');
+  });
+
   it('fetches commits by sha from origin before the ancestry check (shallow CI checkout)', () => {
-    // The CI checkout is fetch-depth 1, so the live commit — and on PRs the
-    // head commit — is usually NOT in the object store; a bare `git
-    // merge-base` would exit 128 on the missing object and block EVERY
-    // forward PR (or silently flip verdict on a future git change). The
-    // cat-file-then-fetch fallback makes the direction decision real.
+    // After unshallowing, the live commit is present on a normal forward push,
+    // but the PR-head case (an unmerged branch) still needs the by-sha fetch:
+    // the head sha is not reachable from origin/main. The cat-file-then-fetch
+    // fallback makes the direction decision real for that case.
     expect(SRC).toContain("spawnSync('git', ['cat-file', '-e', sha])");
     expect(SRC).toContain("spawnSync('git', ['fetch', '--quiet', 'origin', sha])");
     // The fetch must run BEFORE the ancestry check.
