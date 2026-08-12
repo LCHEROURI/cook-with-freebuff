@@ -23,6 +23,16 @@ npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 
+# Firebase emulator logs (created by `npm run emulators`)
+firebase-debug.log
+firestore-debug.log
+ui-debug.log
+pubsub-debug.log
+auth-debug.log
+functions-debug.log
+database-debug.log
+storage-debug.log
+
 # local env files
 .env*.local
 

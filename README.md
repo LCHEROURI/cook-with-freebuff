@@ -310,8 +310,10 @@ cp .env.example .env.local
 npm run dev
 
 # Local Firestore/Auth emulator — develop against a LOCAL database instead of
-# production. Requires Java 11+ (the Firestore emulator is a JVM binary); the
-# Auth emulator and Emulator UI are Node-based. Add these to .env.local first:
+# production. Requires Java 21+ (the Firestore emulator is a JVM binary and
+# current firebase-tools rejects older runtimes; `brew install openjdk@21` then
+# `sudo ln -sfn /opt/homebrew/opt/openjdk@21/libexec/openjdk.jdk /Library/Java/JavaVirtualMachines/openjdk-21.jdk`).
+# The Auth emulator and Emulator UI are Node-based. Add these to .env.local first:
 #   NEXT_PUBLIC_USE_FIRESTORE_EMULATOR=1
 #   FIRESTORE_EMULATOR_HOST=localhost:8080
 #   FIREBASE_AUTH_EMULATOR_HOST=localhost:9099
