@@ -240,8 +240,41 @@ if (!speechSynthesized) {
   note(`using the committed speech fixture (${readFileSync(SPEECH_WAV).length}b)`);
 }
 makeSilenceWav(SILENCE_WAV);
+
+// The dictation stage needs a real end-of-utterance: Chrome loops the fake
+// capture file, so a speech-only WAV streams continuous audio and the
+// client's flush-on-silence never fires (no 1.2s of trailing silence) — the
+// transcription never lands. Rebuild the speech WAV with ~3s of silence
+// appended so the mic hears "say the prompt, then stop", like a real user.
+function appendSilenceTail(wavPath, seconds = 3) {
+  const buf = readFileSync(wavPath);
+  const rate = buf.readUInt32LE(24);
+  // Data chunk: skip the 44-byte header (pcm16 mono — what say/afconvert and
+  // the fixture both produce).
+  const pcm = buf.subarray(44);
+  const numSamples = Math.floor(rate * seconds);
+  const pcmWithSilence = Buffer.concat([pcm, Buffer.alloc(numSamples * 2)]);
+  const dataSize = pcmWithSilence.length;
+  const out = Buffer.alloc(44 + dataSize);
+  out.write('RIFF', 0);
+  out.writeUInt32LE(36 + dataSize, 4);
+  out.write('WAVE', 8);
+  out.write('fmt ', 12);
+  out.writeUInt32LE(16, 16);
+  out.writeUInt16LE(1, 20);
+  out.writeUInt16LE(1, 22);
+  out.writeUInt32LE(rate, 24);
+  out.writeUInt32LE(rate * 2, 28);
+  out.writeUInt16LE(2, 32);
+  out.writeUInt16LE(16, 34);
+  out.write('data', 36);
+  out.writeUInt32LE(dataSize, 40);
+  pcmWithSilence.copy(out, 44);
+  writeFileSync(wavPath, out);
+}
+appendSilenceTail(SPEECH_WAV);
 existsSync(SPEECH_WAV) && existsSync(SILENCE_WAV)
-  ? ok(`speech WAV (${readFileSync(SPEECH_WAV).length}b) + silence WAV ready`)
+  ? ok(`speech+silence WAV (${readFileSync(SPEECH_WAV).length}b) + silence WAV ready`)
   : (console.error('✗ FAIL: fake audio files were not produced'), process.exit(1));
 
 // ── Browser harness: one headless Chrome per phase, fresh profile ───────────
