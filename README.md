@@ -309,6 +309,17 @@ cp .env.example .env.local
 # Run dev server
 npm run dev
 
+# Local Firestore/Auth emulator — develop against a LOCAL database instead of
+# production. Requires Java 11+ (the Firestore emulator is a JVM binary); the
+# Auth emulator and Emulator UI are Node-based. Add these to .env.local first:
+#   NEXT_PUBLIC_USE_FIRESTORE_EMULATOR=1
+#   FIRESTORE_EMULATOR_HOST=localhost:8080
+#   FIREBASE_AUTH_EMULATOR_HOST=localhost:9099
+# then start the emulators (Emulator UI at http://localhost:4000):
+npm run emulators
+# and run the dev server in another terminal — Auth + Firestore now hit the
+# local emulator instead of the production project.
+
 # Typecheck
 npm run typecheck
 

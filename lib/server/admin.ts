@@ -68,19 +68,32 @@ let cachedAuth: Auth | null = null;
 let cachedDb: Firestore | null = null;
 
 export function getAdminApp(): App | null {
-  const creds = getAdminCredentials();
-  if (!creds) return null;
   if (cachedApp) return cachedApp;
   const existing = getApps();
-  cachedApp =
-    existing[0] ??
-    initializeApp({
-      credential: cert({
-        projectId: creds.projectId,
-        clientEmail: creds.clientEmail,
-        privateKey: creds.privateKey.replace(/\\n/g, '\n'),
-      }),
-    });
+  if (existing[0]) {
+    cachedApp = existing[0];
+    return cachedApp;
+  }
+
+  // Local emulator mode: the Firestore + Auth emulators do not need real
+  // credentials. When FIRESTORE_EMULATOR_HOST is set, initialize with a
+  // demo project id — firebase-admin auto-routes Firestore (and Auth via
+  // FIREBASE_AUTH_EMULATOR_HOST) to the local emulators instead of the
+  // production project, so development never touches real data.
+  if (process.env.FIRESTORE_EMULATOR_HOST) {
+    cachedApp = initializeApp({ projectId: 'demo-cook-with-freebuff' });
+    return cachedApp;
+  }
+
+  const creds = getAdminCredentials();
+  if (!creds) return null;
+  cachedApp = initializeApp({
+    credential: cert({
+      projectId: creds.projectId,
+      clientEmail: creds.clientEmail,
+      privateKey: creds.privateKey.replace(/\\n/g, '\n'),
+    }),
+  });
   return cachedApp;
 }
 

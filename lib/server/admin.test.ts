@@ -10,6 +10,7 @@
 // ============================================================================
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { initializeApp } from 'firebase-admin/app';
 
 // Fake admin credentials so getAdminApp() produces a non-null app.
 const FAKE_CREDS = JSON.stringify({
@@ -44,7 +45,10 @@ vi.mock('firebase-admin/firestore', () => ({
 
 beforeEach(() => {
   vi.resetModules();
+  vi.clearAllMocks();
   process.env.FIREBASE_SERVICE_ACCOUNT = FAKE_CREDS;
+  delete process.env.FIRESTORE_EMULATOR_HOST;
+  delete process.env.FIREBASE_AUTH_EMULATOR_HOST;
   // Clean the global state that firebase-admin/app mocks might carry.
   currentDbMock = null;
   dbSettingsSpy = vi.fn();
@@ -78,6 +82,20 @@ it('does not throw when settings() was already applied by a duplicate module cop
   const db = getAdminDb();
   expect(db).toBe(dbMock);
   expect(dbSettingsSpy).toHaveBeenCalledOnce();     // tried once, caught
+});
+
+it('initializes with a demo project id (no service account) when FIRESTORE_EMULATOR_HOST is set', async () => {
+  // Emulator mode: the Firestore + Auth emulators do not need real
+  // credentials, so getAdminApp() must initialize with a demo project id
+  // instead of failing the SA parse. This proves the branch (not just the
+  // text) so local development can run without FIREBASE_SERVICE_ACCOUNT.
+  delete process.env.FIREBASE_SERVICE_ACCOUNT;
+  process.env.FIRESTORE_EMULATOR_HOST = 'localhost:8080';
+
+  const { getAdminApp } = await import('./admin');
+  const app = getAdminApp();
+  expect(app).toEqual({ name: 'test-app' });
+  expect(initializeApp).toHaveBeenCalledWith({ projectId: 'demo-cook-with-freebuff' });
 });
 
 it('re-throws errors that are NOT the idempotent-duplicate (genuine failure)', async () => {

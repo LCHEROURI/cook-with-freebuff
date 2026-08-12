@@ -21,7 +21,8 @@
     "verify:teeth-proofs": "node scripts/verify-teeth-proofs.mjs teeth-proofs",
     "verify:hook-block-proof": "node scripts/verify-teeth-proofs.mjs hook-block",
     "authorize:domain": "node scripts/authorize-domain.mjs",
-    "admin:list": "node scripts/admin-list-data.mjs"
+    "admin:list": "node scripts/admin-list-data.mjs",
+    "emulators": "npx -y firebase-tools@latest emulators:start --only firestore,auth,ui --project demo-cook-with-freebuff"
   },
   "dependencies": {
     "@google/generative-ai": "^0.24.1",
