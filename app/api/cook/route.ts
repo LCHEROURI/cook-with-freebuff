@@ -48,6 +48,7 @@ async function handle(userId: string, body: unknown): Promise<NextResponse> {
     errorMessage?: unknown;
     failedTool?: unknown;
     prompt?: unknown;
+    protein?: unknown;
   };
 
   const action: CookAction = isCookAction(parsed.action) ? parsed.action : 'status';
@@ -169,7 +170,17 @@ async function handle(userId: string, body: unknown): Promise<NextResponse> {
       // "Your recipes" on the /cook starter: the owner's generated recipes,
       // newest first, as lightweight summaries (never the full step lists).
       // One tap on a row launches a fresh session pinned to that recipe.
-      const owned = await ctx.recipeStore?.listRecipes(userId) ?? [];
+      const protein = typeof parsed.protein === 'string' && parsed.protein.trim()
+        ? parsed.protein.trim().toLowerCase()
+        : undefined;
+      let owned = await ctx.recipeStore?.listRecipes(userId) ?? [];
+      // Client-side filter by protein category (simple enough to not warrant a
+      // composite index — listRecipes returns the full set per user).
+      if (protein) {
+        owned = owned.filter((r) =>
+          r.proteinCategories?.some((c) => c === protein),
+        );
+      }
       const recipes = owned
         .sort((a, b) => b.updatedAt - a.updatedAt)
         .map((r) => ({
@@ -178,6 +189,7 @@ async function handle(userId: string, body: unknown): Promise<NextResponse> {
           servings: r.servings,
           totalMinutes: r.totalMinutes,
           ingredientCount: r.ingredients.length,
+          proteinCategories: r.proteinCategories ?? [],
           // What the recipe was built for (parsed from the creation prompt) —
           // old/agent-generated recipes carry none and get a safe empty shape.
           preferences: r.preferences ?? { servings: null, allergies: [], dietaryRestrictions: [] },
@@ -286,6 +298,7 @@ async function handle(userId: string, body: unknown): Promise<NextResponse> {
           recipeId: recipe.id,
           title: recipe.title,
           servings: recipe.servings,
+          proteinCategories: recipe.proteinCategories ?? [],
           // Echo only the parsed preferences — never the internal `matched` spans.
           preferences: {
             servings: prefs.servings,

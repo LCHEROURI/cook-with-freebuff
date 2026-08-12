@@ -85,6 +85,8 @@ export const recipeSchema = z.object({
   dietaryTags: z.array(z.string()).default([]),
   allergens: z.array(z.string()).default([]),
   safetyNotes: z.array(z.string()).default([]),
+  /** Auto-classified from ingredients by the deterministic classifier. */
+  proteinCategories: z.array(z.string()).default([]),
   preferences: recipePreferencesSchema.optional(),
   // generatedAt/updatedAt are SERVER metadata — the model is never asked for
   // them (the generation prompt's schema omits them), so real model output

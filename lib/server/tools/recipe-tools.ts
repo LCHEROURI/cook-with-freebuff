@@ -19,6 +19,7 @@ import {
 import { ok, fail, toToolError } from './types';
 import type { ToolDefinition } from './types';
 import type { Recipe, Ingredient } from '../../domain/types';
+import { classifyProteins } from '../../recipe/classify';
 
 export const generateRecipeTool: ToolDefinition = {
   name: 'generate_recipe',
@@ -52,6 +53,7 @@ export const generateRecipeTool: ToolDefinition = {
         const owned = {
           ...parsed.data,
           userId: ctx.userId,
+          proteinCategories: classifyProteins(parsed.data.ingredients),
           preferences: {
             servings: args.request.servings ?? null,
             allergies: args.request.allergies,

@@ -82,6 +82,8 @@ export interface Recipe {
   dietaryTags: string[];
   allergens: string[];
   safetyNotes: string[];
+  /** Auto-classified from ingredients — never AI-generated. Defaults to empty when unset. */
+  proteinCategories?: string[];
   preferences?: RecipePreferences;
   generatedAt: EpochMs;
   updatedAt: EpochMs;

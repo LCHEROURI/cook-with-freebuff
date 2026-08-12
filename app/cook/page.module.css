@@ -879,3 +879,59 @@
   opacity: 0.5;
   cursor: not-allowed;
 }
+
+/* ── Protein filter chips ───────────────────────────────────────────────── */
+.proteinFilters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
+.proteinChip {
+  padding: 0.25rem 0.65rem;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-full, 9999px);
+  background: var(--color-surface);
+  color: var(--color-text-muted);
+  font-size: 0.8rem;
+  font-family: inherit;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+
+.proteinChip:hover {
+  border-color: var(--color-brand);
+  color: var(--color-brand);
+}
+
+.proteinChipActive {
+  background: var(--color-brand);
+  color: var(--color-text-on-brand);
+  border-color: var(--color-brand);
+}
+
+.proteinChipActive:hover {
+  background: var(--color-brand-hover);
+  color: var(--color-text-on-brand);
+}
+
+/* ── Protein badges on recipe cards ─────────────────────────────────────── */
+.proteinBadges {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+  margin-left: 0.5rem;
+  vertical-align: middle;
+}
+
+.proteinBadge {
+  display: inline-block;
+  padding: 0.1rem 0.45rem;
+  border-radius: var(--radius-full, 9999px);
+  background: var(--color-surface-alt, #f5f0e6);
+  color: var(--color-text-muted);
+  font-size: 0.7rem;
+  font-weight: 500;
+  text-transform: capitalize;
+  white-space: nowrap;
+}

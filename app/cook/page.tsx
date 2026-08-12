@@ -154,6 +154,7 @@ export default function CookPage() {
     servings: number;
     totalMinutes: number;
     ingredientCount: number;
+    proteinCategories: string[];
     // What the recipe was built for. Optional so a stale deployed API (before
     // this field shipped) never crashes the row render.
     preferences?: {
@@ -167,15 +168,16 @@ export default function CookPage() {
     status: 'loading',
     items: [],
   });
+  const [filterProtein, setFilterProtein] = useState<string>('');
   const [startingId, setStartingId] = useState<string | null>(null);
 
-  const fetchRecipes = useCallback(async () => {
+  const fetchRecipes = useCallback(async (protein?: string) => {
     try {
       const token = await auth.getToken();
       const res = await fetch('/api/cook', {
         method: 'POST',
         headers: { 'content-type': 'application/json', ...(token ? { authorization: `Bearer ${token}` } : {}) },
-        body: JSON.stringify({ action: 'list_recipes' }),
+        body: JSON.stringify({ action: 'list_recipes', protein: protein ?? '' }),
       });
       const body = (await res.json()) as { success: boolean; data?: { recipes: RecipeSummary[] } };
       if (!res.ok || !body.success || !body.data) {
@@ -191,9 +193,9 @@ export default function CookPage() {
   // Fetch the list whenever the starter (no active session) is on screen.
   useEffect(() => {
     if (cook.loading || snap?.found) return;
-    void fetchRecipes();
+    void fetchRecipes(filterProtein);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [cook.loading, snap?.found, fetchRecipes]);
+  }, [cook.loading, snap?.found, filterProtein, fetchRecipes]);
 
   const handleCreateRecipe = async (text: string) => {
     const trimmed = text.trim();
@@ -487,11 +489,46 @@ export default function CookPage() {
           {recipes.status === 'ready' && recipes.items.length > 0 && (
             <section className={styles.recipesSection} aria-label="Your recipes">
               <h2 className={styles.recipesTitle}>Your recipes</h2>
+              {/* Protein category filter chips */}
+              {(() => {
+                const allCats = [...new Set(recipes.items.flatMap((r) => r.proteinCategories))].sort();
+                if (allCats.length === 0) return null;
+                return (
+                  <nav className={styles.proteinFilters} aria-label="Filter by protein">
+                    <button
+                      type="button"
+                      className={`${styles.proteinChip} ${filterProtein === '' ? styles.proteinChipActive : ''}`}
+                      onClick={() => setFilterProtein('')}
+                    >
+                      All
+                    </button>
+                    {allCats.map((cat) => (
+                      <button
+                        key={cat}
+                        type="button"
+                        className={`${styles.proteinChip} ${filterProtein === cat ? styles.proteinChipActive : ''}`}
+                        onClick={() => setFilterProtein(filterProtein === cat ? '' : cat)}
+                      >
+                        {cat}
+                      </button>
+                    ))}
+                  </nav>
+                );
+              })()}
               <ul className={styles.recipesList}>
                 {recipes.items.map((r) => (
                   <li key={r.recipeId} className={styles.recipeCard}>
                     <div className={styles.recipeInfo}>
-                      <p className={styles.recipeName}>{r.title}</p>
+                      <p className={styles.recipeName}>
+                        {r.title}
+                        {r.proteinCategories.length > 0 && (
+                          <span className={styles.proteinBadges}>
+                            {r.proteinCategories.map((cat) => (
+                              <span key={cat} className={styles.proteinBadge}>{cat}</span>
+                            ))}
+                          </span>
+                        )}
+                      </p>
                       <RecipeRowMeta
                         servings={r.servings}
                         totalMinutes={r.totalMinutes}
