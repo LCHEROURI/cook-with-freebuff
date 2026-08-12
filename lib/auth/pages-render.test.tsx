@@ -62,10 +62,11 @@ describe('app/page.tsx · landing render', () => {
     expect(html).not.toContain('Sign out');
   });
 
-  it('shows Start cooking and Sign out when signed in', () => {
+  it('shows Start cooking, My recipes and Sign out when signed in', () => {
     mockAuth.mockReturnValue({ ...base, user: { uid: 'u1' } as UseAuthSessionResult['user'] });
     const html = renderToStaticMarkup(createElement(HomePage));
     expect(html).toContain('Start cooking');
+    expect(html).toContain('My recipes');
     expect(html).toContain('Sign out');
     expect(html).not.toContain('Sign in to start');
   });

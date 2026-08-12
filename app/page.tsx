@@ -29,6 +29,7 @@ export default function HomePage() {
   const cta = auth.state === 'loading' ? null : auth.user ? (
     <div className={styles.ctaRow}>
       <Link href="/cook" className={styles.primaryBtn}>👨‍🍳 Start cooking</Link>
+      <Link href="/recipes" className={styles.secondaryBtn}>📖 My recipes</Link>
       <Link href="/kitchen" className={styles.secondaryBtn}>🧺 My kitchen</Link>
     </div>
   ) : (

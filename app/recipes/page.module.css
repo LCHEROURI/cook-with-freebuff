@@ -1,0 +1,301 @@
+/* ── /recipes — "My Recipes" browser ─────────────────────────────────────── */
+
+.main {
+  max-width: var(--max-width);
+  margin: 0 auto;
+  padding: 1.25rem 1rem 3rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  min-height: 100dvh;
+}
+
+.centered {
+  text-align: center;
+  color: var(--color-text-secondary);
+  padding: 2rem 0;
+}
+
+/* ── Header ─────────────────────────────────────────────────────────────── */
+.header {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+}
+
+.headerText {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  min-width: 0;
+}
+
+.backLink {
+  font-size: 1.5rem;
+  line-height: 1;
+  text-decoration: none;
+  color: var(--color-text);
+  min-width: 44px;
+  min-height: 44px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-sm);
+}
+
+.backLink:hover {
+  background: var(--color-surface-secondary);
+}
+
+.title {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: 1.5rem;
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.subtitle {
+  margin: 0;
+  font-size: 0.95rem;
+  color: var(--color-text-secondary);
+}
+
+.errorNote {
+  padding: 0.75rem 1rem;
+  border-radius: var(--radius-md);
+  background: var(--color-danger-bg);
+  border: 1px solid var(--color-danger-border);
+  color: var(--color-danger);
+  font-size: 0.95rem;
+}
+
+/* ── Search + filters ───────────────────────────────────────────────────── */
+.controls {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.controlsRow {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.search {
+  flex: 1;
+  min-width: 0;
+  padding: 0.65rem 0.9rem;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+  color: var(--color-text);
+  font-size: 1rem;
+  font-family: inherit;
+}
+
+.search::placeholder {
+  color: var(--color-text-muted);
+}
+
+.search:focus {
+  outline: 2px solid var(--color-focus);
+  outline-offset: 0;
+}
+
+.sort {
+  padding: 0.65rem 0.75rem;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+  color: var(--color-text);
+  font-size: 0.95rem;
+  font-family: inherit;
+}
+
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
+.chip {
+  min-height: 34px;
+  padding: 0.35rem 0.8rem;
+  border-radius: 999px;
+  border: 1px solid var(--color-border);
+  background: var(--color-surface);
+  color: var(--color-text-secondary);
+  font-size: 0.9rem;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.chip:hover {
+  border-color: var(--color-border-strong);
+}
+
+.chipActive {
+  background: var(--color-brand);
+  border-color: var(--color-brand);
+  color: var(--color-text-on-brand);
+}
+
+/* ── Count ──────────────────────────────────────────────────────────────── */
+.count {
+  margin: 0;
+  font-size: 0.85rem;
+  color: var(--color-text-muted);
+}
+
+/* ── List ───────────────────────────────────────────────────────────────── */
+.list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+
+.card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.85rem 1rem;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-xs);
+  text-align: left;
+}
+
+.cardInfo {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  min-width: 0;
+}
+
+.cardName {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--color-text);
+  overflow-wrap: anywhere;
+}
+
+.badges {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+  margin-left: 0.5rem;
+  vertical-align: middle;
+}
+
+.badge {
+  font-size: 0.7rem;
+  font-weight: 600;
+  padding: 0.1rem 0.5rem;
+  border-radius: 999px;
+  background: var(--color-mauve-subtle);
+  border: 1px solid var(--color-mauve-subtle-border);
+  color: var(--color-text-secondary);
+  white-space: nowrap;
+}
+
+.startBtn {
+  flex-shrink: 0;
+  min-height: 40px;
+  padding: 0.5rem 0.9rem;
+  background: var(--color-brand);
+  color: var(--color-text-on-brand);
+  border: none;
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  font-size: 0.95rem;
+  font-weight: 600;
+  font-family: inherit;
+}
+
+.startBtn:hover:not(:disabled) {
+  background: var(--color-brand-hover);
+}
+
+.startBtn:active:not(:disabled) {
+  background: var(--color-brand-active);
+}
+
+.startBtn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* ── Empty / CTAs ───────────────────────────────────────────────────────── */
+.empty {
+  display: flex;
+  flex-direction: column;
+  gap: 0.9rem;
+  align-items: flex-start;
+  padding: 1.5rem 1rem;
+  background: var(--color-surface);
+  border: 1px dashed var(--color-border-strong);
+  border-radius: var(--radius-lg);
+  text-align: left;
+}
+
+.emptyText {
+  margin: 0;
+  color: var(--color-text-secondary);
+}
+
+.primaryBtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  text-decoration: none;
+  padding: 0.7rem 1.1rem;
+  border: none;
+  border-radius: var(--radius-md);
+  background: var(--color-brand);
+  color: var(--color-text-on-brand);
+  font-size: 1rem;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.primaryBtn:hover {
+  background: var(--color-brand-hover);
+}
+
+.secondaryBtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0.7rem 1.1rem;
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+  color: var(--color-text);
+  font-size: 1rem;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.secondaryBtn:hover {
+  background: var(--color-surface-secondary);
+}
+
+.newRecipeLink {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 44px;
+  margin-top: 0.5rem;
+  text-decoration: none;
+  font-weight: 600;
+  color: var(--color-accent-subtle-text);
+}

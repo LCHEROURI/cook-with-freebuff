@@ -165,6 +165,13 @@ describe('app/page.tsx · landing page', () => {
     expect(HOME).toContain('href="/kitchen"');
     expect(HOME).toContain('🧺 My kitchen');
   });
+
+  it('links to the saved-recipe browser from the signed-in CTA', () => {
+    // “My Recipes” (/recipes) is the searchable saved-recipe surface — it must
+    // stay one tap from the landing page alongside Start cooking and My kitchen.
+    expect(HOME).toContain('href="/recipes"');
+    expect(HOME).toContain('📖 My recipes');
+  });
 });
 
 describe('app/kitchen/page.tsx · protected kitchen surface', () => {
