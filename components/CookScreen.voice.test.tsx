@@ -114,6 +114,31 @@ describe('CookScreen — copy voice details', () => {
     expect(container.querySelector('[data-hearing]')?.textContent).toContain('Hearing you…');
   });
 
+  it('says the mic is paused while the reply plays instead of inviting speech', () => {
+    const { container, rerender } = render(
+      createElement(CookScreen, {
+        ...baseProps(),
+        micSupported: true,
+        micListening: true,
+        micReplying: false,
+      }),
+    );
+    const status = container.querySelector('[data-hearing]');
+    expect(status?.getAttribute('data-replying')).toBe('false');
+    expect(status?.textContent).toContain('Listening… speak now');
+
+    rerender(
+      createElement(CookScreen, {
+        ...baseProps(),
+        micSupported: true,
+        micListening: true,
+        micReplying: true,
+      }),
+    );
+    expect(container.querySelector('[data-hearing]')?.getAttribute('data-replying')).toBe('true');
+    expect(container.querySelector('[data-hearing]')?.textContent).toContain('Reply playing — mic paused');
+  });
+
   it('surfaces the active voice engine as a badge', () => {
     const { rerender } = render(createElement(CookScreen, { ...baseProps(), voiceEngine: 'gemini-live' }));
     const liveBadge = screen.getByText(/Gemini Live/);

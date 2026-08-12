@@ -121,6 +121,14 @@ export async function runVoiceSelfCheck(opts: {
     probeTokenEndpoint(opts.tokenUrl, opts.getToken),
     probeWebSocket(opts.wsUrl ?? LIVE_WS_URL),
   ]);
+  // Structured hop results — a console paste alone then diagnoses the failure
+  // (which hop broke and how), even when the banner text was dismissed.
+  console.error(
+    `[voice:self-check] token ok=${token.ok} httpStatus=${token.httpStatus ?? 'null'} error=${token.error ?? 'null'}`,
+  );
+  console.error(
+    `[voice:self-check] websocket opened=${websocket.opened} closeCode=${websocket.closeCode ?? 'null'} error=${websocket.error ?? 'null'}`,
+  );
   return { token, websocket };
 }
 
@@ -128,8 +136,12 @@ export async function runVoiceSelfCheck(opts: {
  * Name the exact failing hop from the self-check results. Falls back to the
  * session's own message when the probes are inconclusive.
  */
-export function composeHopReason(baseMessage: string, check: VoiceSelfCheckResult): string {
-  const fallback = 'Using the built-in speech fallback instead.';
+export function composeHopReason(
+  baseMessage: string,
+  check: VoiceSelfCheckResult,
+  fallbackText = 'Using the built-in speech fallback instead.',
+): string {
+  const fallback = fallbackText;
   const t = check.token;
   if (t.error === 'timeout') {
     return `Gemini Live failed — the voice token endpoint timed out. ${fallback}`;

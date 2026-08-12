@@ -2,6 +2,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { act, renderHook } from '@testing-library/react';
 import { useLiveDictation, DICTATION_SYSTEM_INSTRUCTION } from './useLiveDictation';
+import { runVoiceSelfCheck, type VoiceSelfCheckResult } from '@/lib/voice/self-check';
 
 // ============================================================================
 // lib/hooks/useLiveDictation.test.ts — the recipe-starter dictation mic: a
@@ -58,6 +59,20 @@ vi.mock('@/lib/voice/gemini-live', async (importOriginal) => {
     ...actual,
     GeminiLiveClient: ctorSpy,
     DEFAULT_TOKEN_URL: '/api/voice/token',
+  };
+});
+
+// The self-check probes run on every failure; by default they resolve healthy
+// so existing tests keep their own error text. The hop-naming test overrides
+// the result with a rejected token.
+vi.mock('@/lib/voice/self-check', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/voice/self-check')>();
+  return {
+    ...actual,
+    runVoiceSelfCheck: vi.fn().mockResolvedValue({
+      token: { ok: true, httpStatus: 200, error: null },
+      websocket: { opened: true, closeCode: null, error: null },
+    }),
   };
 });
 
@@ -126,6 +141,28 @@ describe('useLiveDictation', () => {
     expect(lastClient!.startListeningCalls).toBe(1);
   });
 
+  it('exposes the reply-playback mic pause and clears it on error or final transcript', async () => {
+    const onFinal = vi.fn();
+    const { result } = renderHook(() => useLiveDictation({ onFinal }));
+    await act(async () => {
+      await result.current.toggle();
+    });
+    await act(async () => {
+      lastClient!.emit('status', 'CONNECTED');
+    });
+    expect(result.current.micReplying).toBe(false);
+    await act(async () => {
+      lastClient!.emit('playback', true);
+    });
+    expect(result.current.micReplying).toBe(true);
+    // The final transcript closes the session — no stale "reply playing".
+    await act(async () => {
+      lastClient!.emit('transcript', { type: 'final', text: 'rice' });
+    });
+    expect(result.current.micReplying).toBe(false);
+    expect(onFinal).toHaveBeenCalledWith('rice');
+  });
+
   it('hands the FINAL input transcription to onFinal, then closes the session', async () => {
     const onFinal = vi.fn();
     const { result } = renderHook(() => useLiveDictation({ onFinal }));
@@ -191,6 +228,41 @@ describe('useLiveDictation', () => {
       lastClient!.emit('status', 'DISCONNECTED'); // server drops IT unexpectedly
     });
     expect(result.current.error).toContain('type your ingredients');
+  });
+
+  it('names the exact failing hop in the error once the self-check probes land', async () => {
+    // A deferred probe lets the test observe the immediate reason BEFORE the
+    // enrichment lands, proving the fallback never waits on the probes.
+    let resolveProbe!: (v: VoiceSelfCheckResult) => void;
+    vi.mocked(runVoiceSelfCheck).mockReturnValueOnce(
+      new Promise((r) => {
+        resolveProbe = r;
+      }),
+    );
+    const { result } = renderHook(() => useLiveDictation());
+    await act(async () => {
+      await result.current.toggle();
+    });
+    await act(async () => {
+      lastClient!.emit('error', new Error('Could not open the voice connection.'));
+      lastClient!.emit('status', 'ERROR');
+    });
+    // Immediate reason first — the fallback must not wait on the probes…
+    expect(result.current.error).toContain("couldn't start");
+    // …then the probes land and the error names the failing hop with the
+    // dictation-specific fallback wording.
+    await act(async () => {
+      resolveProbe({
+        token: { ok: false, httpStatus: 503, error: null },
+        websocket: { opened: true, closeCode: null, error: null },
+      });
+      await Promise.resolve();
+    });
+    expect(result.current.error).toContain('HTTP 503');
+    expect(result.current.error).toContain('you can type your ingredients instead.');
+    expect(vi.mocked(runVoiceSelfCheck)).toHaveBeenCalledWith(
+      expect.objectContaining({ tokenUrl: '/api/voice/token' }),
+    );
   });
 
   it('maps a microphone error to a friendly permission message', async () => {

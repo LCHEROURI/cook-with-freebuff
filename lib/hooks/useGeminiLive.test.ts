@@ -199,6 +199,34 @@ describe('useGeminiLive', () => {
     expect(result.current.error).toContain('built-in speech fallback');
   });
 
+  it('logs a structured self-check verdict even when the banner was dismissed', async () => {
+    const err = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    vi.mocked(runVoiceSelfCheck).mockResolvedValueOnce({
+      token: { ok: false, httpStatus: 503, error: null },
+      websocket: { opened: true, closeCode: null, error: null },
+    });
+    const { result } = renderHook(() => useGeminiLive());
+    await act(async () => {
+      await result.current.toggle();
+    });
+    await act(async () => {
+      lastClient!.emit('error', new Error('Could not open the voice connection.'));
+      lastClient!.emit('status', 'ERROR');
+    });
+    await act(async () => {
+      result.current.clearError();
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+    // The dismissed banner stays dismissed, but the console still names the
+    // failing hop — the paste, not the screen, is the diagnostic.
+    expect(result.current.error).toBeNull();
+    expect(err).toHaveBeenCalledWith(expect.stringContaining('[voice:self-check] verdict:'));
+    expect(err).toHaveBeenCalledWith(expect.stringContaining('HTTP 503'));
+    err.mockRestore();
+  });
+
   it('does not resurrect a dismissed banner with a late self-check result', async () => {
     const { result } = renderHook(() => useGeminiLive());
     await act(async () => {
@@ -247,6 +275,30 @@ describe('useGeminiLive', () => {
     });
     expect(result.current.hearing).toBe(false);
     expect(result.current.mode).toBe('off');
+  });
+
+  it('exposes the reply-playback mic pause and clears it when the session errors', async () => {
+    const { result } = renderHook(() => useGeminiLive());
+    await act(async () => {
+      await result.current.toggle();
+    });
+    await act(async () => {
+      lastClient!.emit('status', 'CONNECTED');
+    });
+    expect(result.current.micReplying).toBe(false);
+    await act(async () => {
+      lastClient!.emit('playback', true);
+    });
+    expect(result.current.micReplying).toBe(true);
+    await act(async () => {
+      lastClient!.emit('playback', false);
+    });
+    expect(result.current.micReplying).toBe(false);
+    // A session error must not leave a stale "reply playing" on screen.
+    await act(async () => {
+      lastClient!.emit('status', 'ERROR');
+    });
+    expect(result.current.micReplying).toBe(false);
   });
 
   it('builds a THINKING turn from a final transcript, streams the reply, and finalizes on turn end', async () => {

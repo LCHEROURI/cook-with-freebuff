@@ -47,6 +47,9 @@ export interface CookScreenProps {
    *  status dot can widen into a solid recording bar ("hearing you") instead
    *  of the waiting pulse. */
   micHearing?: boolean;
+  /** True while the model's spoken reply is playing: the mic is muted, so
+   *  the status line must say so instead of inviting speech into a dead mic. */
+  micReplying?: boolean;
   /** Which voice engine the mic uses — surfaced as a small badge so a
    *  session that silently landed on the Web Speech fallback is visible at a
    *  glance instead of behaving differently without saying why. */
@@ -82,6 +85,7 @@ export function CookScreen({
   micListening = false,
   micInterim = '',
   micHearing = false,
+  micReplying = false,
   voiceEngine = 'none',
   micError,
   onMicToggle,
@@ -392,12 +396,26 @@ export function CookScreen({
           role="status"
           aria-live="polite"
           data-hearing={micHearing ? 'true' : 'false'}
+          data-replying={micReplying ? 'true' : 'false'}
         >
           <span
-            className={micHearing ? styles.micStatusDotHearing : styles.micStatusDot}
+            className={
+              micReplying
+                ? styles.micStatusDotReplying
+                : micHearing
+                  ? styles.micStatusDotHearing
+                  : styles.micStatusDot
+            }
             aria-hidden="true"
           />
-          <span>🎙 {micHearing ? 'Hearing you…' : micInterim || 'Listening… speak now'}</span>
+          <span>
+            🎙{' '}
+            {micReplying
+              ? 'Reply playing — mic paused'
+              : micHearing
+                ? 'Hearing you…'
+                : micInterim || 'Listening… speak now'}
+          </span>
           <span className={styles.micStatusHint}>· tap to stop</span>
         </p>
       )}

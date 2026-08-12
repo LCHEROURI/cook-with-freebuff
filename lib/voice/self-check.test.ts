@@ -143,11 +143,27 @@ describe('composeHopReason', () => {
 
 describe('runVoiceSelfCheck', () => {
   it('probes both hops and returns a combined result', async () => {
+    const err = vi.spyOn(console, 'error').mockImplementation(() => undefined);
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, status: 200 }));
     const p = runVoiceSelfCheck({ tokenUrl: '/api/voice/token' });
     FakeWebSocket.instances[0].open();
     const r = await p;
     expect(r.token).toEqual({ ok: true, httpStatus: 200, error: null });
     expect(r.websocket.opened).toBe(true);
+    // Structured hop lines — a console paste alone names the failing hop.
+    expect(err).toHaveBeenCalledWith('[voice:self-check] token ok=true httpStatus=200 error=null');
+    expect(err).toHaveBeenCalledWith('[voice:self-check] websocket opened=true closeCode=null error=null');
+    err.mockRestore();
+  });
+
+  it('logs structured lines that name the failing hop on a broken path', async () => {
+    const err = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false, status: 503 }));
+    const p = runVoiceSelfCheck({ tokenUrl: '/api/voice/token' });
+    FakeWebSocket.instances[0].fail();
+    await p;
+    expect(err).toHaveBeenCalledWith('[voice:self-check] token ok=false httpStatus=503 error=null');
+    expect(err).toHaveBeenCalledWith('[voice:self-check] websocket opened=false closeCode=null error=connection-failed');
+    err.mockRestore();
   });
 });

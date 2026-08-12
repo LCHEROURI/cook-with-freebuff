@@ -128,6 +128,9 @@ export function useGeminiLive(opts: UseGeminiLiveOptions = {}) {
   // Live speech energy from the client — true while the user is actually
   // speaking, so the mic status can show a recording bar vs the waiting pulse.
   const [hearing, setHearing] = useState(false);
+  // True while the model's spoken reply is playing (or queued): the mic is
+  // muted, so the UI must stop inviting speech (no "Listening… speak now").
+  const [micReplying, setMicReplying] = useState(false);
   // Watchdog: true while the session is live and listening but nothing has
   // been heard for silentThresholdMs — the caption swaps from the frozen
   // "Listening…" to an honest "say something, or tap to stop".
@@ -312,13 +315,16 @@ export function useGeminiLive(opts: UseGeminiLiveOptions = {}) {
         setMode('off');
         setStatus('ERROR');
         setHearing(false);
+        setMicReplying(false);
       } else if (s === 'DISCONNECTED') {
         setMode((m) => (m === 'live' || m === 'connecting' ? 'off' : m));
         setStatus('IDLE');
         setHearing(false);
+        setMicReplying(false);
       }
     });
     client.on('hearing', (h) => setHearing(h));
+    client.on('playback', (p) => setMicReplying(p));
     client.on('transcript', (t) => {
       if (t.type === 'final' && t.text.trim()) {
         markActivity();
@@ -354,8 +360,11 @@ export function useGeminiLive(opts: UseGeminiLiveOptions = {}) {
         tokenUrl: optsRef.current.tokenUrl ?? DEFAULT_TOKEN_URL,
         getToken: optsRef.current.getToken,
       }).then((check) => {
-        if (lastErrorRef.current !== immediate) return; // dismissed or superseded
         const enriched = composeHopReason(immediate, check);
+        // Structured verdict — logged even if the banner was dismissed, so a
+        // console paste always names the failing hop.
+        console.error(`[voice:self-check] verdict: ${enriched}`);
+        if (lastErrorRef.current !== immediate) return; // dismissed or superseded
         lastErrorRef.current = enriched;
         setError(enriched);
       });
@@ -398,6 +407,7 @@ export function useGeminiLive(opts: UseGeminiLiveOptions = {}) {
       mode,
       status,
       hearing,
+      micReplying,
       awaiting,
       connectTimeoutMs: optsRef.current.connectTimeoutMs ?? DEFAULT_CONNECT_TIMEOUT_MS,
       error: error ?? null,
@@ -409,7 +419,7 @@ export function useGeminiLive(opts: UseGeminiLiveOptions = {}) {
         webSocket: typeof WebSocket !== 'undefined',
       },
     };
-  }, [mode, status, hearing, awaiting, error]);
+  }, [mode, status, hearing, micReplying, awaiting, error]);
 
   // Watchdog: poll while the session is live; if the mic is listening and
   // nothing happened for silentThresholdMs, surface the awaiting state.
@@ -432,6 +442,7 @@ export function useGeminiLive(opts: UseGeminiLiveOptions = {}) {
     mode,
     status,
     hearing,
+    micReplying,
     error,
     turns,
     awaiting,

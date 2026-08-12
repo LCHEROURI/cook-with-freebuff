@@ -52,6 +52,10 @@ export interface GeminiLiveEventMap {
    *  the speech threshold), false after a short silence gap. Lets the UI show
    *  a "hearing you" recording bar that differs from the waiting pulse. */
   hearing: boolean;
+  /** True while the model's spoken reply is playing (or queued): the mic is
+   *  muted so the reply's echo can never reach the server's VAD as a phantom
+   *  user turn. The UI must NOT invite speech during this window. */
+  playback: boolean;
   error: Error;
 }
 
@@ -179,6 +183,7 @@ export class GeminiLiveClient {
 
   private playbackQueue: ArrayBuffer[] = [];
   private playing = false;
+  private micPaused = false;
   private currentSource: BufferSourceLike | null = null;
   private playbackCtx: AudioContextLike | null = null;
 
@@ -243,6 +248,14 @@ export class GeminiLiveClient {
     if (this.hearing === value) return;
     this.hearing = value;
     this.emit('hearing', value);
+  }
+
+  /** Reply playback mutes the mic — surface that so the UI stops inviting
+   *  speech into a muted mic ("Listening… speak now" while it cannot hear). */
+  private setMicPaused(value: boolean): void {
+    if (this.micPaused === value) return;
+    this.micPaused = value;
+    this.emit('playback', value);
   }
 
   get connected(): boolean {
@@ -658,6 +671,7 @@ export class GeminiLiveClient {
     // Playback mutes the mic (see onaudioprocess) — the model's reply is not
     // "the user hearing", so drop the hearing state the moment it starts.
     if (this.playbackQueue.length === 0) this.setHearing(false);
+    this.setMicPaused(true);
     try {
       const bin = atob(base64);
       const buf = new ArrayBuffer(bin.length);
@@ -694,7 +708,10 @@ export class GeminiLiveClient {
       // The model's reply just finished — forget any echo of it the mic
       // picked up, so the next flush timer only starts from the user's own
       // next speech, never from the tail of the reply.
-      if (this.playbackQueue.length === 0) this.flushLastSpeechMs = 0;
+      if (this.playbackQueue.length === 0) {
+        this.flushLastSpeechMs = 0;
+        this.setMicPaused(false);
+      }
     }
   }
 
@@ -720,6 +737,7 @@ export class GeminiLiveClient {
     }
     this.currentSource = null;
     this.playbackQueue = [];
+    this.setMicPaused(false);
   }
 }
 

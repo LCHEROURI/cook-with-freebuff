@@ -406,6 +406,73 @@ describe('GeminiLiveClient — mic capture + playback plumbing', () => {
     client.disconnect();
   });
 
+  it('emits the playback (mic-paused) event on enqueue and back to false when the queue drains', async () => {
+    // The playback event is the client-side signal the UI needs to stop
+    // inviting speech into a muted mic — it must fire true the moment a reply
+    // frame arrives and false once the reply has finished draining.
+    mintOk();
+    const procHolder: { fn: ((e: { inputBuffer: { getChannelData(c: number): Float32Array } }) => void) | null } = { fn: null };
+    const createdSources: { src: { onended: (() => void) | null; start: () => void; stop: () => void } | null } = { src: null };
+    const { client, getWs } = setupClient({
+      deps: {
+        createWebSocket: (url: string) => new FakeWebSocket(url),
+        getUserMedia: async () => ({ getTracks: () => [{ stop: vi.fn() }] }) as unknown as MediaStream,
+        createAudioContext: () =>
+          ({
+            sampleRate: 48000,
+            createMediaStreamSource: () => ({ connect: () => undefined }),
+            createScriptProcessor: () => ({
+              connect: () => undefined,
+              get onaudioprocess() {
+                return procHolder.fn;
+              },
+              set onaudioprocess(fn: ((e: { inputBuffer: { getChannelData(c: number): Float32Array } }) => void) | null) {
+                procHolder.fn = fn;
+              },
+            }),
+            createGain: () => ({ gain: { value: 0 }, connect: () => undefined }),
+            createBufferSource: () => {
+              const src = {
+                buffer: null,
+                onended: null as (() => void) | null,
+                start: () => undefined,
+                stop: () => undefined,
+                connect: () => undefined,
+              };
+              createdSources.src = src;
+              return src;
+            },
+            decodeAudioData: async () => {
+              throw new Error('raw');
+            },
+            destination: {},
+            close: async () => undefined,
+          }) as never,
+      },
+    });
+    const playbackEvents: boolean[] = [];
+    client.on('playback', (p) => playbackEvents.push(p));
+    await client.connect();
+    const ws = getWs();
+    ws.open();
+    await ws.receive({ setupComplete: {} });
+    await client.startListening();
+
+    // Reply audio arrives: mic-paused must fire true immediately.
+    await ws.receive({
+      serverContent: { modelTurn: { parts: [{ inlineData: { data: btoa('not really pcm') } }] } },
+    });
+    await new Promise((r) => setTimeout(r, 0));
+    expect(playbackEvents).toContain(true);
+
+    // Reply finishes draining: mic-paused fires false.
+    createdSources.src?.onended?.();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(playbackEvents[playbackEvents.length - 1]).toBe(false);
+
+    client.disconnect();
+  });
+
   it('forces the mic back on when reply playback stalls and never drains', async () => {
     // If the model's audio reply never finishes (browser blocked the
     // playback, a source that never ends), the mute-during-playback guard

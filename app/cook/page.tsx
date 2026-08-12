@@ -552,12 +552,26 @@ export default function CookPage() {
                 role="status"
                 aria-live="polite"
                 data-hearing={dictation.hearing ? 'true' : 'false'}
+                data-replying={dictation.micReplying ? 'true' : 'false'}
               >
                 <span
-                  className={dictation.hearing ? styles.micStatusDotHearing : styles.micStatusDot}
+                  className={
+                    dictation.micReplying
+                      ? styles.micStatusDotReplying
+                      : dictation.hearing
+                        ? styles.micStatusDotHearing
+                        : styles.micStatusDot
+                  }
                   aria-hidden="true"
                 />
-                <span>🎙 {dictation.hearing ? 'Hearing you…' : 'Listening… speak your ingredients'}</span>
+                <span>
+                  🎙{' '}
+                  {dictation.micReplying
+                    ? 'Reply playing — mic paused'
+                    : dictation.hearing
+                      ? 'Hearing you…'
+                      : 'Listening… speak your ingredients'}
+                </span>
               </p>
             )}
             {dictation.error && (
@@ -695,6 +709,7 @@ export default function CookPage() {
       micListening={useLiveMic ? live.mode !== 'off' : voiceInput.listening}
       micInterim={useLiveMic ? liveCaption : voiceInput.interim}
       micHearing={useLiveMic ? live.hearing : false}
+      micReplying={useLiveMic ? live.micReplying : false}
       voiceEngine={voiceEngine}
       micError={useLiveMic ? live.error : (fallbackNotice ?? voiceInput.error)}
       onMicToggle={

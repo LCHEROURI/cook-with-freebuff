@@ -769,6 +769,24 @@
   transition: width 0.15s ease, height 0.15s ease, border-radius 0.15s ease;
 }
 
+/* Mic muted while the model's reply plays: a dimmed, still dot with muted
+   text — deliberately NOT a pulsing "speak now" cue, because the mic cannot
+   hear during this window. */
+.micStatusDotReplying {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--color-text-muted);
+  flex-shrink: 0;
+  animation: none;
+  opacity: 0.55;
+  transition: width 0.15s ease, height 0.15s ease, border-radius 0.15s ease;
+}
+
+.micStatus[data-replying='true'] {
+  color: var(--color-text-muted);
+}
+
 .micStatusHint {
   color: var(--color-text-muted);
   font-weight: 400;

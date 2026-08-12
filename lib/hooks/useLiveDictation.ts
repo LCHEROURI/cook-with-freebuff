@@ -26,6 +26,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { GeminiLiveClient, DEFAULT_TOKEN_URL } from '@/lib/voice/gemini-live';
+import { composeHopReason, runVoiceSelfCheck } from '@/lib/voice/self-check';
 
 export type LiveDictationStatus = 'IDLE' | 'LISTENING' | 'THINKING' | 'ERROR';
 
@@ -57,12 +58,18 @@ export function useLiveDictation(options: UseLiveDictationOptions = {}) {
   const [status, setStatus] = useState<LiveDictationStatus>('IDLE');
   const [error, setError] = useState<string | null>(null);
   const [hearing, setHearing] = useState(false);
+  // True while the model's audio reply plays: the mic is muted during that
+  // window, so the caption must not invite more speech into a dead mic.
+  const [micReplying, setMicReplying] = useState(false);
 
   const clientRef = useRef<GeminiLiveClient | null>(null);
   const quietTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // True when WE close the session (barge-in, final transcript, unmount) — an
   // unexpected server close must surface as an error, not silence.
   const intentionalRef = useRef(false);
+  // The error message currently on screen, so an async self-check can enrich
+  // it without resurrecting a banner the user already dismissed.
+  const lastErrorRef = useRef<string | null>(null);
   const optionsRef = useRef(options);
   optionsRef.current = options;
 
@@ -124,9 +131,11 @@ export function useLiveDictation(options: UseLiveDictationOptions = {}) {
         clientRef.current = null;
         setStatus('ERROR');
         setHearing(false);
+        setMicReplying(false);
       } else if (s === 'DISCONNECTED') {
         clearQuietTimer();
         setHearing(false);
+        setMicReplying(false);
         if (clientRef.current === client) {
           clientRef.current = null;
           if (intentionalRef.current) {
@@ -143,11 +152,13 @@ export function useLiveDictation(options: UseLiveDictationOptions = {}) {
       }
     });
     client.on('hearing', (h) => setHearing(h));
+    client.on('playback', (p) => setMicReplying(p));
     client.on('transcript', (t) => {
       // Only the FINAL input transcription is a real utterance — partials
       // stream in this API too, but the starter waits for the finished one.
       if (t.type !== 'final' || !t.text.trim()) return;
       setHearing(false);
+      setMicReplying(false);
       clearQuietTimer();
       intentionalRef.current = true;
       clientRef.current = null;
@@ -155,6 +166,7 @@ export function useLiveDictation(options: UseLiveDictationOptions = {}) {
       // A final can arrive AFTER the quiet-timeout flushed the stream (the
       // server emits it 1-2s after audioStreamEnd) — clear the timeout's
       // "did not hear anything" error: the user DID speak, the text landed.
+      lastErrorRef.current = null;
       setError(null);
       // The dictation is one utterance per tap — close the session so the
       // model's (unneeded) audio reply never streams or lingers.
@@ -163,11 +175,25 @@ export function useLiveDictation(options: UseLiveDictationOptions = {}) {
     });
     client.on('error', (e) => {
       clearQuietTimer();
-      const message = e.message.includes('Microphone')
+      const immediate = e.message.includes('Microphone')
         ? 'Microphone permission denied — enable it in your browser, or type your ingredients instead.'
         : `Gemini Live couldn't start: ${e.message} — you can type your ingredients instead.`;
       setStatus('ERROR');
-      setError(message);
+      setError(immediate);
+      lastErrorRef.current = immediate;
+      // Probe the two hops independently (token endpoint + Live WebSocket) so
+      // the error names the exact failing hop — same as the cooking mic.
+      void runVoiceSelfCheck({
+        tokenUrl: optionsRef.current.tokenUrl ?? DEFAULT_TOKEN_URL,
+        getToken: optionsRef.current.getToken,
+      }).then((check) => {
+        const enriched = composeHopReason(immediate, check, 'you can type your ingredients instead.');
+        // Structured verdict — logged even if the banner was dismissed.
+        console.error(`[voice:self-check] verdict: ${enriched}`);
+        if (lastErrorRef.current !== immediate) return; // dismissed or superseded
+        lastErrorRef.current = enriched;
+        setError(enriched);
+      });
     });
 
     setStatus('LISTENING');
@@ -181,6 +207,9 @@ export function useLiveDictation(options: UseLiveDictationOptions = {}) {
       clientRef.current = null;
       client.disconnect();
       setStatus('ERROR');
+      // A fresh error owns the screen — a late self-check probe from an
+      // earlier failure must not overwrite it.
+      lastErrorRef.current = null;
       setError('I did not hear anything — tap the mic and speak, or type your ingredients instead.');
     }, o.quietTimeoutMs ?? 15000);
   }, [available, stop, clearQuietTimer]);
@@ -196,13 +225,17 @@ export function useLiveDictation(options: UseLiveDictationOptions = {}) {
     [clearQuietTimer],
   );
 
-  const clearError = useCallback(() => setError(null), []);
+  const clearError = useCallback(() => {
+    lastErrorRef.current = null;
+    setError(null);
+  }, []);
 
   return {
     available,
     status,
     listening: status === 'LISTENING',
     hearing,
+    micReplying,
     error,
     toggle,
     stop,
