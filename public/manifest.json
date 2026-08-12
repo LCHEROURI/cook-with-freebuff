@@ -1,11 +1,36 @@
 {
-  "name": "Kitchen Agent — Cook with Freebuff",
-  "short_name": "Kitchen Agent",
-  "description": "Voice-first intelligent cooking companion",
+  "name": "Cook With Me — Kitchen Agent",
+  "short_name": "Cook With Me",
+  "description": "Voice-first intelligent cooking companion — hands-free guided cooking step by step",
   "start_url": "/cook",
   "display": "standalone",
-  "background_color": "#f7f8fa",
-  "theme_color": "#3157d5",
+  "background_color": "#FCF8EC",
+  "theme_color": "#6B9FD4",
   "orientation": "portrait",
-  "icons": []
+  "categories": ["food", "utilities", "lifestyle"],
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "sizes": "512x512",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ],
+  "screenshots": [],
+  "shortcuts": [
+    {
+      "name": "Start Cooking",
+      "short_name": "Cook",
+      "description": "Start a new guided cooking session",
+      "url": "/cook",
+      "icons": [{ "src": "/icon.svg", "sizes": "512x512" }]
+    },
+    {
+      "name": "My Kitchen",
+      "short_name": "Kitchen",
+      "description": "View pantry, groceries, leftovers and dietary profile",
+      "url": "/kitchen",
+      "icons": [{ "src": "/icon.svg", "sizes": "512x512" }]
+    }
+  ]
 }
