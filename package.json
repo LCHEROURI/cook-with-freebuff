@@ -20,7 +20,8 @@
     "verify:gate-stale-proof": "node scripts/verify-teeth-proofs.mjs gate-stale",
     "verify:teeth-proofs": "node scripts/verify-teeth-proofs.mjs teeth-proofs",
     "verify:hook-block-proof": "node scripts/verify-teeth-proofs.mjs hook-block",
-    "authorize:domain": "node scripts/authorize-domain.mjs"
+    "authorize:domain": "node scripts/authorize-domain.mjs",
+    "admin:list": "node scripts/admin-list-data.mjs"
   },
   "dependencies": {
     "@google/generative-ai": "^0.24.1",
