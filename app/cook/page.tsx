@@ -102,6 +102,31 @@ export default function CookPage() {
     void voiceInput.toggle();
   }, [live.status, live.mode, live.error, voiceInput]);
 
+  // One-click "copy voice details": whatever the active mic engine (Gemini
+  // Live or the Web Speech fallback), the blob carries the hook + client
+  // session state plus browser capabilities, so a dropped mic can be shared
+  // for diagnosis without console access. Both engines are included — the
+  // fallback state matters even when the user is on Gemini. Declared with the
+  // other hooks (BEFORE the starter screen's early return) so hook order is
+  // stable across renders.
+  const copyMicDiagnostics = useCallback(() => {
+    return JSON.stringify(
+      {
+        active: useLiveMic ? 'gemini-live' : 'web-speech',
+        capturedAt: new Date().toISOString(),
+        gemini: live.getDiagnostics(),
+        webSpeech: {
+          supported: voiceInput.supported,
+          listening: voiceInput.listening,
+          interim: voiceInput.interim,
+          error: voiceInput.error ?? null,
+        },
+      },
+      null,
+      2,
+    );
+  }, [useLiveMic, live, voiceInput]);
+
   // Recipe-starter state (the "start from scratch" stage): the user tells us
   // what they have, the agent generates + validates a recipe, then "Start
   // cooking" launches it. Before this the empty state was a dead end — the
@@ -495,29 +520,6 @@ export default function CookPage() {
       </main>
     );
   }
-
-  // One-click "copy voice details": whatever the active mic engine (Gemini
-  // Live or the Web Speech fallback), the blob carries the hook + client
-  // session state plus browser capabilities, so a dropped mic can be shared
-  // for diagnosis without console access. Both engines are included — the
-  // fallback state matters even when the user is on Gemini.
-  const copyMicDiagnostics = useCallback(() => {
-    return JSON.stringify(
-      {
-        active: useLiveMic ? 'gemini-live' : 'web-speech',
-        capturedAt: new Date().toISOString(),
-        gemini: live.getDiagnostics(),
-        webSpeech: {
-          supported: voiceInput.supported,
-          listening: voiceInput.listening,
-          interim: voiceInput.interim,
-          error: voiceInput.error ?? null,
-        },
-      },
-      null,
-      2,
-    );
-  }, [useLiveMic, live, voiceInput]);
 
   return (
     <CookScreen
