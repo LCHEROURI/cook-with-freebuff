@@ -52,10 +52,10 @@ body {
   --color-mauve-subtle-border: #E2D5EC;
 
   /* Surfaces — warm, tactile */
-  --color-bg: #FBF7F0;
-  --color-surface: #FEFCF8;
-  --color-surface-secondary: #F5EFE6;
-  --color-surface-muted: #EDE6DA;
+  --color-bg: #FCF8EC;
+  --color-surface: #FFFDF6;
+  --color-surface-secondary: #F7F0DE;
+  --color-surface-muted: #F0E8D0;
 
   /* Text — deep brown, never harsh black */
   --color-text: #3D3226;
@@ -141,10 +141,10 @@ body {
     --color-mauve-subtle: #2A2230;
     --color-mauve-subtle-border: #403248;
 
-    --color-bg: #1E1814;
-    --color-surface: #28201A;
-    --color-surface-secondary: #322820;
-    --color-surface-muted: #3C3028;
+    --color-bg: #1E1A14;
+    --color-surface: #28231A;
+    --color-surface-secondary: #322B20;
+    --color-surface-muted: #3C3428;
 
     --color-text: #EDE6DA;
     --color-text-secondary: #C8BCA8;
