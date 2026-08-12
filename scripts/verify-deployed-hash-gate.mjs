@@ -126,7 +126,8 @@ if (!live) {
 // missing object exits 128 (or a future git change silently flips the
 // verdict) — and a silently-green broken guard is the failure this exists to
 // prevent.
-if (spawnSync('git', ['rev-parse', '--is-shallow-repository'], { encoding: 'utf8' }).stdout.trim() === 'true') {
+const shallow = spawnSync('git', ['rev-parse', '--is-shallow-repository'], { encoding: 'utf8' });
+if (shallow.status === 0 && shallow.stdout.trim() === 'true') {
   if (spawnSync('git', ['fetch', '--quiet', '--unshallow', 'origin']).status !== 0) {
     console.error('✗ FAIL: could not deepen the shallow checkout for the ancestry check — cannot guard against a stale-head push.');
     process.exit(1);
