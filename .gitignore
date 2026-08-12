@@ -33,6 +33,9 @@ functions-debug.log
 database-debug.log
 storage-debug.log
 
+# Firebase emulator export/import data (seeded local dev data)
+emulator-data/
+
 # local env files
 .env*.local
 

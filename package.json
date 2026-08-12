@@ -22,7 +22,8 @@
     "verify:hook-block-proof": "node scripts/verify-teeth-proofs.mjs hook-block",
     "authorize:domain": "node scripts/authorize-domain.mjs",
     "admin:list": "node scripts/admin-list-data.mjs",
-    "emulators": "npx -y firebase-tools@latest emulators:start --only firestore,auth,ui --project demo-cook-with-freebuff"
+    "emulators": "npx -y firebase-tools@latest emulators:start --only firestore,auth,ui --project demo-cook-with-freebuff --import emulator-data --export-on-exit emulator-data",
+    "emulators:export": "npx -y firebase-tools@latest emulators:export --force --only firestore,auth --project demo-cook-with-freebuff emulator-data"
   },
   "dependencies": {
     "@google/generative-ai": "^0.24.1",

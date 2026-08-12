@@ -321,6 +321,12 @@ npm run dev
 npm run emulators
 # and run the dev server in another terminal — Auth + Firestore now hit the
 # local emulator instead of the production project.
+#
+# Dev data persists across restarts: `npm run emulators` imports the previous
+# snapshot from emulator-data/ on startup and re-exports it when you stop the
+# emulators with Ctrl+C (SIGINT). To snapshot mid-session without stopping,
+# run `npm run emulators:export` in a second terminal. The emulator-data/
+# directory is gitignored (it is local seeded state, not source).
 
 # Typecheck
 npm run typecheck

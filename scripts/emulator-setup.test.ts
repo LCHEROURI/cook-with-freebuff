@@ -18,6 +18,7 @@ const ADMIN = readFileSync('lib/server/admin.ts', 'utf8');
 const FIREBASE_JSON = readFileSync('firebase.json', 'utf8');
 const PKG = readFileSync('package.json', 'utf8');
 const ENV_EXAMPLE = readFileSync('.env.example', 'utf8');
+const GITIGNORE = readFileSync('.gitignore', 'utf8');
 
 describe('local Firestore/Auth emulator wiring · contract lock', () => {
   it('client connects Auth and Firestore to the emulators only under NEXT_PUBLIC_USE_FIRESTORE_EMULATOR=1', () => {
@@ -50,10 +51,20 @@ describe('local Firestore/Auth emulator wiring · contract lock', () => {
     expect(cfg.apphosting.ignore).toContain('node_modules');
   });
 
-  it('npm run emulators starts firestore + auth + ui against a demo project', () => {
+  it('npm run emulators imports the previous snapshot and re-exports on exit', () => {
     expect(PKG).toContain(
-      '"emulators": "npx -y firebase-tools@latest emulators:start --only firestore,auth,ui --project demo-cook-with-freebuff"',
+      '"emulators": "npx -y firebase-tools@latest emulators:start --only firestore,auth,ui --project demo-cook-with-freebuff --import emulator-data --export-on-exit emulator-data"',
     );
+  });
+
+  it('npm run emulators:export snapshots firestore + auth mid-session', () => {
+    expect(PKG).toContain(
+      '"emulators:export": "npx -y firebase-tools@latest emulators:export --force --only firestore,auth --project demo-cook-with-freebuff emulator-data"',
+    );
+  });
+
+  it('gitignores the emulator-data export directory so seeded data is never committed', () => {
+    expect(GITIGNORE).toContain('emulator-data/');
   });
 
   it('documents the emulator env vars in .env.example', () => {
