@@ -376,6 +376,22 @@ npx -y firebase-tools@latest login:ci      # sign in as the project owner, click
 # paste the printed token into GitHub → Settings → Secrets and variables → Actions → FIREBASE_TOKEN
 ```
 
+**Rotation.** GitHub Actions secrets cannot auto-expire, and this token is a
+long-lived Google refresh token — it never expires on its own, but it DIES
+the moment the owner account revokes it (signing out of Firebase sessions, a
+Google password change, or a manual revocation at
+https://myaccount.google.com/security). Rotate it **quarterly** as routine
+hygiene, and immediately after any of those events or a suspected leak.
+
+**A stale token never fails silently.** When the token dies, the next `main`
+push leaves the `deploy-apphosting` job RED with a Firebase auth error (loud,
+on the runner, not silent), while Vercel still deploys independently — so the
+app stays up and only the Firebase Hosting side stops auto-syncing. Recovery
+is the same two lines above: re-run `login:ci`, update the secret, then
+re-run the failed job (or push again). The contract test in
+`scripts/ci-workflows.test.ts` locks the loud-guard so a missing-token push
+can never masquerade as a green skip.
+
 The job is gated on `FIREBASE_TOKEN`: fork PRs and unconfigured repos skip
 (never deploy), and a missing token on a canonical `main` push fails loudly
 so a skipped deploy can never masquerade as a green auto-sync.
