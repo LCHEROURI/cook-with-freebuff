@@ -158,4 +158,27 @@ describe('scripts/verify-live.mjs · live-voice gate [3e] (dictation + active-sc
     expect(DRIVER).toContain("document.querySelector('[role=\"log\"][aria-label=\"Conversation transcript\"]')");
     expect(DRIVER).toContain("agentMentions >= 2");
   });
+
+  it('Phase C — asserts TWO input transcriptions from two spoken bursts through the active mic', () => {
+    // The continuous-voice contract (seen live: exactly 1 transcription
+    // across two bursts = one-shot flush bug). The driver must gate on
+    // seen.length >= 2 so a future edit that relaxes the check to a single
+    // burst (masking the one-shot-flush regression) fails HERE, at the
+    // post-deploy gate.
+    //
+    // The speech WAV loops (speech → 3s silence → …). Each burst + 1.2s
+    // trailing silence flushes via audioStreamEnd, and the re-armed flush
+    // (inputTranscription.final !== false) produces the second transcription.
+    // A future edit that drops the >= 2 check to >= 1, or changes the label
+    // from TWO to anything else, fails this contract.
+    expect(DRIVER).toContain('TWO input transcriptions');                   // the stage header
+    expect(DRIVER).toContain('seen.length >= 2');                           // the gate condition
+    expect(DRIVER).toContain('ok(`TWO spoken bursts transcribed through the active mic'); // the success marker
+    expect(DRIVER).toContain('fail(`only ${seen.length} transcription(s) after 90s');       // the failure marker
+    // The two-burst proof is exercise, not a cosmetic label — the driver
+    // must still collect the actual transcriptions array and populate
+    // seen[0] / seen[1] in the success message.
+    expect(DRIVER).toContain('${seen[0]}');
+    expect(DRIVER).toContain('${seen[1]}');
+  });
 });
