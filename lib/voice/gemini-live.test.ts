@@ -312,6 +312,187 @@ describe('GeminiLiveClient — mic capture + playback plumbing', () => {
     client.disconnect();
     expect(stopTrack).toHaveBeenCalled();
   });
+
+  it('auto-flushes audioStreamEnd after trailing silence so the FINAL input transcription is emitted', async () => {
+    // Seen live: the Live server only emits the final input transcription once
+    // the audio stream ends — without the flush the dictation hook waits
+    // forever (147 audio frames streamed, 0 inputTranscriptions). The client
+    // must send audioStreamEnd once, ~flushOnSilenceMs after the last frame
+    // with real signal.
+    mintOk();
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-01-01T00:00:00Z'));
+    const procHolder: { fn: ((e: { inputBuffer: { getChannelData(c: number): Float32Array } }) => void) | null } = { fn: null };
+    const { client, getWs } = setupClient({
+      flushOnSilenceMs: 1200,
+      deps: {
+        createWebSocket: (url: string) => new FakeWebSocket(url),
+        getUserMedia: async () => ({ getTracks: () => [{ stop: vi.fn() }] }) as unknown as MediaStream,
+        createAudioContext: () =>
+          ({
+            sampleRate: 48000,
+            createMediaStreamSource: () => ({ connect: () => undefined }),
+            createScriptProcessor: () => ({
+              connect: () => undefined,
+              get onaudioprocess() {
+                return procHolder.fn;
+              },
+              set onaudioprocess(fn: ((e: { inputBuffer: { getChannelData(c: number): Float32Array } }) => void) | null) {
+                procHolder.fn = fn;
+              },
+            }),
+            createGain: () => ({ gain: { value: 0 }, connect: () => undefined }),
+            createBufferSource: () => ({ buffer: null, onended: null, start: () => undefined, stop: () => undefined, connect: () => undefined }),
+            decodeAudioData: async () => {
+              throw new Error('raw');
+            },
+            destination: {},
+            close: async () => undefined,
+          }) as never,
+      },
+    });
+    await client.connect();
+    const ws = getWs();
+    ws.open();
+    await ws.receive({ setupComplete: {} });
+    await client.startListening();
+
+    // Speech first — the flush timer must start AFTER the speech ends.
+    procHolder.fn?.({ inputBuffer: { getChannelData: () => new Float32Array(4096).fill(0.3) } });
+    expect(ws.sent.some((s) => s.includes('audioStreamEnd'))).toBe(false);
+    // 1.1s of silence: still under the 1.2s threshold — no flush yet.
+    vi.setSystemTime(new Date('2026-01-01T00:00:01.100Z'));
+    procHolder.fn?.({ inputBuffer: { getChannelData: () => new Float32Array(4096) } });
+    expect(ws.sent.some((s) => s.includes('audioStreamEnd'))).toBe(false);
+    // Cross the threshold: the flush goes out — once.
+    vi.setSystemTime(new Date('2026-01-01T00:00:01.300Z'));
+    procHolder.fn?.({ inputBuffer: { getChannelData: () => new Float32Array(4096) } });
+    const ends = ws.sent.filter((s) => s.includes('audioStreamEnd'));
+    expect(ends.length).toBe(1);
+    // More silence after the flush: no duplicate.
+    vi.setSystemTime(new Date('2026-01-01T00:00:02.500Z'));
+    procHolder.fn?.({ inputBuffer: { getChannelData: () => new Float32Array(4096) } });
+    expect(ws.sent.filter((s) => s.includes('audioStreamEnd')).length).toBe(1);
+
+    client.disconnect();
+    vi.useRealTimers();
+  });
+
+  it('re-arms the flush on turnComplete so a SECOND utterance gets its own audioStreamEnd (continuous mic)', async () => {
+    // The reported bug: the mic transcribed the FIRST burst then went dead —
+    // the flush was one-shot (`flushed` never reset), so after the first
+    // audioStreamEnd the server never emitted another final transcription.
+    // Live-API probe proof: the server accepts and transcribes a 2nd utterance
+    // only when it gets its OWN audioStreamEnd. turnComplete must re-arm the
+    // flush, and silence alone must never flush (no speech since re-arm).
+    mintOk();
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-01-01T00:00:00Z'));
+    const procHolder: { fn: ((e: { inputBuffer: { getChannelData(c: number): Float32Array } }) => void) | null } = { fn: null };
+    const { client, getWs } = setupClient({
+      flushOnSilenceMs: 1200,
+      deps: {
+        createWebSocket: (url: string) => new FakeWebSocket(url),
+        getUserMedia: async () => ({ getTracks: () => [{ stop: vi.fn() }] }) as unknown as MediaStream,
+        createAudioContext: () =>
+          ({
+            sampleRate: 48000,
+            createMediaStreamSource: () => ({ connect: () => undefined }),
+            createScriptProcessor: () => ({
+              connect: () => undefined,
+              get onaudioprocess() {
+                return procHolder.fn;
+              },
+              set onaudioprocess(fn: ((e: { inputBuffer: { getChannelData(c: number): Float32Array } }) => void) | null) {
+                procHolder.fn = fn;
+              },
+            }),
+            createGain: () => ({ gain: { value: 0 }, connect: () => undefined }),
+            createBufferSource: () => ({ buffer: null, onended: null, start: () => undefined, stop: () => undefined, connect: () => undefined }),
+            decodeAudioData: async () => {
+              throw new Error('raw');
+            },
+            destination: {},
+            close: async () => undefined,
+          }) as never,
+      },
+    });
+    await client.connect();
+    const ws = getWs();
+    ws.open();
+    await ws.receive({ setupComplete: {} });
+    await client.startListening();
+
+    // Utterance 1: speech, then 1.3s silence → first flush.
+    procHolder.fn?.({ inputBuffer: { getChannelData: () => new Float32Array(4096).fill(0.3) } });
+    vi.setSystemTime(new Date('2026-01-01T00:00:01.300Z'));
+    procHolder.fn?.({ inputBuffer: { getChannelData: () => new Float32Array(4096) } });
+    expect(ws.sent.filter((s) => s.includes('audioStreamEnd')).length).toBe(1);
+
+    // The server finishes the exchange → turnComplete re-arms the flush.
+    await ws.receive({ serverContent: { turnComplete: true } });
+
+    // Long silence with NO new speech: must NOT flush (nothing to flush).
+    vi.setSystemTime(new Date('2026-01-01T00:00:05.000Z'));
+    procHolder.fn?.({ inputBuffer: { getChannelData: () => new Float32Array(4096) } });
+    expect(ws.sent.filter((s) => s.includes('audioStreamEnd')).length).toBe(1);
+
+    // Utterance 2: fresh speech, then 1.3s silence → the SECOND flush.
+    procHolder.fn?.({ inputBuffer: { getChannelData: () => new Float32Array(4096).fill(0.25) } });
+    vi.setSystemTime(new Date('2026-01-01T00:00:06.300Z'));
+    procHolder.fn?.({ inputBuffer: { getChannelData: () => new Float32Array(4096) } });
+    const ends = ws.sent.filter((s) => s.includes('audioStreamEnd'));
+    expect(ends.length).toBe(2);
+
+    client.disconnect();
+    vi.useRealTimers();
+  });
+
+  it('disconnect() flushes an un-flushed utterance before closing (dictation quiet-timeout path)', async () => {
+    // The dictation deadlock: the quiet-timeout called disconnect() directly
+    // (never stopListening), the socket closed WITHOUT audioStreamEnd, and the
+    // server never emitted the pending final transcription. disconnect() must
+    // flush.
+    mintOk();
+    const procHolder: { fn: ((e: { inputBuffer: { getChannelData(c: number): Float32Array } }) => void) | null } = { fn: null };
+    const { client, getWs } = setupClient({
+      deps: {
+        createWebSocket: (url: string) => new FakeWebSocket(url),
+        getUserMedia: async () => ({ getTracks: () => [{ stop: vi.fn() }] }) as unknown as MediaStream,
+        createAudioContext: () =>
+          ({
+            sampleRate: 48000,
+            createMediaStreamSource: () => ({ connect: () => undefined }),
+            createScriptProcessor: () => ({
+              connect: () => undefined,
+              get onaudioprocess() {
+                return procHolder.fn;
+              },
+              set onaudioprocess(fn: ((e: { inputBuffer: { getChannelData(c: number): Float32Array } }) => void) | null) {
+                procHolder.fn = fn;
+              },
+            }),
+            createGain: () => ({ gain: { value: 0 }, connect: () => undefined }),
+            createBufferSource: () => ({ buffer: null, onended: null, start: () => undefined, stop: () => undefined, connect: () => undefined }),
+            decodeAudioData: async () => {
+              throw new Error('raw');
+            },
+            destination: {},
+            close: async () => undefined,
+          }) as never,
+      },
+    });
+    await client.connect();
+    const ws = getWs();
+    ws.open();
+    await ws.receive({ setupComplete: {} });
+    await client.startListening();
+    // One speech frame, then disconnect immediately (no silence elapsed, no
+    // auto-flush) — the close must still flush the utterance.
+    procHolder.fn?.({ inputBuffer: { getChannelData: () => new Float32Array(4096).fill(0.2) } });
+    client.disconnect();
+    expect(ws.sent.some((s) => s.includes('audioStreamEnd'))).toBe(true);
+  });
 });
 
 describe('audio helpers', () => {

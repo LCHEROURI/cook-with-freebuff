@@ -221,16 +221,23 @@ function makeSilenceWav(path, seconds = 2, rate = 16000) {
   writeFileSync(path, buf);
 }
 console.log(`\n[1b] Generating fake audio: speech (“${SPOKEN_PROMPT}”) + silence`);
-try {
-  // macOS: synthesize FRESH speech so the dictation stage hears today's voice.
-  execFileSync('say', ['-o', '/tmp/live-voice-speech.aiff', SPOKEN_PROMPT], { stdio: 'ignore' });
-  execFileSync('afconvert', ['-f', 'WAVE', '-d', 'LEI16@16000', '-c', '1', '/tmp/live-voice-speech.aiff', SPEECH_WAV], { stdio: 'ignore' });
-  ok('speech audio synthesized fresh (macOS say → 16 kHz PCM WAV)');
-} catch {
-  // Linux (CI runner) has no `say` — fall back to the committed fixture: the
-  // SAME real recorded speech, so the transcription path is platform-independent.
+let speechSynthesized = false;
+if (process.env.LIVE_VOICE_USE_FIXTURE !== '1') {
+  try {
+    // macOS: synthesize FRESH speech so the dictation stage hears today's voice.
+    execFileSync('say', ['-o', '/tmp/live-voice-speech.aiff', SPOKEN_PROMPT], { stdio: 'ignore' });
+    execFileSync('afconvert', ['-f', 'WAVE', '-d', 'LEI16@16000', '-c', '1', '/tmp/live-voice-speech.aiff', SPEECH_WAV], { stdio: 'ignore' });
+    speechSynthesized = true;
+    ok('speech audio synthesized fresh (macOS say → 16 kHz PCM WAV)');
+  } catch {
+    // fall through to the fixture
+  }
+}
+if (!speechSynthesized) {
+  // Linux (CI runner) has no `say` — use the committed fixture: the SAME real
+  // recorded speech, so the transcription path is platform-independent.
   copyFileSync(fileURLToPath(new URL('./fixtures/dictation-speech.wav', import.meta.url)), SPEECH_WAV);
-  note(`macOS say unavailable — using the committed fixture (${readFileSync(SPEECH_WAV).length}b)`);
+  note(`using the committed speech fixture (${readFileSync(SPEECH_WAV).length}b)`);
 }
 makeSilenceWav(SILENCE_WAV);
 existsSync(SPEECH_WAV) && existsSync(SILENCE_WAV)

@@ -238,6 +238,37 @@ describe('useLiveDictation', () => {
     expect(result.current.listening).toBe(false);
   });
 
+  it('a flush-late final (server emits it after the quiet-timeout disconnect) still fills the prompt and clears the error', async () => {
+    // The Live server only emits the FINAL input transcription after the audio
+    // stream ends. When the flush arrives after the 15s quiet-timeout already
+    // fired (timeout → disconnect() → audioStreamEnd → server transcribes the
+    // utterance it was holding), the transcript must STILL reach onFinal and
+    // clear the timeout's "did not hear anything" error — the user DID speak.
+    vi.useFakeTimers();
+    const onFinal = vi.fn();
+    const { result } = renderHook(() => useLiveDictation({ onFinal, quietTimeoutMs: 15000 }));
+    await act(async () => {
+      await result.current.toggle();
+      lastClient!.emit('status', 'CONNECTED');
+    });
+    // Nothing heard for 15s → the quiet timeout fires (disconnect flushes).
+    await act(async () => {
+      vi.advanceTimersByTime(15001);
+    });
+    expect(result.current.error).toContain('did not hear anything');
+    expect(onFinal).not.toHaveBeenCalled();
+    // ~1-2s later the flushed transcription lands: onFinal fires and the
+    // contradictory error is cleared.
+    await act(async () => {
+      vi.advanceTimersByTime(1500);
+      lastClient!.emit('transcript', { type: 'final', text: 'chicken rice onion' });
+    });
+    expect(onFinal).toHaveBeenCalledTimes(1);
+    expect(onFinal).toHaveBeenCalledWith('chicken rice onion');
+    expect(result.current.error).toBeNull();
+    expect(result.current.listening).toBe(false);
+  });
+
   it('unmount disconnects the session — no dangling socket', async () => {
     const { result, unmount } = renderHook(() => useLiveDictation());
     await act(async () => {

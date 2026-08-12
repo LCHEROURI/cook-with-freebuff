@@ -146,6 +146,10 @@ export function useLiveDictation(options: UseLiveDictationOptions = {}) {
       intentionalRef.current = true;
       clientRef.current = null;
       optionsRef.current.onFinal?.(t.text.trim());
+      // A final can arrive AFTER the quiet-timeout flushed the stream (the
+      // server emits it 1-2s after audioStreamEnd) — clear the timeout's
+      // "did not hear anything" error: the user DID speak, the text landed.
+      setError(null);
       // The dictation is one utterance per tap — close the session so the
       // model's (unneeded) audio reply never streams or lingers.
       client.disconnect();

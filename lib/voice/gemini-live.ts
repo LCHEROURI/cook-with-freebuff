@@ -103,6 +103,14 @@ export interface GeminiLiveOptions {
   tools?: readonly unknown[];
   /** Reply modality. Default ['AUDIO'] (spoken replies); dictation uses ['TEXT']. */
   responseModalities?: Array<'AUDIO' | 'TEXT'>;
+  /**
+   * End-of-utterance flush: after this much trailing silence (ms), the client
+   * sends `audioStreamEnd` once so the server emits the pending FINAL input
+   * transcription. The Live server holds the utterance until the stream ends.
+   * Default 1200; 0 disables the auto-flush (stopListening/disconnect still
+   * flush).
+   */
+  flushOnSilenceMs?: number;
   deps?: GeminiLiveDeps;
 }
 
@@ -114,6 +122,17 @@ export class GeminiLiveClient {
   private mediaStream: MediaStream | null = null;
   private audioContext: AudioContextLike | null = null;
   private processor: ScriptProcessorLike | null = null;
+
+  // End-of-utterance flush state (see startListening): the Live server holds
+  // the current utterance's audio and only emits the FINAL input transcription
+  // once the stream ends (`audioStreamEnd`), so after each trailing silence the
+  // client sends one flush. The state re-arms on turnComplete/interrupted — a
+  // fresh utterance gets its OWN flush, so a continuous conversation never
+  // dies after the first burst (seen live: one-shot flush = second utterance
+  // never transcribed). 0 in flushLastSpeechMs means "no speech since the last
+  // re-arm" — a flush must never fire on silence alone.
+  private flushLastSpeechMs = 0;
+  private flushSent = false;
 
   private playbackQueue: ArrayBuffer[] = [];
   private playing = false;
@@ -236,14 +255,49 @@ export class GeminiLiveClient {
       this.processor = processor;
       const inputRate = ctx.sampleRate;
 
+      // End-of-utterance flush: the Live server holds the current utterance's
+      // audio in a buffer and only emits the FINAL input transcription once
+      // the stream ends (`audioStreamEnd`). Without a flush the dictation
+      // hook would wait forever for a transcript that never comes (seen live:
+      // 147 audio frames streamed, 0 inputTranscriptions, then the quiet
+      // timeout bailed). Track the last frame with real signal and, after a
+      // short trailing silence (default 1.2s), send `audioStreamEnd` once so
+      // the transcription lands ~1-2s after the user stops speaking. The
+      // state is instance-level so turnComplete/interrupted can re-arm it
+      // (handleMessage) — every utterance, not just the first, gets flushed.
+      const flushSilenceMs = this.opts.flushOnSilenceMs ?? 1200;
+      const SPEECH_RMS = 0.012;
+      this.flushLastSpeechMs = 0;
+      this.flushSent = false;
+
       processor.onaudioprocess = (e) => {
         const channel = e.inputBuffer.getChannelData(0);
+        let rms = 0;
+        for (let i = 0; i < channel.length; i++) rms += channel[i] * channel[i];
+        rms = Math.sqrt(rms / channel.length);
+        if (rms > SPEECH_RMS) this.flushLastSpeechMs = Date.now();
         const chunk = resample(channel, inputRate, INPUT_RATE);
         if (chunk.length === 0) return;
         const pcm = floatTo16BitPCM(chunk);
         this.send({
           realtimeInput: { audio: { data: pcmToBase64(pcm), mimeType: 'audio/pcm;rate=16000' } },
         });
+        // Only flush when real speech was heard since the last re-arm — a
+        // flush on empty silence would consume the one-shot before the user
+        // ever spoke and kill the first real utterance. Also never flush while
+        // the model's own reply is playing: the speaker's echo into the mic
+        // would otherwise transcribe the model's words as a spurious user turn.
+        if (
+          !this.flushSent &&
+          this.flushLastSpeechMs > 0 &&
+          !this.playing &&
+          this.playbackQueue.length === 0 &&
+          flushSilenceMs > 0 &&
+          Date.now() - this.flushLastSpeechMs >= flushSilenceMs
+        ) {
+          this.flushSent = true;
+          this.send({ realtimeInput: { audioStreamEnd: true } });
+        }
       };
 
       // ScriptProcessor only fires while wired into the destination graph; a
@@ -267,6 +321,11 @@ export class GeminiLiveClient {
 
   disconnect(): void {
     this.stopPlayback();
+    // Flush any un-flushed utterance before closing — otherwise the server
+    // never emits the pending final input transcription (dictation deadlock
+    // seen live: the quiet-timeout path called disconnect() and the spoken
+    // prompt never landed in the input).
+    if (this.connected && this.processor) this.send({ realtimeInput: { audioStreamEnd: true } });
     this.teardownMic();
     try {
       this.ws?.close();
@@ -317,6 +376,12 @@ export class GeminiLiveClient {
     this.emit('status', 'ERROR');
   }
 
+  /** Allow the end-of-utterance flush to fire again for the next utterance. */
+  private rearmFlush(): void {
+    this.flushLastSpeechMs = 0;
+    this.flushSent = false;
+  }
+
   private async handleMessage(data: unknown): Promise<void> {
     const raw = await decodeFrame(data);
     if (!raw || !raw.startsWith('{')) return;
@@ -357,8 +422,15 @@ export class GeminiLiveClient {
         if (part.inlineData?.data) this.queuePlayback(part.inlineData.data);
       }
       if (sc.turnComplete) {
+        // The turn is over — the user may speak again. Re-arm the flush so
+        // the NEXT utterance gets its own audioStreamEnd instead of the
+        // one-shot flush leaving every later burst untranscribed.
+        this.rearmFlush();
         this.emit('turn', { kind: 'end' });
       }
+      // A barge-in cuts the current exchange — the next utterance is a fresh
+      // turn and needs its own flush too.
+      if (sc.interrupted) this.rearmFlush();
     }
 
     const toolCall = msg.toolCall as
@@ -426,6 +498,10 @@ export class GeminiLiveClient {
       }
     } finally {
       this.playing = false;
+      // The model's reply just finished — forget any echo of it the mic
+      // picked up, so the next flush timer only starts from the user's own
+      // next speech, never from the tail of the reply.
+      if (this.playbackQueue.length === 0) this.flushLastSpeechMs = 0;
     }
   }
 
