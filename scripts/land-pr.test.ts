@@ -93,6 +93,14 @@ describe('scripts/land-pr.mjs · the PR + merge path', () => {
     expect(LAND).toContain('--body "${MESSAGE');
   });
 
+  it('captures the PR URL via runQuiet (the number is needed to arm auto-merge)', () => {
+    // A regression here would return an empty URL, so auto-merge arming
+    // silently targets the wrong PR number — the exact bug caught live when
+    // the helper's first run created PR #9 but armed nothing.
+    expect(LAND).toContain('return runQuiet(`gh pr create');
+    expect(LAND).toContain('prUrl.match(/(\\d+)\\s*$/)');
+  });
+
   it('arms auto-merge with squash + branch deletion by default', () => {
     expect(LAND).toContain('gh pr merge "${prNumber}" --auto --squash --delete-branch');
   });
