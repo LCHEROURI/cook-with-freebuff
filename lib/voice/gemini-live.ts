@@ -693,15 +693,21 @@ export class GeminiLiveClient {
         const chunk = this.playbackQueue.shift()!;
         const ctx = this.getPlaybackContext();
         if (!ctx) break;
-        let audio: AudioBuffer;
         try {
-          audio = await ctx.decodeAudioData(chunk);
+          let audio: AudioBuffer;
+          try {
+            audio = await ctx.decodeAudioData(chunk);
+          } catch {
+            // Raw 24 kHz PCM16 — decodeAudioData rejects containerless frames,
+            // so we decode the PCM directly.
+            audio = decodePcmToAudioBuffer(ctx, chunk, OUTPUT_RATE) as unknown as AudioBuffer;
+          }
+          await playBuffer(ctx, audio, (src) => (this.currentSource = src));
         } catch {
-          // Raw 24 kHz PCM16 — decodeAudioData rejects containerless frames,
-          // so we decode the PCM directly.
-          audio = decodePcmToAudioBuffer(ctx, chunk, OUTPUT_RATE) as unknown as AudioBuffer;
+          // A chunk that cannot be decoded or scheduled (a broken context, a
+          // rejected playBuffer) must NOT kill the drain: dropping it and
+          // continuing is what keeps the queue emptying and the mic unmuting.
         }
-        await playBuffer(ctx, audio, (src) => (this.currentSource = src));
       }
     } finally {
       this.playing = false;
@@ -711,6 +717,14 @@ export class GeminiLiveClient {
       if (this.playbackQueue.length === 0) {
         this.flushLastSpeechMs = 0;
         this.setMicPaused(false);
+      } else {
+        // The drain exited with chunks still queued (an error path). Without
+        // this, the mic stays muted forever behind a stuck queue — the
+        // "first burst transcribed, then dead" signature. Re-enter shortly
+        // so the queue gets another chance to drain.
+        setTimeout(() => {
+          if (this.playbackQueue.length > 0 && !this.playing) void this.drainPlayback();
+        }, 100);
       }
     }
   }

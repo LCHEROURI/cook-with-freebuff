@@ -473,6 +473,71 @@ describe('GeminiLiveClient — mic capture + playback plumbing', () => {
     client.disconnect();
   });
 
+  it('a broken playback chunk does not leave the mic muted — the queue drains and capture resumes', async () => {
+    // If a chunk cannot be scheduled (a broken AudioContext where
+    // createBufferSource throws, so playBuffer rejects), the drain must drop
+    // it and continue rather than exit mid-queue with the mic muted forever —
+    // the captured "playing=false, queue=1, mic paused" stuck state.
+    mintOk();
+    const procHolder: { fn: ((e: { inputBuffer: { getChannelData(c: number): Float32Array } }) => void) | null } = { fn: null };
+    const { client, getWs } = setupClient({
+      deps: {
+        createWebSocket: (url: string) => new FakeWebSocket(url),
+        getUserMedia: async () => ({ getTracks: () => [{ stop: vi.fn() }] }) as unknown as MediaStream,
+        createAudioContext: () =>
+          ({
+            sampleRate: 48000,
+            createMediaStreamSource: () => ({ connect: () => undefined }),
+            createScriptProcessor: () => ({
+              connect: () => undefined,
+              get onaudioprocess() {
+                return procHolder.fn;
+              },
+              set onaudioprocess(fn: ((e: { inputBuffer: { getChannelData(c: number): Float32Array } }) => void) | null) {
+                procHolder.fn = fn;
+              },
+            }),
+            createGain: () => ({ gain: { value: 0 }, connect: () => undefined }),
+            createBufferSource: () => {
+              throw new Error('broken context');
+            },
+            decodeAudioData: async () => {
+              throw new Error('raw');
+            },
+            destination: {},
+            close: async () => undefined,
+          }) as never,
+      },
+    });
+    const playbackEvents: boolean[] = [];
+    client.on('playback', (p) => playbackEvents.push(p));
+    await client.connect();
+    const ws = getWs();
+    ws.open();
+    await ws.receive({ setupComplete: {} });
+    await client.startListening();
+
+    const audioFrameCount = () => ws.sent.filter((s) => s.includes('realtimeInput') && s.includes('"audio"')).length;
+    procHolder.fn?.({ inputBuffer: { getChannelData: () => new Float32Array(4096).fill(0.3) } });
+    expect(audioFrameCount()).toBe(1);
+
+    // Reply audio arrives — the chunk cannot be scheduled, but the drain must
+    // recover instead of leaving the mic muted.
+    await ws.receive({
+      serverContent: { modelTurn: { parts: [{ inlineData: { data: btoa('not really pcm') } }] } },
+    });
+    await new Promise((r) => setTimeout(r, 0));
+    // Mic-paused fired true on enqueue, then false once the drain recovered.
+    expect(playbackEvents).toContain(true);
+    expect(playbackEvents[playbackEvents.length - 1]).toBe(false);
+
+    // Capture resumed: a later speech frame streams again.
+    procHolder.fn?.({ inputBuffer: { getChannelData: () => new Float32Array(4096).fill(0.3) } });
+    expect(audioFrameCount()).toBe(2);
+
+    client.disconnect();
+  });
+
   it('forces the mic back on when reply playback stalls and never drains', async () => {
     // If the model's audio reply never finishes (browser blocked the
     // playback, a source that never ends), the mute-during-playback guard
