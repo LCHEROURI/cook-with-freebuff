@@ -178,17 +178,9 @@ if (NO_MERGE) {
     let last = '';
     let merged = false;
     while (Date.now() < deadline) {
-      // Cap the sleep at the remaining budget so --wait-timeout is honored to
-      // the second — an unconditional 20s sleep could overrun a short timeout
-      // (or the final iteration of any timeout) and report a merge that
-      // happened after the declared deadline.
-      const remainingMs = deadline - Date.now();
-      if (remainingMs <= 0) break;
-      await sleep(Math.min(20_000, remainingMs));
-      // Recheck the deadline after the sleep: gh pr view is a network call
-      // that can overrun the declared timeout, so never run the query past
-      // the budget — a merge reported after the deadline would be a lie.
-      if (Date.now() >= deadline) break;
+      // Poll FIRST, sleep after (Codex P2): with a --wait-timeout of 20s or
+      // less, the capped sleep would consume the entire budget before the
+      // first query ever ran — the wait would silently never look at the PR.
       const state = runQuiet(`gh pr view "${prNumber}" --json state --jq .state`);
       if (state && state !== last) {
         console.log(`  [${new Date().toISOString().slice(11, 19)}] ${state}`);
@@ -199,6 +191,17 @@ if (NO_MERGE) {
         break;
       }
       if (state === 'CLOSED') break;
+      // Cap the sleep at the remaining budget so --wait-timeout is honored to
+      // the second — an unconditional 20s sleep could overrun a short timeout
+      // (or the final iteration of any timeout) and report a merge that
+      // happened after the declared deadline. Recheck the deadline after the
+      // sleep too: the next gh pr view is a network call that can overrun the
+      // budget, so it never runs past it — a merge reported after the
+      // declared deadline would be a lie.
+      const remainingMs = deadline - Date.now();
+      if (remainingMs <= 0) break;
+      await sleep(Math.min(20_000, remainingMs));
+      if (Date.now() >= deadline) break;
     }
     if (merged) {
       console.log(`\n✓ PR #${prNumber} MERGED — branch + PR + checks + merge completed in one command: ${prUrl}`);

@@ -137,15 +137,22 @@ describe('scripts/land-pr.mjs · --wait (the whole landing as one step)', () => 
     expect(LAND).toContain('await sleep(Math.min(20_000, remainingMs));');
   });
 
-  it('rechecks the deadline after sleeping, before the gh pr view query (Codex P2)', () => {
-    // The capped sleep returns at approximately the deadline; the query itself
-    // is a network call that can overrun it, so it must never run past the
-    // budget — a merge reported after the declared deadline would be a lie.
-    expect(LAND).toContain('if (Date.now() >= deadline) break;');
+  it('polls BEFORE the first sleep, so a short --wait-timeout still queries (Codex P2)', () => {
+    // With --wait-timeout of 20s or less, sleeping first would consume the
+    // entire budget before the first query ever ran — the wait would silently
+    // never look at the PR. The query must come first in the loop.
+    expect(LAND).toContain('await sleep(Math.min(20_000, remainingMs));');
     const pollBlock = LAND.slice(LAND.indexOf('const deadline'), LAND.indexOf('if (merged)'));
-    expect(pollBlock.indexOf('if (Date.now() >= deadline) break;')).toBeLessThan(
-      pollBlock.indexOf('gh pr view "${prNumber}" --json state --jq .state'),
+    expect(pollBlock.indexOf('gh pr view "${prNumber}" --json state --jq .state')).toBeLessThan(
+      pollBlock.indexOf('await sleep(Math.min(20_000, remainingMs));'),
     );
+  });
+
+  it('rechecks the deadline after sleeping, so the next query never runs past the budget', () => {
+    // The capped sleep returns at approximately the deadline; the next query
+    // itself is a network call that can overrun it, so it must never run past
+    // the budget — a merge reported after the declared deadline would be a lie.
+    expect(LAND).toContain('if (Date.now() >= deadline) break;');
   });
 
   it('times out honestly (auto-merge stays armed) instead of hanging forever', () => {
