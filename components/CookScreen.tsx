@@ -14,19 +14,38 @@ function formatCountdown(seconds: number): string {
   return `${m}:${r.toString().padStart(2, '0')}`;
 }
 
-function TimerDisplay({ timer }: { timer: ActiveTimerInfo }) {
+function TimerDisplay({ timer, paused }: { timer: ActiveTimerInfo; paused: boolean }) {
   const [remaining, setRemaining] = useState(timer.remainingSeconds);
   useEffect(() => {
+    // While paused the server freezes the countdown at the at-pause remainder
+    // (derived from pausedAt) — /cook must agree with the card and NOT tick
+    // the local countdown toward zero, or the screen would show a shrinking
+    // timer the server says is frozen.
+    if (paused) {
+      setRemaining(timer.remainingSeconds);
+      return;
+    }
     setRemaining(timer.remainingSeconds);
     const id = window.setInterval(() => {
       setRemaining((prev) => Math.max(0, prev - 1));
     }, 1000);
     return () => window.clearInterval(id);
-  }, [timer.endsAt, timer.remainingSeconds]);
+  }, [timer.endsAt, timer.remainingSeconds, paused]);
   return (
-    <div className={styles.timer} role="timer" aria-label={`${timer.label}, ${formatCountdown(remaining)} remaining`}>
+    <div
+      className={paused ? `${styles.timer} ${styles.timerPaused}` : styles.timer}
+      role="timer"
+      aria-label={
+        paused
+          ? `${timer.label}, paused at ${formatCountdown(timer.remainingSeconds)}`
+          : `${timer.label}, ${formatCountdown(remaining)} remaining`
+      }
+    >
       <span className={styles.timerLabel}>{timer.label}</span>
-      <span className={styles.timerCount}>{formatCountdown(remaining)}</span>
+      <span className={styles.timerCount}>
+        {paused ? '⏸ ' : ''}
+        {formatCountdown(paused ? timer.remainingSeconds : remaining)}
+      </span>
     </div>
   );
 }
@@ -241,7 +260,7 @@ export function CookScreen({
       {snap.activeTimers.length > 0 && (
         <section className={styles.timers}>
           {snap.activeTimers.map((t) => (
-            <TimerDisplay key={t.timerId} timer={t} />
+            <TimerDisplay key={t.timerId} timer={t} paused={isPaused} />
           ))}
         </section>
       )}
