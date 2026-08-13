@@ -7,11 +7,13 @@ How this app is built, deployed, and verified, and what to do when something bre
 ```
 push/PR ──► GitHub Actions (validate: typecheck · lint · test · build)
                  │
-                 ▼
-        Vercel production deploy (cook-with-freebuff)
+                 ├──► Vercel production deploy (cook-with-freebuff)
+                 │         │
+                 │         ▼
+                 │   deployment_status: verify-deployed (verify:live)
                  │
-                 ▼
-        deployment_status: verify-deployed (verify:live against https://cook-with-freebuff.vercel.app)
+                 └──► emulator-compare smoke ──► App Hosting deploy
+                       (needs: validate + smoke)
 ```
 
 - **Hosting** — Vercel. Production branch `main`. Preview deploys for PRs.
@@ -38,8 +40,9 @@ The values must stay in sync across all three stores.
 # 1. Validate locally
 npm run typecheck && npm test && npm run build
 
-# 2. Commit + push (triggers validate job)
-git push origin main
+# 2. Land to main (protected — see "Landing changes (strict flow)" below):
+#    owner   git push origin main                                     # bypass-with-recording
+#    anyone  npm run land:pr -- --message "fix: ..." --wait           # branch + PR + merge-when-green
 
 # 3. Vercel auto-deploys the main branch
 
@@ -52,6 +55,56 @@ npm run verify:live                 # seeds owner recipe → guided flow → saf
 (`verify-deployed` job), secret-gated on the four vars above with a loud
 guard: a missing secret on a main push **fails** the run instead of silently
 skipping.
+
+## Landing changes (strict flow)
+
+`main` has **strict** branch protection: up-to-date is required, merges are
+PR-only (zero required approvals for the solo maintainer), and the repository
+owner may push directly with **bypass-with-recording** (`enforce_admins` is
+off — the push is allowed and marked "Bypassed rule violations"). Everyone
+else must land through a pull request.
+
+### Required checks
+
+Three checks are required before anything merges:
+
+| Check | Runs on | Gates |
+|---|---|---|
+| `Typecheck · Lint · Test · Build` | every PR + push | merge |
+| `Verify PR preview deploy (hash gate)` | Vercel preview deploy of the PR head | merge |
+| `Emulator-compare smoke (guided flow vs live)` | main pushes (push-only job) | the App Hosting deploy (`needs: [validate, emulator-compare]`) |
+
+The smoke reports **skipped** on PRs by design — its deployed leg writes to the
+shared production backend, so per-PR runs would burn the owner-verify write
+budget. A skipped required check does not block an auto-merge (verified live:
+PRs #13 and #14 merged on validate + preview gate with the smoke skipped).
+
+### Merge-when-green (the one-command path)
+
+```bash
+npm run land:pr -- --message "fix: ..." --wait
+```
+
+`scripts/land-pr.mjs` does the whole dance in one step: guards (clean tree /
+wrong base), feature branch, staged-only commit (hunk-split trees stay
+clean), push of the feature branch **only** (it never touches a main ref), PR
+against `main`, auto-merge armed (squash + delete branch), and with `--wait`
+it blocks until the PR actually merges (default timeout 600s, tune with
+`--wait-timeout`) and reports the outcome. Auto-merge fires the moment the
+required checks go green — merge-when-green without babysitting.
+`--no-merge` stops at PR creation.
+
+### The bootstrap path (historical)
+
+Between "strict checks + admin enforcement" and PR-only, there was a
+bootstrap deadlock: a brand-new commit's checks cannot run until the commit
+exists, and the commit cannot land until its checks pass — GitHub rejects the
+first push with `N/N required status checks are expected`. The escape was to
+push the same commits to a temporary branch, open a **bootstrap PR** so the
+checks ran on the exact commit, then direct-push to `main` (check runs are
+keyed per commit, so the green/skipped runs satisfied the required checks).
+That dance is obsolete: PR-only + auto-merge replaced it, and the owner's
+bypass-with-recording makes the direct push itself unblocked.
 
 ## Verify:live contract
 

@@ -2,12 +2,11 @@
 // ============================================================================
 // scripts/land-pr.mjs — one-command landing path under the PR-only flow.
 //
-// Branch protection on `main` requires a pull request plus two green checks
-// (`Typecheck · Lint · Test · Build`, `Verify PR preview deploy (hash gate)`),
-// strict up-to-date mode, and admin enforcement — direct pushes to main are
-// rejected. That means every change lands via the branch → PR → checks →
-// merge path, and doing that by hand is a nine-step dance. This script is
-// that path in one command:
+// Branch protection on `main` requires three green checks (validate, the
+// preview hash gate, the emulator-compare smoke), strict up-to-date mode, and
+// a pull request — the owner can bypass with recording, but the PR path keeps
+// every landing gated. Doing the branch → PR → checks → merge path by hand is
+// a nine-step dance; this script is that path in one command:
 //
 //     node scripts/land-pr.mjs --message "fix: ..."
 //
@@ -26,12 +25,16 @@
 //   5. Opens a PR against the base branch with the message as title/body.
 //   6. Enables auto-merge (squash, delete branch) unless --no-merge — the PR
 //      merges itself the moment both required checks pass.
+//   7. With --wait, blocks until the PR merges (timeout --wait-timeout
+//      seconds, default 600) and reports the outcome — the whole landing,
+//      end to end, in one command.
 //
 // Exit codes: 0 = PR created (and auto-merge armed unless --no-merge);
 // 1 = nothing to commit / git or gh failed; 2 = wrong base branch.
 // ============================================================================
 
 import { execSync } from 'node:child_process';
+import { setTimeout as sleep } from 'node:timers/promises';
 
 function run(cmd, opts = {}) {
   // With stdio 'inherit' execSync returns null (nothing is captured), so the
@@ -61,9 +64,14 @@ const MESSAGE = take('--message');
 const BRANCH_FLAG = take('--branch');
 const BASE = take('--base') || 'main';
 const NO_MERGE = args.includes('--no-merge');
+const WAIT = args.includes('--wait');
+const WAIT_TIMEOUT_S = Number(take('--wait-timeout')) || 600;
 
 if (!MESSAGE) {
   fail(1, 'a commit/PR message is required: node scripts/land-pr.mjs --message "fix: ..."');
+}
+if (WAIT && NO_MERGE) {
+  fail(1, '--wait needs auto-merge — drop --no-merge (or drop --wait)');
 }
 
 // ---- guards ----------------------------------------------------------------
@@ -162,5 +170,30 @@ if (NO_MERGE) {
     console.log('  It merges itself once the required checks pass.');
   } catch {
     fail(1, `PR created at ${prUrl}, but arming auto-merge failed — merge it manually once checks are green`);
+  }
+
+  if (WAIT) {
+    console.log(`  Waiting for PR #${prNumber} to merge (timeout ${WAIT_TIMEOUT_S}s)...`);
+    const deadline = Date.now() + WAIT_TIMEOUT_S * 1000;
+    let last = '';
+    let merged = false;
+    while (Date.now() < deadline) {
+      await sleep(20_000);
+      const state = runQuiet(`gh pr view "${prNumber}" --json state --jq .state`);
+      if (state && state !== last) {
+        console.log(`  [${new Date().toISOString().slice(11, 19)}] ${state}`);
+        last = state;
+      }
+      if (state === 'MERGED') {
+        merged = true;
+        break;
+      }
+      if (state === 'CLOSED') break;
+    }
+    if (merged) {
+      console.log(`\n✓ PR #${prNumber} MERGED — branch + PR + checks + merge completed in one command: ${prUrl}`);
+    } else {
+      fail(1, `PR #${prNumber} did not merge within ${WAIT_TIMEOUT_S}s (last state: ${last || 'unknown'}) — auto-merge stays armed, check ${prUrl}`);
+    }
   }
 }

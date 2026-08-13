@@ -579,9 +579,23 @@ npm run land:pr -- --message "fix: expose the stuck-queue duration"
 staged-only when anything is staged (so a hunk-split multi-stream tree stays
 clean), pushes **only** the feature branch (it never touches a main ref), opens
 the PR against `main`, and arms auto-merge — the PR merges itself the moment
-the required checks pass. Pass `--no-merge` to stop at PR creation and merge
-manually with `gh pr merge <n> --squash --delete-branch`. It is
-contract-locked by `scripts/land-pr.test.ts`.
+the required checks pass. Add `--wait` to block until the PR actually merges
+(timeout via `--wait-timeout`, default 600s) and report the outcome — the
+whole branch → PR → checks → merge path as a single automated step. Pass
+`--no-merge` to stop at PR creation and merge manually with
+`gh pr merge <n> --squash --delete-branch`. It is contract-locked by
+`scripts/land-pr.test.ts`.
+
+> Why no GitHub merge queue: the queue is an organization-only feature, and
+> this repo is owned by a personal account. Auto-merge plus `--wait` is the
+> personal-repo equivalent: each PR merges itself the moment its checks go
+> green. Moving the repo into an organization would unlock the real queue
+> (and branch-staleness auto-updating).
+
+The three required checks, the merge-when-green mechanics, and the history of
+the **bootstrap path** (the temporary-branch PR dance used before PR-only
+protection, now obsolete) are documented in
+[`DEPLOYMENT.md`](./DEPLOYMENT.md) under "Landing changes (strict flow)".
 
 ## Project principles
 

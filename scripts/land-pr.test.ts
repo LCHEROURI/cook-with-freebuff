@@ -111,3 +111,26 @@ describe('scripts/land-pr.mjs · the PR + merge path', () => {
     expect(LAND).toContain('gh pr merge ${prNumber} --squash --delete-branch');
   });
 });
+
+describe('scripts/land-pr.mjs · --wait (the whole landing as one step)', () => {
+  it('parses --wait and --wait-timeout (default 600s)', () => {
+    expect(LAND).toContain("const WAIT = args.includes('--wait');");
+    expect(LAND).toContain("const WAIT_TIMEOUT_S = Number(take('--wait-timeout')) || 600;");
+  });
+
+  it('rejects --wait combined with --no-merge (nothing to wait for)', () => {
+    expect(LAND).toContain('--wait needs auto-merge');
+    expect(LAND).toContain('if (WAIT && NO_MERGE)');
+  });
+
+  it('polls the PR state until MERGED and reports the outcome', () => {
+    expect(LAND).toContain('gh pr view "${prNumber}" --json state --jq .state');
+    expect(LAND).toContain('state === \'MERGED\'');
+    expect(LAND).toContain('MERGED — branch + PR + checks + merge completed in one command');
+  });
+
+  it('times out honestly (auto-merge stays armed) instead of hanging forever', () => {
+    expect(LAND).toContain('did not merge within ${WAIT_TIMEOUT_S}s');
+    expect(LAND).toContain('auto-merge stays armed, check ${prUrl}');
+  });
+});
