@@ -436,6 +436,13 @@ const pageText = (evaluate) => evaluate(`document.body?.innerText?.replace(/\\s+
 // Shared page-text state (set by whichever phase runs; Phase C reads it).
 let text = '';
 
+// Shared across phases: Phase A mints (and sets) it first; Phase B re-arms the
+// watch and reassigns it. Declared here at module top level because Phase A's
+// `if (!PHASE_C_ONLY)` block scopes `let` — a block-local declaration throws
+// `minted is not defined` in Phase B (seen live: every full verify:live [3e]
+// run crashed at the active-screen mic stage).
+let minted;
+
 // ── PHASE A: starter DICTATION mic ──────────────────────────────────────────
 if (!PHASE_C_ONLY) {
 console.log(`\n=== PHASE A — starter dictation mic (speech fake-audio) ===`);
@@ -486,7 +493,7 @@ const tappedA = await evA(`(() => {
 tappedA === 'tapped' ? ok('dictation mic tapped') : fail(`dictation mic not found (${tappedA})`);
 netA.length = 0; // watch only the dictation session's traffic
 
-let minted = tokenPosted(netA);
+minted = tokenPosted(netA);
 for (let i = 0; i < 30 && !minted; i++) { await sleep(500); minted = tokenPosted(netA); }
 minted ? ok('ephemeral token minted (POST /api/voice/token)') : note('token POST not observed');
 let wsUrlA = wsUrlObserved(netA);

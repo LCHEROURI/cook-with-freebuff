@@ -92,6 +92,27 @@ describe('scripts/verify-live.mjs · live-voice gate [3e] (dictation + active-sc
     expect(DRIVER).toContain("fail(`passing run but the blob reports a stuck queue");
   });
 
+  it('declares the shared minted flag at MODULE scope (Phase B reassigns Phase A\'s flag)', () => {
+    // Seen live: `let minted` lived inside Phase A's `if (!PHASE_C_ONLY)`
+    // block (wrapping added by 9cc53e2), so Phase B's `minted = tokenPosted(netB);`
+    // threw `minted is not defined` — every full verify:live [3e] run crashed
+    // at the active-screen mic stage while the Phase-C-only batches stayed
+    // 100% (they skip A and B). The fix hoists the declaration to module top
+    // level, before Phase A's block. Locks:
+    //   - the top-level declaration exists BEFORE the Phase A block starts
+    //   - Phase A ASSIGNS (never redeclares with `let`) — a block-local
+    //     redeclaration would re-break the scope and fail HERE
+    const phaseA = DRIVER.indexOf('// ── PHASE A:');
+    const phaseB = DRIVER.indexOf('// ── PHASE B:');
+    expect(phaseA).toBeGreaterThan(-1);
+    expect(phaseB).toBeGreaterThan(phaseA);
+    const beforePhaseA = DRIVER.slice(0, phaseA);
+    const phaseASection = DRIVER.slice(phaseA, phaseB);
+    expect(beforePhaseA).toContain('let minted;');
+    expect(phaseASection).toContain('minted = tokenPosted(netA);');
+    expect(phaseASection).not.toContain('let minted');
+  });
+
   it('delegates the blob verdict to the shared unit-tested function (voice-blob-verdict.mjs)', () => {
     // The negative path — a stuckQueueSince > 0 blob MUST fail the run — is
     // PROVEN by scripts/voice-blob-verdict.test.ts (which injects the blob
