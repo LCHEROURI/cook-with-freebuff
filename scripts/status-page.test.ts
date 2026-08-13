@@ -6,35 +6,34 @@ import { describe, expect, it } from 'vitest';
 //
 // The /status page shows three facts at a glance: the live commit, the build
 // time, and the last post-deploy verify:live result. Load-bearing properties:
-// the route is PUBLIC by design (the documented exception, exactly like
-// /api/build-info — the facts carry no secrets), but a caller who DOES present
-// a bearer token must present a VALID one: the token is resolved server-side
-// and an invalid token is rejected with 401, never silently ignored (the
-// repo's auth boundary: every API route resolves the ID token via
-// resolveUserId). The status page sends its ID token when signed in. It
-// returns the same build facts as /api/build-info plus a `verifyLive` record
-// read with the ADMIN SDK from `deploy_status/verify_live` (client rules
-// untouched), and the CI recorder validates the document with a Zod schema
-// before persisting — a malformed commit or run URL is never stored and later
-// trusted. A future edit that drops the token resolution, the admin-only read,
-// or the recorder contract fails here instead of shipping a status page that
-// silently shows nothing.
+// the route REQUIRES a valid bearer token outright (the repo's auth boundary:
+// every API route resolves the ID token via resolveUserId — no token, or an
+// invalid one, gets 401; no public exception). The status page sends its ID
+// token when signed in and shows a sign-in prompt when signed out. It returns
+// the same build facts as /api/build-info plus a `verifyLive` record read with
+// the ADMIN SDK from `deploy_status/verify_live` (client rules untouched), and
+// the CI recorder validates the document with a Zod schema before persisting
+// — a malformed commit or run URL is never stored and later trusted. A future
+// edit that drops the auth gate, the admin-only read, or the recorder contract
+// fails here instead of shipping a status page that silently shows nothing.
 // ============================================================================
 
 const ROUTE = readFileSync('app/api/status/route.ts', 'utf8');
 const PAGE = readFileSync('app/status/page.tsx', 'utf8');
 const RECORDER = readFileSync('scripts/record-verify-status.mjs', 'utf8');
 
-describe('app/api/status/route.ts · public-with-verified-token status route', () => {
-  it('is public by design BUT resolves any presented bearer token server-side', () => {
-    // The route stays tokenless-readable (the documented exception, same as
-    // /api/build-info), yet a caller who presents a token must present a
-    // VALID one — resolveUserId is wired, an invalid token gets 401.
+describe('app/api/status/route.ts · authenticated status route', () => {
+  it('requires a valid bearer token outright — no tokenless public exception', () => {
+    // The repo's auth boundary: every API route resolves the Firebase ID token
+    // server side. No token (or an invalid one) is rejected with 401 — the
+    // route is never readable tokenless.
     expect(ROUTE).toContain("import { getAdminDb, resolveUserId } from '@/lib/server/admin'");
     expect(ROUTE).toContain('authorization');
     expect(ROUTE).toContain('Bearer ');
     expect(ROUTE).toContain("const userId = await resolveUserId(token);");
-    expect(ROUTE).toContain("NextResponse.json({ error: 'invalid token' }, { status: 401 })");
+    expect(ROUTE).toContain("if (!userId) {");
+    expect(ROUTE).toContain("NextResponse.json(");
+    expect(ROUTE).toContain("status: 401 }");
   });
 
   it('returns the same build facts as /api/build-info', () => {
@@ -75,6 +74,18 @@ describe('app/status/page.tsx · the glance surface', () => {
     expect(PAGE).toContain("import { useAuthSession } from '@/lib/auth/useAuthSession'");
     expect(PAGE).toContain('LCHEROURI/cook-with-freebuff/commit/');
     expect(PAGE).toContain('View the CI run ↗');
+  });
+
+  it('gates the fetch on a signed-in user — never a tokenless request', () => {
+    expect(PAGE).toContain("if (auth.state !== 'ready' || !auth.user) return;");
+    expect(PAGE).toContain('res.status === 401');
+  });
+
+  it('shows a sign-in prompt when signed out instead of an empty state', () => {
+    expect(PAGE).toContain('Sign in to see kitchen status');
+    expect(PAGE).toContain('Sign in with Google');
+    expect(PAGE).toContain('auth.signIn()');
+    expect(PAGE).toContain('signInButton');
   });
 
 });
