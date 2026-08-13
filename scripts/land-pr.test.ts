@@ -78,9 +78,10 @@ describe('scripts/land-pr.mjs · never bypasses the protection', () => {
   });
 
   it('never pushes (or otherwise writes) a main ref directly', () => {
-    // The script exists because direct pushes to main are rejected; if a
+    // This is a PR-creation tool; a main push here would bypass (or mask a
+    // bypass of) the required checks and skip the recorded bypass — if a
     // future edit adds a main push or a raw `git push` without a branch ref,
-    // it would silently bypass the protection — fail here.
+    // fail here.
     expect(LAND).not.toMatch(/git push[^;]*\bmain\b/);
     expect(LAND).not.toMatch(/refs\/heads\/main/);
   });
