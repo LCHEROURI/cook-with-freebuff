@@ -338,6 +338,7 @@ jobs:
       # above is what guarantees "new build": the host provably serves the
       # pushed commit before this runs.
       - name: Verify deployed app end to end (verify:live)
+        id: verify
         if: ${{ env.NEXT_PUBLIC_FIREBASE_API_KEY != '' && env.FIREBASE_SERVICE_ACCOUNT != '' && env.APP_OWNER_UID != '' && env.GOOGLE_AI_API_KEY != '' }}
         run: npm run verify:live
         env:
@@ -347,3 +348,13 @@ jobs:
           FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
           APP_OWNER_UID: ${{ secrets.APP_OWNER_UID }}
           GOOGLE_AI_API_KEY: ${{ secrets.GOOGLE_AI_API_KEY }}
+
+      # Record the verify:live verdict to Firestore for the public /status
+      # page. Runs ALWAYS so a red run is recorded too — a failure must stay
+      # visible at a glance, not vanish. Gated on the verify step's outcome so
+      # it only records when verify:live actually RAN (a skipped pre-flight
+      # never overwrites the last real result), and it reads
+      # FIREBASE_SERVICE_ACCOUNT from the job env — no new secret wiring.
+      - name: Record verify:live result for the status page
+        if: ${{ always() && (steps.verify.outcome == 'success' || steps.verify.outcome == 'failure') }}
+        run: node scripts/record-verify-status.mjs --verdict "${{ steps.verify.outcome }}" --commit "${{ github.sha }}" --run-url "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"

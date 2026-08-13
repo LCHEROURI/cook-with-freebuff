@@ -158,6 +158,25 @@ export function webSpeechApiAvailable(): boolean {
   return Boolean(w.SpeechRecognition || w.webkitSpeechRecognition);
 }
 
+/** The voice engine the browser can actually use — a pure capability check. */
+export type VoiceEngine = 'gemini-live' | 'web-speech' | 'none';
+
+/**
+ * Which mic engine /cook will use, from browser capability alone: Gemini Live
+ * needs a WebSocket + fetch + Web Audio; Web Speech needs a SpeechRecognition
+ * constructor. The active-screen page computes the same answer from runtime
+ * state; this is the static capability probe the landing card uses so users
+ * see the engine without opening /cook.
+ */
+export function detectVoiceEngine(): VoiceEngine {
+  if (typeof window === 'undefined') return 'none';
+  const w = window as unknown as { AudioContext?: unknown; webkitAudioContext?: unknown };
+  if (typeof WebSocket !== 'undefined' && typeof fetch === 'function' && Boolean(w.AudioContext || w.webkitAudioContext)) {
+    return 'gemini-live';
+  }
+  return webSpeechApiAvailable() ? 'web-speech' : 'none';
+}
+
 /** Probe microphone access directly — the probe that names the real hop. */
 export async function probeWebSpeechMic(timeoutMs = 3000): Promise<WebSpeechSelfCheckResult['mic']> {
   const md = typeof navigator !== 'undefined' ? navigator.mediaDevices : undefined;

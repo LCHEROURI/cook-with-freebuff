@@ -173,6 +173,111 @@
   background: var(--color-surface-secondary);
 }
 
+/* ── Resume card — the active session at a glance ────────────────────────── */
+.resume {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  width: 100%;
+  max-width: 640px;
+  padding: 1.25rem 1.25rem 1.25rem 1rem;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-left: 3px solid var(--color-accent);
+  border-radius: 0 var(--radius-lg) var(--radius-lg) 0;
+  box-shadow: var(--shadow-sm);
+}
+
+.resumeHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.resumeEyebrow {
+  font-family: var(--font-display);
+  font-size: 0.8rem;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: var(--color-accent);
+}
+
+.resumeVoice {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--color-text-secondary);
+}
+
+.resumeVoice[data-engine='gemini-live'] {
+  color: var(--color-brand);
+}
+
+.resumeVoice[data-engine='web-speech'] {
+  color: var(--color-accent);
+}
+
+.resumeTitle {
+  font-family: var(--font-display);
+  font-size: 1.25rem;
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.resumeStep {
+  color: var(--color-text-secondary);
+  font-size: 0.95rem;
+  font-weight: 600;
+}
+
+.resumeInstruction {
+  color: var(--color-text);
+  font-size: 1rem;
+  line-height: 1.5;
+}
+
+.resumeTimers {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.resumeTimer {
+  font-family: var(--font-mono);
+  font-size: 0.9rem;
+  padding: 0.35rem 0.75rem;
+  background: var(--color-surface-secondary);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  color: var(--color-text-secondary);
+}
+
+.resumeBtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 48px;
+  padding: 0.75rem 1.5rem;
+  margin-top: 0.5rem;
+  background: var(--color-accent);
+  color: var(--color-text-on-accent);
+  border: none;
+  border-radius: var(--radius-md);
+  text-decoration: none;
+  font-size: 1.05rem;
+  font-weight: 600;
+  font-family: inherit;
+  box-shadow: var(--shadow-sm);
+  transition: background 0.15s, box-shadow 0.15s, transform 0.15s;
+}
+
+.resumeBtn:hover {
+  background: var(--color-accent-hover);
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-md);
+}
+
 /* ── Features — cards with a colored left accent bar ─────────────────────── */
 .features {
   display: grid;
@@ -230,4 +335,19 @@
   margin-top: 3rem;
   color: var(--color-text-muted);
   font-size: 0.9rem;
+}
+
+.footerLink {
+  margin-top: 0.5rem;
+}
+
+.footerLink a {
+  color: var(--color-brand);
+  text-decoration: none;
+  font-weight: 600;
+}
+
+.footerLink a:hover {
+  color: var(--color-brand-hover);
+  text-decoration: underline;
 }

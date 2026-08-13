@@ -92,6 +92,18 @@ describe('app/cook/page.tsx · protected route', () => {
     expect(COOK).toContain('cook.launch(starter.ready.recipeId)');
   });
 
+  it('shows the first-visit tour on the starter and dismisses it on engagement', () => {
+    // New users land on the starter with no idea of the flow — the tour points
+    // at the input, the mic, and the create button. It must render ONLY on
+    // the starter (no active session), and the page must dismiss it when the
+    // user actually engages (types, taps the mic, or submits).
+    expect(COOK).toContain("import { StarterTour, dismissStarterTour } from '@/components/StarterTour'");
+    expect(COOK).toContain('<StarterTour onDismiss={() => setTourDismissed(true)} />');
+    expect(COOK).toContain('tourVisible && !tourDismissed');
+    expect(COOK).toContain('dismissStarterTour();');
+    expect(COOK).toContain('starter.prompt.trim().length > 0 || dictation.listening');
+  });
+
   it('shows the owner’s reusable “Your recipes” list with one-tap relaunch', () => {
     // Generated recipes must be reusable: the starter lists them (newest
     // first) and each row launches a fresh session pinned to that recipe.
@@ -172,6 +184,20 @@ describe('app/page.tsx · landing page', () => {
     expect(HOME).toContain('href="/recipes"');
     expect(HOME).toContain('📖 My recipes');
   });
+
+  it('reads the active session on the landing page and shows the resume card', () => {
+    // The resume card lets a signed-in user jump back into the current step
+    // without opening /cook. Load-bearing: the read goes through the SAME
+    // /api/cook status action (never a client-side Firestore read), it is
+    // gated on auth settle like /recipes (no tokenless request from signed-out
+    // visitors), and the card links to /cook.
+    expect(HOME).toContain("body: JSON.stringify({ action: 'status' })");
+    expect(HOME).toContain("if (auth.state !== 'ready' || !auth.user) return;");
+    expect(HOME).toContain('Resume cooking →');
+    expect(HOME).toContain('href="/cook"');
+    expect(HOME).toContain("import { detectVoiceEngine } from '@/lib/voice/self-check'");
+  });
+
 });
 
 describe('app/kitchen/page.tsx · protected kitchen surface', () => {
