@@ -664,6 +664,19 @@
   border-radius: var(--radius-md);
 }
 
+/* A paused session's timer is frozen at the at-pause remainder — reads as
+   stopped, matching the resume card's paused treatment (dashed, muted). */
+.timerPaused {
+  background: var(--color-surface-muted);
+  border-style: dashed;
+  border-color: var(--color-border);
+}
+
+.timerPaused .timerLabel,
+.timerPaused .timerCount {
+  color: var(--color-text-muted);
+}
+
 .timerLabel {
   font-size: 1rem;
   font-weight: 600;

@@ -102,6 +102,24 @@ describe('CookScreen', () => {
     expect(html).not.toContain('Done with this step');
   });
 
+  it('freezes a paused timer at the server-reported remainder — /cook agrees with the card', () => {
+    // The server derives the at-pause remainder from pausedAt; /cook must
+    // display exactly that frozen value (⏸ prefix, no local tick toward 0),
+    // the same treatment the landing card's ResumeTimer uses.
+    const html = render(
+      snapshot({
+        phase: 'PAUSED',
+        paused: true,
+        activeTimers: [{ timerId: 't1', label: 'four-minute timer', durationSeconds: 240, endsAt: Date.now() + 30_000, remainingSeconds: 120 }],
+      }),
+    );
+    expect(html).toContain('four-minute timer');
+    expect(html).toContain('⏸');
+    expect(html).toContain('2:00');
+    // The aria-label names the paused-at value, not a shrinking remaining.
+    expect(html).toContain('paused at');
+  });
+
   it('renders a safety gate that must be acknowledged before continuing', () => {
     const onDone = vi.fn();
     const html = render(
