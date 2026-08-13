@@ -403,15 +403,23 @@ export class GuidedCookingService {
   async resume(userId: string, sessionId?: string, options?: { correlationId?: string }): Promise<GuideSnapshot> {
     const session = await this.resolveSession(userId, sessionId);
     if (!session) throw new GuideError('No cooking session found for this user', 'SESSION_NOT_FOUND', true);
-    // Pause genuinely froze the timers (snapshot reports the at-pause
-    // remainder); resume shifts endsAt forward by the paused duration so the
-    // countdown continues from where it froze instead of firing instantly.
-    if (session.pausedAt) {
-      await rebaseTimersAfterResume(this.timerStore, session.id, session.pausedAt);
-    }
+    // Validate + transition FIRST, mutate timers AFTER: a duplicate resume
+    // (client retry after a lost response) finds the session already ACTIVE
+    // and resumeSession rejects with NOT_PAUSED before any timer is touched —
+    // never a second rebase. pausedAt persists on the session doc after
+    // resume, so the guard must be the phase, not the field. Only a session
+    // that is genuinely PAUSED has its timers rebased, and only after the
+    // version-checked transition succeeds.
+    const pausedAt = session.currentPhase === 'PAUSED' ? session.pausedAt : undefined;
     const updated = await this.sessionService.resumeSession(session.id, session.version, {
       correlationId: options?.correlationId,
     });
+    if (pausedAt) {
+      // The frozen at-pause remainder carries through: shift endsAt forward by
+      // the paused duration so the countdown continues where it froze instead
+      // of firing instantly.
+      await rebaseTimersAfterResume(this.timerStore, updated.id, pausedAt);
+    }
     return this.buildSnapshot(userId, updated);
   }
 
