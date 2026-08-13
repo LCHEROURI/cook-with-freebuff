@@ -282,6 +282,13 @@
   color: var(--color-text-secondary);
 }
 
+/* A paused session's timers are frozen, not counting — dashed, muted, ⏸. */
+.resumeTimerPaused {
+  background: var(--color-surface-muted);
+  border-style: dashed;
+  color: var(--color-text-muted);
+}
+
 .resumeActions {
   display: flex;
   align-items: center;

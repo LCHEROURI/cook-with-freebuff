@@ -244,6 +244,20 @@ describe('app/page.tsx · resume card', () => {
     expect(postedActions(fetchMock)).toEqual(['resume']);
   });
 
+  it('freezes the timer readout while the session is paused', async () => {
+    mockStatusFetch(PAUSED_SESSION);
+    render(<HomePage />);
+
+    await waitFor(() => {
+      expect(screen.getByText('▶ Resume')).toBeInTheDocument();
+    });
+    // The paused chip shows the at-pause value with a pause icon and a frozen
+    // label — never a live ⏱ countdown.
+    expect(screen.getByText(/⏸ Rice simmer · 5:00/)).toBeInTheDocument();
+    expect(screen.queryByText(/⏱/)).not.toBeInTheDocument();
+    expect(screen.getByRole('timer')).toHaveAttribute('aria-label', 'Rice simmer, paused at 5:00');
+  });
+
   it('shows an alert when a timer finishes while the page is open', async () => {
     mockStatusFetch({
       success: true,
