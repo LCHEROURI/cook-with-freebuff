@@ -865,6 +865,9 @@ export class GuidedCookingService {
       recipeTitle: recipe?.title,
       activeTimers: await this.activeTimers(session),
       paused: session.currentPhase === 'PAUSED',
+      // The pause instant — clients render "paused 2m ago" from this. Only
+      // meaningful while paused; absent otherwise.
+      pausedAt: session.currentPhase === 'PAUSED' ? session.pausedAt : undefined,
     };
 
     const action = this.currentAction(session, recipe);

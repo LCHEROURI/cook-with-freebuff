@@ -400,6 +400,19 @@ describe('pause freezes timers', () => {
     expect(after[0].status).toBe('RUNNING'); // not COMPLETED, not detached
   });
 
+  it('exposes pausedAt on the paused snapshot so clients can render "paused Xm ago"', async () => {
+    const { guide, store } = await launch();
+    const paused = await guide.pause('user-1');
+    expect(paused.paused).toBe(true);
+    const session = await store.getActiveSession('user-1');
+    expect(paused.pausedAt).toBe(session?.pausedAt);
+    expect(typeof paused.pausedAt).toBe('number');
+
+    // After resume the field is gone — it only means something while paused.
+    const resumed = await guide.resume('user-1');
+    expect(resumed.pausedAt).toBeUndefined();
+  });
+
   it('reports the at-pause remainder while paused (frozen, server-derived from pausedAt, not wall clock)', async () => {
     vi.useFakeTimers();
     vi.setSystemTime(1_000_000_000_000);

@@ -110,6 +110,7 @@ describe('CookScreen', () => {
       snapshot({
         phase: 'PAUSED',
         paused: true,
+        pausedAt: Date.now() - 120_000,
         activeTimers: [{ timerId: 't1', label: 'four-minute timer', durationSeconds: 240, endsAt: Date.now() + 30_000, remainingSeconds: 120 }],
       }),
     );
@@ -118,6 +119,8 @@ describe('CookScreen', () => {
     expect(html).toContain('2:00');
     // The aria-label names the paused-at value, not a shrinking remaining.
     expect(html).toContain('paused at');
+    // And how long the pause has lasted so far.
+    expect(html).toContain('paused 2m ago');
   });
 
   it('renders a safety gate that must be acknowledged before continuing', () => {
