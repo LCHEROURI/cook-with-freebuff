@@ -77,6 +77,21 @@ describe('scripts/verify-live.mjs · live-voice gate [3e] (dictation + active-sc
     expect(LIVE).toContain("fail(`voice driver: missing “${marker}” in the driver log`);");
   });
 
+  it('asserts the passing-run diagnostics blob is not stuck (stuckQueueSince === 0)', () => {
+    // A phase-C run that still produces two bursts must ALSO prove the mic is
+    // not sitting behind a stuck queue — the exact "first burst then dead"
+    // signature (playback idle, queue non-empty) that a regression would
+    // reintroduce. The driver captures the copy-voice-details blob on the
+    // PASSING path and fails if stuckQueueSince is non-zero, so a future stall
+    // fails the harness (and the post-deploy [3e] gate) instead of passing
+    // silently. A driver edit that drops this assertion while still exiting 0
+    // fails HERE.
+    expect(DRIVER).toContain('stuckQueueSince');
+    expect(DRIVER).toContain('captureVoiceDetailsBlob');
+    expect(DRIVER).toContain('diagnostics blob clean');
+    expect(DRIVER).toContain("fail(`passing run but the blob reports a stuck queue");
+  });
+
   it('sweeps its own probes (verify-live-voice- prefix) so a killed run can never hijack /cook', () => {
     // The recipe prefix sits INSIDE verify:live's `verify-live-` sweep
     // namespace, so the pre-run sweep backstops a hard-killed run. The
