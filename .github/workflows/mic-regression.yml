@@ -1,0 +1,113 @@
+name: Mic regression (weekly phase-C pass rate)
+
+# Scheduled weekly monitor for the two-burst mic path that was dropping the
+# second burst (proven live at 33% pass rate before the drain-stuck fix,
+# 28/28 since). Runs the phase-C-only batch against the LIVE deploy and fails
+# the job if ANY run drops a burst — so a regression that the one-time
+# verification missed shows up as a red check within a week instead of
+# surfacing on a user's phone. The driver cleans up its probe recipe and
+# owner session on every exit path, so a red run never leaves debris.
+#
+# Event notes:
+#   - `schedule` runs on the default branch only (no fork PRs), but keep the
+#     same fork discipline as the other workflows: the run step is gated on
+#     the owner credentials (skip-not-fail) and the loud guard is
+#     canonical-repo-only, so a missing credential never masquerades as a
+#     green weekly pass.
+#   - Batch size 6: matches the measured verification batches. At the pre-fix
+#     33% true rate, P(6/6 green) ≈ 0.1%, so a regression to the old failure
+#     mode is caught with >99% confidence in a single week; the run budget
+#     stays under 20 minutes (each run ~90s + Chrome + npm ci).
+
+on:
+  schedule:
+    - cron: '0 6 * * 1' # Mondays 06:00 UTC
+  workflow_dispatch:
+
+concurrency:
+  group: mic-regression
+  cancel-in-progress: false
+
+jobs:
+  phase-c-batch:
+    name: Phase-C two-burst batch (6 runs)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    env:
+      NEXT_PUBLIC_FIREBASE_API_KEY: ${{ secrets.NEXT_PUBLIC_FIREBASE_API_KEY }}
+      FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+      APP_OWNER_UID: ${{ secrets.APP_OWNER_UID }}
+      # The driver defaults to the canonical URL; pin it explicitly so a
+      # future move of the default can never silently re-target the monitor.
+      VERIFY_BASE_URL: https://cook-with-freebuff.vercel.app
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v5
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+
+      # The driver drives the real /cook UI via CDP (headless), so the runner
+      # needs a Chromium binary — same browser-actions/setup-chrome pattern as
+      # verify-deployed.yml; its macOS path fallback would crash on Linux.
+      - name: Install Chrome for the CDP driver
+        id: chrome
+        uses: browser-actions/setup-chrome@v2
+        with:
+          chrome-version: stable
+
+      - name: Install dependencies
+        run: npm ci
+
+      # The driver mints a REAL owner session (SA-signed custom token) and
+      # writes to the shared backend (seed + probe + cleanup), so it needs the
+      # same owner credentials verify:live uses. On the canonical repo a
+      # missing credential must fail loudly — a silent skip would look like a
+      # green weekly pass.
+      - name: Fail loudly if owner credentials are missing
+        if: ${{ github.repository == 'LCHEROURI/cook-with-freebuff' && (env.NEXT_PUBLIC_FIREBASE_API_KEY == '' || env.FIREBASE_SERVICE_ACCOUNT == '' || env.APP_OWNER_UID == '') }}
+        run: |
+          echo "::error::Owner-credential secrets missing — the weekly phase-C monitor cannot mint its owner session."
+          echo "Add NEXT_PUBLIC_FIREBASE_API_KEY, FIREBASE_SERVICE_ACCOUNT and APP_OWNER_UID under GitHub -> Settings -> Secrets and variables -> Actions, then re-run."
+          exit 1
+
+      # Gated on the credentials so forks / unconfigured repos stay green; on
+      # the canonical repo the loud guard above turns a missing credential
+      # into a hard failure instead.
+      - name: Run the phase-C batch (6 runs)
+        if: ${{ env.NEXT_PUBLIC_FIREBASE_API_KEY != '' && env.FIREBASE_SERVICE_ACCOUNT != '' && env.APP_OWNER_UID != '' }}
+        env:
+          CHROME_PATH: ${{ steps.chrome.outputs.chrome-path }}
+        run: |
+          set -uo pipefail
+          passes=0
+          failed=""
+          for i in 1 2 3 4 5 6; do
+            echo "--- run $i/6 ---"
+            if node scripts/drive-live-voice.mjs --phase-c-only --out "${RUNNER_TEMP}/phase-c/run-$i"; then
+              passes=$((passes + 1))
+            else
+              failed="$failed $i"
+            fi
+          done
+          if [ -n "$failed" ]; then
+            echo "::error::phase-C batch: ${passes}/6 passed — failed run(s):${failed} — blobs + screenshots saved under ${RUNNER_TEMP}/phase-c"
+            exit 1
+          fi
+          echo "::notice::phase-C batch: 6/6 passed — no two-burst regression"
+
+      # Always upload the run artifacts (including a failed run's
+      # copy-voice-details blob + screenshot) so a red week is debuggable from
+      # the workflow run alone, without asking the driver's owner to re-paste.
+      - name: Upload phase-C artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: phase-c-runs
+          path: ${{ runner.temp }}/phase-c
+          if-no-files-found: ignore

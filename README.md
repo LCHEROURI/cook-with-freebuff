@@ -348,6 +348,12 @@ npm run deploy:apphosting
 npm run verify:live
 # → https://cook-with-freebuff.vercel.app (override: npm run verify:live -- --app URL)
 # → https://cook-with-freebuff--portfolio-app-freebuff2.us-central1.hosted.app (Firebase App Hosting)
+#
+# The two-burst mic path is monitored WEEKLY in CI: the mic-regression
+# workflow (Mondays 06:00 UTC, manual via workflow_dispatch) runs 6 phase-C
+# runs against the live deploy and turns red if any run drops the second
+# burst, uploading the failing run's copy-voice-details blob + screenshot as
+# an artifact — so a mic regression surfaces as a red check within a week.
 
 # Same check against a LOCAL dev server — boots `next dev` on port 3100,
 # warms the routes, runs the full check, and tears the server down, all in
