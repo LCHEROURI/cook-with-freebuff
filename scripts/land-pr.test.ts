@@ -137,6 +137,17 @@ describe('scripts/land-pr.mjs · --wait (the whole landing as one step)', () => 
     expect(LAND).toContain('await sleep(Math.min(20_000, remainingMs));');
   });
 
+  it('rechecks the deadline after sleeping, before the gh pr view query (Codex P2)', () => {
+    // The capped sleep returns at approximately the deadline; the query itself
+    // is a network call that can overrun it, so it must never run past the
+    // budget — a merge reported after the declared deadline would be a lie.
+    expect(LAND).toContain('if (Date.now() >= deadline) break;');
+    const pollBlock = LAND.slice(LAND.indexOf('const deadline'), LAND.indexOf('if (merged)'));
+    expect(pollBlock.indexOf('if (Date.now() >= deadline) break;')).toBeLessThan(
+      pollBlock.indexOf('gh pr view "${prNumber}" --json state --jq .state'),
+    );
+  });
+
   it('times out honestly (auto-merge stays armed) instead of hanging forever', () => {
     expect(LAND).toContain('did not merge within ${WAIT_TIMEOUT_S}s');
     expect(LAND).toContain('auto-merge stays armed, check ${prUrl}');

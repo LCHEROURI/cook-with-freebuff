@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { act, render, screen, waitFor } from '@testing-library/react';
 import '@testing-library/jest-dom/vitest';
 
 // ============================================================================
@@ -301,7 +301,7 @@ describe('app/page.tsx · resume card', () => {
   it('shows an alert when a timer finishes while the page is open', async () => {
     mockStatusFetch({
       success: true,
-      data: { alerts: [{ message: 'Your Rice simmer is finished.' }], snapshot: ACTIVE_SESSION.data.snapshot },
+      data: { alerts: [{ message: 'Your Rice simmer is finished.', timerId: 't1' }], snapshot: ACTIVE_SESSION.data.snapshot },
     });
     render(<HomePage />);
 
@@ -315,7 +315,7 @@ describe('app/page.tsx · resume card', () => {
   it('dismisses the timer alert without losing the card', async () => {
     mockStatusFetch({
       success: true,
-      data: { alerts: [{ message: 'Your Rice simmer is finished.' }], snapshot: ACTIVE_SESSION.data.snapshot },
+      data: { alerts: [{ message: 'Your Rice simmer is finished.', timerId: 't1' }], snapshot: ACTIVE_SESSION.data.snapshot },
     });
     render(<HomePage />);
 
@@ -332,7 +332,7 @@ describe('app/page.tsx · resume card', () => {
   it('wires the gesture unlock and chimes when a timer alert appears', async () => {
     mockStatusFetch({
       success: true,
-      data: { alerts: [{ message: 'Your Rice simmer is finished.' }], snapshot: ACTIVE_SESSION.data.snapshot },
+      data: { alerts: [{ message: 'Your Rice simmer is finished.', timerId: 't1' }], snapshot: ACTIVE_SESSION.data.snapshot },
     });
     render(<HomePage />);
 
@@ -344,5 +344,41 @@ describe('app/page.tsx · resume card', () => {
     });
     // Exactly one chime for the one alert — never a repeat for the same alert.
     expect(mockPlayChime).toHaveBeenCalledTimes(1);
+  });
+
+  it('chimes for each distinct timerId even when labels repeat (Codex P2)', async () => {
+    vi.useFakeTimers();
+    try {
+      // Poll 1 (mount): timer t1 finishes — one chime.
+      mockStatusFetch({
+        success: true,
+        data: { alerts: [{ message: 'Your Simmer is finished.', timerId: 't1' }], snapshot: ACTIVE_SESSION.data.snapshot },
+      });
+      render(<HomePage />);
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(0);
+      });
+      expect(screen.getByText('Your Simmer is finished.')).toBeInTheDocument();
+      expect(mockPlayChime).toHaveBeenCalledTimes(1);
+
+      // Poll 2 (10s later): SAME label, NEW timerId — the old message-keyed
+      // dedupe would have swallowed it. It must chime.
+      mockStatusFetch({
+        success: true,
+        data: { alerts: [{ message: 'Your Simmer is finished.', timerId: 't2' }], snapshot: ACTIVE_SESSION.data.snapshot },
+      });
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(10_000);
+      });
+      expect(mockPlayChime).toHaveBeenCalledTimes(2);
+
+      // Poll 3: the same timerId re-reported never chimes again.
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(10_000);
+      });
+      expect(mockPlayChime).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

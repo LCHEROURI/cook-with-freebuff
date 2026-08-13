@@ -185,6 +185,10 @@ if (NO_MERGE) {
       const remainingMs = deadline - Date.now();
       if (remainingMs <= 0) break;
       await sleep(Math.min(20_000, remainingMs));
+      // Recheck the deadline after the sleep: gh pr view is a network call
+      // that can overrun the declared timeout, so never run the query past
+      // the budget — a merge reported after the deadline would be a lie.
+      if (Date.now() >= deadline) break;
       const state = runQuiet(`gh pr view "${prNumber}" --json state --jq .state`);
       if (state && state !== last) {
         console.log(`  [${new Date().toISOString().slice(11, 19)}] ${state}`);
