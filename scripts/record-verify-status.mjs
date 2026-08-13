@@ -24,8 +24,26 @@
 
 import { readFileSync } from 'node:fs';
 import { resolve as resolvePath } from 'node:path';
+import { z } from 'zod';
 import { initializeApp, cert, getApps } from 'firebase-admin/app';
 import { getFirestore } from 'firebase-admin/firestore';
+
+// ── Status document schema ──────────────────────────────────────────────────
+// The doc is trusted by the /api/status route, so it is validated here BEFORE
+// persisting — a malformed commit or run URL can never be stored and later
+// trusted. Same contract the repository layer enforces for every Firestore
+// write (AGENTS.md: all writes are schema validated).
+const verifyLiveStatusSchema = z.object({
+  verdict: z.enum(['success', 'failure']),
+  commitSha: z
+    .string()
+    .regex(/^[0-9a-f]{40}$/i, 'commitSha must be a 40-hex git sha')
+    .min(1),
+  ranAt: z.string().min(1, 'ranAt is required'),
+  runUrl: z
+    .string()
+    .refine((v) => v === '' || /^https?:\/\//.test(v), 'runUrl must be empty or an http(s) URL'),
+});
 
 // ── Env loading (process.env wins; .env.local fills the gaps) ───────────────
 function loadEnv() {
@@ -75,15 +93,23 @@ try {
   fail(`could not initialize the admin SDK: ${e instanceof Error ? e.message : e}`);
 }
 
+const statusDoc = {
+  verdict,
+  commitSha,
+  ranAt: new Date().toISOString(),
+  runUrl: runUrl || '',
+};
+const parsed = verifyLiveStatusSchema.safeParse(statusDoc);
+if (!parsed.success) {
+  fail(`refusing to persist an invalid status document: ${parsed.error.issues
+    .map((i) => `${i.path.join('.')} ${i.message}`)
+    .join('; ')}`);
+}
+
 try {
   const db = getFirestore(app);
   const doc = db.collection('deploy_status').doc('verify_live');
-  await doc.set({
-    verdict,
-    commitSha,
-    ranAt: new Date().toISOString(),
-    runUrl: runUrl || '',
-  });
+  await doc.set(parsed.data);
   ok(`recorded verify:live ${verdict} for ${commitSha.slice(0, 12)} → deploy_status/verify_live`);
 } catch (e) {
   fail(`could not write deploy_status/verify_live: ${e instanceof Error ? e.message : e}`);
