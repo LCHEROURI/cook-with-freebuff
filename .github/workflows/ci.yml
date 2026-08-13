@@ -121,20 +121,22 @@ jobs:
   # Emulator-compare smoke: prove the deterministic guided flow works on the
   # local Firestore/Auth emulator stack AND matches what production serves,
   # BEFORE any deploy proceeds. Runs on every main push (and manual
-  # dispatch); deploy-apphosting waits on it. ALSO runs on pull_request so it
-  # can be a GitHub required status check (a required check that never runs
-  # on PRs blocks merges forever) — on a PR the deployed leg still compares
-  # against the CURRENT live deploy (context-independent: it proves the
-  # emulator stack reproduces what's live, not the PR's code). The deployed
-  # leg uses the same owner-credential secrets verify-deployed.yml uses; the
-  # emulator leg is offline and needs Java 21 (Firestore emulator). A
-  # divergence — a guided step that passes on one stack and not the other —
-  # fails the job.
+  # dispatch); deploy-apphosting waits on it. The deployed leg uses the same
+  # owner-credential secrets verify-deployed.yml uses; the emulator leg is
+  # offline and needs Java 21 (Firestore emulator). A divergence — a guided
+  # step that passes on one stack and not the other — fails the job.
+  #
+  # Deliberately NOT a pull_request job or a GitHub required check: the
+  # deployed leg WRITES to the shared production backend (seed + probe +
+  # cleanup), and per-PR runs would burn the owner-verify write budget for a
+  # context-independent check. It still gates the Firebase App Hosting deploy
+  # (deploy-apphosting needs it) and runs red on every main push, so a
+  # regression is visible on the commit — just not a merge blocker.
   emulator-compare:
     name: Emulator-compare smoke (guided flow vs live)
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    if: ${{ github.event_name == 'push' || github.event_name == 'workflow_dispatch' || github.event_name == 'pull_request' }}
+    if: ${{ github.event_name == 'push' || github.event_name == 'workflow_dispatch' }}
 
     env:
       NEXT_PUBLIC_FIREBASE_API_KEY: ${{ secrets.NEXT_PUBLIC_FIREBASE_API_KEY }}
@@ -169,12 +171,7 @@ jobs:
           echo "Add NEXT_PUBLIC_FIREBASE_API_KEY, FIREBASE_SERVICE_ACCOUNT and APP_OWNER_UID under GitHub -> Settings -> Secrets and variables -> Actions, then re-run."
           exit 1
 
-      # Gated on the credentials like verify-deployed.yml's verify step, so
-      # fork PRs (no secrets) skip-not-fail and stay mergeable; on the
-      # canonical repo a missing credential is caught by the loud guard above
-      # instead (a skipped run must never masquerade as a green smoke).
       - name: Run the emulator-compare smoke
-        if: ${{ env.NEXT_PUBLIC_FIREBASE_API_KEY != '' && env.FIREBASE_SERVICE_ACCOUNT != '' && env.APP_OWNER_UID != '' }}
         run: npm run verify:live:compare:emulator
 
   deploy-apphosting:

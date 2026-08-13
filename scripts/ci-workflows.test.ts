@@ -235,11 +235,13 @@ describe('.github/workflows/ci.yml · deploy-apphosting auto-sync job', () => {
     expect(smokeStart).toBeGreaterThan(0);
     const smokeBlock = CI.slice(smokeStart, CI.indexOf('\n  deploy-apphosting:', smokeStart));
     expect(smokeBlock).toContain('name: Emulator-compare smoke (guided flow vs live)');
-    // Runs on push AND pull_request: the job is a GitHub required status
-    // check, and a required check that never runs on PRs blocks merges
-    // forever — the PR trigger is what keeps PRs mergeable. deploy-apphosting
-    // (locked by its own test below) stays push-only.
-    expect(smokeBlock).toContain("github.event_name == 'push' || github.event_name == 'workflow_dispatch' || github.event_name == 'pull_request'");
+    // Push + manual dispatch ONLY — deliberately not a pull_request job or a
+    // required check: the deployed leg writes to the shared production
+    // backend, and per-PR runs would burn the owner-verify write budget for
+    // a context-independent check. It still gates the App Hosting deploy via
+    // `needs` and runs red on every main push.
+    expect(smokeBlock).toContain("github.event_name == 'push' || github.event_name == 'workflow_dispatch'");
+    expect(smokeBlock).not.toContain('pull_request');
     // The deployed leg needs the same owner credentials the post-deploy
     // verify:live uses; the emulator leg needs Java 21 for the Firestore
     // emulator (ubuntu runners default to an older JDK).
@@ -248,11 +250,6 @@ describe('.github/workflows/ci.yml · deploy-apphosting auto-sync job', () => {
     expect(smokeBlock).toContain('NEXT_PUBLIC_FIREBASE_API_KEY');
     expect(smokeBlock).toContain('FIREBASE_SERVICE_ACCOUNT');
     expect(smokeBlock).toContain('APP_OWNER_UID');
-    // Fork safety: the run step is gated on the owner credentials (fork PRs
-    // have no secrets — skip-not-fail keeps them mergeable), and the loud
-    // guard stays canonical-repo-only so a missing credential there fails
-    // loudly instead of silently skipping.
-    expect(smokeBlock).toContain('if: ${{ env.NEXT_PUBLIC_FIREBASE_API_KEY != \'\' && env.FIREBASE_SERVICE_ACCOUNT != \'\' && env.APP_OWNER_UID != \'\' }}');
     expect(smokeBlock).toContain("github.repository == 'LCHEROURI/cook-with-freebuff'");
     expect(smokeBlock).toContain('npm run verify:live:compare:emulator');
   });
