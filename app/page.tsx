@@ -157,8 +157,9 @@ export default function HomePage() {
     void fetchStatus();
     // Keep the resume card fresh and finished-timer alerts timely (timer
     // countdowns use their own 1s tick, but the step and alerts come from the
-    // server).
-    const id = window.setInterval(() => void fetchStatus(), 30000);
+    // server — 10s keeps an alert at most ~10s late without hammering the
+    // endpoint).
+    const id = window.setInterval(() => void fetchStatus(), 10000);
     return () => window.clearInterval(id);
   }, [auth.state, auth.user, fetchStatus]);
 
