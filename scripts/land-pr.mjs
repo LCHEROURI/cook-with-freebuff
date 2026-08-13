@@ -140,9 +140,11 @@ try {
   fail(1, `push failed — branch \`${branch}\` committed locally but not pushed`);
 }
 
+// runQuiet so the URL is CAPTURED (run() inherits stdio and returns nothing
+// — the PR number is needed to arm auto-merge).
 const prUrl = (() => {
   try {
-    return run(`gh pr create --base "${BASE}" --head "${branch}" --title "${MESSAGE.replace(/"/g, '\\"')}" --body "${MESSAGE.replace(/"/g, '\\"')}"`);
+    return runQuiet(`gh pr create --base "${BASE}" --head "${branch}" --title "${MESSAGE.replace(/"/g, '\\"')}" --body "${MESSAGE.replace(/"/g, '\\"')}"`);
   } catch {
     fail(1, 'PR creation failed — the branch is pushed, create the PR manually');
   }
