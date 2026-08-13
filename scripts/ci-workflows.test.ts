@@ -622,4 +622,22 @@ describe('.github/workflows/mic-regression.yml · weekly two-burst pass-rate mon
     expect(MIC_REGRESSION).toContain('if: always()');
     expect(MIC_REGRESSION).toContain('phase-c-runs');
   });
+
+  it('opens a GitHub issue on a red week, deduped against an open issue', () => {
+    // A monitor nobody watches needs an alert path: on a red batch (the
+    // `result` output set), the job opens a labeled issue with the pass
+    // rate, the run link, and the artifacts link. Dedupe keeps consecutive
+    // red weeks from spamming — an open mic-regression issue means the
+    // regression is already known. Requires issues:write.
+    expect(MIC_REGRESSION).toContain('issues: write');
+    expect(MIC_REGRESSION).toContain('Open a GitHub issue on a red week');
+    expect(MIC_REGRESSION).toContain("steps.batch.outputs.result != ''");
+    expect(MIC_REGRESSION).toContain('gh issue list');
+    expect(MIC_REGRESSION).toContain('--label "mic-regression" --state open');
+    expect(MIC_REGRESSION).toContain('gh label create "mic-regression" --force');
+    expect(MIC_REGRESSION).toContain('gh issue create');
+    expect(MIC_REGRESSION).toContain('--body "The weekly phase-C two-burst check went red');
+    expect(MIC_REGRESSION).toContain('$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/${{ github.run_id }}');
+    expect(MIC_REGRESSION).toContain('skipping (dedupe)');
+  });
 });
