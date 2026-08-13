@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from 'vitest';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { createElement } from 'react';
 import { CookScreen } from './CookScreen';
-import type { GuideSnapshot } from '@/lib/server/guide-service';
+import type { GuideSnapshot } from '@/lib/domain/guide';
 
 function snapshot(overrides: Partial<GuideSnapshot> = {}): GuideSnapshot {
   return {

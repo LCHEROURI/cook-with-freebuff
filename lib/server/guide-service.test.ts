@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { SessionService, InMemorySessionStore } from './session-service';
 import {
   InMemoryTimerStore,
@@ -367,6 +367,85 @@ describe('checkTimers', () => {
     const { alerts, snapshot } = await guide.checkTimers('user-1');
     expect(alerts).toHaveLength(1);
     expect(snapshot.phase).toBe('WAITING_FOR_TIMER'); // still waiting on timer-2
+  });
+});
+
+// ── Pause freezes timers (Codex P1: the poll must not consume due timers
+// ── while paused, and the at-pause remainder must be server-derived) ─────────
+
+describe('pause freezes timers', () => {
+  it('checkTimers does NOT complete or detach a due timer while the session is paused', async () => {
+    const { guide, timers } = await launch();
+    // Drive to WAITING_FOR_TIMER so a real timer is running.
+    await guide.completeCurrentAction('user-1');
+    let snap = await guide.completeCurrentAction('user-1');
+    expect(snap.phase).toBe('WAITING_FOR_TIMER');
+    const sessionId = snap.sessionId!;
+
+    // Pause, then backdate the timer so it is now due.
+    snap = await guide.pause('user-1', sessionId);
+    expect(snap.phase).toBe('PAUSED');
+    const [timer] = await timers.listActiveTimers(sessionId);
+    await timers.updateTimer(timer.id, {
+      startedAt: Date.now() - 250_000,
+      endsAt: Date.now() - 10_000,
+    });
+
+    // The poll that used to consume the due timer must now leave it alone.
+    const { alerts, snapshot } = await guide.checkTimers('user-1', sessionId);
+    expect(alerts).toEqual([]);
+    expect(snapshot.phase).toBe('PAUSED');
+    const after = await timers.listActiveTimers(sessionId);
+    expect(after).toHaveLength(1);
+    expect(after[0].status).toBe('RUNNING'); // not COMPLETED, not detached
+  });
+
+  it('reports the at-pause remainder while paused (frozen, server-derived from pausedAt, not wall clock)', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(1_000_000_000_000);
+    try {
+      const { guide, timers } = await launch();
+      await guide.completeCurrentAction('user-1');
+      let snap = await guide.completeCurrentAction('user-1'); // WAITING_FOR_TIMER + 240s timer
+      const sessionId = snap.sessionId!;
+      const [timer] = await timers.listActiveTimers(sessionId);
+      await timers.updateTimer(timer.id, { startedAt: Date.now() - 120_000, endsAt: Date.now() + 120_000 });
+
+      snap = await guide.pause('user-1', sessionId);
+      const frozenAtPause = snap.activeTimers[0].remainingSeconds;
+      expect(frozenAtPause).toBe(120);
+
+      // Two minutes of wall clock pass while paused, taking the ORIGINAL
+      // endsAt into the past — the remainder must stay at the at-pause 120s,
+      // never shrink toward the now-due endsAt (the reload/poll bug: the old
+      // code computed remainingSeconds from endsAt − Date.now()).
+      vi.setSystemTime(1_000_000_000_000 + 120_000);
+      const still = await guide.getCurrentAction('user-1', sessionId);
+      expect(still.phase).toBe('PAUSED');
+      expect(still.activeTimers[0].remainingSeconds).toBe(120);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('resume rebases the timer by the paused duration so the frozen remainder carries through', async () => {
+    const { guide, timers } = await launch();
+    await guide.completeCurrentAction('user-1');
+    let snap = await guide.completeCurrentAction('user-1'); // WAITING_FOR_TIMER + 240s timer
+    const sessionId = snap.sessionId!;
+    const [timer] = await timers.listActiveTimers(sessionId);
+    await timers.updateTimer(timer.id, { startedAt: Date.now() - 60_000, endsAt: Date.now() + 180_000 });
+
+    snap = await guide.pause('user-1', sessionId);
+    const frozenAtPause = snap.activeTimers[0].remainingSeconds;
+    expect(frozenAtPause).toBe(180);
+
+    // "Wait" 3 minutes while paused, then resume — the timer must continue
+    // from 180s (180s frozen + 3m pause), not fire instantly.
+    const s = await guide.resume('user-1', sessionId);
+    expect(s.phase).toBe('WAITING_FOR_TIMER');
+    const [rebased] = await timers.listActiveTimers(sessionId);
+    expect(rebased.endsAt).toBeGreaterThanOrEqual(Date.now() + 180_000 - 5_000);
   });
 });
 

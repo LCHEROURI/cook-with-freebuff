@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import styles from '@/app/cook/page.module.css';
 import { VoiceIndicator } from './VoiceIndicator';
-import type { ActiveTimerInfo, GuideSnapshot } from '@/lib/server/guide-service';
+import type { ActiveTimerInfo, GuideSnapshot } from '@/lib/domain/guide';
 import type { AgentTurn, VoiceStatus } from '@/lib/agent';
 
 function formatCountdown(seconds: number): string {
