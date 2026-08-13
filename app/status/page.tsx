@@ -26,25 +26,45 @@ const formatTime = (iso: string) =>
 
 export default function StatusPage() {
   const [status, setStatus] = useState<Status | null>(null);
+  const [denied, setDenied] = useState(false);
+  const [signingIn, setSigningIn] = useState(false);
   const auth = useAuthSession();
   const getToken = auth.getToken;
 
   useEffect(() => {
+    // The route requires a valid token outright — never fetch signed out.
+    if (auth.state !== 'ready' || !auth.user) return;
     let cancelled = false;
     void (async () => {
       const token = await getToken();
       const headers: Record<string, string> = {};
       if (token) headers.authorization = `Bearer ${token}`;
       const res = await fetch('/api/status', { headers });
+      if (res.status === 401) {
+        if (!cancelled) setDenied(true);
+        return;
+      }
       const body = (await res.json()) as Status;
-      if (!cancelled) setStatus(body);
+      if (!cancelled) {
+        setStatus(body);
+        setDenied(false);
+      }
     })().catch(() => {
       if (!cancelled) setStatus(null);
     });
     return () => {
       cancelled = true;
     };
-  }, [getToken]);
+  }, [auth.state, auth.user, getToken]);
+
+  const handleSignIn = async () => {
+    setSigningIn(true);
+    try {
+      await auth.signIn();
+    } finally {
+      setSigningIn(false);
+    }
+  };
 
   const verdictClass =
     status?.verifyLive?.verdict === 'success'
@@ -80,6 +100,38 @@ export default function StatusPage() {
           The live build, when it shipped, and whether the last full verification passed.
         </p>
       </section>
+
+      {auth.state === 'ready' && !auth.user && (
+        <section className={styles.cards} aria-label="Sign in required">
+          <article className={styles.card}>
+            <h2 className={styles.cardTitle}>Sign in to see kitchen status</h2>
+            <p className={styles.cardMeta}>
+              The status surface is private — sign in with Google to see the
+              live commit, build time, and the last verify:live result.
+            </p>
+            <button
+              type="button"
+              className={styles.signInButton}
+              onClick={() => void handleSignIn()}
+              disabled={signingIn}
+            >
+              {signingIn ? 'Signing in…' : 'Sign in with Google'}
+            </button>
+          </article>
+        </section>
+      )}
+
+      {denied && (
+        <section className={styles.cards} aria-label="Access denied">
+          <article className={styles.card}>
+            <h2 className={styles.cardTitle}>Could not load status</h2>
+            <p className={styles.cardMeta}>
+              The server rejected the request. Try signing out and back in, or
+              reload the page.
+            </p>
+          </article>
+        </section>
+      )}
 
       <section className={styles.cards} aria-label="App status">
         <article className={styles.card}>

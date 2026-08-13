@@ -2,27 +2,25 @@ import { NextResponse } from 'next/server';
 import { getAdminDb, resolveUserId } from '@/lib/server/admin';
 
 // GET /api/status — one glance at the app's health: the live commit + build
-// time (same public facts as /api/build-info) plus the last post-deploy
-// verify:live verdict, which the verify-live CI job records to the
-// `deploy_status/verify_live` doc (scripts/record-verify-status.mjs).
+// time plus the last post-deploy verify:live verdict, which the verify-live
+// CI job records to the `deploy_status/verify_live` doc
+// (scripts/record-verify-status.mjs).
 //
-// Public by design (the documented exception, exactly like /api/build-info):
-// the commit SHA and build time carry no secrets, and the verify:live verdict
-// is already public via the GitHub Actions run. To stay inside the repo's
-// auth boundary, a caller who DOES present a bearer token must present a
-// VALID one — the token is resolved server-side and an invalid token is
-// rejected with 401, never silently ignored. The status page sends its ID
-// token when signed in. The verify record is read with the ADMIN SDK
-// (server-only), so the client rules stay untouched — direct client reads of
-// `deploy_status` remain denied.
+// Authenticated outright, matching the repo's auth boundary (every API route
+// resolves the Firebase ID token server side via resolveUserId): a caller
+// without a valid bearer token gets 401. The status page sends its ID token
+// when signed in and shows a sign-in prompt when signed out. The verify
+// record is read with the ADMIN SDK (server-only), so the client rules stay
+// untouched — direct client reads of `deploy_status` remain denied.
 export async function GET(request: Request) {
   const auth = request.headers.get('authorization');
   const token = auth?.startsWith('Bearer ') ? auth.slice(7) : null;
-  if (token) {
-    const userId = await resolveUserId(token);
-    if (!userId) {
-      return NextResponse.json({ error: 'invalid token' }, { status: 401 });
-    }
+  const userId = await resolveUserId(token);
+  if (!userId) {
+    return NextResponse.json(
+      { error: 'UNAUTHENTICATED', message: 'Authentication required' },
+      { status: 401 },
+    );
   }
   let verifyLive: {
     verdict: string;
