@@ -366,6 +366,12 @@ npm run verify:live:emulator
 # deterministic flow on BOTH production (--guided-only) and the local
 # emulators, then diffs the seven shared steps — the emulator side is fully
 # offline (no production traffic). Fails on any step divergence.
+#
+# This ALSO runs automatically as a pre-deploy smoke check: on every main
+# push, CI (ci.yml emulator-compare job, needs Java 21) gates the Firebase
+# App Hosting deploy on it, and the local pre-push hook runs it too (skips
+# with a warning when Java 21 or .env.local is missing; escape hatches:
+# SKIP_VERIFY_EMULATOR_COMPARE=1 locally).
 npm run verify:live:compare:emulator
 
 # Diff the local stack against the deployed stack on the FULL lifecycle —

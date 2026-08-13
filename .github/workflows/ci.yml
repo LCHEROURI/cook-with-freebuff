@@ -114,11 +114,61 @@ jobs:
   # Gated on FIREBASE_TOKEN (skip-not-fail on forks/unconfigured repos); the
   # loud guard below turns a missing token on a canonical main push into a
   # failure. Pull requests never deploy.
+
+  # Emulator-compare smoke: prove the deterministic guided flow works on the
+  # local Firestore/Auth emulator stack AND matches what production serves,
+  # BEFORE any deploy proceeds. Runs on every main push (and manual
+  # dispatch); deploy-apphosting waits on it. The deployed leg uses the same
+  # owner-credential secrets verify-deployed.yml uses; the emulator leg is
+  # offline and needs Java 21 (Firestore emulator). A divergence — a guided
+  # step that passes on one stack and not the other — fails the job.
+  emulator-compare:
+    name: Emulator-compare smoke (guided flow vs live)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    if: ${{ github.event_name == 'push' || github.event_name == 'workflow_dispatch' }}
+
+    env:
+      NEXT_PUBLIC_FIREBASE_API_KEY: ${{ secrets.NEXT_PUBLIC_FIREBASE_API_KEY }}
+      FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+      APP_OWNER_UID: ${{ secrets.APP_OWNER_UID }}
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v5
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+
+      # The Firestore emulator requires Java 21 (see README); ubuntu runners
+      # default to an older JDK, so pin it explicitly.
+      - name: Set up Java 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Fail loudly if owner credentials are missing
+        if: ${{ github.repository == 'LCHEROURI/cook-with-freebuff' && (env.NEXT_PUBLIC_FIREBASE_API_KEY == '' || env.FIREBASE_SERVICE_ACCOUNT == '' || env.APP_OWNER_UID == '') }}
+        run: |
+          echo "::error::Owner-credential secrets missing — the emulator-compare smoke cannot run its deployed leg."
+          echo "Add NEXT_PUBLIC_FIREBASE_API_KEY, FIREBASE_SERVICE_ACCOUNT and APP_OWNER_UID under GitHub -> Settings -> Secrets and variables -> Actions, then re-run."
+          exit 1
+
+      - name: Run the emulator-compare smoke
+        run: npm run verify:live:compare:emulator
+
   deploy-apphosting:
     name: Deploy Firebase App Hosting
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    needs: validate
+    needs: [validate, emulator-compare]
     if: ${{ github.event_name == 'push' || github.event_name == 'workflow_dispatch' }}
 
     env:

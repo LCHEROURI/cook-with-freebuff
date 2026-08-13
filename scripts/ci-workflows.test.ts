@@ -39,12 +39,14 @@ const FOUR_SECRETS_GATE =
 const SECRET_WIRING = (name: string) => name + ': ${{ secrets.' + name + ' }}';
 
 describe('.github/workflows/ci.yml · push-time validate contract', () => {
-  // validate is the FIRST job in ci.yml (deploy-apphosting now follows it);
-  // the post-deploy gate moved out. The block runs from the validate key to
-  // the deploy-apphosting key; a non-empty guard turns a future restructure
-  // into a legible failure instead of confusing toContain misses.
-  const deployStart = CI.indexOf('\n  deploy-apphosting:');
-  const validateBlock = CI.slice(CI.indexOf('\n  validate:'), deployStart === -1 ? undefined : deployStart);
+  // validate is the FIRST job in ci.yml; the emulator-compare smoke is the
+  // SECOND (deploy-apphosting follows it), and the post-deploy gate moved
+  // out. The block runs from the validate key to the emulator-compare key so
+  // the smoke job's push-gated steps are never read as part of validate; a
+  // non-empty guard turns a future restructure into a legible failure
+  // instead of confusing toContain misses.
+  const smokeStart = CI.indexOf('\n  emulator-compare:');
+  const validateBlock = CI.slice(CI.indexOf('\n  validate:'), smokeStart === -1 ? undefined : smokeStart);
 
   it('keeps the four push-time checks (typecheck · lint · test · build)', () => {
     expect(validateBlock.length).toBeGreaterThan(0);
@@ -187,11 +189,12 @@ describe('.github/workflows/ci.yml · deploy-apphosting auto-sync job', () => {
   const deployStart = CI.indexOf('\n  deploy-apphosting:');
   const deployBlock = CI.slice(deployStart);
 
-  it('deploys after validate passes and never on pull_request', () => {
+  it('deploys after validate AND the emulator-compare smoke pass — never on pull_request', () => {
     expect(deployBlock.length).toBeGreaterThan(0);
     expect(deployBlock).toContain('name: Deploy Firebase App Hosting');
-    // validate must pass first — never deploy broken code.
-    expect(deployBlock).toContain('needs: validate');
+    // validate and the emulator-compare smoke must pass first — never deploy
+    // broken code or a guided flow that diverges from live.
+    expect(deployBlock).toContain('needs: [validate, emulator-compare]');
     // Push + manual re-sync only; PRs must never deploy.
     expect(deployBlock).toContain("github.event_name == 'push' || github.event_name == 'workflow_dispatch'");
     expect(deployBlock).not.toContain('pull_request');
@@ -211,6 +214,23 @@ describe('.github/workflows/ci.yml · deploy-apphosting auto-sync job', () => {
     // reintroduces the owner-IAM 403.
     expect(deployBlock).not.toContain('GOOGLE_APPLICATION_CREDENTIALS');
     expect(deployBlock).not.toContain('FIREBASE_SERVICE_ACCOUNT');
+  });
+
+  it('runs the emulator-compare smoke before the deploy with Java 21 + owner creds', () => {
+    const smokeStart = CI.indexOf('\n  emulator-compare:');
+    expect(smokeStart).toBeGreaterThan(0);
+    const smokeBlock = CI.slice(smokeStart, CI.indexOf('\n  deploy-apphosting:', smokeStart));
+    expect(smokeBlock).toContain('name: Emulator-compare smoke (guided flow vs live)');
+    expect(smokeBlock).toContain("github.event_name == 'push' || github.event_name == 'workflow_dispatch'");
+    // The deployed leg needs the same owner credentials the post-deploy
+    // verify:live uses; the emulator leg needs Java 21 for the Firestore
+    // emulator (ubuntu runners default to an older JDK).
+    expect(smokeBlock).toContain('actions/setup-java@v4');
+    expect(smokeBlock).toContain("java-version: '21'");
+    expect(smokeBlock).toContain('NEXT_PUBLIC_FIREBASE_API_KEY');
+    expect(smokeBlock).toContain('FIREBASE_SERVICE_ACCOUNT');
+    expect(smokeBlock).toContain('APP_OWNER_UID');
+    expect(smokeBlock).toContain('npm run verify:live:compare:emulator');
   });
 
   it('retries the deploy on a 409 queue-conflict with backoff (never on other errors)', () => {

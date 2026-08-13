@@ -58,14 +58,44 @@ node scripts/verify-deployed-hash-gate.mjs --stale-guard >&2
 CODE=$?
 
 if [ "$CODE" -eq 0 ]; then
-  echo "pre-push: ✓ live-vs-HEAD check passed — safe to push" >&2
-  exit 0
-fi
-
-if [ "$CODE" -eq 2 ]; then
+  echo "pre-push: ✓ live-vs-HEAD check passed" >&2
+elif [ "$CODE" -eq 2 ]; then
   echo "pre-push: ⚠ cannot verify the deployed hash (invalid/revoked token) — continuing without the comparison" >&2
+else
+  echo "pre-push: ✗ BLOCKED — see the verdict above; to override, re-run with SKIP_VERIFY_DEPLOYED_HASH=1" >&2
+  exit 1
+fi
+
+# ── Emulator-compare smoke (verify:live:compare:emulator) ────────────────────
+# Proves the deterministic guided flow works on the local Firestore/Auth
+# emulator stack AND matches live, before the push triggers the deploy. Same
+# driver CI runs on every main push. Capability handling mirrors this hook's
+# philosophy: a check that CANNOT run on this machine (no Java 21, or no
+# .env.local for the deployed leg) warns and continues — CI is the
+# authoritative gate — while a genuine compare FAILURE blocks the push.
+if [ "${SKIP_VERIFY_EMULATOR_COMPARE:-0}" = "1" ]; then
+  echo "pre-push: SKIP_VERIFY_EMULATOR_COMPARE=1 — skipping the emulator-compare smoke" >&2
   exit 0
 fi
 
-echo "pre-push: ✗ BLOCKED — see the verdict above; to override, re-run with SKIP_VERIFY_DEPLOYED_HASH=1" >&2
+JAVA_MAJOR=$(java -version 2>&1 | head -1 | sed -E 's/.*version "([0-9]+).*/\1/')
+if [ -z "$JAVA_MAJOR" ] || [ "$JAVA_MAJOR" -lt 21 ]; then
+  echo "pre-push: ⚠ Java 21+ not found — skipping the emulator-compare smoke (CI runs it on every main push)" >&2
+  exit 0
+fi
+if [ ! -f "$ROOT/.env.local" ]; then
+  echo "pre-push: ⚠ .env.local not found — skipping the emulator-compare smoke (its deployed leg needs real creds)" >&2
+  exit 0
+fi
+
+echo "pre-push: running the emulator-compare smoke (boots local Firestore/Auth emulators + dev server)..." >&2
+npm run verify:live:compare:emulator >&2
+COMPARE_CODE=$?
+
+if [ "$COMPARE_CODE" -eq 0 ]; then
+  echo "pre-push: ✓ emulator-compare smoke passed — guided flow matches live" >&2
+  exit 0
+fi
+
+echo "pre-push: ✗ BLOCKED — the emulator-compare smoke failed; to override, re-run with SKIP_VERIFY_EMULATOR_COMPARE=1" >&2
 exit 1
