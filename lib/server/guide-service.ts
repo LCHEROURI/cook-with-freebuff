@@ -418,7 +418,28 @@ export class GuidedCookingService {
       // The frozen at-pause remainder carries through: shift endsAt forward by
       // the paused duration so the countdown continues where it froze instead
       // of firing instantly.
-      await rebaseTimersAfterResume(this.timerStore, updated.id, pausedAt);
+      try {
+        await rebaseTimersAfterResume(this.timerStore, updated.id, pausedAt);
+      } catch (e) {
+        // The session already transitioned to ACTIVE, so a plain error would
+        // make every retry fail with NOT_PAUSED and the timers could never be
+        // rebased — an expiry that elapsed during the pause would fire
+        // immediately (Codex P1). Roll the session back to PAUSED with the
+        // ORIGINAL pausedAt: the frozen remainder is intact, a retry of
+        // resume is legal, and the all-or-nothing rebase means a retry shifts
+        // from the original endsAt exactly once. The rollback re-pause is
+        // best-effort (a version conflict there is a genuinely rare double
+        // failure); either way the caller sees a recoverable error.
+        await this.sessionService.pauseSession(updated.id, updated.version, {
+          correlationId: options?.correlationId,
+          pausedAt,
+        }).catch(() => undefined);
+        throw new GuideError(
+          'Resume could not finish syncing the paused timers — the session was paused again. Please resume once more.',
+          'TIMER_REBASE_FAILED',
+          true,
+        );
+      }
     }
     return this.buildSnapshot(userId, updated);
   }
