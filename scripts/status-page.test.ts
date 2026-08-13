@@ -88,6 +88,24 @@ describe('app/status/page.tsx · the glance surface', () => {
     expect(PAGE).toContain('signInButton');
   });
 
+  it('hides the status cards while signed out (no Loading… dead state)', () => {
+    // The cards section is gated on a signed-in user — a signed-out visitor
+    // sees only the sign-in prompt, never an unconditional Loading… row.
+    expect(PAGE).toContain("auth.state === 'ready' && auth.user && (");
+    expect(PAGE).toContain('aria-label="App status"');
+  });
+
+  it('renders the auth initialization error state honestly', () => {
+    expect(PAGE).toContain("auth.state === 'error'");
+    expect(PAGE).toContain('Sign in is unavailable right now');
+    expect(PAGE).toContain('{auth.error ?? \'Authentication could not initialize.\'}');
+  });
+
+  it('surfaces a rejected Google sign-in instead of swallowing it', () => {
+    expect(PAGE).toContain('setSignInError');
+    expect(PAGE).toContain('e instanceof Error ? e.message : \'Sign in failed. Try again.\'');
+  });
+
 });
 
 describe('scripts/record-verify-status.mjs · the recorder', () => {
