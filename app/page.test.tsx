@@ -43,8 +43,17 @@ vi.mock('@/lib/voice/self-check', async (importOriginal) => {
   };
 });
 
+vi.mock('@/lib/audio/timer-chime', () => ({
+  unlockAudioOnGesture: vi.fn(),
+  playTimerChime: vi.fn(),
+}));
+
 import { useAuthSession, type UseAuthSessionResult } from '@/lib/auth/useAuthSession';
+import { unlockAudioOnGesture, playTimerChime } from '@/lib/audio/timer-chime';
 import HomePage from './page';
+
+const mockUnlockChime = vi.mocked(unlockAudioOnGesture);
+const mockPlayChime = vi.mocked(playTimerChime);
 
 const base: UseAuthSessionResult = {
   user: { uid: 'owner-uid' } as UseAuthSessionResult['user'],
@@ -137,6 +146,8 @@ function mockStatusFetch(body: unknown) {
 beforeEach(() => {
   mockAuth.mockReset();
   mockAuth.mockReturnValue(base);
+  mockUnlockChime.mockClear();
+  mockPlayChime.mockClear();
   vi.unstubAllGlobals();
 });
 
@@ -292,5 +303,22 @@ describe('app/page.tsx · resume card', () => {
       expect(screen.queryByText('Your Rice simmer is finished.')).not.toBeInTheDocument();
     });
     expect(screen.getByText('Simple Chicken and Rice')).toBeInTheDocument();
+  });
+
+  it('wires the gesture unlock and chimes when a timer alert appears', async () => {
+    mockStatusFetch({
+      success: true,
+      data: { alerts: [{ message: 'Your Rice simmer is finished.' }], snapshot: ACTIVE_SESSION.data.snapshot },
+    });
+    render(<HomePage />);
+
+    // The unlock is wired on mount (before any alert) so a later gesture can
+    // resume the suspended AudioContext.
+    expect(mockUnlockChime).toHaveBeenCalledTimes(1);
+    await waitFor(() => {
+      expect(screen.getByText('Your Rice simmer is finished.')).toBeInTheDocument();
+    });
+    // Exactly one chime for the one alert — never a repeat for the same alert.
+    expect(mockPlayChime).toHaveBeenCalledTimes(1);
   });
 });

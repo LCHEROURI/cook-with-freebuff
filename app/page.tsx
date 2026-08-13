@@ -1,10 +1,11 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import styles from './page.module.css';
 import { useAuthSession } from '@/lib/auth/useAuthSession';
 import { detectVoiceEngine } from '@/lib/voice/self-check';
+import { playTimerChime, unlockAudioOnGesture } from '@/lib/audio/timer-chime';
 import type { GuideSnapshot } from '@/lib/server/guide-service';
 
 function formatCountdown(ms: number): string {
@@ -100,6 +101,19 @@ export default function HomePage() {
   const [toggling, setToggling] = useState(false);
   const voiceEngine = detectVoiceEngine();
 
+  // The chime is gesture-gated by the browser's AudioContext policy: it stays
+  // suspended until the first interaction, so playTimerChime can only ever
+  // sound after the user has engaged with the page.
+  useEffect(() => unlockAudioOnGesture(), []);
+
+  // Chime when a NEW alert appears (first one, or a different one after a
+  // dismissal) — never again on the same alert.
+  const prevAlert = useRef<string | null>(null);
+  useEffect(() => {
+    if (alert && alert !== prevAlert.current) playTimerChime();
+    prevAlert.current = alert;
+  }, [alert]);
+
   // The resume card needs the active session's current step + timers. Reads
   // come through the same /api/cook 'timers' action /cook's own hook polls
   // (never a client-side Firestore read): a finished timer surfaces an alert
@@ -141,9 +155,11 @@ export default function HomePage() {
   useEffect(() => {
     if (auth.state !== 'ready' || !auth.user) return;
     void fetchStatus();
-    // Keep the resume card fresh (timer countdowns use their own 1s tick, but
-    // the step itself can change in the background).
-    const id = window.setInterval(() => void fetchStatus(), 30000);
+    // Keep the resume card fresh and finished-timer alerts timely (timer
+    // countdowns use their own 1s tick, but the step and alerts come from the
+    // server — 10s keeps an alert at most ~10s late without hammering the
+    // endpoint).
+    const id = window.setInterval(() => void fetchStatus(), 10000);
     return () => window.clearInterval(id);
   }, [auth.state, auth.user, fetchStatus]);
 
