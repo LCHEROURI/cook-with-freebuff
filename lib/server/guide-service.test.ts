@@ -460,6 +460,31 @@ describe('pause freezes timers', () => {
     const [rebased] = await timers.listActiveTimers(sessionId);
     expect(rebased.endsAt).toBeGreaterThanOrEqual(Date.now() + 180_000 - 5_000);
   });
+
+  it('a duplicate resume does NOT rebase timers a second time (Codex P1 — atomic rebase)', async () => {
+    const { guide, timers } = await launch();
+    await guide.completeCurrentAction('user-1');
+    let snap = await guide.completeCurrentAction('user-1'); // WAITING_FOR_TIMER + 240s timer
+    const sessionId = snap.sessionId!;
+    const [timer] = await timers.listActiveTimers(sessionId);
+    await timers.updateTimer(timer.id, { startedAt: Date.now() - 60_000, endsAt: Date.now() + 180_000 });
+
+    await guide.pause('user-1', sessionId);
+    // "Wait" 3 minutes paused, then resume — endsAt shifts forward by 3m.
+    const resumed = await guide.resume('user-1', sessionId);
+    const [afterFirst] = await timers.listActiveTimers(sessionId);
+    expect(afterFirst.endsAt).toBeGreaterThanOrEqual(Date.now() + 180_000 - 5_000);
+
+    // The client retries because the first response was lost. pausedAt still
+    // sits on the doc (resume never cleared it), but the session is ACTIVE —
+    // resumeSession rejects with NOT_PAUSED and NO timer may be touched. The
+    // old guard (truthy pausedAt) rebased again, silently extending cooking
+    // time by the second pause window.
+    const before = afterFirst.endsAt;
+    await expect(guide.resume('user-1', sessionId)).rejects.toThrow(/NOT_PAUSED|not paused|already/);
+    const [afterRetry] = await timers.listActiveTimers(sessionId);
+    expect(afterRetry.endsAt).toBe(before);
+  });
 });
 
 // ── Navigation ───────────────────────────────────────────────────────────────

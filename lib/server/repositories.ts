@@ -239,9 +239,18 @@ export async function updateTimer(
   id: string,
   partial: Partial<CookingTimer>,
 ): Promise<void> {
+  // Validate the update at the write boundary (repo rule) BEFORE any I/O: a
+  // malformed legacy value propagated into a partial (e.g. a string endsAt
+  // concatenated during a rebase) must fail here instead of reaching
+  // Firestore. Partial parse also strips unknown keys, so the write only
+  // ever carries known fields.
+  const validated = cookingTimerSchema.partial().parse(partial);
   const db = getAdminDb();
   if (!db) throw new Error('Firestore not initialized');
-  await db.collection(TIMERS).doc(id).update(partial as unknown as Record<string, unknown>);
+  await db
+    .collection(TIMERS)
+    .doc(id)
+    .update(validated as unknown as Record<string, unknown>);
 }
 
 export async function listActiveTimers(sessionId: string): Promise<CookingTimer[]> {

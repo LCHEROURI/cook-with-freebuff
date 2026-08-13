@@ -15,7 +15,9 @@ import type { Ingredient, SessionPhase } from './types';
  */
 export function formatPausedAgo(pausedAt: number, nowMs: number = Date.now()): string {
   const s = Math.max(0, Math.floor((nowMs - pausedAt) / 1000));
-  if (s < 5) return 'just now';
+  // Keep "just now" for the whole first minute — "paused 0m ago" would be
+  // misleading during the pause's most commonly viewed window.
+  if (s < 60) return 'just now';
   const m = Math.floor(s / 60);
   if (m < 60) return `paused ${m}m ago`;
   const h = Math.floor(m / 60);

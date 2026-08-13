@@ -171,15 +171,20 @@ export const resumeCookingSessionTool: ToolDefinition = {
     if (!resolved.ok) return resolved.result;
     const s = resolved.session;
     try {
-      // Pause froze the timers (snapshot reports the at-pause remainder);
-      // resume shifts endsAt forward by the paused duration so the countdown
-      // continues from where it froze instead of firing instantly.
-      if (s.pausedAt) {
-        await rebaseTimersAfterResume(ctx.timerStore, s.id, s.pausedAt);
-      }
+      // Validate + transition FIRST, mutate timers AFTER (same contract as
+      // guide-service.resume): a duplicate resume rejects with NOT_PAUSED
+      // before any timer is touched. pausedAt persists on the doc after
+      // resume, so the guard is the phase, never the field.
+      const pausedAt = s.currentPhase === 'PAUSED' ? s.pausedAt : undefined;
       const updated = await ctx.sessionService.resumeSession(s.id, s.version, {
         correlationId: ctx.correlationId,
       });
+      if (pausedAt) {
+        // The frozen at-pause remainder carries through — shift endsAt
+        // forward by the paused duration so the countdown continues where it
+        // froze instead of firing instantly.
+        await rebaseTimersAfterResume(ctx.timerStore, updated.id, pausedAt);
+      }
       return ok({ sessionId: updated.id, phase: updated.currentPhase, status: updated.status });
     } catch (e) {
       return toToolError(e);

@@ -107,13 +107,19 @@ export default function HomePage() {
   // sound after the user has engaged with the page.
   useEffect(() => unlockAudioOnGesture(), []);
 
-  // Chime when a NEW alert appears (first one, or a different one after a
-  // dismissal) — never again on the same alert.
-  const prevAlert = useRef<string | null>(null);
+  // Chime once per finished timer, keyed by the server's unique timerId —
+  // never by message text, so two same-labeled timers finishing in separate
+  // polls each chime. A completed timer is detached server-side, so an id can
+  // never legitimately fire twice.
+  const chimedTimerIds = useRef<Set<string>>(new Set());
+  const [alertTimerIds, setAlertTimerIds] = useState<string[]>([]);
   useEffect(() => {
-    if (alert && alert !== prevAlert.current) playTimerChime();
-    prevAlert.current = alert;
-  }, [alert]);
+    const fresh = alertTimerIds.filter((id) => !chimedTimerIds.current.has(id));
+    if (fresh.length > 0) {
+      playTimerChime();
+      for (const id of fresh) chimedTimerIds.current.add(id);
+    }
+  }, [alertTimerIds]);
 
   // The resume card needs the active session's current step + timers. Reads
   // come through the same /api/cook 'timers' action /cook's own hook polls
@@ -135,12 +141,13 @@ export default function HomePage() {
       });
       const body = (await res.json()) as {
         success: boolean;
-        data?: { alerts?: { message: string }[]; snapshot?: GuideSnapshot };
+        data?: { alerts?: { message: string; timerId: string }[]; snapshot?: GuideSnapshot };
       };
       const snapshot = body.data?.snapshot;
       if (res.ok && body.success && snapshot && snapshot.found) {
         if (body.data?.alerts && body.data.alerts.length > 0) {
           setAlert(body.data.alerts.map((a) => a.message).join(' '));
+          setAlertTimerIds(body.data.alerts.map((a) => a.timerId));
         }
         setSnap(snapshot);
       } else {
