@@ -1,0 +1,136 @@
+'use client';
+
+import { useEffect, useState } from 'react';
+import Link from 'next/link';
+import styles from './page.module.css';
+
+interface VerifyLive {
+  verdict: string;
+  commitSha: string;
+  ranAt: string;
+  runUrl: string;
+}
+
+interface Status {
+  commitSha: string;
+  builtAt: string;
+  emulator: boolean;
+  verifyLive: VerifyLive | null;
+}
+
+const shortSha = (sha: string) => (sha ? sha.slice(0, 7) : 'unknown');
+const commitUrl = (sha: string) => `https://github.com/LCHEROURI/cook-with-freebuff/commit/${sha}`;
+const formatTime = (iso: string) =>
+  iso ? new Date(iso).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' }) : '—';
+
+export default function StatusPage() {
+  const [status, setStatus] = useState<Status | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    void fetch('/api/status')
+      .then((r) => r.json())
+      .then((body: Status) => {
+        if (!cancelled) setStatus(body);
+      })
+      .catch(() => {
+        if (!cancelled) setStatus(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const verdictClass =
+    status?.verifyLive?.verdict === 'success'
+      ? styles.pass
+      : status?.verifyLive?.verdict === 'failure'
+        ? styles.fail
+        : styles.unknown;
+
+  const verdictLabel =
+    status?.verifyLive?.verdict === 'success'
+      ? '✓ Passing'
+      : status?.verifyLive?.verdict === 'failure'
+        ? '✗ Failing'
+        : 'No run recorded yet';
+
+  return (
+    <main className={styles.main}>
+      <header className={styles.topbar}>
+        <span className={styles.brand}>Cook With Me</span>
+        <Link href="/" className={styles.backLink}>
+          ← Back to start
+        </Link>
+      </header>
+
+      <section className={styles.hero}>
+        <h1 className={styles.title}>Kitchen status</h1>
+        <p className={styles.heroMotif} aria-hidden="true">
+          <span>🧑‍🍳</span>
+          <span>🔥</span>
+          <span>🌿</span>
+        </p>
+        <p className={styles.subtitle}>
+          The live build, when it shipped, and whether the last full verification passed.
+        </p>
+      </section>
+
+      <section className={styles.cards} aria-label="App status">
+        <article className={styles.card}>
+          <h2 className={styles.cardTitle}>Live commit</h2>
+          {status ? (
+            <>
+              <p className={styles.mono}>
+                <a href={commitUrl(status.commitSha)} className={styles.link}>
+                  {shortSha(status.commitSha)}
+                </a>
+              </p>
+              <p className={styles.cardMeta}>Built {formatTime(status.builtAt)}</p>
+            </>
+          ) : (
+            <p className={styles.cardMeta}>Loading…</p>
+          )}
+        </article>
+
+        <article className={styles.card}>
+          <h2 className={styles.cardTitle}>Last verify:live</h2>
+          {status ? (
+            status.verifyLive ? (
+              <>
+                <p className={`${styles.verdict} ${verdictClass}`}>{verdictLabel}</p>
+                <p className={styles.cardMeta}>
+                  {status.verifyLive.verdict === 'success' ? 'Verified' : 'Last failed'} on{' '}
+                  <a href={commitUrl(status.verifyLive.commitSha)} className={styles.link}>
+                    {shortSha(status.verifyLive.commitSha)}
+                  </a>
+                </p>
+                <p className={styles.cardMeta}>{formatTime(status.verifyLive.ranAt)}</p>
+                {status.verifyLive.runUrl && (
+                  <p className={styles.cardMeta}>
+                    <a href={status.verifyLive.runUrl} className={styles.link}>
+                      View the CI run ↗
+                    </a>
+                  </p>
+                )}
+              </>
+            ) : (
+              <p className={styles.cardMeta}>No verify:live result recorded yet.</p>
+            )
+          ) : (
+            <p className={styles.cardMeta}>Loading…</p>
+          )}
+        </article>
+      </section>
+
+      <footer className={styles.footer}>
+        <p>
+          Cook With Me · the verify:live result updates after every deploy ·{' '}
+          <a href="https://github.com/LCHEROURI/cook-with-freebuff" className={styles.link}>
+            source
+          </a>
+        </p>
+      </footer>
+    </main>
+  );
+}

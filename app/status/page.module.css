@@ -1,0 +1,147 @@
+.main {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  min-height: 100dvh;
+  padding: 0 1rem 3rem;
+}
+
+.topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  max-width: var(--max-width);
+  padding: 1rem 0;
+}
+
+.brand {
+  font-family: var(--font-display);
+  font-weight: 500;
+  color: var(--color-brand);
+  font-size: 1.1rem;
+  letter-spacing: 0.01em;
+}
+
+.backLink {
+  color: var(--color-brand);
+  text-decoration: none;
+  font-weight: 600;
+  border-radius: var(--radius-sm);
+}
+
+.backLink:hover {
+  color: var(--color-brand-hover);
+}
+
+/* ── Hero — same quiet herb motif as the landing page ─────────────────────── */
+.hero {
+  text-align: center;
+  padding: 4rem 0 2.5rem;
+  max-width: 600px;
+}
+
+.title {
+  font-family: var(--font-display);
+  font-size: 2.6rem;
+  font-weight: 500;
+  color: var(--color-text);
+  line-height: 1.15;
+  letter-spacing: -0.01em;
+}
+
+.heroMotif {
+  margin-top: 0.5rem;
+  font-size: 1.1rem;
+  letter-spacing: 0.15em;
+  filter: grayscale(0.3);
+}
+
+.subtitle {
+  margin-top: 1rem;
+  color: var(--color-text-secondary);
+  font-size: 1.05rem;
+  line-height: 1.6;
+  font-style: italic;
+}
+
+/* ── Status cards — warm surfaces with colored left accents ──────────────── */
+.cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 1rem;
+  width: 100%;
+  max-width: 640px;
+}
+
+.card {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  padding: 1.5rem 1.5rem 1.5rem 1.25rem;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-left: 3px solid var(--color-brand);
+  border-radius: 0 var(--radius-lg) var(--radius-lg) 0;
+  box-shadow: var(--shadow-xs);
+}
+
+.card:nth-child(2) {
+  border-left-color: var(--color-mauve);
+}
+
+.cardTitle {
+  font-family: var(--font-display);
+  font-size: 1.05rem;
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.cardMeta {
+  color: var(--color-text-secondary);
+  font-size: 0.95rem;
+  line-height: 1.5;
+}
+
+.mono {
+  font-family: var(--font-mono);
+  font-size: 1.05rem;
+  color: var(--color-text);
+}
+
+.verdict {
+  font-family: var(--font-display);
+  font-size: 1.35rem;
+  font-weight: 600;
+}
+
+.pass {
+  color: var(--color-success);
+}
+
+.fail {
+  color: var(--color-danger);
+}
+
+.unknown {
+  color: var(--color-text-muted);
+}
+
+.link {
+  color: var(--color-brand);
+  text-decoration: none;
+  font-weight: 600;
+}
+
+.link:hover {
+  color: var(--color-brand-hover);
+  text-decoration: underline;
+}
+
+.footer {
+  margin-top: 3rem;
+  color: var(--color-text-muted);
+  font-size: 0.9rem;
+  max-width: 640px;
+  text-align: center;
+}

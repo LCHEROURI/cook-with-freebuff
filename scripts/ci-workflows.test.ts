@@ -283,6 +283,25 @@ describe('.github/workflows/ci.yml · post-deploy verify:live needs-edge', () =>
     }
   });
 
+  it('records the verify:live verdict to Firestore after the verify step (runs even on failure)', () => {
+    // The status page needs the last verify:live result at a glance. The
+    // record step reads the verdict from the verify step's own outcome (so a
+    // skipped pre-flight never overwrites the last real result), runs with
+    // `if: always()` so a RED run is recorded too, and needs NO new secret
+    // wiring — it reads FIREBASE_SERVICE_ACCOUNT from the job env.
+    expect(verifyBlock).toContain('id: verify');
+    expect(verifyBlock).toContain('name: Record verify:live result for the status page');
+    expect(verifyBlock).toContain("always() && (steps.verify.outcome == 'success' || steps.verify.outcome == 'failure')");
+    expect(verifyBlock).toContain('node scripts/record-verify-status.mjs');
+    expect(verifyBlock).toContain('--verdict "${{ steps.verify.outcome }}"');
+    expect(verifyBlock).toContain('--commit "${{ github.sha }}"');
+    expect(verifyBlock).toContain('--run-url "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"');
+    // Negative: the record step must not introduce a 4th secret wiring.
+    const recordStart = verifyBlock.indexOf('name: Record verify:live result for the status page');
+    const recordBlock = verifyBlock.slice(recordStart);
+    expect(recordBlock).not.toContain('secrets.');
+  });
+
   it('keeps the loud-secret guard so a missing secret fails instead of silently skipping (no VERCEL_TOKEN)', () => {
     expect(verifyBlock).toContain('name: Fail loudly if a verify secret is missing (main deploy)');
     expect(verifyBlock).toContain('::error::Required GitHub Actions secret(s) missing on main deploy:');
