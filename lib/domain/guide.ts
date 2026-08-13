@@ -9,6 +9,19 @@
 
 import type { Ingredient, SessionPhase } from './types';
 
+/**
+ * "paused 2m ago" — how long the session has been paused, derived from the
+ * pause instant. Shared by the landing card and /cook so both surfaces agree.
+ */
+export function formatPausedAgo(pausedAt: number, nowMs: number = Date.now()): string {
+  const s = Math.max(0, Math.floor((nowMs - pausedAt) / 1000));
+  if (s < 5) return 'just now';
+  const m = Math.floor(s / 60);
+  if (m < 60) return `paused ${m}m ago`;
+  const h = Math.floor(m / 60);
+  return `paused ${h}h ${m % 60}m ago`;
+}
+
 export interface ActiveTimerInfo {
   timerId: string;
   label: string;
@@ -58,6 +71,8 @@ export interface GuideAction {
   /** Set when a timer finished during this call (checkTimers / completion). */
   alert?: string;
   paused?: boolean;
+  /** Epoch ms when the session paused — lets clients show "paused 2m ago". */
+  pausedAt?: number;
 }
 
 /** Full state for the cooking UI (includes expandable recipe content). */

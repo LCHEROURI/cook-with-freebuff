@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import styles from '@/app/cook/page.module.css';
 import { VoiceIndicator } from './VoiceIndicator';
-import type { ActiveTimerInfo, GuideSnapshot } from '@/lib/domain/guide';
+import { formatPausedAgo, type ActiveTimerInfo, type GuideSnapshot } from '@/lib/domain/guide';
 import type { AgentTurn, VoiceStatus } from '@/lib/agent';
 
 function formatCountdown(seconds: number): string {
@@ -14,8 +14,11 @@ function formatCountdown(seconds: number): string {
   return `${m}:${r.toString().padStart(2, '0')}`;
 }
 
-function TimerDisplay({ timer, paused }: { timer: ActiveTimerInfo; paused: boolean }) {
+function TimerDisplay({ timer, paused, pausedAt }: { timer: ActiveTimerInfo; paused: boolean; pausedAt?: number }) {
   const [remaining, setRemaining] = useState(timer.remainingSeconds);
+  // Ticks the "paused 2m ago" caption while paused (the frozen remainder itself
+  // must NOT tick — that comes from the server).
+  const [nowMs, setNowMs] = useState(Date.now());
   useEffect(() => {
     // While paused the server freezes the countdown at the at-pause remainder
     // (derived from pausedAt) — /cook must agree with the card and NOT tick
@@ -23,7 +26,8 @@ function TimerDisplay({ timer, paused }: { timer: ActiveTimerInfo; paused: boole
     // timer the server says is frozen.
     if (paused) {
       setRemaining(timer.remainingSeconds);
-      return;
+      const id = window.setInterval(() => setNowMs(Date.now()), 1000);
+      return () => window.clearInterval(id);
     }
     setRemaining(timer.remainingSeconds);
     const id = window.setInterval(() => {
@@ -37,14 +41,19 @@ function TimerDisplay({ timer, paused }: { timer: ActiveTimerInfo; paused: boole
       role="timer"
       aria-label={
         paused
-          ? `${timer.label}, paused at ${formatCountdown(timer.remainingSeconds)}`
+          ? `${timer.label}, paused at ${formatCountdown(timer.remainingSeconds)}, ${formatPausedAgo(pausedAt ?? nowMs, nowMs)}`
           : `${timer.label}, ${formatCountdown(remaining)} remaining`
       }
     >
       <span className={styles.timerLabel}>{timer.label}</span>
-      <span className={styles.timerCount}>
-        {paused ? '⏸ ' : ''}
-        {formatCountdown(paused ? timer.remainingSeconds : remaining)}
+      <span className={styles.timerRight}>
+        <span className={styles.timerCount}>
+          {paused ? '⏸ ' : ''}
+          {formatCountdown(paused ? timer.remainingSeconds : remaining)}
+        </span>
+        {paused && pausedAt ? (
+          <span className={styles.timerPausedAgo}>{formatPausedAgo(pausedAt, nowMs)}</span>
+        ) : null}
       </span>
     </div>
   );
@@ -260,7 +269,7 @@ export function CookScreen({
       {snap.activeTimers.length > 0 && (
         <section className={styles.timers}>
           {snap.activeTimers.map((t) => (
-            <TimerDisplay key={t.timerId} timer={t} paused={isPaused} />
+            <TimerDisplay key={t.timerId} timer={t} paused={isPaused} pausedAt={snap.pausedAt} />
           ))}
         </section>
       )}

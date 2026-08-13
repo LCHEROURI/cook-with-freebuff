@@ -677,6 +677,18 @@
   color: var(--color-text-muted);
 }
 
+.timerPausedAgo {
+  font-size: 0.75rem;
+  color: var(--color-text-muted);
+}
+
+.timerRight {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 0.25rem;
+}
+
 .timerLabel {
   font-size: 1rem;
   font-weight: 600;

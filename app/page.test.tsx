@@ -93,6 +93,7 @@ const PAUSED_SESSION = {
       ...ACTIVE_SESSION.data.snapshot,
       phase: 'PAUSED',
       paused: true,
+      pausedAt: Date.now() - 120_000,
     },
   },
 };
@@ -290,8 +291,10 @@ describe('app/page.tsx · resume card', () => {
     // captures the at-pause value).
     expect(screen.getByText(/⏸ Rice simmer/)).toBeInTheDocument();
     expect(screen.queryByText(/⏱/)).not.toBeInTheDocument();
+    // How long the pause has lasted so far, from the server's pausedAt.
+    expect(screen.getByText('paused 2m ago')).toBeInTheDocument();
     await waitFor(() => {
-      expect(screen.getByRole('timer')).toHaveAttribute('aria-label', expect.stringMatching(/Rice simmer, paused at [0-9]+:[0-9]{2}/));
+      expect(screen.getByRole('timer')).toHaveAttribute('aria-label', expect.stringMatching(/Rice simmer, paused at [0-9]+:[0-9]{2}, paused 2m ago/));
     });
   });
 

@@ -6,7 +6,7 @@ import styles from './page.module.css';
 import { useAuthSession } from '@/lib/auth/useAuthSession';
 import { detectVoiceEngine } from '@/lib/voice/self-check';
 import { playTimerChime, unlockAudioOnGesture } from '@/lib/audio/timer-chime';
-import type { GuideSnapshot } from '@/lib/domain/guide';
+import { formatPausedAgo, type GuideSnapshot } from '@/lib/domain/guide';
 
 function formatCountdown(ms: number): string {
   const s = Math.max(0, Math.floor(ms / 1000));
@@ -20,14 +20,20 @@ function formatCountdown(ms: number): string {
 // the session is paused the server freezes the countdown at the at-pause
 // remainder (derived from pausedAt, so it survives reloads and polls), and
 // the card just displays that frozen value — no client-side capture.
-function ResumeTimer({ timer, paused }: { timer: { label: string; endsAt: number; remainingSeconds: number }; paused: boolean }) {
+function ResumeTimer({ timer, paused, pausedAt }: { timer: { label: string; endsAt: number; remainingSeconds: number }; paused: boolean; pausedAt?: number }) {
   const [remaining, setRemaining] = useState(Math.max(0, timer.endsAt - Date.now()));
+  // Ticks the "paused 2m ago" caption while paused (the frozen remainder itself
+  // must NOT tick — that comes from the server).
+  const [nowMs, setNowMs] = useState(Date.now());
   useEffect(() => {
-    if (paused) return; // the server reports the frozen at-pause remainder
-    setRemaining(Math.max(0, timer.endsAt - Date.now()));
-    const id = window.setInterval(() => {
+    if (!paused) {
       setRemaining(Math.max(0, timer.endsAt - Date.now()));
-    }, 1000);
+      const id = window.setInterval(() => {
+        setRemaining(Math.max(0, timer.endsAt - Date.now()));
+      }, 1000);
+      return () => window.clearInterval(id);
+    }
+    const id = window.setInterval(() => setNowMs(Date.now()), 1000);
     return () => window.clearInterval(id);
   }, [timer.endsAt, paused]);
   const shownMs = paused ? timer.remainingSeconds * 1000 : remaining;
@@ -37,11 +43,14 @@ function ResumeTimer({ timer, paused }: { timer: { label: string; endsAt: number
       role="timer"
       aria-label={
         paused
-          ? `${timer.label}, paused at ${formatCountdown(shownMs)}`
+          ? `${timer.label}, paused at ${formatCountdown(shownMs)}, ${formatPausedAgo(pausedAt ?? nowMs, nowMs)}`
           : `${timer.label}, ${formatCountdown(shownMs)} remaining`
       }
     >
       {paused ? '⏸' : '⏱'} {timer.label} · {formatCountdown(shownMs)}
+      {paused && pausedAt ? (
+        <span className={styles.resumeTimerPausedAgo}>{formatPausedAgo(pausedAt, nowMs)}</span>
+      ) : null}
     </span>
   );
 }
@@ -247,7 +256,7 @@ export default function HomePage() {
           {snap.activeTimers.length > 0 && (
             <div className={styles.resumeTimers}>
               {snap.activeTimers.map((t) => (
-                <ResumeTimer key={t.timerId} timer={t} paused={snap.paused ?? false} />
+                <ResumeTimer key={t.timerId} timer={t} paused={snap.paused ?? false} pausedAt={snap.pausedAt} />
               ))}
             </div>
           )}
