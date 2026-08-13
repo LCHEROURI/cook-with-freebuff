@@ -10,7 +10,7 @@ runConfig:
 env:
   # Firebase client config (safe to expose, available at build + runtime)
   - variable: NEXT_PUBLIC_FIREBASE_API_KEY
-    value: AIzaSyDwSkl-FVO53Vuzeoo3ZjtWhtJumnjtQiU
+    value: AIzaSyA9iUv7FVUDEuwO5pdEd8RXJc9qshNMRlE
     availability:
       - BUILD
       - RUNTIME
@@ -25,17 +25,17 @@ env:
       - BUILD
       - RUNTIME
   - variable: NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET
-    value: portfolio-app-freebuff2.appspot.com
+    value: portfolio-app-freebuff2.firebasestorage.app
     availability:
       - BUILD
       - RUNTIME
   - variable: NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID
-    value: "774744467587"
+    value: "952213217375"
     availability:
       - BUILD
       - RUNTIME
   - variable: NEXT_PUBLIC_FIREBASE_APP_ID
-    value: 1:774744467587:web:80ea5d2dda479df6e9f7b6
+    value: 1:952213217375:web:4de27046c743eceb523bea
     availability:
       - BUILD
       - RUNTIME
