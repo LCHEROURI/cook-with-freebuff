@@ -363,6 +363,32 @@ const wsUrlObserved = (n) => {
 const tokenPosted = (n) =>
   n.some((e) => e.method === 'Network.requestWillBeSent' && e.params.request.url.includes('/api/voice/token'));
 
+// Capture the copy-voice-details blob — the exact artifact the deployed
+// button produces — by patching navigator.clipboard.writeText and clicking
+// the button (reading the clipboard back needs document focus, which a
+// headless tab lacks). Returns the blob text, or a marker when the button is
+// missing / nothing was captured.
+async function captureVoiceDetailsBlob(cdp, evaluate) {
+  try {
+    await cdp.send('Browser.grantPermissions', {
+      permissions: ['clipboardReadWrite', 'clipboardSanitizedWrite'],
+      origin: APP,
+    });
+  } catch { /* older protocol — the page may still read the clipboard */ }
+  return evaluate(`(async () => {
+    const btn = document.querySelector('button[aria-label="Copy voice session details"]');
+    if (!btn) return 'NO_COPY_BUTTON (not listening / no error visible)';
+    let captured = null;
+    try {
+      const orig = navigator.clipboard.writeText.bind(navigator.clipboard);
+      navigator.clipboard.writeText = (t) => { captured = t; return orig(t).catch(() => undefined); };
+    } catch { /* clipboard unavailable — click still runs the handler */ }
+    btn.click();
+    await new Promise((r) => setTimeout(r, 400));
+    return captured ?? 'BLob_CAPTURE_MISS';
+  })()`);
+}
+
 // ── Session injection (same IndexedDB/localStorage recipe as the other drivers) ──
 const AUTH_USER = {
   uid: tokenPayload.sub,
@@ -852,30 +878,45 @@ for (let i = 0; i < 90 && !got2; i++) {
 }
 if (got2) {
   ok(`TWO spoken bursts transcribed through the active mic — “${seen[0]}” / “${seen[1]}”`);
+  // A passing run must ALSO prove the mic is not stuck: the "first burst then
+  // dead" signature is playback IDLE with a stuck non-empty queue, which the
+  // diagnostics blob reports as stuckQueueSince !== 0. If a future regression
+  // ever leaves the mic muted behind a stuck queue (even one that still
+  // yielded two bursts), this assertion fails the harness instead of passing
+  // silently. Retry the capture briefly in case the copy button was in a
+  // transient state between turns.
+  let blob = await captureVoiceDetailsBlob(cdpC, evC);
+  for (let i = 0; i < 5 && (blob.startsWith('NO_COPY_BUTTON') || blob.startsWith('BLob_CAPTURE_MISS')); i++) {
+    await sleep(1000);
+    blob = await captureVoiceDetailsBlob(cdpC, evC);
+  }
+  if (blob.startsWith('NO_COPY_BUTTON') || blob.startsWith('BLob_CAPTURE_MISS')) {
+    fail(`passing run but the diagnostics blob was not capturable (${blob}) — cannot prove the mic is not stuck`);
+  } else {
+    let parsed = null;
+    try { parsed = JSON.parse(blob); } catch { /* non-JSON blob */ }
+    // The page's copy payload nests the hook diagnostics under `gemini` (see
+    // app/cook/page.tsx copyMicDiagnostics): gemini.client holds the session
+    // diagnostics, so stuckQueueSince lives at gemini.client.stuckQueueSince.
+    const client = parsed?.gemini?.client ?? null;
+    const stuckSince = client?.stuckQueueSince;
+    // stuckQueueMs only exists once the derived-duration change deploys;
+    // absent is tolerated, present-and-non-zero is a stall.
+    const stuckMs = client?.stuckQueueMs;
+    const stuckMsBad = typeof stuckMs === 'number' && stuckMs !== 0;
+    if (client === null || stuckSince !== 0 || stuckMsBad) {
+      fail(`passing run but the blob reports a stuck queue (stuckQueueSince=${stuckSince}, stuckQueueMs=${stuckMs}) — blob + screenshot saved`);
+      try { writeFileSync(`${OUT}/phase-c-pass-blob.json`, blob); note('suspicious blob saved: phase-c-pass-blob.json'); } catch { /* non-fatal */ }
+      try { await cdpC.screenshot('phase-c-pass-blob'); note('screenshot: phase-c-pass-blob.png'); } catch { /* non-fatal */ }
+    } else {
+      ok(`diagnostics blob clean — stuckQueueSince=0${typeof stuckMs === 'number' ? `, stuckQueueMs=${stuckMs}` : ''} (no stall)`);
+    }
+  }
 } else {
   fail(`only ${seen.length} transcription(s) after 90s: ${JSON.stringify(seen.slice(-3))}`);
-  // The drop just happened — capture the copy-voice-details blob live, the
-  // exact artifact the deployed button produces, plus a screenshot.
-  try {
-    await cdpC.send('Browser.grantPermissions', {
-      permissions: ['clipboardReadWrite', 'clipboardSanitizedWrite'],
-      origin: APP,
-    });
-  } catch { /* older protocol — the page may still read the clipboard */ }
-  const blob = await evC(`(async () => {
-    const btn = document.querySelector('button[aria-label="Copy voice session details"]');
-    if (!btn) return 'NO_COPY_BUTTON (not listening / no error visible)';
-    // Patch writeText so the blob is captured directly — reading the clipboard
-    // back requires document focus, which a headless tab lacks.
-    let captured = null;
-    try {
-      const orig = navigator.clipboard.writeText.bind(navigator.clipboard);
-      navigator.clipboard.writeText = (t) => { captured = t; return orig(t).catch(() => undefined); };
-    } catch { /* clipboard unavailable — click still runs the handler */ }
-    btn.click();
-    await new Promise((r) => setTimeout(r, 400));
-    return captured ?? 'BLob_CAPTURE_MISS';
-  })()`);
+  // The drop just happened — capture the copy-voice-details blob live (the
+  // exact artifact the deployed button produces) plus a screenshot.
+  const blob = await captureVoiceDetailsBlob(cdpC, evC);
   console.log('\n=== copy-voice-details blob captured at the drop ===');
   console.log(blob);
   try { writeFileSync(`${OUT}/phase-c-drop-blob.json`, blob); note(`blob saved: phase-c-drop-blob.json`); } catch { /* non-fatal */ }
