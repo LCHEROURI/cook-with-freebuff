@@ -188,5 +188,16 @@ describe('scripts/verify-live.mjs · starter-flow gate (create → validate → 
     expect(SRC).toContain("await d.ref.update({ status: 'ABANDONED', lastActivityAt: Date.now() });");
     expect(SRC).toContain('archived before the UI stage');
     expect(SRC).toContain("ok(`orphan-recipe session ${d.id.slice(0, 8)}… (recipe “${s.recipeId.slice(0, 30)}” gone) settled (+ ${events.size} events)`)");
+    // A TOOL-FREE conversation session (no recipeId — the orchestrator's
+    // start_cooking_session fallback when a turn arrives without one) must
+    // NOT escape the settle: it has no recipe doc to check, so the old code
+    // skipped it outright and it stayed ACTIVE forever, auto-resuming /cook
+    // and hiding the starter on consecutive runs. Stale bare sessions must be
+    // archived like stale probes; the blanket `!s.recipeId` skip must not
+    // return.
+    expect(SRC).toContain('if (typeof s.recipeId !== \'string\' || !s.recipeId)');
+    expect(SRC).toContain('stale bare session');
+    expect(SRC).toContain('(no recipe, idle');
+    expect(SRC).not.toContain('if (typeof s.recipeId !== \'string\' || !s.recipeId) continue;');
   });
 });

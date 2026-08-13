@@ -525,9 +525,22 @@ try {
     for (const d of leftover.docs) {
       const s = d.data();
       if (s.status !== 'ACTIVE' && s.status !== 'PAUSED') continue;
-      if (typeof s.recipeId !== 'string' || !s.recipeId) continue;
       const lastActivity = typeof s.lastActivityAt === 'number' ? s.lastActivityAt : 0;
       const stale = lastActivity > 0 && lastActivity < idleCutoff;
+      // Bare sessions (no recipeId — tool-free conversation sessions the
+      // orchestrator creates via start_cooking_session when a turn arrives
+      // without one) escape the pre-run sweep AND the recipe checks below: a
+      // real cooking session ALWAYS carries a recipeId, so a bare ACTIVE one
+      // that has been idle is a leftover hijacker — archive it the same way
+      // as a stale probe (seen live: an idle bare session auto-resumed and
+      // hid the starter on two consecutive runs).
+      if (typeof s.recipeId !== 'string' || !s.recipeId) {
+        if (stale) {
+          await d.ref.update({ status: 'ABANDONED', lastActivityAt: Date.now() });
+          ok(`stale bare session ${d.id.slice(0, 8)}… (no recipe, idle ${Math.round((Date.now() - lastActivity) / 60000)}m) archived before the UI stage`);
+        }
+        continue;
+      }
       const recipeSnap = await db.collection('recipes').doc(s.recipeId).get();
       if (recipeSnap.exists && !stale) continue;
       if (recipeSnap.exists) {
