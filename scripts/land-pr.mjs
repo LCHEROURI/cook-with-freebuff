@@ -159,7 +159,7 @@ if (NO_MERGE) {
   try {
     run(`gh pr merge "${prNumber}" --auto --squash --delete-branch`);
     console.log(`\n✓ PR created with auto-merge armed (squash): ${prUrl}`);
-    console.log('  It merges itself once the required checks pass. Direct pushes to main stay rejected.');
+    console.log('  It merges itself once the required checks pass.');
   } catch {
     fail(1, `PR created at ${prUrl}, but arming auto-merge failed — merge it manually once checks are green`);
   }
