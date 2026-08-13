@@ -29,7 +29,7 @@ describe('authErrorMessage · Firebase auth error → honest copy', () => {
   });
 
   it('maps an unauthorized domain to the authorized-domains guidance', () => {
-    // The classic failure for a fresh Vercel URL: the domain is not in the
+    // The classic failure for a fresh deploy URL: the domain is not in the
     // project's Authorized domains — the message must point at the fix.
     expect(authErrorMessage('auth/unauthorized-domain')).toBe(SIGN_IN_BLOCKED);
     expect(SIGN_IN_BLOCKED).toContain('Authorized domains');

@@ -47,10 +47,10 @@ describe("README · 'Re-proving the gate's teeth in seconds'", () => {
 
   it('keeps the section with its read-only framing and the worktree-commit requirement', () => {
     expect(TEETH.length).toBeGreaterThan(0);
-    // The framing line: the proofs are read-only against git and Vercel —
+    // The framing line: the proofs are read-only against git and the host —
     // dropping it would let a future edit turn the proofs into something
     // that deploys or mutates.
-    expect(TEETH).toContain('All three are read-only against git and Vercel');
+    expect(TEETH).toContain('All three are read-only against git and the host');
     // The one requirement the one-liners rely on: the worktree commit must
     // carry the gate driver with --stale-guard support (≥ 067b313). Without
     // it, the copied hook one-liner runs an old driver and the proof silently

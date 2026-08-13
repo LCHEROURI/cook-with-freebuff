@@ -2,7 +2,8 @@
 // ============================================================================
 // scripts/verify-live.mjs — end-to-end verification of the DEPLOYED app.
 //
-// Proves the live stack (Vercel + Gemini + shared Firestore) works end to end:
+// Proves the live stack (Firebase App Hosting + Gemini + shared Firestore)
+// works end to end:
 //   1. Loads env (process.env first, then .env.local — plain KEY=VALUE lines,
 //      surrounding quotes stripped).
 //   1b. PRE-RUN SWEEP: archives leftover probe sessions (recipeId starting
@@ -51,7 +52,7 @@
 //      run's pre-run sweep.
 //
 // Usage:
-//   npm run verify:live                       # → https://cook-with-freebuff.vercel.app
+//   npm run verify:live                       # → https://cook-with-freebuff--portfolio-app-freebuff2.us-central1.hosted.app
 //   npm run verify:live -- --app http://localhost:3000
 //   VERIFY_BASE_URL=... node scripts/verify-live.mjs
 //   npm run verify:live:emulator              # guided flow vs the LOCAL emulators
@@ -94,22 +95,15 @@ const flag = (name, fallback) => {
   const i = process.argv.indexOf(name);
   return i >= 0 && process.argv[i + 1] ? process.argv[i + 1] : fallback;
 };
-const APP = (flag('--app', process.env.VERIFY_BASE_URL) ?? 'https://cook-with-freebuff.vercel.app').replace(/\/$/, '');
-// Second production target: Firebase App Hosting (Cloud Run SSR). The full
-// driver stages above run against APP; this URL gets a lightweight smoke
-// check (landing page + /api/build-info commit) so BOTH hosts are confirmed
-// every run without doubling the heavy Gemini/Chrome budget. Env-overridable
-// (VERIFY_APPHOSTING_URL) so the CI workflow can pin it explicitly and a
-// custom-domain migration never requires a script edit.
-const APPHOSTING_APP = (flag('--apphosting', process.env.VERIFY_APPHOSTING_URL) ?? 'https://cook-with-freebuff--portfolio-app-freebuff2.us-central1.hosted.app').replace(/\/$/, '');
+const APP = (flag('--app', process.env.VERIFY_BASE_URL) ?? 'https://cook-with-freebuff--portfolio-app-freebuff2.us-central1.hosted.app').replace(/\/$/, '');
 // Emulator mode: run the deterministic guided flow against the LOCAL
 // Firestore + Auth emulators instead of production. Enabled via the
 // `--emulator` flag or VERIFY_EMULATOR=1 (set by verify-live-emulator.mjs).
 const EMULATOR = process.argv.includes('--emulator') || process.env.VERIFY_EMULATOR === '1';
 // Guided-flow-only mode: stop after the deterministic guided flow [1]–[3],
 // skipping the production-only stages (starter/Gemini, Chrome drivers, agent
-// turns, App Hosting smoke). Used by verify-live-compare-emulator.mjs so the
-// deployed reference leg is fast and only emits the shared guided-flow steps.
+// turns). Used by verify-live-compare-emulator.mjs so the deployed reference
+// leg is fast and only emits the shared guided-flow steps.
 const GUIDED_ONLY = process.argv.includes('--guided-only');
 const EMULATOR_PROJECT_ID = 'demo-cook-with-freebuff';
 const AUTH_EMULATOR_HOST = process.env.FIREBASE_AUTH_EMULATOR_HOST || 'localhost:9099';
@@ -124,8 +118,8 @@ const skip = (m) => console.log(`  - SKIP: ${m}`);
 const note = (m) => console.log(`  - ${m}`);
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-// Safe pretty-print for fail messages — a non-JSON body (e.g. a Vercel
-// protection 401 page) must print as `null`, never crash the verifier.
+// Safe pretty-print for fail messages — a non-JSON body (e.g. a proxy error
+// page) must print as `null`, never crash the verifier.
 const j = (v) => JSON.stringify(v ?? null).slice(0, 160);
 const fetchJson = async (url, init) => {
   // The default 30s budget covers every ordinary call; callers that drive
@@ -799,49 +793,12 @@ try {
     skip('Gemini turn (GOOGLE_AI_API_KEY not set locally — provider check skipped, not failed)');
   }
 
-  // ── 4b. Second target smoke: Firebase App Hosting ─────────────────────────
-  // The primary flow above proves the Vercel stack end to end. This stage
-  // confirms the Firebase App Hosting build serves the SAME app (landing page
-  // + /api/build-info commit), so both production hosts are covered by one
-  // run. Lightweight by design — no Gemini/Chrome budget — and a host outage
-  // is a FAIL here, never a silent skip.
-  console.log(`\n[4b] Second target smoke: Firebase App Hosting (${APPHOSTING_APP})`);
-  const landingRes = await fetch(APPHOSTING_APP, { signal: AbortSignal.timeout(30_000) });
-  let landingHtml = '';
-  try { landingHtml = await landingRes.text(); } catch { /* non-text */ }
-  if (landingRes.status === 200 && /Kitchen Agent/.test(landingHtml)) {
-    ok(`App Hosting landing → 200 “Kitchen Agent”`);
-  } else {
-    fail(`App Hosting landing → ${landingRes.status} (expected 200 + “Kitchen Agent”)`);
-  }
-
-  const buildInfoRes = await fetch(`${APPHOSTING_APP}/api/build-info`, { signal: AbortSignal.timeout(30_000) });
-  const buildInfo = await buildInfoRes.json().catch(() => null);
-  const apphostingSha = typeof buildInfo?.commitSha === 'string' ? buildInfo.commitSha : '';
-  if (buildInfoRes.status === 200 && apphostingSha) {
-    ok(`App Hosting /api/build-info → commit ${apphostingSha.slice(0, 12)}…`);
-  } else {
-    fail(`App Hosting /api/build-info → ${buildInfoRes.status} (commit ${apphostingSha || 'missing'})`);
-  }
-
-  // Same-app proof: the App Hosting build must also answer /api/cook (the
-  // auth-gated surface both hosts share). Reuse the owner token minted above.
-  const apphostingCook = await fetchJson(`${APPHOSTING_APP}/api/cook`, {
-    method: 'POST',
-    headers: AUTH,
-    body: JSON.stringify({ action: 'status' }),
-  });
-  if (apphostingCook.status === 200) {
-    ok(`App Hosting /api/cook → 200 (owner session accepted)`);
-  } else {
-    fail(`App Hosting /api/cook → ${apphostingCook.status}`);
-  }
   } else {
     // Guided flow only: prove the deterministic steps [1]–[3] and stop. These
     // stages each need a production-only dependency — real Gemini generation
-    // ([3b], [4]), headless Chrome + Gemini Live ([3d], [3e]), and the live
-    // hosts ([4b]) — so they are skipped (emulator mode, or --guided-only).
-    skip('starter flow, UI/voice drivers, agent turns, and App Hosting smoke — guided flow only');
+    // ([3b], [4]) and headless Chrome + Gemini Live ([3d], [3e]) — so they
+    // are skipped (emulator mode, or --guided-only).
+    skip('starter flow, UI/voice drivers, and agent turns — guided flow only');
   }
 } catch (e) {
   // Only report if the token-exchange abort path hasn't already (that path

@@ -5,34 +5,36 @@ How this app is built, deployed, and verified, and what to do when something bre
 ## Topology
 
 ```
-push/PR ──► GitHub Actions (validate: typecheck · lint · test · build)
-                 │
-                 ├──► Vercel production deploy (cook-with-freebuff)
-                 │         │
-                 │         ▼
-                 │   deployment_status: verify-deployed (verify:live)
-                 │
-                 └──► emulator-compare smoke ──► App Hosting deploy
-                       (needs: validate + smoke)
+push/PR ──► GitHub Actions (validate: typecheck · lint · test · build
+             │            + tokenless stale-head guards)
+             │
+             ├──► emulator-compare smoke
+             │         │
+             │         ▼
+             └──► deploy-apphosting (App Hosting — PRIMARY production host)
+                       │
+                       ▼
+                   verify:live (same run: wait-for-sha → smoke → full E2E)
 ```
 
-- **Hosting** — Vercel. Production branch `main`. Preview deploys for PRs.
+- **Hosting** — Firebase App Hosting (Cloud Run, SSR). Production branch `main`.
+  Canonical URL: `https://cook-with-freebuff--portfolio-app-freebuff2.us-central1.hosted.app`.
 - **Auth / Data** — Firebase Auth + Firestore, shared with the portfolio app under **one union ruleset**
   (see `firestore.rules`). Both apps deploy the same rules file; keep them in sync in one commit.
 - **Admin SDK** — server-side only, service-account credentials from `FIREBASE_SERVICE_ACCOUNT`
-  (inline JSON in `.env.local` / Vercel env / GitHub secret).
+  (inline JSON in `.env.local` / GitHub secret).
 
 ## Required environment
 
 | Variable | Where | Purpose |
 |---|---|---|
-| `NEXT_PUBLIC_FIREBASE_API_KEY` | Vercel, GitHub secret | Client Firebase auth |
-| `FIREBASE_SERVICE_ACCOUNT` | `.env.local`, Vercel, GitHub secret | Admin SDK (inline JSON) |
-| `APP_OWNER_UID` | `.env.local`, Vercel, GitHub secret | Owner identity for verify:live + admin flows |
-| `GOOGLE_AI_API_KEY` | `.env.local`, Vercel, GitHub secret | Gemini provider (recipe gen, conversation) |
+| `NEXT_PUBLIC_FIREBASE_API_KEY` | GitHub secret | Client Firebase auth |
+| `FIREBASE_SERVICE_ACCOUNT` | `.env.local`, GitHub secret | Admin SDK (inline JSON) |
+| `APP_OWNER_UID` | `.env.local`, GitHub secret | Owner identity for verify:live + admin flows |
+| `GOOGLE_AI_API_KEY` | `.env.local`, GitHub secret | Gemini provider (recipe gen, conversation) |
 
-Local dev reads `.env.local`; CI reads GitHub secrets; Vercel reads its env store.
-The values must stay in sync across all three stores.
+Local dev reads `.env.local`; CI reads GitHub secrets. The values must stay in
+sync across both stores.
 
 ## Deploying
 
@@ -44,17 +46,20 @@ npm run typecheck && npm test && npm run build
 #    owner   git push origin main                                     # bypass-with-recording
 #    anyone  npm run land:pr -- --message "fix: ..." --wait           # branch + PR + merge-when-green
 
-# 3. Vercel auto-deploys the main branch
+# 3. CI deploys the main branch to App Hosting (after validate + smoke pass)
 
-# 4. Verify the deployed app end to end
-npm run verify:live                 # seeds owner recipe → guided flow → safety gate →
+# 4. CI verifies the deployed app end to end (same run, after the rollout
+#    serves the pushed commit):
+#    npm run verify:live            # seeds owner recipe → guided flow → safety gate →
                                     # timer → pantry confirm → Gemini turn → cleanup
 ```
 
-`verify:live` also runs automatically in CI after every main deploy
-(`verify-deployed` job), secret-gated on the four vars above with a loud
-guard: a missing secret on a main push **fails** the run instead of silently
-skipping.
+`verify:live` also runs automatically in CI in the same run as every main
+deploy (`verify:live` job, needs-edge of the deploy), secret-gated on the
+four vars above with a loud guard: a missing secret on a main push **fails**
+the run instead of silently skipping. Its first step polls the host's
+`/api/build-info` until it serves the pushed commit (tokenless), so it can
+never race the deploy.
 
 ## Landing changes (strict flow)
 
@@ -66,18 +71,23 @@ else must land through a pull request.
 
 ### Required checks
 
-Three checks are required before anything merges:
+One check is required before anything merges, plus a push-only smoke:
 
 | Check | Runs on | Gates |
 |---|---|---|
-| `Typecheck · Lint · Test · Build` | every PR + push | merge |
-| `Verify PR preview deploy (hash gate)` | Vercel preview deploy of the PR head | merge |
+| `Typecheck · Lint · Test · Build` | every PR + push | merge (includes the tokenless push + PR stale-head guards) |
 | `Emulator-compare smoke (guided flow vs live)` | main pushes (push-only job) | the App Hosting deploy (`needs: [validate, emulator-compare]`) |
+
+There is **no PR preview deploy check** — App Hosting is the only host and
+builds no Vercel-style previews. The old `Verify PR preview deploy (hash
+gate)` check was removed with Vercel: with a single host there is no second
+build system to reconcile, `validate` proves the app builds, and a bad App
+Hosting build of the merged main fails the `deploy-apphosting` job loudly.
 
 The smoke reports **skipped** on PRs by design — its deployed leg writes to the
 shared production backend, so per-PR runs would burn the owner-verify write
 budget. A skipped required check does not block an auto-merge (verified live:
-PRs #13 and #14 merged on validate + preview gate with the smoke skipped).
+PRs #13 and #14 merged with the smoke skipped).
 
 ### Merge-when-green (the one-command path)
 
@@ -108,7 +118,8 @@ bypass-with-recording makes the direct push itself unblocked.
 
 ## Verify:live contract
 
-`scripts/verify-live.mjs` proves the whole stack against the live build:
+`scripts/verify-live.mjs` proves the whole stack against the live App Hosting
+build:
 
 1. Seeds an owner-scoped recipe via the Admin SDK
 2. Mints an owner ID token (`createCustomToken` → identitytoolkit exchange)
@@ -136,17 +147,17 @@ npm run verify:live -- --app http://localhost:3100   # local dev server
 
 ## Rollback
 
-```bash
-# Vercel: promote a previous deployment via the dashboard, or
-vercel rollback <deployment-url>
-```
+App Hosting keeps prior rollouts; to roll back, promote a previous rollout via
+the Firebase console (App Hosting → rollouts) or redeploy an earlier commit.
+There is no second host to switch to — the App Hosting rollout history IS the
+rollback surface.
 
 ## Troubleshooting
 
 | Symptom | Likely cause | Fix |
 |---|---|---|
 | verify:live fails at seed | `FIREBASE_SERVICE_ACCOUNT` stale/missing | Re-sync all three stores |
-| verify:live fails at Gemini turn | `GOOGLE_AI_API_KEY` missing on Vercel | Add to Vercel env, redeploy |
+| verify:live fails at Gemini turn | `GOOGLE_AI_API_KEY` missing | Add to GitHub secrets (and `apphosting.yaml` for runtime), redeploy |
 | `/api/*` returns 401 | ID token rejected | Check `NEXT_PUBLIC_FIREBASE_API_KEY` matches project |
 | Firestore reads/writes fail client-side | Rules not deployed / drifted | Re-deploy union ruleset from portfolio repo |
 | CI validate fails at lint | ESLint config drift | `npm run lint` locally first |

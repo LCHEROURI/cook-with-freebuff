@@ -7,7 +7,7 @@
 // build's `git rev-parse HEAD` returns nothing. This predeploy step writes the
 // SHA to a tiny file that IS included in the upload, and next.config.mjs reads
 // it as a fallback — so /api/build-info can report the real commit on App
-// Hosting exactly like it does on Vercel.
+// Hosting exactly like it does on the primary App Hosting host.
 // ============================================================================
 
 import { execSync } from 'node:child_process';

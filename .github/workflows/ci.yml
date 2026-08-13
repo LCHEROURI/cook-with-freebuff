@@ -47,31 +47,20 @@ jobs:
         run: npm run build
 
       # Push-time stale-head guard: verifies the pushed HEAD is not a rollback
-      # of what Vercel is currently serving, BEFORE the deploy starts (the
-      # post-deploy workflow can only prove what was deployed == what was
-      # pushed; it cannot catch a stale push that should never have deployed).
-      # Runs verify-deployed-hash with --stale-guard, which is DIRECTION-aware:
-      # a normal forward push (live behind the pushed HEAD — the standard case
-      # right before a deploy) PASSES here and is proven after deploy; only a
-      # push whose HEAD is NOT ahead of live (rollback/diverged) fails. Only
-      # runs on pushes to main — a PR head is legitimately behind live main, so
-      # the check would falsely block every PR. Gated on VERCEL_TOKEN; the
-      # loud guard below turns a missing token into a failure instead of a
-      # silently skipped gate.
-      - name: Fail loudly if VERCEL_TOKEN is missing (main push)
-        if: ${{ github.event_name == 'push' && github.repository == 'LCHEROURI/cook-with-freebuff' && env.VERCEL_TOKEN == '' }}
-        run: |
-          echo "::error::VERCEL_TOKEN secret missing — the stale-head guard cannot run on a main push."
-          echo "Add it under GitHub -> Settings -> Secrets and variables -> Actions, then re-run."
-          exit 1
-        env:
-          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
-
+      # of what the App Hosting host is currently serving, BEFORE the deploy
+      # starts (the post-deploy gate can only prove what was deployed == what
+      # was pushed; it cannot catch a stale push that should never have
+      # deployed). Runs verify-deployed-hash with --stale-guard, which is
+      # DIRECTION-aware: a normal forward push (live behind the pushed HEAD —
+      # the standard case right before a deploy) PASSES here and is proven
+      # after deploy; only a push whose HEAD is NOT ahead of live
+      # (rollback/diverged) fails. Tokenless: the live commit comes from the
+      # host's public /api/build-info, so no secret gate is needed. Only runs
+      # on pushes to main — a PR head is legitimately behind live main, so the
+      # check would falsely block every PR.
       - name: Verify pushed head is not stale vs live (stale-guard)
-        if: ${{ github.event_name == 'push' && env.VERCEL_TOKEN != '' }}
+        if: ${{ github.event_name == 'push' }}
         run: node scripts/verify-deployed-hash-gate.mjs --stale-guard
-        env:
-          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
 
       # PR-time stale-head guard: the SAME direction-aware gate, pinned to the
       # PR head via --head instead of the pushed HEAD. This is load-bearing on
@@ -84,31 +73,19 @@ jobs:
       # head is legitimately behind BASE main (that is why this step never
       # runs on push — the push-time step above is the push contract), but a
       # PR cut before LIVE's state is exactly what this check surfaces in the
-      # PR checks instead of only at merge time. Gated on VERCEL_TOKEN: fork
-      # PRs have no secrets → skip-not-fail, and the loud guard below fails a
-      # missing token on the canonical repo instead of a silently green skip.
-      - name: Fail loudly if VERCEL_TOKEN is missing (PR)
-        if: ${{ github.event_name == 'pull_request' && github.repository == 'LCHEROURI/cook-with-freebuff' && env.VERCEL_TOKEN == '' }}
-        run: |
-          echo "::error::VERCEL_TOKEN secret missing — the PR stale-head guard cannot run."
-          echo "Add it under GitHub -> Settings -> Secrets and variables -> Actions, then re-run."
-          exit 1
-        env:
-          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
-
+      # PR checks instead of only at merge time. Tokenless like the push-time
+      # step. Fork PRs are skipped: the gate fetches commits by sha from
+      # origin, and a fork's origin does not carry the live commit on upstream
+      # main, so the ancestry check cannot run there.
       - name: Verify PR head is not stale vs live (stale-guard)
-        if: ${{ github.event_name == 'pull_request' && env.VERCEL_TOKEN != '' }}
+        if: ${{ github.event_name == 'pull_request' && github.repository == 'LCHEROURI/cook-with-freebuff' }}
         run: node scripts/verify-deployed-hash-gate.mjs --stale-guard --head "${{ github.event.pull_request.head.sha }}"
-        env:
-          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
 
-  # Firebase App Hosting sync: deploy the Firebase Hosting side after every
-  # push to main, so it stops drifting behind Vercel (which auto-deploys on
-  # push while App Hosting had to be deployed manually via `npm run
-  # deploy:apphosting`). Runs AFTER validate passes (never deploy broken code).
-  # Auth is a FIREBASE_TOKEN refresh token from `firebase login:ci` run as the
-  # project OWNER: `firebase deploy --only apphosting` is the "deploy from
-  # source as a human" path and provisions resources (creates a service
+  # Firebase App Hosting deploy — App Hosting is the PRIMARY production host.
+  # Every main push deploys here, AFTER validate passes (never deploy broken
+  # code). Auth is a FIREBASE_TOKEN refresh token from `firebase login:ci` run
+  # as the project OWNER: `firebase deploy --only apphosting` is the "deploy
+  # from source as a human" path and provisions resources (creates a service
   # account, sets the project IAM policy for the App Hosting agents) that
   # require owner-level IAM — the restricted Admin SDK service account the
   # verify gates use does NOT have it, and must never be widened to setIamPolicy.
@@ -122,7 +99,7 @@ jobs:
   # local Firestore/Auth emulator stack AND matches what production serves,
   # BEFORE any deploy proceeds. Runs on every main push (and manual
   # dispatch); deploy-apphosting waits on it. The deployed leg uses the same
-  # owner-credential secrets verify-deployed.yml uses; the emulator leg is
+  # owner-credential secrets the verify:live job uses; the emulator leg is
   # offline and needs Java 21 (Firestore emulator). A divergence — a guided
   # step that passes on one stack and not the other — fails the job.
   #
@@ -246,10 +223,127 @@ jobs:
         env:
           FIREBASE_TOKEN: ${{ secrets.FIREBASE_TOKEN }}
 
-  # NOTE: the post-deploy verify:live gate NO LONGER lives here. It used to run
-  # in this push-triggered job, where it RACED the Vercel build — hitting the
-  # previous deployment or a 502 mid-deploy. It now runs from
-  # .github/workflows/verify-deployed.yml, triggered by Vercel's
-  # deployment_status event AFTER a successful production deploy, targeting the
-  # deployment's own URL. Validate above is the push-time contract; the live
-  # contract is the post-deploy workflow.
+  # Post-deploy verify:live — the deployed-app gate. Runs in the SAME run as
+  # the deploy (needs: [deploy-apphosting]) instead of an event-driven
+  # workflow, so it can never race the host build the way the old push-time
+  # job did against Vercel. `firebase deploy --only apphosting` can return
+  # while the rollout is still queued or building, so the first step polls
+  # the host's /api/build-info (tokenless) until it serves the pushed commit
+  # (wait-for-deploy-sha) — the gate PROVES the target serves your commit
+  # before exercising it. Then the post-deploy smoke and verify:live run
+  # against that same host. deploy-apphosting only runs on real main pushes +
+  # workflow_dispatch, so this job is skipped on PRs and merge-queue pushes.
+  verify-live:
+    name: Verify deployed app after deploy (verify:live)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    needs: [deploy-apphosting]
+
+    env:
+      NEXT_PUBLIC_FIREBASE_API_KEY: ${{ secrets.NEXT_PUBLIC_FIREBASE_API_KEY }}
+      FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+      APP_OWNER_UID: ${{ secrets.APP_OWNER_UID }}
+      GOOGLE_AI_API_KEY: ${{ secrets.GOOGLE_AI_API_KEY }}
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v5
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      # Loud guard: on a real main deploy of the canonical repo, a missing
+      # secret fails the run instead of silently skipping the verify steps
+      # below — a skipped gate would masquerade as a green post-deploy check.
+      # Manual workflow_dispatch re-runs stay exempt (operator-initiated,
+      # skipped steps are visible to the operator).
+      - name: Fail loudly if a verify secret is missing (main deploy)
+        if: ${{ github.event_name != 'workflow_dispatch' && github.repository == 'LCHEROURI/cook-with-freebuff' && (env.NEXT_PUBLIC_FIREBASE_API_KEY == '' || env.FIREBASE_SERVICE_ACCOUNT == '' || env.APP_OWNER_UID == '' || env.GOOGLE_AI_API_KEY == '') }}
+        run: |
+          echo "::error::Required GitHub Actions secret(s) missing on main deploy:"
+          [ -z "$NEXT_PUBLIC_FIREBASE_API_KEY" ] && echo "  - NEXT_PUBLIC_FIREBASE_API_KEY (mints the owner ID token for verify:live)"
+          [ -z "$FIREBASE_SERVICE_ACCOUNT" ] && echo "  - FIREBASE_SERVICE_ACCOUNT (seeds the owner recipe + mints the owner custom token)"
+          [ -z "$APP_OWNER_UID" ] && echo "  - APP_OWNER_UID (the owner Firebase Auth uid verify:live signs in as)"
+          [ -z "$GOOGLE_AI_API_KEY" ] && echo "  - GOOGLE_AI_API_KEY (the Gemini provider the agent turn must answer with)"
+          echo "Add them under GitHub -> Settings -> Secrets and variables -> Actions, then re-run this job."
+          exit 1
+        env:
+          NEXT_PUBLIC_FIREBASE_API_KEY: ${{ secrets.NEXT_PUBLIC_FIREBASE_API_KEY }}
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+          APP_OWNER_UID: ${{ secrets.APP_OWNER_UID }}
+          GOOGLE_AI_API_KEY: ${{ secrets.GOOGLE_AI_API_KEY }}
+
+      # The deploy job can exit while the rollout is still building. Prove the
+      # host serves the pushed commit (github.sha — what write-commit.mjs
+      # stamped) before doing anything else; a timeout names the failing hop.
+      # Tokenless: /api/build-info is public.
+      - name: Wait for the App Hosting rollout to serve the pushed commit
+        run: node scripts/wait-for-deploy-sha.mjs --url "https://cook-with-freebuff--portfolio-app-freebuff2.us-central1.hosted.app" --expect "${{ github.sha }}"
+
+      # Post-deploy smoke: the pre-deploy emulator-compare smoke gates the
+      # DEPLOY (above); this is the same fail-fast pattern on the post-deploy
+      # side, and it needs NOTHING NEW — plain curl, the canonical URL already
+      # wired above, no secrets, no setup. verify:live is a ~20-30 min run, so
+      # before committing to it this step proves the two cheapest facts about
+      # the fresh deploy: the canonical URL answers 200 and /api/build-info
+      # serves a real commitSha. A broken hop fails here in seconds with the
+      # hop named, instead of surfacing half an hour later inside verify:live.
+      # Gated on the same four secrets as verify:live, so a fork that skips
+      # the deep run also skips its pre-flight.
+      - name: Post-deploy smoke (app up + build-info answers)
+        if: ${{ env.NEXT_PUBLIC_FIREBASE_API_KEY != '' && env.FIREBASE_SERVICE_ACCOUNT != '' && env.APP_OWNER_UID != '' && env.GOOGLE_AI_API_KEY != '' }}
+        run: |
+          set -euo pipefail
+          base="https://cook-with-freebuff--portfolio-app-freebuff2.us-central1.hosted.app"
+          code="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 15 "$base")" || {
+            echo "::error::post-deploy smoke: canonical URL did not answer (curl exit $?) — the fresh deploy is not reachable"
+            exit 1
+          }
+          if [ "$code" != "200" ]; then
+            echo "::error::post-deploy smoke: canonical URL answered HTTP $code (expected 200) — the fresh deploy is not reachable"
+            exit 1
+          fi
+          body="$(curl -sS --max-time 15 "$base/api/build-info")" || {
+            echo "::error::post-deploy smoke: /api/build-info did not answer (curl exit $?) — the API hop is broken"
+            exit 1
+          }
+          sha="$(printf '%s' "$body" | sed -n 's/.*"commitSha":"\([^"]*\)".*/\1/p')"
+          if [ -z "$sha" ]; then
+            echo "::error::post-deploy smoke: /api/build-info answered but reported no commitSha (raw: ${body:0:120})"
+            exit 1
+          fi
+          echo "post-deploy smoke: canonical 200, /api/build-info commit ${sha:0:12} — verify:live preconditions met"
+
+      # Chrome: verify:live's [3d] stage drives the real /cook UI via
+      # scripts/drive-starter-prefs.mjs (headless CDP), so the runner needs a
+      # Chromium binary — same browser-actions/setup-chrome pattern as before.
+      # CHROME_PATH is threaded into the step so the driver's spawn finds the
+      # Linux binary (its Mac path fallback would crash here).
+      - name: Install Chrome for the UI starter driver
+        id: chrome
+        uses: browser-actions/setup-chrome@v2
+        with:
+          chrome-version: stable
+
+      # End-to-end verification of the freshly deployed app, against the
+      # canonical App Hosting URL. Gated on the full credential set so forks /
+      # unconfigured repos stay green, and the Gemini turn is always enforced
+      # here (locally it SKIPs when the key is absent). The wait-for-sha step
+      # above is what guarantees "new build": the host provably serves the
+      # pushed commit before this runs.
+      - name: Verify deployed app end to end (verify:live)
+        if: ${{ env.NEXT_PUBLIC_FIREBASE_API_KEY != '' && env.FIREBASE_SERVICE_ACCOUNT != '' && env.APP_OWNER_UID != '' && env.GOOGLE_AI_API_KEY != '' }}
+        run: npm run verify:live
+        env:
+          VERIFY_BASE_URL: https://cook-with-freebuff--portfolio-app-freebuff2.us-central1.hosted.app
+          CHROME_PATH: ${{ steps.chrome.outputs.chrome-path }}
+          NEXT_PUBLIC_FIREBASE_API_KEY: ${{ secrets.NEXT_PUBLIC_FIREBASE_API_KEY }}
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+          APP_OWNER_UID: ${{ secrets.APP_OWNER_UID }}
+          GOOGLE_AI_API_KEY: ${{ secrets.GOOGLE_AI_API_KEY }}

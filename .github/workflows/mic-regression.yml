@@ -46,7 +46,7 @@ jobs:
       APP_OWNER_UID: ${{ secrets.APP_OWNER_UID }}
       # The driver defaults to the canonical URL; pin it explicitly so a
       # future move of the default can never silently re-target the monitor.
-      VERIFY_BASE_URL: https://cook-with-freebuff.vercel.app
+      VERIFY_BASE_URL: https://cook-with-freebuff--portfolio-app-freebuff2.us-central1.hosted.app
 
     steps:
       - name: Check out repository

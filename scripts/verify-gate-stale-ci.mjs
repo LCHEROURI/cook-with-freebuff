@@ -14,11 +14,11 @@
 // So right after a deploy both verdicts reproduce BY CONSTRUCTION — the teeth
 // are proven on the real runner, not just via the npm one-liners.
 //
-// Skip-not-fail on the transient edge: right after a deploy the canonical
-// alias can still serve the previous commit (alias promotion lag), or the
-// Vercel API can hiccup — in those states the verdicts CANNOT reproduce, so
-// the wrapper prints a loud SKIP instead of failing the run. Only a proof
-// that can reproduce is allowed to fail.
+// Skip-not-fail on the transient edge: right after a deploy the host can
+// still serve the previous commit (rollout settling), or /api/build-info can
+// hiccup — in those states the verdicts CANNOT reproduce, so the wrapper
+// prints a loud SKIP instead of failing the run. Only a proof that can
+// reproduce is allowed to fail.
 //
 // The skip decision reuses the gate's OWN direction logic — there is no
 // duplicated verdict code in this file. The precondition probe runs
@@ -28,7 +28,6 @@
 //   exit 1 + `✗ STALE-HEAD BLOCK` → live is strictly AHEAD of the parent —
 //       the one state where both teeth reproduce → run the proof.
 //   exit 0 → live is at or behind the parent (deploy-lag transient) → SKIP.
-//   exit 2 → live could not be resolved (token/API transient) → SKIP.
 //   exit 1 without the BLOCK line → the gate's own fail-loud "could not
 //       determine the live commit" path → SKIP.
 //
@@ -102,8 +101,8 @@ if (!blocked) {
   if (probe.stderr) process.stderr.write(probe.stderr);
   const reason =
     probe.status === 0
-      ? "live is not yet strictly ahead of the pushed commit's parent (alias promotion lag — the deploy may still be settling)"
-      : 'the live commit could not be determined (Vercel API / credential transient)';
+      ? "live is not yet strictly ahead of the pushed commit's parent (rollout settling — the deploy may still be rolling out)"
+      : 'the live commit could not be determined (App Hosting /api/build-info transient)';
   console.log(`\nSKIP: gate-stale proof could not reproduce right after this deploy — ${reason}.`);
   console.log('  The teeth will be machine-re-proven on the next deploy — this skip is not a failure.');
   process.exit(0);

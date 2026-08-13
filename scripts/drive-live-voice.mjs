@@ -62,7 +62,7 @@ const flag = (name, fallback) => {
   const i = args.indexOf(name);
   return i >= 0 && args[i + 1] ? args[i + 1] : fallback;
 };
-const APP = (flag('--app', process.env.VERIFY_BASE_URL) ?? 'https://cook-with-freebuff.vercel.app').replace(/\/$/, '');
+const APP = (flag('--app', process.env.VERIFY_BASE_URL) ?? 'https://cook-with-freebuff--portfolio-app-freebuff2.us-central1.hosted.app').replace(/\/$/, '');
 const OUT = flag('--out', '/tmp/live-voice-drive');
 // Run ONLY the two-burst phase (used to measure its pass rate across repeated
 // runs — Phase A and B are skipped, and the owner session is injected fresh).

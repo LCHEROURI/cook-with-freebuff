@@ -16,10 +16,11 @@ import { describe, expect, it } from 'vitest';
 // shared driver in --stale-guard mode (scripts/verify-deployed-hash-gate.mjs)
 // — the SAME direction-aware verdict the CI validate job runs. The hook
 // contains no bash reimplementation of the direction logic (no merge-base
-// ancestry code): the driver's exit code IS the verdict (0 = safe, 1 = block,
-// 2 = bad token). The direction logic itself is locked by
-// verify-deployed-hash-gate.test.ts; here we lock that the hook delegates and
-// mirrors the codes.
+// ancestry code): the driver's exit code IS the verdict (0 = safe, 1 =
+// block). There is no exit-2 credential path — the gate is tokenless — so
+// the hook must not carry a warn-and-continue branch. The direction logic
+// itself is locked by verify-deployed-hash-gate.test.ts; here we lock that
+// the hook delegates and mirrors the codes.
 // ============================================================================
 
 const HOOK = readFileSync('.githooks/pre-push', 'utf8');
@@ -66,23 +67,23 @@ describe('.githooks/pre-push · exit-code routing (the driver verdict)', () => {
     expect(HOOK).toContain('exit 0');
   });
 
-  it('exit 2 (invalid/revoked token) → warn and continue, never blocks', () => {
-    expect(HOOK).toContain('[ "$CODE" -eq 2 ]');
-    expect(HOOK).toContain('invalid/revoked token');
-    expect(HOOK).toContain('exit 0');
+  it('has NO warn-and-continue credential branch (the gate is tokenless)', () => {
+    // The old exit-2 path (invalid/revoked token → warn + continue) is gone
+    // with the token chain. A regression that reintroduces it would silently
+    // skip the gate on a class of failures that no longer exists — fail here.
+    expect(HOOK).not.toContain('-eq 2');
+    expect(HOOK).not.toContain('invalid/revoked');
   });
 
   it('exit 1 (stale head OR unverifiable) → BLOCKS the push with exit 1', () => {
     expect(HOOK).toContain('✗ BLOCKED');
     expect(HOOK).toContain('SKIP_VERIFY_DEPLOYED_HASH=1');
     expect(HOOK).toContain('exit 1');
-    // The block must come AFTER the exit-0 and exit-2 branches — a reorder
-    // that lets a blocked push fall through to a proceed branch fails here.
+    // The block must come AFTER the exit-0 branch — a reorder that lets a
+    // blocked push fall through to a proceed branch fails here.
     const proceed = HOOK.indexOf('safe to push');
-    const warn = HOOK.indexOf('invalid/revoked token');
     const blocked = HOOK.indexOf('✗ BLOCKED');
     expect(proceed).toBeGreaterThan(-1);
-    expect(warn).toBeGreaterThan(proceed);
-    expect(blocked).toBeGreaterThan(warn);
+    expect(blocked).toBeGreaterThan(proceed);
   });
 });

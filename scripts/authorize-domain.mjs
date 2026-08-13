@@ -3,13 +3,13 @@
 // scripts/authorize-domain.mjs — add a deployment URL to the shared Firebase
 // project's authorized domains using a service account.
 //
-//   node scripts/authorize-domain.mjs --domain https://cook-with-freebuff.vercel.app
+//   node scripts/authorize-domain.mjs --domain https://cook-with-freebuff--portfolio-app-freebuff2.us-central1.hosted.app
 //
 // Google sign-in (Firebase Auth) only works from domains listed in the
 // project's Authorized domains. This script reads the Identity Platform admin
 // config, appends the domain if missing, and PATCHes it back — idempotent:
 // exits 0 when already present. It makes the login page work on a fresh
-// Vercel URL without a console click.
+// App Hosting URL without a console click.
 //
 // Reads the service account from FIREBASE_SERVICE_ACCOUNT (inline JSON) or
 // FIREBASE_SERVICE_ACCOUNT_PATH (file), mints a Google OAuth token from the
@@ -26,7 +26,7 @@ const flag = (name, fallback) => {
   const i = args.indexOf(name);
   return i >= 0 && args[i + 1] ? args[i + 1] : fallback;
 };
-const DOMAIN = new URL(flag('--domain', 'https://cook-with-freebuff.vercel.app')).hostname;
+const DOMAIN = new URL(flag('--domain', 'https://cook-with-freebuff--portfolio-app-freebuff2.us-central1.hosted.app')).hostname;
 const PROJECT = process.env.FIREBASE_PROJECT_ID ?? 'portfolio-app-freebuff2';
 const CONFIG_URL = `https://identitytoolkit.googleapis.com/admin/v2/projects/${PROJECT}/config`;
 

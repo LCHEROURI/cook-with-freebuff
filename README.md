@@ -12,7 +12,7 @@ Voice-first / screen-light intelligent cooking companion.
 | AI | Provider boundary (Gemini ready, swappable) |
 | Validation | Zod (runtime input/output validation) |
 | Tests | Vitest |
-| Hosting | Vercel + Firebase App Hosting (Cloud Run, SSR) |
+| Hosting | Firebase App Hosting (Cloud Run, SSR) |
 
 ## Architecture
 
@@ -66,9 +66,12 @@ Every push to `main` runs the same contract-locked discipline as Freebuff's port
 2. **Full test suite** — `npm test` (284 tests, unit + integration)
 3. **ESLint** — `npm run lint` (configured for CI, `root: true`)
 4. **Production build** — `npm run build`
-5. **Live E2E after every deploy** — `verify-deployed` job runs `npm run verify:live`
-   against the deployed app: seed owner recipe → guided flow → safety gate →
-   timer auto-start → pantry add + confirm → Gemini turn → cleanup
+5. **Live E2E after every deploy** — the `verify:live` job (a needs-edge of the
+   App Hosting deploy in the same CI run) runs `npm run verify:live` against
+   the deployed app: seed owner recipe → guided flow → safety gate →
+   timer auto-start → pantry add + confirm → Gemini turn → cleanup. Its first
+   step polls the host's `/api/build-info` until it serves the pushed commit,
+   so it can never race the deploy
 6. **Secret-gated loud guards** — a missing secret on a main push fails the
    run with a targeted message instead of silently skipping
 
@@ -338,7 +341,7 @@ npm test
 npm run build
 
 # MANUAL deploy to Firebase App Hosting (Cloud Run SSR) — stamps commit-sha.txt
-# (read by /api/build-info) then uploads + rolls out to Cloud Run. CI now runs
+# (read by /api/build-info) then uploads + rolls out to Cloud Run. CI runs
 # this automatically on every push to main (see "Firebase App Hosting
 # auto-deploy" below); this command is the manual fallback / local deploy.
 npm run deploy:apphosting
@@ -346,8 +349,8 @@ npm run deploy:apphosting
 # End-to-end verification of the DEPLOYED app (seed recipe + owner token +
 # guided flow + safety gate + timer + Gemini turn, with cleanup)
 npm run verify:live
-# → https://cook-with-freebuff.vercel.app (override: npm run verify:live -- --app URL)
-# → https://cook-with-freebuff--portfolio-app-freebuff2.us-central1.hosted.app (Firebase App Hosting)
+# → https://cook-with-freebuff--portfolio-app-freebuff2.us-central1.hosted.app
+#   (override: npm run verify:live -- --app URL)
 #
 # The two-burst mic path is monitored WEEKLY in CI: the mic-regression
 # workflow (Mondays 06:00 UTC, manual via workflow_dispatch) runs 6 phase-C
@@ -389,21 +392,22 @@ npm run verify:live:compare:emulator
 # and fails on any status-line divergence
 npm run verify:live:compare
 
-# Live commit vs local HEAD, before any deploy — reports the commit BOTH
-# Vercel and Firebase App Hosting are serving and fails unless each matches
-# your local HEAD (exit 2 = the VERCEL_TOKEN is invalid/revoked)
+# Live commit vs local HEAD, before any deploy — reports the commit the App
+# Hosting host is serving and fails unless it matches your local HEAD. Fully
+# tokenless (the live commit comes from the host's public /api/build-info).
 npm run verify:deployed-hash
 ```
 
 ## Firebase App Hosting auto-deploy (CI)
 
-Every push to `main` deploys the Firebase Hosting side automatically, so it
-stops drifting behind Vercel (which auto-deploys on push while App Hosting
-used to need a manual `npm run deploy:apphosting`). The `deploy-apphosting`
-job in `.github/workflows/ci.yml` runs **after** `validate` passes (broken
+App Hosting is the **primary production host**. Every push to `main` deploys
+here automatically: the `deploy-apphosting` job in `.github/workflows/ci.yml`
+runs **after** `validate` passes and after the emulator-compare smoke (broken
 code never deploys), stamps the pushed commit into `commit-sha.txt` (the
 App Hosting source ZIP excludes `.git`, so `/api/build-info` can report the
-exact commit), then rolls out to Cloud Run.
+exact commit), then rolls out to Cloud Run. The same CI run then verifies the
+deployment: the `verify:live` job waits until `/api/build-info` serves the
+pushed commit, then runs the full end-to-end check against the host.
 
 **Auth is a `FIREBASE_TOKEN` refresh token from `firebase login:ci` run as
 the project OWNER — not the service account.** The reason is IAM, not
@@ -434,8 +438,7 @@ hygiene, and immediately after any of those events or a suspected leak.
 
 **A stale token never fails silently.** When the token dies, the next `main`
 push leaves the `deploy-apphosting` job RED with a Firebase auth error (loud,
-on the runner, not silent), while Vercel still deploys independently — so the
-app stays up and only the Firebase Hosting side stops auto-syncing. Recovery
+on the runner, not silent) and the verify:live needs-edge never runs. Recovery
 is the same two lines above: re-run `login:ci`, update the secret, then
 re-run the failed job (or push again). The contract test in
 `scripts/ci-workflows.test.ts` locks the loud-guard so a missing-token push
@@ -449,19 +452,19 @@ so a skipped deploy can never masquerade as a green auto-sync.
 
 `.githooks/pre-push` runs the `verify:deployed-hash` gate on any push that
 lands on `refs/heads/main` and shows the operator exactly what the push will
-change relative to what Vercel is currently serving. The hook **delegates its
-entire verdict to the gate driver's `--stale-guard` mode** — the same
-implementation the CI validate job runs — so the local hook and CI can never
-disagree about what is safe to push:
+change relative to what the App Hosting host is currently serving. The hook
+**delegates its entire verdict to the gate driver's `--stale-guard` mode** —
+the same implementation the CI validate job runs — so the local hook and CI
+can never disagree about what is safe to push. The gate is tokenless (it
+reads the host's public `/api/build-info`), so the hook has no credential
+path to degrade:
 
 - exit 0 → PASS (live == HEAD, or a forward deploy — live is behind HEAD;
-  the post-deploy gate verifies after Vercel finishes)
+  the post-deploy gate verifies after App Hosting finishes)
 - exit 1 → **blocked** — live is **not** an ancestor of HEAD (rollback /
   clobber risk, pull/rebase first), or the live commit could not be
   determined at all (a push that cannot be verified must not go out
   silently)
-- exit 2 → invalid/revoked token — warn and continue (a bad local token
-  must not block a deploy; CI has its own token and verifies there)
 
 Wire it in a fresh clone:
 
@@ -519,25 +522,19 @@ git worktree add --detach /tmp/cook-stale-guard HEAD~1 && (cd /tmp/cook-stale-gu
 git worktree add --detach /tmp/cook-hook-block HEAD~1 && mkdir -p /tmp/cook-hook-block/.githooks && cp .githooks/pre-push /tmp/cook-hook-block/.githooks/ && cp scripts/verify-deployed-hash-gate.mjs scripts/verify-deployed-hash.mjs /tmp/cook-hook-block/scripts/ && (cd /tmp/cook-hook-block && printf 'refs/heads/main a refs/heads/main b\n' | bash .githooks/pre-push; echo "hook exit=$?"); git worktree remove /tmp/cook-hook-block --force
 ```
 
-All three are read-only against git and Vercel — nothing is pushed, deployed, or
-modified; only a temporary worktree is created and removed.
+All three are read-only against git and the host — nothing is pushed, deployed,
+or modified; only a temporary worktree is created and removed.
 
-### PR preview gate — the post-deploy check PRs report
+### PR checks — validate, tokenless, no preview deploy
 
-Branch protection on `main` requires two checks before a PR can merge:
-
-- **`Typecheck · Lint · Test · Build`** — the CI validate job (runs on every
-  PR already).
-- **`Verify PR preview deploy (hash gate)`** — a job in
-  `.github/workflows/verify-deployed.yml` that fires on Vercel's successful
-  **Preview** deployment of the PR head and asserts the preview serves the PR
-  head commit (the same `verify-deployed-hash.mjs --url … --expect …`
-  assertion the production post-deploy gate runs).
-
-It is deliberately lightweight — `VERCEL_TOKEN` only, zero Firestore traffic —
-so verifying every PR costs no owner-verify write budget (that is why the
-write-heavy `verify:live` stays Production-only). Fork PRs (no secrets) get a
-skipped-but-green check; a missing token on the canonical repo fails loudly.
+Branch protection on `main` requires the CI validate check before a PR can
+merge: typecheck, lint, tests, the production build, and the tokenless
+PR-time stale-head guard. There is **no PR preview deploy** — App Hosting is
+the only host, and it does not build Vercel-style previews. The old `Verify
+PR preview deploy (hash gate)` check (a Vercel preview hash assertion) was
+removed with Vercel: with a single host there is no second build system to
+reconcile, `validate` proves the app builds, and a bad App Hosting build of
+the merged main fails the `deploy-apphosting` job loudly.
 
 ### PR-time stale-head guard — a stale PR surfaces in the checks
 
@@ -561,9 +558,9 @@ so the ancestry decision is real, never a missing-object accident.
 
 ### Landing a change — two working paths
 
-Branch protection requires the three checks — validate, the preview hash gate,
-and the emulator-compare smoke — before anything merges, and the smoke also
-gates the App Hosting deploy on every push. Administrators push directly to
+Branch protection requires validate (which includes the tokenless stale-head
+guards) before anything merges, and the emulator-compare smoke gates the App
+Hosting deploy on every push. Administrators push directly to
 `main` with bypass-with-recording (the push shows "Bypassed rule violations"
 and the push-triggered checks still gate the deploy); everyone else must land
 through a pull request.
