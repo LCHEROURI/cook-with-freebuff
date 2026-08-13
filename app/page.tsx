@@ -15,19 +15,40 @@ function formatCountdown(ms: number): string {
 }
 
 // Live countdown for one active timer on the resume card — ticks every second
-// from the server-reported endsAt (same shape CookScreen's timers use).
-function ResumeTimer({ timer }: { timer: { label: string; endsAt: number } }) {
+// from the server-reported endsAt (same shape CookScreen's timers use). While
+// the session is paused the countdown freezes at the value the server
+// reported when the pause happened, so a paused timer reads as frozen rather
+// than counting down.
+function ResumeTimer({ timer, paused }: { timer: { label: string; endsAt: number; remainingSeconds: number }; paused: boolean }) {
   const [remaining, setRemaining] = useState(Math.max(0, timer.endsAt - Date.now()));
+  // Captured ONCE on entering the paused state: the poll keeps running while
+  // paused and the server keeps counting toward the original endsAt, so the
+  // frozen readout must not track the shrinking server value.
+  const [frozenMs, setFrozenMs] = useState<number | null>(null);
   useEffect(() => {
+    if (paused) {
+      setFrozenMs((prev) => prev ?? timer.remainingSeconds * 1000);
+      return;
+    }
+    setFrozenMs(null);
     setRemaining(Math.max(0, timer.endsAt - Date.now()));
     const id = window.setInterval(() => {
       setRemaining(Math.max(0, timer.endsAt - Date.now()));
     }, 1000);
     return () => window.clearInterval(id);
-  }, [timer.endsAt]);
+  }, [timer.endsAt, timer.remainingSeconds, paused]);
+  const shownMs = paused && frozenMs !== null ? frozenMs : remaining;
   return (
-    <span className={styles.resumeTimer} role="timer" aria-label={`${timer.label}, ${formatCountdown(remaining)} remaining`}>
-      ⏱ {timer.label} · {formatCountdown(remaining)}
+    <span
+      className={paused ? `${styles.resumeTimer} ${styles.resumeTimerPaused}` : styles.resumeTimer}
+      role="timer"
+      aria-label={
+        paused
+          ? `${timer.label}, paused at ${formatCountdown(shownMs)}`
+          : `${timer.label}, ${formatCountdown(shownMs)} remaining`
+      }
+    >
+      {paused ? '⏸' : '⏱'} {timer.label} · {formatCountdown(shownMs)}
     </span>
   );
 }
@@ -211,7 +232,7 @@ export default function HomePage() {
           {snap.activeTimers.length > 0 && (
             <div className={styles.resumeTimers}>
               {snap.activeTimers.map((t) => (
-                <ResumeTimer key={t.timerId} timer={t} />
+                <ResumeTimer key={t.timerId} timer={t} paused={snap.paused ?? false} />
               ))}
             </div>
           )}

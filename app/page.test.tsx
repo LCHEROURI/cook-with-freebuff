@@ -244,6 +244,25 @@ describe('app/page.tsx · resume card', () => {
     expect(postedActions(fetchMock)).toEqual(['resume']);
   });
 
+  it('freezes the timer readout while the session is paused', async () => {
+    mockStatusFetch(PAUSED_SESSION);
+    render(<HomePage />);
+
+    await waitFor(() => {
+      expect(screen.getByText('▶ Resume')).toBeInTheDocument();
+    });
+    // The paused chip shows a pause icon and a frozen label — never a live ⏱
+    // countdown. The exact seconds are not asserted: the fixture's endsAt is
+    // captured at module load, so the chip's value depends on when this test
+    // runs (its 1s tick decays past the initial 5:00 before the freeze
+    // captures the at-pause value).
+    expect(screen.getByText(/⏸ Rice simmer/)).toBeInTheDocument();
+    expect(screen.queryByText(/⏱/)).not.toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByRole('timer')).toHaveAttribute('aria-label', expect.stringMatching(/Rice simmer, paused at [0-9]+:[0-9]{2}/));
+    });
+  });
+
   it('shows an alert when a timer finishes while the page is open', async () => {
     mockStatusFetch({
       success: true,
