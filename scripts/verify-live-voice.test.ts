@@ -92,6 +92,19 @@ describe('scripts/verify-live.mjs · live-voice gate [3e] (dictation + active-sc
     expect(DRIVER).toContain("fail(`passing run but the blob reports a stuck queue");
   });
 
+  it('delegates the blob verdict to the shared unit-tested function (voice-blob-verdict.mjs)', () => {
+    // The negative path — a stuckQueueSince > 0 blob MUST fail the run — is
+    // PROVEN by scripts/voice-blob-verdict.test.ts (which injects the blob
+    // and asserts verdict.stuck). That proof is only worth anything if the
+    // driver actually runs the tested function: this locks the import and the
+    // thin call site, so a future edit that re-implements the decision inline
+    // (leaving the tested module dead code) fails HERE instead of silently
+    // un-proving the assertion.
+    expect(DRIVER).toContain("import { evaluateVoiceBlob } from './voice-blob-verdict.mjs';");
+    expect(DRIVER).toContain('const verdict = evaluateVoiceBlob(blob);');
+    expect(DRIVER).toContain('if (verdict.stuck)');
+  });
+
   it('sweeps its own probes (verify-live-voice- prefix) so a killed run can never hijack /cook', () => {
     // The recipe prefix sits INSIDE verify:live's `verify-live-` sweep
     // namespace, so the pre-run sweep backstops a hard-killed run. The
