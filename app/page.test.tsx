@@ -10,8 +10,10 @@ import '@testing-library/jest-dom/vitest';
 // countdowns, the voice engine badge, a Resume link) so a signed-in user can
 // jump back in without opening /cook. Load-bearing behavior: the status read
 // is gated on auth settle (a signed-out visitor never fires a tokenless
-// request), a found session renders the card, a missing session hides it, and
-// the voice badge reflects the browser capability probe.
+// request), a found session renders the card, a missing session hides it, the
+// voice badge reflects the browser capability probe, the pause/resume quick
+// action works from the card without opening /cook, and a finished timer
+// surfaces a dismissible alert from the same 'timers' action /cook polls.
 // ============================================================================
 
 const push = vi.fn();
@@ -58,18 +60,70 @@ const mockAuth = vi.mocked(useAuthSession);
 const ACTIVE_SESSION = {
   success: true,
   data: {
-    found: true,
-    sessionId: 's1',
-    phase: 'COOKING_GUIDANCE',
-    recipeTitle: 'Simple Chicken and Rice',
-    stepNumber: 2,
-    totalSteps: 5,
-    instruction: 'Add the rice and stir.',
-    activeTimers: [
-      { timerId: 't1', label: 'Rice simmer', durationSeconds: 600, endsAt: Date.now() + 300000, remainingSeconds: 300 },
-    ],
+    alerts: [],
+    snapshot: {
+      found: true,
+      sessionId: 's1',
+      phase: 'COOKING_GUIDANCE',
+      recipeTitle: 'Simple Chicken and Rice',
+      stepNumber: 2,
+      totalSteps: 5,
+      instruction: 'Add the rice and stir.',
+      activeTimers: [
+        { timerId: 't1', label: 'Rice simmer', durationSeconds: 600, endsAt: Date.now() + 300000, remainingSeconds: 300 },
+      ],
+    },
   },
 };
+
+const PAUSED_SESSION = {
+  success: true,
+  data: {
+    alerts: [],
+    snapshot: {
+      ...ACTIVE_SESSION.data.snapshot,
+      phase: 'PAUSED',
+      paused: true,
+    },
+  },
+};
+
+const NO_SESSION = {
+  success: true,
+  data: {
+    alerts: [],
+    snapshot: { found: false, phase: 'IDLE', activeTimers: [] },
+  },
+};
+
+// A fetch that answers the 'timers' poll with `running` and the pause/resume
+// calls with the matching flipped snapshot. The real /api/cook route returns
+// the snapshot DIRECTLY for pause/resume (only 'timers' wraps it in
+// { alerts, snapshot }), so the mock mirrors that split — and lets the click
+// tests observe the exact action posted.
+function mockToggleFetch(running: unknown, paused: unknown) {
+  const runningSnap = (running as { data: { snapshot: unknown } }).data.snapshot;
+  const pausedSnap = (paused as { data: { snapshot: unknown } }).data.snapshot;
+  const fetchMock = vi.fn(async (_url: unknown, init?: RequestInit) => {
+    const body = JSON.parse(String(init?.body ?? '{}')) as { action: string };
+    if (body.action === 'pause') return { ok: true, json: async () => ({ success: true, data: pausedSnap }) };
+    if (body.action === 'resume') return { ok: true, json: async () => ({ success: true, data: runningSnap }) };
+    return { ok: true, json: async () => running };
+  });
+  vi.stubGlobal('fetch', fetchMock);
+  return fetchMock;
+}
+
+function postedActions(fetchMock: ReturnType<typeof vi.fn>): string[] {
+  // The card's background poll posts 'timers' on an interval — filter it out
+  // so the assertions see only user-initiated actions.
+  return fetchMock.mock.calls
+    .map(([, init]) => {
+      const body = JSON.parse(String((init as RequestInit | undefined)?.body ?? '{}')) as { action: string };
+      return body.action;
+    })
+    .filter((a) => a !== 'timers');
+}
 
 function mockStatusFetch(body: unknown) {
   const fetchMock = vi.fn(async () => ({
@@ -104,7 +158,7 @@ describe('app/page.tsx · resume card', () => {
   });
 
   it('renders no resume card when signed in but no session is found', async () => {
-    const fetchMock = mockStatusFetch({ success: true, data: { found: false, phase: 'IDLE', activeTimers: [] } });
+    const fetchMock = mockStatusFetch(NO_SESSION);
     render(<HomePage />);
 
     await waitFor(() => {
@@ -142,9 +196,82 @@ describe('app/page.tsx · resume card', () => {
   });
 
   it('links to the status page from the footer', () => {
-    mockStatusFetch({ success: true, data: { found: false, phase: 'IDLE', activeTimers: [] } });
+    mockStatusFetch(NO_SESSION);
     render(<HomePage />);
     expect(screen.getByText('Kitchen status')).toBeInTheDocument();
     expect(screen.getByText('Kitchen status')).toHaveAttribute('href', '/status');
+  });
+
+  it('pauses the session from the card without opening /cook', async () => {
+    const fetchMock = mockToggleFetch(ACTIVE_SESSION, PAUSED_SESSION);
+    render(<HomePage />);
+
+    await waitFor(() => {
+      expect(screen.getByText('⏸ Pause')).toBeInTheDocument();
+    });
+    screen.getByText('⏸ Pause').click();
+
+    await waitFor(() => {
+      expect(screen.getByText('▶ Resume')).toBeInTheDocument();
+    });
+    // The card now reads as paused, not in progress.
+    expect(screen.getByText('Paused')).toBeInTheDocument();
+    expect(screen.queryByText('In progress')).not.toBeInTheDocument();
+    expect(postedActions(fetchMock)).toEqual(['pause']);
+  });
+
+  it('resumes a paused session from the card', async () => {
+    const fetchMock = mockToggleFetch(ACTIVE_SESSION, PAUSED_SESSION);
+    render(<HomePage />);
+
+    await waitFor(() => {
+      expect(screen.getByText('⏸ Pause')).toBeInTheDocument();
+    });
+    // Swap to a paused server state via the poll's next tick isn't needed —
+    // simulate the pause first, then resume.
+    fetchMock.mockClear();
+    screen.getByText('⏸ Pause').click();
+    await waitFor(() => {
+      expect(screen.getByText('▶ Resume')).toBeInTheDocument();
+    });
+
+    fetchMock.mockClear();
+    screen.getByText('▶ Resume').click();
+    await waitFor(() => {
+      expect(screen.getByText('⏸ Pause')).toBeInTheDocument();
+    });
+    expect(screen.getByText('In progress')).toBeInTheDocument();
+    expect(postedActions(fetchMock)).toEqual(['resume']);
+  });
+
+  it('shows an alert when a timer finishes while the page is open', async () => {
+    mockStatusFetch({
+      success: true,
+      data: { alerts: [{ message: 'Your Rice simmer is finished.' }], snapshot: ACTIVE_SESSION.data.snapshot },
+    });
+    render(<HomePage />);
+
+    await waitFor(() => {
+      expect(screen.getByText('Your Rice simmer is finished.')).toBeInTheDocument();
+    });
+    // The card still renders its session alongside the alert.
+    expect(screen.getByText('Simple Chicken and Rice')).toBeInTheDocument();
+  });
+
+  it('dismisses the timer alert without losing the card', async () => {
+    mockStatusFetch({
+      success: true,
+      data: { alerts: [{ message: 'Your Rice simmer is finished.' }], snapshot: ACTIVE_SESSION.data.snapshot },
+    });
+    render(<HomePage />);
+
+    await waitFor(() => {
+      expect(screen.getByText('Your Rice simmer is finished.')).toBeInTheDocument();
+    });
+    screen.getByLabelText('Dismiss alert').click();
+    await waitFor(() => {
+      expect(screen.queryByText('Your Rice simmer is finished.')).not.toBeInTheDocument();
+    });
+    expect(screen.getByText('Simple Chicken and Rice')).toBeInTheDocument();
   });
 });
