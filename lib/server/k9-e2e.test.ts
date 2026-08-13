@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { SessionService, InMemorySessionStore } from './session-service';
 import {
   InMemoryTimerStore,
@@ -80,6 +80,70 @@ describe('K9 scenario 3 — pause → close → reopen → resume exact step', (
     expect(resumed.phase).toBe('PREP_GUIDANCE');
     expect(resumed.instruction).toBe('Dice the onion');
     expect(resumed.stepNumber).toBe(1);
+  });
+});
+
+describe('K9 pause-freeze E2E — paused WAITING_FOR_TIMER with a due timer resumes and recovers to the next step', () => {
+  it('freezes the timer through the pause, carries the remainder on resume, then completes and recovers', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(1_000_000_000_000);
+    try {
+      const ctx = makeContext();
+      await ctx.recipes.createRecipe(makeRecipe());
+      await ctx.guide.launchCookWithMe('user-1', 'recipe-1');
+      await ctx.guide.completeCurrentAction('user-1');
+      let snap = await ctx.guide.completeCurrentAction('user-1'); // WAITING_FOR_TIMER + 240s timer
+      expect(snap.phase).toBe('WAITING_FOR_TIMER');
+      const sessionId = snap.sessionId!;
+      const [timer] = await ctx.timers.listActiveTimers(sessionId);
+      // Give the timer 60s left, then pause.
+      await ctx.timers.updateTimer(timer.id, { startedAt: Date.now() - 180_000, endsAt: Date.now() + 60_000 });
+
+      snap = await ctx.guide.pause('user-1', sessionId);
+      expect(snap.phase).toBe('PAUSED');
+      expect(snap.activeTimers[0].remainingSeconds).toBe(60); // frozen at pause
+
+      // Two minutes pass while paused: the timer is now DUE (its original
+      // endsAt was only 60s out). The poll must NOT consume or detach it —
+      // that is the pause-freeze fix. Without it, resume would restore
+      // WAITING_FOR_TIMER with no active timer and the session could never
+      // recover (Done stays disabled forever).
+      vi.setSystemTime(1_000_000_000_000 + 120_000);
+      const duringPause = await ctx.guide.checkTimers('user-1', sessionId);
+      expect(duringPause.alerts).toEqual([]);
+      expect(duringPause.snapshot.phase).toBe('PAUSED');
+      const [stillRunning] = await ctx.timers.listActiveTimers(sessionId);
+      expect(stillRunning.status).toBe('RUNNING'); // not COMPLETED, not detached
+
+      // Resume: the session returns to WAITING_FOR_TIMER and the timer's
+      // endsAt is rebased by the paused duration — the frozen 60s remainder
+      // carries through instead of firing instantly.
+      const resumed = await ctx.guide.resume('user-1', sessionId);
+      expect(resumed.phase).toBe('WAITING_FOR_TIMER');
+      const [rebased] = await ctx.timers.listActiveTimers(sessionId);
+      expect(rebased.status).toBe('RUNNING');
+      expect(rebased.endsAt).toBeGreaterThan(Date.now() + 55_000);
+
+      // Sixty-one more seconds: the rebased timer is due again — checkTimers
+      // completes it and the session recovers to the exact step, no timers
+      // left.
+      vi.setSystemTime(1_000_000_000_000 + 181_000);
+      const completed = await ctx.guide.checkTimers('user-1', sessionId);
+      expect(completed.alerts).toHaveLength(1);
+      expect(completed.snapshot.phase).toBe('COOKING_GUIDANCE');
+      expect(completed.snapshot.instruction).toBe('Sear the chicken four minutes');
+      expect(completed.snapshot.stepNumber).toBe(1);
+      expect(completed.snapshot.activeTimers).toEqual([]);
+
+      // The session is fully recovered — the cook can keep going: completing
+      // the recovered step advances to the next cooking step.
+      const next = await ctx.guide.completeCurrentAction('user-1');
+      expect(next.phase).toBe('COOKING_GUIDANCE');
+      expect(next.stepNumber).toBe(2);
+      expect(next.instruction).toBe('Simmer the rice');
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 
