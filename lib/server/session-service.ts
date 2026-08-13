@@ -162,7 +162,7 @@ export class SessionService {
     expectedVersion: number,
     to: SessionPhase,
     reason: 'USER_INPUT' | 'AGENT_TOOL' | 'TIMER_COMPLETED' | 'RECOVERY' | 'SYSTEM',
-    options?: { correlationId?: string },
+    options?: { correlationId?: string; pausedAt?: number },
   ): Promise<CookingSession> {
     if (hasBeenProcessed(options?.correlationId)) {
       const session = await this.store.getSession(sessionId);
@@ -216,7 +216,10 @@ export class SessionService {
     // Update status based on phase
     if (to === 'PAUSED') {
       partial.status = 'PAUSED';
-      partial.pausedAt = now();
+      // Default anchor is now; a caller may restore an EARLIER pause (the
+      // resume-failure rollback re-pauses with the ORIGINAL pausedAt so the
+      // frozen remainder and a clean retry survive).
+      partial.pausedAt = options?.pausedAt ?? now();
     } else if (to === 'COMPLETED') {
       partial.status = 'COMPLETED';
       partial.completedAt = now();
@@ -428,7 +431,7 @@ export class SessionService {
   async pauseSession(
     sessionId: string,
     expectedVersion: number,
-    options?: { correlationId?: string },
+    options?: { correlationId?: string; pausedAt?: number },
   ): Promise<CookingSession> {
     return this.transitionTo(sessionId, expectedVersion, 'PAUSED', 'USER_INPUT', options);
   }

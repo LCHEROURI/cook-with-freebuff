@@ -28,6 +28,7 @@ export default function StatusPage() {
   const [status, setStatus] = useState<Status | null>(null);
   const [denied, setDenied] = useState(false);
   const [signingIn, setSigningIn] = useState(false);
+  const [signInError, setSignInError] = useState<string | null>(null);
   const auth = useAuthSession();
   const getToken = auth.getToken;
 
@@ -59,8 +60,14 @@ export default function StatusPage() {
 
   const handleSignIn = async () => {
     setSigningIn(true);
+    setSignInError(null);
     try {
       await auth.signIn();
+    } catch (e) {
+      // Rejected sign-in (popup closed, blocked, provider disabled): the
+      // thrown message is already the mapped honest copy — surface it so the
+      // failure is never silent.
+      setSignInError(e instanceof Error ? e.message : 'Sign in failed. Try again.');
     } finally {
       setSigningIn(false);
     }
@@ -101,6 +108,19 @@ export default function StatusPage() {
         </p>
       </section>
 
+      {auth.state === 'error' && (
+        <section className={styles.cards} aria-label="Sign in unavailable">
+          <article className={styles.card}>
+            <h2 className={styles.cardTitle}>Sign in is unavailable right now</h2>
+            <p className={styles.cardMeta}>{auth.error ?? 'Authentication could not initialize.'}</p>
+            <p className={styles.cardMeta}>
+              Reload the page to try again. The status surface needs a signed-in
+              session to load.
+            </p>
+          </article>
+        </section>
+      )}
+
       {auth.state === 'ready' && !auth.user && (
         <section className={styles.cards} aria-label="Sign in required">
           <article className={styles.card}>
@@ -117,6 +137,7 @@ export default function StatusPage() {
             >
               {signingIn ? 'Signing in…' : 'Sign in with Google'}
             </button>
+            {signInError && <p className={styles.cardMeta}>{signInError}</p>}
           </article>
         </section>
       )}
@@ -133,6 +154,7 @@ export default function StatusPage() {
         </section>
       )}
 
+      {auth.state === 'ready' && auth.user && (
       <section className={styles.cards} aria-label="App status">
         <article className={styles.card}>
           <h2 className={styles.cardTitle}>Live commit</h2>
@@ -179,6 +201,7 @@ export default function StatusPage() {
           )}
         </article>
       </section>
+      )}
 
       <footer className={styles.footer}>
         <p>

@@ -182,8 +182,24 @@ export const resumeCookingSessionTool: ToolDefinition = {
       if (pausedAt) {
         // The frozen at-pause remainder carries through — shift endsAt
         // forward by the paused duration so the countdown continues where it
-        // froze instead of firing instantly.
-        await rebaseTimersAfterResume(ctx.timerStore, updated.id, pausedAt);
+        // froze instead of firing instantly. On failure, roll the session
+        // back to PAUSED with the ORIGINAL pausedAt so a retry is legal and
+        // rebases from the untouched endsAt (same contract as
+        // guide-service.resume — Codex P1: the transition and rebase must be
+        // atomic or the rebase idempotently retryable).
+        try {
+          await rebaseTimersAfterResume(ctx.timerStore, updated.id, pausedAt);
+        } catch (e) {
+          await ctx.sessionService.pauseSession(updated.id, updated.version, {
+            correlationId: ctx.correlationId,
+            pausedAt,
+          }).catch(() => undefined);
+          return fail(
+            'TIMER_REBASE_FAILED',
+            'Resume could not finish syncing the paused timers — the session was paused again. Please resume once more.',
+            true,
+          );
+        }
       }
       return ok({ sessionId: updated.id, phase: updated.currentPhase, status: updated.status });
     } catch (e) {
