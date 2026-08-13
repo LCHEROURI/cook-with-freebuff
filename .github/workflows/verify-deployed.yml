@@ -194,6 +194,41 @@ jobs:
           node scripts/verify-deployed-hash.mjs \
             --apphosting-url "https://cook-with-freebuff--portfolio-app-freebuff2.us-central1.hosted.app"
 
+      # Post-deploy smoke: the pre-deploy emulator-compare smoke gates the
+      # DEPLOY (ci.yml); this is the same fail-fast pattern on the post-deploy
+      # side, and it needs NOTHING new — plain curl, the canonical URL already
+      # wired above, no secrets, no setup. verify:live is a ~20-30 min run, so
+      # before committing to it this step proves the two cheapest facts about
+      # the fresh deploy: the canonical URL answers 200 and /api/build-info
+      # serves a real commitSha. A broken hop (alias dead, API error, empty
+      # commit) fails here in seconds with the hop named, instead of surfacing
+      # half an hour later inside verify:live. Gated on the same four secrets
+      # as verify:live, so a fork that skips the deep run also skips its
+      # pre-flight.
+      - name: Post-deploy smoke (app up + build-info answers)
+        if: ${{ env.NEXT_PUBLIC_FIREBASE_API_KEY != '' && env.FIREBASE_SERVICE_ACCOUNT != '' && env.APP_OWNER_UID != '' && env.GOOGLE_AI_API_KEY != '' }}
+        run: |
+          set -euo pipefail
+          base="https://cook-with-freebuff.vercel.app"
+          code="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 15 "$base")" || {
+            echo "::error::post-deploy smoke: canonical URL did not answer (curl exit $?) — the fresh deploy is not reachable"
+            exit 1
+          }
+          if [ "$code" != "200" ]; then
+            echo "::error::post-deploy smoke: canonical URL answered HTTP $code (expected 200) — the fresh deploy is not reachable"
+            exit 1
+          fi
+          body="$(curl -sS --max-time 15 "$base/api/build-info")" || {
+            echo "::error::post-deploy smoke: /api/build-info did not answer (curl exit $?) — the API hop is broken"
+            exit 1
+          }
+          sha="$(printf '%s' "$body" | sed -n 's/.*"commitSha":"\([^"]*\)".*/\1/p')"
+          if [ -z "$sha" ]; then
+            echo "::error::post-deploy smoke: /api/build-info answered but reported no commitSha (raw: ${body:0:120})"
+            exit 1
+          fi
+          echo "post-deploy smoke: canonical 200, /api/build-info commit ${sha:0:12} — verify:live preconditions met"
+
       - name: Verify deployed app end to end (verify:live)
         if: ${{ env.NEXT_PUBLIC_FIREBASE_API_KEY != '' && env.FIREBASE_SERVICE_ACCOUNT != '' && env.APP_OWNER_UID != '' && env.GOOGLE_AI_API_KEY != '' }}
         run: npm run verify:live

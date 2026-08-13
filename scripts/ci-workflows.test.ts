@@ -289,6 +289,37 @@ describe('.github/workflows/verify-deployed.yml · deployment_status post-deploy
     expect(POST_DEPLOY).toContain(FOUR_SECRETS_GATE);
   });
 
+  it('runs a post-deploy smoke before verify:live — app up + build-info answers, naming the failing hop', () => {
+    // The pre-deploy emulator-compare smoke gates the DEPLOY (ci.yml); this is
+    // the same fail-fast pattern on the post-deploy side, added to prove the
+    // post-deploy workflow needs NOTHING NEW now that the smoke gate exists —
+    // the smoke runs on plain curl + the canonical URL already wired elsewhere
+    // in the file (zero new secrets, zero new env, zero new setup). verify:live
+    // is a ~20-30 min run, so before committing to it this step proves the two
+    // cheapest facts about the fresh deploy: the canonical URL answers 200 and
+    // /api/build-info serves a real commitSha. A broken hop fails here in
+    // seconds with the hop named, instead of surfacing half an hour later
+    // inside verify:live.
+    const smokeStart = POST_DEPLOY.indexOf('name: Post-deploy smoke');
+    const verifyStart = POST_DEPLOY.indexOf('name: Verify deployed app end to end (verify:live)');
+    expect(smokeStart).toBeGreaterThan(0);
+    expect(verifyStart).toBeGreaterThan(smokeStart); // ordered BEFORE verify:live — it guards that step
+    const smokeBlock = POST_DEPLOY.slice(smokeStart, verifyStart);
+    // The canonical URL and the build-info probe are wired via the `base`
+    // variable inside the step (no new env/secret needed to reach them).
+    expect(smokeBlock).toContain('base="https://cook-with-freebuff.vercel.app"');
+    expect(smokeBlock).toContain('"$base/api/build-info"');
+    // Gated identically to verify:live, so a fork that skips the deep run also
+    // skips its pre-flight (both stay skip-not-fail on forks).
+    expect(smokeBlock).toContain(FOUR_SECRETS_GATE);
+    expect(smokeBlock).toContain('exit 1'); // loud failure, never a silent skip
+    expect(smokeBlock).toContain('::error::'); // names the failing hop in the log
+    // "Needs nothing new": the smoke must not introduce a secret wiring or an
+    // env block the workflow didn't already have.
+    expect(smokeBlock).not.toContain('secrets.');
+    expect(smokeBlock).not.toMatch(/^\s+env:/m);
+  });
+
   it('installs Chrome and threads CHROME_PATH into the verify step (UI starter driver)', () => {
     // verify:live's [3c] stage drives the real /cook UI via
     // scripts/drive-starter-prefs.mjs (headless CDP), so the post-deploy

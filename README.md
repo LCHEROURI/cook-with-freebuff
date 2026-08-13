@@ -371,7 +371,11 @@ npm run verify:live:emulator
 # push, CI (ci.yml emulator-compare job, needs Java 21) gates the Firebase
 # App Hosting deploy on it, and the local pre-push hook runs it too (skips
 # with a warning when Java 21 or .env.local is missing; escape hatches:
-# SKIP_VERIFY_EMULATOR_COMPARE=1 locally).
+# SKIP_VERIFY_EMULATOR_COMPARE=1 locally). On the post-deploy side,
+# .github/workflows/verify-deployed.yml runs its own cheap smoke (canonical
+# URL answers 200 + /api/build-info serves a commit) right before the ~30-min
+# verify:live, so a dead deploy fails in seconds with the hop named — that
+# workflow needs nothing beyond the credentials it already had.
 npm run verify:live:compare:emulator
 
 # Diff the local stack against the deployed stack on the FULL lifecycle —
