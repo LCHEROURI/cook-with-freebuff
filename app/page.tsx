@@ -74,14 +74,18 @@ const FEATURES = [
 export default function HomePage() {
   const auth = useAuthSession();
   const [snap, setSnap] = useState<GuideSnapshot | null>(null);
+  const [alert, setAlert] = useState<string | null>(null);
   const [checked, setChecked] = useState(false);
   const [toggling, setToggling] = useState(false);
   const voiceEngine = detectVoiceEngine();
 
   // The resume card needs the active session's current step + timers. Reads
-  // come through the same /api/cook status action /cook itself uses (never a
-  // client-side Firestore read). Gated on auth settle exactly like /recipes so
-  // a signed-out visitor never fires a tokenless request.
+  // come through the same /api/cook 'timers' action /cook's own hook polls
+  // (never a client-side Firestore read): a finished timer surfaces an alert
+  // AND the returned snapshot recovers the session to the next step. The
+  // server is idempotent — a completed timer is detached, so later polls
+  // can't re-alert on it. Gated on auth settle exactly like /recipes so a
+  // signed-out visitor never fires a tokenless request.
   const getToken = auth.getToken;
   const fetchStatus = useCallback(async () => {
     if (auth.state !== 'ready' || !auth.user) return;
@@ -91,11 +95,18 @@ export default function HomePage() {
       const res = await fetch('/api/cook', {
         method: 'POST',
         headers: { 'content-type': 'application/json', ...(token ? { authorization: `Bearer ${token}` } : {}) },
-        body: JSON.stringify({ action: 'status' }),
+        body: JSON.stringify({ action: 'timers' }),
       });
-      const body = (await res.json()) as { success: boolean; data?: GuideSnapshot };
-      if (res.ok && body.success && body.data && body.data.found) {
-        setSnap(body.data);
+      const body = (await res.json()) as {
+        success: boolean;
+        data?: { alerts?: { message: string }[]; snapshot?: GuideSnapshot };
+      };
+      const snapshot = body.data?.snapshot;
+      if (res.ok && body.success && snapshot && snapshot.found) {
+        if (body.data?.alerts && body.data.alerts.length > 0) {
+          setAlert(body.data.alerts.map((a) => a.message).join(' '));
+        }
+        setSnap(snapshot);
       } else {
         setSnap(null);
       }
@@ -177,6 +188,14 @@ export default function HomePage() {
 
       {checked && auth.user && snap && (
         <section className={styles.resume} aria-label="Resume cooking">
+          {alert && (
+            <div className={styles.resumeAlert} role="status">
+              <span>{alert}</span>
+              <button className={styles.resumeAlertDismiss} onClick={() => setAlert(null)} aria-label="Dismiss alert">
+                ✕
+              </button>
+            </div>
+          )}
           <div className={styles.resumeHeader}>
             <span className={styles.resumeEyebrow}>{snap.paused ? 'Paused' : 'In progress'}</span>
             <span className={styles.resumeVoice} data-engine={voiceEngine}>
