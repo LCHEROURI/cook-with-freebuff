@@ -40,6 +40,7 @@ import { resolve as resolvePath } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { initializeApp, cert, getApps } from 'firebase-admin/app';
 import { getFirestore } from 'firebase-admin/firestore';
+import { evaluateVoiceBlob } from './voice-blob-verdict.mjs';
 
 // ── Env loading (process.env wins; .env.local fills gaps) ───────────────────
 function loadEnv() {
@@ -893,23 +894,17 @@ if (got2) {
   if (blob.startsWith('NO_COPY_BUTTON') || blob.startsWith('BLob_CAPTURE_MISS')) {
     fail(`passing run but the diagnostics blob was not capturable (${blob}) — cannot prove the mic is not stuck`);
   } else {
-    let parsed = null;
-    try { parsed = JSON.parse(blob); } catch { /* non-JSON blob */ }
-    // The page's copy payload nests the hook diagnostics under `gemini` (see
-    // app/cook/page.tsx copyMicDiagnostics): gemini.client holds the session
-    // diagnostics, so stuckQueueSince lives at gemini.client.stuckQueueSince.
-    const client = parsed?.gemini?.client ?? null;
-    const stuckSince = client?.stuckQueueSince;
-    // stuckQueueMs only exists once the derived-duration change deploys;
-    // absent is tolerated, present-and-non-zero is a stall.
-    const stuckMs = client?.stuckQueueMs;
-    const stuckMsBad = typeof stuckMs === 'number' && stuckMs !== 0;
-    if (client === null || stuckSince !== 0 || stuckMsBad) {
-      fail(`passing run but the blob reports a stuck queue (stuckQueueSince=${stuckSince}, stuckQueueMs=${stuckMs}) — blob + screenshot saved`);
+    // The parse + stuck decision is shared (scripts/voice-blob-verdict.mjs),
+    // where the unit tests INJECT a stuckQueueSince > 0 blob and prove the
+    // verdict fires — this branch must stay a thin caller so the tested
+    // logic can never drift from what the driver runs.
+    const verdict = evaluateVoiceBlob(blob);
+    if (verdict.stuck) {
+      fail(`passing run but the blob reports a stuck queue (stuckQueueSince=${verdict.stuckSince}, stuckQueueMs=${verdict.stuckMs}) — blob + screenshot saved`);
       try { writeFileSync(`${OUT}/phase-c-pass-blob.json`, blob); note('suspicious blob saved: phase-c-pass-blob.json'); } catch { /* non-fatal */ }
       try { await cdpC.screenshot('phase-c-pass-blob'); note('screenshot: phase-c-pass-blob.png'); } catch { /* non-fatal */ }
     } else {
-      ok(`diagnostics blob clean — stuckQueueSince=0${typeof stuckMs === 'number' ? `, stuckQueueMs=${stuckMs}` : ''} (no stall)`);
+      ok(`diagnostics blob clean — stuckQueueSince=0${typeof verdict.stuckMs === 'number' ? `, stuckQueueMs=${verdict.stuckMs}` : ''} (no stall)`);
     }
   }
 } else {
