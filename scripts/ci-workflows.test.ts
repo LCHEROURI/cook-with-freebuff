@@ -189,15 +189,28 @@ describe('.github/workflows/ci.yml · deploy-apphosting auto-sync job', () => {
   const deployStart = CI.indexOf('\n  deploy-apphosting:');
   const deployBlock = CI.slice(deployStart);
 
-  it('deploys after validate AND the emulator-compare smoke pass — never on pull_request', () => {
+  it('deploys after validate AND the emulator-compare smoke pass — real main pushes only, never PRs or queue branches', () => {
     expect(deployBlock.length).toBeGreaterThan(0);
     expect(deployBlock).toContain('name: Deploy Firebase App Hosting');
     // validate and the emulator-compare smoke must pass first — never deploy
     // broken code or a guided flow that diverges from live.
     expect(deployBlock).toContain('needs: [validate, emulator-compare]');
-    // Push + manual re-sync only; PRs must never deploy.
-    expect(deployBlock).toContain("github.event_name == 'push' || github.event_name == 'workflow_dispatch'");
+    // Real main pushes (checked by ref, not just event) + manual re-sync only.
+    // The merge queue ALSO pushes — gh-readonly-queue branches — and deploying
+    // those merge commits to App Hosting would ship unmerged work, so the push
+    // arm must be pinned to refs/heads/main.
+    expect(deployBlock).toContain("(github.event_name == 'push' && github.ref == 'refs/heads/main') || github.event_name == 'workflow_dispatch'");
     expect(deployBlock).not.toContain('pull_request');
+    // The queue-branch guard is what prevents a queue push from deploying.
+    expect(deployBlock).toContain('refs/heads/main');
+  });
+
+  it('triggers on the merge-queue branches so queued PRs run the required checks', () => {
+    // The merge queue pushes its temporary branches (gh-readonly-queue/**) to
+    // run the required checks against the MERGED state. A push filter of
+    // [main] only would leave the queue waiting forever on required checks
+    // that never report — the queue branch pattern is load-bearing.
+    expect(CI).toContain("branches: [main, 'gh-readonly-queue/**']");
   });
 
   it('authenticates with a FIREBASE_TOKEN (owner login:ci) and stamps the commit', () => {

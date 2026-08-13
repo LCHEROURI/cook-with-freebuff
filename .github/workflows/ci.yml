@@ -2,7 +2,10 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    # The merge queue pushes its temporary branches (gh-readonly-queue/**) to
+    # run the required checks against the MERGED state — the workflows must
+    # trigger there or the queue waits forever on checks that never report.
+    branches: [main, 'gh-readonly-queue/**']
   pull_request:
     branches: [main]
   # Manual re-run of the post-deploy verification without a new push.
@@ -179,7 +182,10 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     needs: [validate, emulator-compare]
-    if: ${{ github.event_name == 'push' || github.event_name == 'workflow_dispatch' }}
+    # Real main pushes only — the merge queue ALSO pushes (gh-readonly-queue
+    # branches), and deploying those merge commits to App Hosting would ship
+    # unmerged work. workflow_dispatch stays operator-initiated.
+    if: ${{ (github.event_name == 'push' && github.ref == 'refs/heads/main') || github.event_name == 'workflow_dispatch' }}
 
     env:
       FIREBASE_TOKEN: ${{ secrets.FIREBASE_TOKEN }}
