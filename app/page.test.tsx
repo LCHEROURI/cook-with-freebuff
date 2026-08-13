@@ -10,8 +10,9 @@ import '@testing-library/jest-dom/vitest';
 // countdowns, the voice engine badge, a Resume link) so a signed-in user can
 // jump back in without opening /cook. Load-bearing behavior: the status read
 // is gated on auth settle (a signed-out visitor never fires a tokenless
-// request), a found session renders the card, a missing session hides it, and
-// the voice badge reflects the browser capability probe.
+// request), a found session renders the card, a missing session hides it, the
+// voice badge reflects the browser capability probe, and the pause/resume
+// quick action works from the card without opening /cook.
 // ============================================================================
 
 const push = vi.fn();
@@ -70,6 +71,37 @@ const ACTIVE_SESSION = {
     ],
   },
 };
+
+const PAUSED_SESSION = {
+  success: true,
+  data: {
+    ...ACTIVE_SESSION.data,
+    phase: 'PAUSED',
+    paused: true,
+  },
+};
+
+// A fetch that answers the status poll with `running` and the pause/resume
+// call with the matching flipped snapshot — lets the click tests observe the
+// exact action posted to /api/cook.
+function mockToggleFetch(running: unknown, paused: unknown) {
+  const fetchMock = vi.fn(async (_url: unknown, init?: RequestInit) => {
+    const body = JSON.parse(String(init?.body ?? '{}')) as { action: string };
+    const reply = body.action === 'pause' ? paused : body.action === 'resume' ? running : running;
+    return { ok: true, json: async () => reply };
+  });
+  vi.stubGlobal('fetch', fetchMock);
+  return fetchMock;
+}
+
+function postedActions(fetchMock: ReturnType<typeof vi.fn>): string[] {
+  return fetchMock.mock.calls
+    .map(([, init]) => {
+      const body = JSON.parse(String((init as RequestInit | undefined)?.body ?? '{}')) as { action: string };
+      return body.action;
+    })
+    .filter((a) => a !== 'status');
+}
 
 function mockStatusFetch(body: unknown) {
   const fetchMock = vi.fn(async () => ({
@@ -146,5 +178,47 @@ describe('app/page.tsx · resume card', () => {
     render(<HomePage />);
     expect(screen.getByText('Kitchen status')).toBeInTheDocument();
     expect(screen.getByText('Kitchen status')).toHaveAttribute('href', '/status');
+  });
+
+  it('pauses the session from the card without opening /cook', async () => {
+    const fetchMock = mockToggleFetch(ACTIVE_SESSION, PAUSED_SESSION);
+    render(<HomePage />);
+
+    await waitFor(() => {
+      expect(screen.getByText('⏸ Pause')).toBeInTheDocument();
+    });
+    screen.getByText('⏸ Pause').click();
+
+    await waitFor(() => {
+      expect(screen.getByText('▶ Resume')).toBeInTheDocument();
+    });
+    // The card now reads as paused, not in progress.
+    expect(screen.getByText('Paused')).toBeInTheDocument();
+    expect(screen.queryByText('In progress')).not.toBeInTheDocument();
+    expect(postedActions(fetchMock)).toEqual(['pause']);
+  });
+
+  it('resumes a paused session from the card', async () => {
+    const fetchMock = mockToggleFetch(ACTIVE_SESSION, PAUSED_SESSION);
+    render(<HomePage />);
+
+    await waitFor(() => {
+      expect(screen.getByText('⏸ Pause')).toBeInTheDocument();
+    });
+    // Swap to a paused server state via the poll's next tick isn't needed —
+    // simulate the pause first, then resume.
+    fetchMock.mockClear();
+    screen.getByText('⏸ Pause').click();
+    await waitFor(() => {
+      expect(screen.getByText('▶ Resume')).toBeInTheDocument();
+    });
+
+    fetchMock.mockClear();
+    screen.getByText('▶ Resume').click();
+    await waitFor(() => {
+      expect(screen.getByText('⏸ Pause')).toBeInTheDocument();
+    });
+    expect(screen.getByText('In progress')).toBeInTheDocument();
+    expect(postedActions(fetchMock)).toEqual(['resume']);
   });
 });
