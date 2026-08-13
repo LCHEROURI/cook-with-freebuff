@@ -24,6 +24,7 @@
 // can NEVER leave a stale ACTIVE session that hijacks the owner's /cook.
 //
 // Usage: node scripts/drive-live-voice.mjs [--out /tmp/live-voice-drive]
+//        node scripts/drive-live-voice.mjs --phase-c-only   # two-burst phase only
 //        Cross-platform: macOS synthesizes FRESH speech via say/afconvert when
 //        available; anywhere else (e.g. the Linux CI runner) it falls back to
 //        the committed fixture scripts/fixtures/dictation-speech.wav — REAL
