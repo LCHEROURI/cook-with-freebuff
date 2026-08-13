@@ -8,10 +8,10 @@ import { describe, expect, it } from 'vitest';
 // Reads the REAL wrapper from disk and asserts the load-bearing lines survive
 // future edits: the shallow-checkout deepen fallback, the precondition probe
 // (which reuses the gate's OWN --stale-guard --head direction logic — a
-// duplicated verdict implementation here would be the bug), the three
-// skip-not-fail branches, and the proof propagation. A future edit that
-// silently drops the probe (and would then fail the run on every deploy-lag
-// transient) fails here.
+// duplicated verdict implementation here would be the bug), the skip-not-fail
+// branches, and the proof propagation. A future edit that silently drops the
+// probe (and would then fail the run on every deploy-lag transient) fails
+// here.
 // ============================================================================
 
 const WRAPPER = readFileSync('scripts/verify-gate-stale-ci.mjs', 'utf8');
@@ -48,15 +48,15 @@ describe('scripts/verify-gate-stale-ci.mjs · post-deploy teeth-proof wrapper', 
     expect(WRAPPER).toContain("run(process.execPath, ['scripts/verify-deployed-hash-gate.mjs', '--stale-guard', '--head', parent], { cwd: ROOT })");
   });
 
-  it('SKIPs-not-fails on all three transient edges: deploy lag (exit 0), API/credential transient (exit 2), and fail-loud-no-live (exit 1 without the BLOCK line)', () => {
+  it('SKIPs-not-fails on the transient edges: deploy lag (exit 0) and fail-loud-no-live (exit 1 without the BLOCK line)', () => {
     // The blocked condition is the ONLY path that proceeds — everything else
     // is a loud SKIP with exit 0. The reason strings distinguish the deploy
-    // (exit 0) from the API/credential (exit 2 / fail-loud) transients so the
-    // log explains WHY the teeth were not proven.
+    // (exit 0) from the fail-loud transients so the log explains WHY the
+    // teeth were not proven.
     expect(WRAPPER).toContain("const blocked = probe.status === 1 && out(probe).includes('✗ STALE-HEAD BLOCK');");
     expect(WRAPPER).toContain('SKIP: gate-stale proof could not reproduce right after this deploy');
-    expect(WRAPPER).toContain('alias promotion lag');
-    expect(WRAPPER).toContain('Vercel API / credential transient');
+    expect(WRAPPER).toContain('rollout settling');
+    expect(WRAPPER).toContain('App Hosting /api/build-info transient');
     expect(WRAPPER).toContain('not a failure');
   });
 

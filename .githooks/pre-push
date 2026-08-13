@@ -12,16 +12,16 @@
 # exit code IS the verdict:
 #
 #   exit 0 → PASS — live is exactly your HEAD, or live is behind your HEAD
-#            (a forward deploy; the post-deploy gate verifies after Vercel
-#            finishes)
+#            (a forward deploy; the post-deploy gate verifies after App
+#            Hosting finishes)
 #   exit 1 → BLOCK — the driver printed STALE-HEAD BLOCK (live is not an
 #            ancestor of HEAD: pushing would roll the site back or clobber
 #            history), or could not determine the live commit at all — a
 #            push that cannot be verified is not verified, and must not go
 #            out silently
-#   exit 2 → invalid/revoked token — cannot verify: WARN + continue (a bad
-#            local token must not block a deploy; CI has its own token and
-#            the post-deploy gate will verify there)
+#
+# The gate is tokenless (it reads the host's public /api/build-info), so
+# there is no credential path to degrade gracefully.
 #
 # Escape hatch: SKIP_VERIFY_DEPLOYED_HASH=1 bypasses entirely.
 # ============================================================================
@@ -59,8 +59,6 @@ CODE=$?
 
 if [ "$CODE" -eq 0 ]; then
   echo "pre-push: ✓ live-vs-HEAD check passed" >&2
-elif [ "$CODE" -eq 2 ]; then
-  echo "pre-push: ⚠ cannot verify the deployed hash (invalid/revoked token) — continuing without the comparison" >&2
 else
   echo "pre-push: ✗ BLOCKED — see the verdict above; to override, re-run with SKIP_VERIFY_DEPLOYED_HASH=1" >&2
   exit 1

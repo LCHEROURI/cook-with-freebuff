@@ -7,8 +7,8 @@
 // → owner token → guided /api/cook flow (launch → prep → safety gate →
 // timer) → pantry add → confirm → query → remove → follow-up query →
 // Gemini turn → cleanup. Local runs it against a freshly booted `next dev`
-// (via verify-live-local.mjs); deployed runs it against
-// https://cook-with-freebuff.vercel.app.
+// (via verify-live-local.mjs); deployed runs it against the canonical
+// https://cook-with-freebuff--portfolio-app-freebuff2.us-central1.hosted.app.
 //
 // The comparison is on the STATUS LINES only (✓ / ✗ FAIL / RESULT:), which
 // are emitted exclusively by verify-live — the driver's own boot/warm/
@@ -65,7 +65,7 @@ const NORMALIZE = [
   [/verify-live-\d+/g, 'verify-live-N'],
   [/in \d+ms/g, 'in Nms'],
   [/Gemini answered: “.+?…”/g, 'Gemini answered: “…”'],
-  [/(\S+\.vercel\.app|localhost:\d+)/g, '<host>'],
+  [/(\S+\.vercel\.app|\S+\.hosted\.app|localhost:\d+)/g, '<host>'],
   [/\(owner [A-Za-z0-9]+\)/g, '(owner <uid>)'],
 ];
 

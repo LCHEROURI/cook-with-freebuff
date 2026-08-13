@@ -1,7 +1,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // Structured logging (K9 Part C — observability)
 //
-// Emits one JSON object per line. Vercel / Google Cloud Logging ingest
+// Emits one JSON object per line. Google Cloud Logging (App Hosting) ingests
 // stdout+stderr JSON lines natively, so every request, model failure, tool
 // failure, and validation failure can be correlated and queried without any
 // external agent. Every event carries the correlationId when one is present —

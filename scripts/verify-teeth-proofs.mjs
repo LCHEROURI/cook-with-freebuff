@@ -35,12 +35,13 @@
 //
 // Every proof copies the CURRENT gate driver (and the base driver it
 // composes) into the worktree, so the proofs are independent of the worktree
-// commit's age — no minimum-commit requirement to track. The gate needs
-// VERCEL_TOKEN (from the environment, the repo's .env.local, or the Vercel
-// CLI auth store — the script copies .env.local into the worktree when
-// present so a token stored there resolves exactly like a real push).
+// commit's age — no minimum-commit requirement to track. The gate itself is
+// tokenless (it reads the host's public /api/build-info), but the hook-block
+// proof's hook also runs the emulator-compare smoke, which needs the repo's
+// .env.local — the script copies it into the worktree when present so that
+// leg resolves exactly like a real push.
 //
-// Read-only against git and Vercel — only temporary worktrees are created
+// Read-only against git and the host — only temporary worktrees are created
 // and removed; nothing is pushed or deployed by the proof itself.
 // ============================================================================
 
@@ -138,8 +139,9 @@ function runProof(mode) {
   let reproduced = false;
   let childExit = -1;
   try {
-    // Copy the repo's .env.local so a token stored there resolves inside the
-    // worktree (a fresh worktree does not check out gitignored files).
+    // Copy the repo's .env.local so the hook-block proof's emulator-compare
+    // leg resolves inside the worktree (a fresh worktree does not check out
+    // gitignored files).
     if (existsSync(resolve(ROOT, '.env.local'))) {
       spawnSync('cp', [resolve(ROOT, '.env.local'), resolve(wtPath, '.env.local')]);
     }
