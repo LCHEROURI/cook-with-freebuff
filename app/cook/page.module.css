@@ -1,3 +1,150 @@
+/* ── First-visit tour ───────────────────────────────────────────────────── */
+.tourCard {
+  position: relative;
+  width: 100%;
+  max-width: 26rem;
+  margin: 0 auto;
+  padding: 1.5rem 1.5rem 1.25rem;
+  background: var(--color-surface);
+  border: 1px solid var(--color-mauve-subtle-border);
+  border-left: 3px solid var(--color-mauve);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-md);
+  text-align: left;
+}
+
+.tourHeader {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.tourEyebrow {
+  font-family: var(--font-display);
+  font-size: 0.85rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--color-mauve);
+  text-transform: uppercase;
+}
+
+.tourClose {
+  background: transparent;
+  border: none;
+  color: var(--color-text-muted);
+  font-size: 1rem;
+  cursor: pointer;
+  padding: 0.25rem 0.5rem;
+  line-height: 1;
+}
+
+.tourClose:hover {
+  color: var(--color-text);
+}
+
+.tourDots {
+  display: flex;
+  gap: 0.35rem;
+  margin: 0.75rem 0 0.5rem;
+}
+
+.tourDot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--color-border);
+  transition: background 0.15s var(--ease-standard), width 0.15s var(--ease-standard);
+}
+
+.tourDotActive {
+  background: var(--color-mauve);
+  width: 18px;
+  border-radius: 999px;
+}
+
+.tourTitle {
+  font-family: var(--font-display);
+  font-size: 1.15rem;
+  font-weight: 600;
+  color: var(--color-text);
+  margin-top: 0.35rem;
+}
+
+.tourBody {
+  color: var(--color-text-secondary);
+  font-size: 0.95rem;
+  line-height: 1.55;
+  margin-top: 0.5rem;
+}
+
+.tourTarget {
+  margin-top: 0.75rem;
+  padding: 0.5rem 0.75rem;
+  background: var(--color-mauve-subtle);
+  border: 1px solid var(--color-mauve-subtle-border);
+  border-radius: var(--radius-sm);
+  color: var(--color-mauve);
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
+.tourActions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.5rem;
+  margin-top: 1.25rem;
+}
+
+.tourBack {
+  background: transparent;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  padding: 0.55rem 1rem;
+  font-family: inherit;
+  font-size: 0.95rem;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+}
+
+.tourBack:hover {
+  border-color: var(--color-mauve);
+  color: var(--color-mauve);
+}
+
+.tourNext {
+  background: var(--color-mauve);
+  color: var(--color-text-on-brand);
+  border: none;
+  border-radius: var(--radius-sm);
+  padding: 0.55rem 1.25rem;
+  font-family: inherit;
+  font-size: 0.95rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.tourNext:hover {
+  background: var(--color-mauve-hover);
+}
+
+.tourSkip {
+  display: block;
+  margin: 0.75rem auto 0;
+  background: transparent;
+  border: none;
+  color: var(--color-text-muted);
+  font-family: inherit;
+  font-size: 0.85rem;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.tourSkip:hover {
+  color: var(--color-text-secondary);
+}
+
 .main {
   display: flex;
   flex-direction: column;

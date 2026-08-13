@@ -7,6 +7,7 @@ import styles from './page.module.css';
 import ConstraintDetails from './ConstraintDetails';
 import RecipeRowMeta from './RecipeRowMeta';
 import { CookScreen } from '@/components/CookScreen';
+import { StarterTour, dismissStarterTour } from '@/components/StarterTour';
 import { useAuthSession } from '@/lib/auth/useAuthSession';
 import { useVoiceSession } from '@/lib/hooks/useVoiceSession';
 import { useVoiceInput } from '@/lib/hooks/useVoiceInput';
@@ -153,6 +154,19 @@ export default function CookPage() {
     items: { name: string; quantity?: number; unit?: string }[];
   }>({ scanning: false, error: null, items: [] });
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // First-visit guide: the tour shows on the starter until the user dismisses
+  // it OR engages with the flow (types, taps the mic, or submits) — seeing
+  // someone use it is proof they don't need it.
+  const [tourVisible, setTourVisible] = useState(true);
+  const [tourDismissed, setTourDismissed] = useState(false);
+
+  useEffect(() => {
+    if (starter.prompt.trim().length > 0 || dictation.listening || scan.scanning || starter.creating) {
+      dismissStarterTour();
+      setTourDismissed(true);
+    }
+  }, [starter.prompt, dictation.listening, scan.scanning, starter.creating]);
 
   const handleCameraCapture = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -424,6 +438,7 @@ export default function CookPage() {
     return (
       <main className={styles.main}>
         <section className={styles.empty}>
+          {tourVisible && !tourDismissed && <StarterTour onDismiss={() => setTourDismissed(true)} />}
           <h1 className={styles.title}>Cook With Me</h1>
           <p className={styles.emptyText}>
             {cook.error ??

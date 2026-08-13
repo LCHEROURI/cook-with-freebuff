@@ -92,6 +92,18 @@ describe('app/cook/page.tsx · protected route', () => {
     expect(COOK).toContain('cook.launch(starter.ready.recipeId)');
   });
 
+  it('shows the first-visit tour on the starter and dismisses it on engagement', () => {
+    // New users land on the starter with no idea of the flow — the tour points
+    // at the input, the mic, and the create button. It must render ONLY on
+    // the starter (no active session), and the page must dismiss it when the
+    // user actually engages (types, taps the mic, or submits).
+    expect(COOK).toContain("import { StarterTour, dismissStarterTour } from '@/components/StarterTour'");
+    expect(COOK).toContain('<StarterTour onDismiss={() => setTourDismissed(true)} />');
+    expect(COOK).toContain('tourVisible && !tourDismissed');
+    expect(COOK).toContain('dismissStarterTour();');
+    expect(COOK).toContain('starter.prompt.trim().length > 0 || dictation.listening');
+  });
+
   it('shows the owner’s reusable “Your recipes” list with one-tap relaunch', () => {
     // Generated recipes must be reusable: the starter lists them (newest
     // first) and each row launches a fresh session pinned to that recipe.
@@ -172,6 +184,7 @@ describe('app/page.tsx · landing page', () => {
     expect(HOME).toContain('href="/recipes"');
     expect(HOME).toContain('📖 My recipes');
   });
+
 });
 
 describe('app/kitchen/page.tsx · protected kitchen surface', () => {
