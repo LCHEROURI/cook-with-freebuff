@@ -619,6 +619,85 @@ describe('GeminiLiveClient — mic capture + playback plumbing', () => {
     vi.useRealTimers();
   });
 
+  it('the watchdog also forces the mic back on when the queue is stuck IDLE (playing=false)', async () => {
+    // Second line of defense: the drain re-arm normally clears a stuck queue,
+    // but a throttled tab can starve the 100ms timer, leaving playback idle
+    // with chunks queued and the mic muted forever. The stall watchdog must
+    // catch this state too — it runs per audio frame, not on timers.
+    mintOk();
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-01-01T00:00:00Z'));
+    const procHolder: { fn: ((e: { inputBuffer: { getChannelData(c: number): Float32Array } }) => void) | null } = { fn: null };
+    const { client, getWs } = setupClient({
+      deps: {
+        createWebSocket: (url: string) => new FakeWebSocket(url),
+        getUserMedia: async () => ({ getTracks: () => [{ stop: vi.fn() }] }) as unknown as MediaStream,
+        createAudioContext: () =>
+          ({
+            sampleRate: 48000,
+            createMediaStreamSource: () => ({ connect: () => undefined }),
+            createScriptProcessor: () => ({
+              connect: () => undefined,
+              get onaudioprocess() {
+                return procHolder.fn;
+              },
+              set onaudioprocess(fn: ((e: { inputBuffer: { getChannelData(c: number): Float32Array } }) => void) | null) {
+                procHolder.fn = fn;
+              },
+            }),
+            createGain: () => ({ gain: { value: 0 }, connect: () => undefined }),
+            createBufferSource: () => ({
+              buffer: null,
+              onended: null,
+              start: () => undefined,
+              stop: () => undefined,
+              connect: () => undefined,
+            }),
+            decodeAudioData: async () => {
+              throw new Error('raw');
+            },
+            destination: {},
+            close: async () => undefined,
+          }) as never,
+      },
+    });
+    await client.connect();
+    const ws = getWs();
+    ws.open();
+    await ws.receive({ setupComplete: {} });
+    await client.startListening();
+
+    const audioFrameCount = () => ws.sent.filter((s) => s.includes('realtimeInput') && s.includes('"audio"')).length;
+    // The stuck state is built directly: each public receive would be drained
+    // by the re-arm, so construct the exact captured signature — playback
+    // idle with chunks still queued.
+    const inner = client as unknown as {
+      playing: boolean;
+      playbackQueue: ArrayBuffer[];
+    };
+
+    procHolder.fn?.({ inputBuffer: { getChannelData: () => new Float32Array(4096).fill(0.3) } });
+    expect(audioFrameCount()).toBe(1);
+
+    inner.playing = false;
+    inner.playbackQueue.push(new ArrayBuffer(8), new ArrayBuffer(8));
+    // A muted frame starts the stuck timer; capture stays suppressed.
+    procHolder.fn?.({ inputBuffer: { getChannelData: () => new Float32Array(4096).fill(0.3) } });
+    expect(audioFrameCount()).toBe(1);
+
+    // 16s later — past the 15s threshold — the stuck-queue branch fires.
+    vi.setSystemTime(new Date('2026-01-01T00:00:16Z'));
+    procHolder.fn?.({ inputBuffer: { getChannelData: () => new Float32Array(4096).fill(0.3) } });
+    expect(client.getDiagnostics().playbackStalls).toBe(1);
+    // The queue is force-cleared and the mic unmuted: the next frame streams.
+    expect(inner.playbackQueue.length).toBe(0);
+    procHolder.fn?.({ inputBuffer: { getChannelData: () => new Float32Array(4096).fill(0.3) } });
+    expect(audioFrameCount()).toBe(2);
+
+    client.disconnect();
+    vi.useRealTimers();
+  });
+
   it('auto-flushes audioStreamEnd after trailing silence so the FINAL input transcription is emitted', async () => {
     // Seen live: the Live server only emits the final input transcription once
     // the audio stream ends — without the flush the dictation hook waits

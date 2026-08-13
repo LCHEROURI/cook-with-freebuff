@@ -204,6 +204,10 @@ export class GeminiLiveClient {
   // transcribed, then the mic goes dead" signature. If playback has been
   // "playing" longer than this without draining, force it down.
   private playbackStartedAt = 0;
+  // When playback is IDLE but the queue is non-empty (a drain error path),
+  // when that stuck state began — the re-arm normally clears it, but a
+  // throttled tab can starve the timer, so the stall watchdog backs it up.
+  private stuckQueueSince = 0;
   private readonly PLAYBACK_STALL_MS = 15000;
 
   // Session diagnostics — populated at every lifecycle point so a dropped mic
@@ -418,20 +422,28 @@ export class GeminiLiveClient {
         // phantom user turn (the reply playing from the speakers IS "speech"
         // to the mic). Capture resumes the moment playback drains.
         if (this.playing || this.playbackQueue.length > 0) {
-          // Stall watchdog: if the reply's audio never finishes (browser
-          // blocked the playback, the source never ended), the mute above
-          // would hold the mic hostage forever. Force the playback down so
-          // capture resumes and the user can speak again.
-          if (
-            this.playing &&
-            this.playbackStartedAt > 0 &&
-            Date.now() - this.playbackStartedAt > this.PLAYBACK_STALL_MS
-          ) {
+          // Track the idle-but-stuck queue (a drain error path): the re-arm
+          // normally clears it, the watchdog below backs it up if it lasts.
+          if (!this.playing) {
+            if (this.stuckQueueSince === 0) this.stuckQueueSince = Date.now();
+          }
+          // Stall watchdog: if the mic stays muted too long — either the
+          // reply's audio never finishes (playing) or the queue is stuck
+          // behind a failed drain (playing=false, queue non-empty) — force
+          // the playback down so capture resumes and the user can speak
+          // again. Runs per audio frame, independent of timers, so a
+          // throttled tab cannot starve it.
+          const stalled =
+            this.playing
+              ? this.playbackStartedAt > 0 && Date.now() - this.playbackStartedAt > this.PLAYBACK_STALL_MS
+              : this.stuckQueueSince > 0 && Date.now() - this.stuckQueueSince > this.PLAYBACK_STALL_MS;
+          if (stalled) {
             this.diag.playbackStalls += 1;
             console.error('[voice] reply playback stalled — forcing the mic back on');
             this.stopPlayback();
             this.playing = false;
             this.playbackStartedAt = 0;
+            this.stuckQueueSince = 0;
             this.flushLastSpeechMs = 0;
             this.setHearing(false);
           }
@@ -716,6 +728,7 @@ export class GeminiLiveClient {
       // next speech, never from the tail of the reply.
       if (this.playbackQueue.length === 0) {
         this.flushLastSpeechMs = 0;
+        this.stuckQueueSince = 0;
         this.setMicPaused(false);
       } else {
         // The drain exited with chunks still queued (an error path). Without
@@ -751,6 +764,7 @@ export class GeminiLiveClient {
     }
     this.currentSource = null;
     this.playbackQueue = [];
+    this.stuckQueueSince = 0;
     this.setMicPaused(false);
   }
 }
