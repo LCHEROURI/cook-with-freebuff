@@ -15,6 +15,7 @@
     "verify:live:local": "node scripts/verify-live-local.mjs",
     "verify:live:emulator": "node scripts/verify-live-emulator.mjs",
     "verify:live:compare": "node scripts/verify-live-compare.mjs",
+    "verify:live:compare:emulator": "node scripts/verify-live-compare-emulator.mjs",
     "verify:deployed-hash": "node scripts/verify-deployed-hash-gate.mjs",
     "verify:gate-fail-proof": "node scripts/verify-teeth-proofs.mjs gate-fail",
     "verify:stale-guard-proof": "node scripts/verify-teeth-proofs.mjs stale-guard",

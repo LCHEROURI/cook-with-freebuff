@@ -55,6 +55,7 @@
 //   npm run verify:live -- --app http://localhost:3000
 //   VERIFY_BASE_URL=... node scripts/verify-live.mjs
 //   npm run verify:live:emulator              # guided flow vs the LOCAL emulators
+//   npm run verify:live -- --guided-only       # deployed guided flow [1]–[3] only
 //
 // Exit code 0 = PASS, 1 = FAIL. Requires .env.local with the Firebase admin
 // credentials + web API key + APP_OWNER_UID (see .env.example) — except in
@@ -105,6 +106,11 @@ const APPHOSTING_APP = (flag('--apphosting', process.env.VERIFY_APPHOSTING_URL) 
 // Firestore + Auth emulators instead of production. Enabled via the
 // `--emulator` flag or VERIFY_EMULATOR=1 (set by verify-live-emulator.mjs).
 const EMULATOR = process.argv.includes('--emulator') || process.env.VERIFY_EMULATOR === '1';
+// Guided-flow-only mode: stop after the deterministic guided flow [1]–[3],
+// skipping the production-only stages (starter/Gemini, Chrome drivers, agent
+// turns, App Hosting smoke). Used by verify-live-compare-emulator.mjs so the
+// deployed reference leg is fast and only emits the shared guided-flow steps.
+const GUIDED_ONLY = process.argv.includes('--guided-only');
 const EMULATOR_PROJECT_ID = 'demo-cook-with-freebuff';
 const AUTH_EMULATOR_HOST = process.env.FIREBASE_AUTH_EMULATOR_HOST || 'localhost:9099';
 let API_KEY = process.env.NEXT_PUBLIC_FIREBASE_API_KEY;
@@ -413,7 +419,7 @@ try {
     fail(`expected WAITING_FOR_TIMER + timer, got ${ack.status} ${j(ack.body?.data)}`);
   }
 
-  if (!EMULATOR) {
+  if (!EMULATOR && !GUIDED_ONLY) {
   // ── 3b. Starter-flow proof: create → validate → start cooking ────────────
   // The /cook starter is the missing start-from-scratch stage: the user says
   // what they have, the agent generates + validates a recipe, then "Start
@@ -831,11 +837,11 @@ try {
     fail(`App Hosting /api/cook → ${apphostingCook.status}`);
   }
   } else {
-    // Emulator mode proves the deterministic guided flow [1]–[3] only. These
+    // Guided flow only: prove the deterministic steps [1]–[3] and stop. These
     // stages each need a production-only dependency — real Gemini generation
     // ([3b], [4]), headless Chrome + Gemini Live ([3d], [3e]), and the live
-    // hosts ([4b]) — so they are skipped rather than run against prod.
-    skip('starter flow, UI/voice drivers, agent turns, and App Hosting smoke — emulator mode runs the deterministic guided flow only');
+    // hosts ([4b]) — so they are skipped (emulator mode, or --guided-only).
+    skip('starter flow, UI/voice drivers, agent turns, and App Hosting smoke — guided flow only');
   }
 } catch (e) {
   // Only report if the token-exchange abort path hasn't already (that path

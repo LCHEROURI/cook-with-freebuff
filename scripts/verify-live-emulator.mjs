@@ -10,9 +10,11 @@
 //   1. Boots the Firestore (8080) + Auth (9099) emulators — reusing them if
 //      they are already running (e.g. `npm run emulators` in another
 //      terminal) so a second `verify:live:emulator` never fights for ports.
-//   2. Boots `next dev` with FIRESTORE_EMULATOR_HOST / FIREBASE_AUTH_EMULATOR_HOST
-//      exported, so the app's server-side admin SDK points at the emulators
-//      instead of the real project (lib/server/admin.ts already branches on
+//   2. Reuses an emulator-pointed `next dev` server if one is already running
+//      (detected via /api/build-info's `emulator: true`), else boots one with
+//      FIRESTORE_EMULATOR_HOST / FIREBASE_AUTH_EMULATOR_HOST exported, so the
+//      app's server-side admin SDK points at the emulators instead of the
+//      real project (lib/server/admin.ts already branches on
 //      FIRESTORE_EMULATOR_HOST).
 //   3. Runs `node scripts/verify-live.mjs --app http://localhost:<port>
 //      --emulator`, which mints a demo owner in the auth emulator, seeds a
@@ -44,7 +46,7 @@ const FIRESTORE_HOST = process.env.FIRESTORE_EMULATOR_HOST || 'localhost:8080';
 const AUTH_HOST = process.env.FIREBASE_AUTH_EMULATOR_HOST || 'localhost:9099';
 const OWNER_UID = process.env.VERIFY_EMULATOR_OWNER_UID || 'verify-live-emulator-owner';
 const EMULATOR_PROJECT = 'demo-cook-with-freebuff';
-const BASE = `http://localhost:${DEV_PORT}`;
+let BASE = `http://localhost:${DEV_PORT}`;
 
 const ok = (m) => console.log(`  ✓ ${m}`);
 const note = (m) => console.log(`  - ${m}`);
@@ -122,8 +124,13 @@ if (reuseEmulators) {
   ok(`emulators up (Firestore ${fsPort}, Auth ${authPort})`);
 }
 
-// ── 2. Boot the dev server pointed at the emulators ────────────────────────
-console.log(`\n=== verify:live:emulator — booting dev server on :${DEV_PORT} ===`);
+// ── 2. Reuse an emulator-pointed dev server, or boot one ───────────────────
+// The app's /api/build-info reports `emulator: true` when the server was
+// started with FIRESTORE_EMULATOR_HOST (see app/api/build-info/route.ts), so
+// an already-running emulator-pointed server (the README flow: `npm run
+// emulators` + `npm run dev` with the emulator vars) is reused instead of
+// booting a second one — and a production-pointed (or non-cook) server is
+// never mistaken for one.
 const devEnv = {
   ...process.env,
   FIRESTORE_EMULATOR_HOST: FIRESTORE_HOST,
@@ -131,23 +138,54 @@ const devEnv = {
   NEXT_PUBLIC_USE_FIRESTORE_EMULATOR: '1',
   APP_OWNER_UID: OWNER_UID,
 };
-const dev = spawn('npm', ['run', 'dev', '--', '--port', String(DEV_PORT)], {
-  cwd: ROOT,
-  detached: true,
-  stdio: 'inherit',
-  env: devEnv,
-});
-const devGroup = -dev.pid;
 
-const serverUp = await waitForServer();
-if (!serverUp) {
-  fail(`dev server never answered on ${BASE} within 180s`);
-  if (dev.exitCode !== null) note(`dev process exited early with code ${dev.exitCode} — is port ${DEV_PORT} already in use?`);
-  try { process.kill(devGroup, 'SIGTERM'); } catch { /* gone */ }
-  if (!reuseEmulators) { try { process.kill(emuGroup, 'SIGKILL'); } catch { /* gone */ } }
-  process.exit(process.exitCode ?? 1);
+const candidateUrls = [
+  ...(process.env.VERIFY_EMULATOR_APP_URL ? [process.env.VERIFY_EMULATOR_APP_URL] : []),
+  'http://localhost:3000',        // the README `npm run dev` default port
+  `http://localhost:${DEV_PORT}`, // this driver's own port
+];
+
+async function findEmulatorServer() {
+  for (const url of candidateUrls) {
+    const base = url.replace(/\/$/, '');
+    try {
+      const res = await fetch(`${base}/api/build-info`, { signal: AbortSignal.timeout(3_000) });
+      if (res.status !== 200) continue;
+      const body = await res.json().catch(() => null);
+      if (body?.emulator === true) return base;
+    } catch { /* not up, or not ours */ }
+  }
+  return null;
 }
-ok(`dev server answering on ${BASE}`);
+
+let dev = null;
+let devGroup = 0;
+let reusedDev = false;
+const reusedServer = await findEmulatorServer();
+if (reusedServer) {
+  BASE = reusedServer;
+  reusedDev = true;
+  note(`reusing existing dev server at ${BASE} (it reports emulator: true)`);
+} else {
+  console.log(`\n=== verify:live:emulator — booting dev server on :${DEV_PORT} ===`);
+  dev = spawn('npm', ['run', 'dev', '--', '--port', String(DEV_PORT)], {
+    cwd: ROOT,
+    detached: true,
+    stdio: 'inherit',
+    env: devEnv,
+  });
+  devGroup = -dev.pid;
+
+  const serverUp = await waitForServer();
+  if (!serverUp) {
+    fail(`dev server never answered on ${BASE} within 180s`);
+    if (dev.exitCode !== null) note(`dev process exited early with code ${dev.exitCode} — is port ${DEV_PORT} already in use?`);
+    try { process.kill(devGroup, 'SIGTERM'); } catch { /* gone */ }
+    if (!reuseEmulators) { try { process.kill(emuGroup, 'SIGKILL'); } catch { /* gone */ } }
+    process.exit(process.exitCode ?? 1);
+  }
+  ok(`dev server answering on ${BASE}`);
+}
 
 // Warm the lazily-compiled API route so its first compile happens before
 // verify:live's request timeouts start.
@@ -175,10 +213,14 @@ const rc = await new Promise((resolveChild) => {
 });
 
 // ── 4. Teardown (always runs) ───────────────────────────────────────────────
-try { process.kill(devGroup, 'SIGTERM'); } catch { /* gone */ }
-await sleep(1_500);
-try { process.kill(devGroup, 'SIGKILL'); } catch { /* gone */ }
-console.log(`\n=== teardown: dev server stopped ===`);
+if (!reusedDev && devGroup) {
+  try { process.kill(devGroup, 'SIGTERM'); } catch { /* gone */ }
+  await sleep(1_500);
+  try { process.kill(devGroup, 'SIGKILL'); } catch { /* gone */ }
+  console.log(`\n=== teardown: dev server stopped ===`);
+} else {
+  note(`dev server left running (reused at ${BASE})`);
+}
 
 if (!reuseEmulators && emuGroup) {
   try { process.kill(emuGroup, 'SIGTERM'); } catch { /* gone */ }

@@ -17,6 +17,7 @@ import { describe, expect, it } from 'vitest';
 
 const VERIFY_LIVE = readFileSync('scripts/verify-live.mjs', 'utf8');
 const ORCHESTRATOR = readFileSync('scripts/verify-live-emulator.mjs', 'utf8');
+const BUILD_INFO = readFileSync('app/api/build-info/route.ts', 'utf8');
 const PKG = readFileSync('package.json', 'utf8');
 
 describe('verify:live:emulator · contract lock', () => {
@@ -39,10 +40,8 @@ describe('verify:live:emulator · contract lock', () => {
   });
 
   it('skips the production-only stages in emulator mode instead of running them', () => {
-    expect(VERIFY_LIVE).toContain('if (!EMULATOR) {');
-    expect(VERIFY_LIVE).toContain(
-      'emulator mode runs the deterministic guided flow only',
-    );
+    expect(VERIFY_LIVE).toContain('if (!EMULATOR && !GUIDED_ONLY) {');
+    expect(VERIFY_LIVE).toContain('guided flow only');
   });
 
   it('the orchestrator boots Firestore + Auth emulators under the demo project', () => {
@@ -60,6 +59,22 @@ describe('verify:live:emulator · contract lock', () => {
   it('the orchestrator spawns verify-live with the --emulator flag', () => {
     expect(ORCHESTRATOR).toContain("'scripts/verify-live.mjs'");
     expect(ORCHESTRATOR).toContain("'--emulator'");
+  });
+
+  it('reuses an already-running emulator-pointed dev server instead of booting a second one', () => {
+    expect(ORCHESTRATOR).toContain('findEmulatorServer');
+    expect(ORCHESTRATOR).toContain('/api/build-info');
+    expect(ORCHESTRATOR).toContain('body?.emulator === true');
+    expect(ORCHESTRATOR).toContain('VERIFY_EMULATOR_APP_URL');
+  });
+
+  it('leaves a reused dev server running (teardown never kills it)', () => {
+    expect(ORCHESTRATOR).toContain('if (!reusedDev && devGroup) {');
+    expect(ORCHESTRATOR).toContain('dev server left running (reused');
+  });
+
+  it('the app reports emulator mode via /api/build-info (bare boolean, no host)', () => {
+    expect(BUILD_INFO).toContain('emulator: !!process.env.FIRESTORE_EMULATOR_HOST');
   });
 
   it('is wired as the one-command npm script', () => {

@@ -362,6 +362,12 @@ npm run verify:live:local
 # skips the Gemini/Chrome/live-host stages.
 npm run verify:live:emulator
 
+# Prove the emulator stack reproduces the deployed guided flow: runs the
+# deterministic flow on BOTH production (--guided-only) and the local
+# emulators, then diffs the seven shared steps — the emulator side is fully
+# offline (no production traffic). Fails on any step divergence.
+npm run verify:live:compare:emulator
+
 # Diff the local stack against the deployed stack on the FULL lifecycle —
 # runs both checks, normalizes ephemeral content (ids, timings, Gemini text),
 # and fails on any status-line divergence
