@@ -559,6 +559,24 @@ behind *base* main (that is the push-time step's job), but a PR cut before
 gate fetches commits by sha from `origin` first (the CI checkout is shallow),
 so the ancestry decision is real, never a missing-object accident.
 
+### Landing a change — the one-command PR path
+
+Because direct pushes to `main` are rejected, every change lands through the
+branch → PR → checks → merge path. The whole dance in one command (from
+`main`, with the change staged or in the tree):
+
+```bash
+npm run land:pr -- --message "fix: expose the stuck-queue duration"
+```
+
+`scripts/land-pr.mjs` refuses to run on a clean tree or off `main`, commits
+staged-only when anything is staged (so a hunk-split multi-stream tree stays
+clean), pushes **only** the feature branch (it never touches a main ref), opens
+the PR against `main`, and arms auto-merge — the PR merges itself the moment
+both required checks pass. Pass `--no-merge` to stop at PR creation and merge
+manually with `gh pr merge <n> --squash --delete-branch`. It is
+contract-locked by `scripts/land-pr.test.ts`.
+
 ## Project principles
 
 1. The backend is the source of truth — LLM conversation history is never authoritative.
