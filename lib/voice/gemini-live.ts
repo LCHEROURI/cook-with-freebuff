@@ -131,6 +131,10 @@ export interface VoiceSessionDiagnostics {
   connected: boolean;
   playing: boolean;
   playbackQueueLength: number;
+  /** Epoch ms when playback went IDLE with a non-empty queue (stuck drain);
+   *  0 when not stuck. Non-zero in the blob means the exact "first burst then
+   *  dead" drop signature is present at capture time. */
+  stuckQueueSince: number;
 }
 
 export interface GeminiLiveOptions {
@@ -233,6 +237,7 @@ export class GeminiLiveClient {
     connected: false,
     playing: false,
     playbackQueueLength: 0,
+    stuckQueueSince: 0,
   };
 
   constructor(private readonly opts: GeminiLiveOptions = {}) {}
@@ -245,6 +250,7 @@ export class GeminiLiveClient {
       connected: this.connected,
       playing: this.playing,
       playbackQueueLength: this.playbackQueue.length,
+      stuckQueueSince: this.stuckQueueSince,
     };
   }
 

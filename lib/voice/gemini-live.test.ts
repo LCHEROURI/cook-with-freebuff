@@ -681,16 +681,22 @@ describe('GeminiLiveClient — mic capture + playback plumbing', () => {
 
     inner.playing = false;
     inner.playbackQueue.push(new ArrayBuffer(8), new ArrayBuffer(8));
-    // A muted frame starts the stuck timer; capture stays suppressed.
+    // A muted frame starts the stuck timer; capture stays suppressed. The
+    // diagnostics blob must expose the stuck state (stuckQueueSince non-zero)
+    // so the exact "first burst then dead" signature is visible in a pasted
+    // copy-voice-details blob without any console access.
     procHolder.fn?.({ inputBuffer: { getChannelData: () => new Float32Array(4096).fill(0.3) } });
     expect(audioFrameCount()).toBe(1);
+    expect(client.getDiagnostics().stuckQueueSince).toBeGreaterThan(0);
 
     // 16s later — past the 15s threshold — the stuck-queue branch fires.
     vi.setSystemTime(new Date('2026-01-01T00:00:16Z'));
     procHolder.fn?.({ inputBuffer: { getChannelData: () => new Float32Array(4096).fill(0.3) } });
     expect(client.getDiagnostics().playbackStalls).toBe(1);
-    // The queue is force-cleared and the mic unmuted: the next frame streams.
+    // The queue is force-cleared and the mic unmuted: the next frame streams,
+    // and the blob's stuck marker resets to 0 (not stuck anymore).
     expect(inner.playbackQueue.length).toBe(0);
+    expect(client.getDiagnostics().stuckQueueSince).toBe(0);
     procHolder.fn?.({ inputBuffer: { getChannelData: () => new Float32Array(4096).fill(0.3) } });
     expect(audioFrameCount()).toBe(2);
 
