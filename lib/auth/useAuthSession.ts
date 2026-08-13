@@ -43,13 +43,25 @@ export function useAuthSession(): UseAuthSessionResult {
   const [error, setError] = useState<string | null>(null);
 
   const authRef = useRef<Auth | null>(null);
+  // Resolves once auth has settled (ready or error). getToken() awaits it so
+  // the first API calls never fire while the SDK is still restoring the
+  // session from IndexedDB — that race 401'd every signed-in page load.
+  const settleRef = useRef<{ promise: Promise<void>; resolve: () => void } | undefined>(undefined);
 
   useEffect(() => {
+    let resolveSettle!: () => void;
+    settleRef.current = {
+      promise: new Promise<void>((resolve) => {
+        resolveSettle = resolve;
+      }),
+      resolve: () => resolveSettle(),
+    };
     const auth = getClientAuth();
     authRef.current = auth;
     if (!auth) {
       setState('error');
       setError(authErrorMessage('config-missing'));
+      settleRef.current.resolve();
       return;
     }
     const unsub = onAuthStateChanged(
@@ -57,10 +69,12 @@ export function useAuthSession(): UseAuthSessionResult {
       (u) => {
         setUser(u);
         setState('ready');
+        settleRef.current?.resolve();
       },
       (err) => {
         setState('error');
         setError(authErrorMessage((err as { code?: string })?.code));
+        settleRef.current?.resolve();
       },
     );
     return () => unsub();
@@ -68,7 +82,12 @@ export function useAuthSession(): UseAuthSessionResult {
 
   const getToken = useCallback(async (): Promise<string | null> => {
     const auth = authRef.current;
-    const current = auth?.currentUser;
+    if (!auth) return null;
+    // Never read currentUser mid-restore: the SDK populates it asynchronously
+    // from IndexedDB, so a tokenless first fetch would 401. Wait for the
+    // settle first — every data hook funnels through this one choke point.
+    await settleRef.current?.promise;
+    const current = auth.currentUser;
     if (!current) return null;
     try {
       return await getIdToken(current);
