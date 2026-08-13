@@ -28,6 +28,7 @@ import { describe, expect, it } from 'vitest';
 
 const CI = readFileSync('.github/workflows/ci.yml', 'utf8');
 const POST_DEPLOY = readFileSync('.github/workflows/verify-deployed.yml', 'utf8');
+const MIC_REGRESSION = readFileSync('.github/workflows/mic-regression.yml', 'utf8');
 
 // The verify step's gating `if:` — the four secrets must ALL be present for
 // the gate to run (a missing one skips-not-fails, but only on forks; the
@@ -558,5 +559,70 @@ describe('.github/workflows/verify-deployed.yml · PR preview gate (branch-prote
   it('keeps the run-safety envelope (10-minute budget, Node 22)', () => {
     expect(previewBlock).toContain('timeout-minutes: 10');
     expect(previewBlock).toMatch(/node-version: 22/);
+  });
+});
+
+describe('.github/workflows/mic-regression.yml · weekly two-burst pass-rate monitor', () => {
+  // Scheduled weekly monitor for the phase-C two-burst mic path (dropped the
+  // second burst at a 33% rate before the drain-stuck fix). The load-bearing
+  // contracts: it runs WEEKLY (not just manually), it runs the phase-C-only
+  // driver in a 6-run batch against the LIVE deploy, a dropped burst fails
+  // the job loudly, and the run is fork-safe like the other workflows — a
+  // missing credential must never masquerade as a green weekly pass.
+
+  it('runs weekly on a schedule (plus manual dispatch)', () => {
+    expect(MIC_REGRESSION).toMatch(/^name: Mic regression \(weekly phase-C pass rate\)/m);
+    expect(MIC_REGRESSION).toContain('schedule:');
+    // Weekly cron — the whole point is early regression detection, so a
+    // future edit that weakens the cadence (or drops the schedule entirely)
+    // fails here.
+    expect(MIC_REGRESSION).toContain("- cron: '0 6 * * 1'");
+    expect(MIC_REGRESSION).toContain('workflow_dispatch:');
+  });
+
+  it('runs the phase-C-only driver in a 6-run batch against the live deploy', () => {
+    expect(MIC_REGRESSION).toContain('name: Phase-C two-burst batch (6 runs)');
+    expect(MIC_REGRESSION).toContain('node scripts/drive-live-voice.mjs --phase-c-only');
+    expect(MIC_REGRESSION).toContain('for i in 1 2 3 4 5 6; do');
+    expect(MIC_REGRESSION).toContain('VERIFY_BASE_URL: https://cook-with-freebuff.vercel.app');
+    expect(MIC_REGRESSION).toContain('timeout-minutes: 30');
+  });
+
+  it('installs Chrome and threads CHROME_PATH into the batch step (CDP driver)', () => {
+    // The driver drives the real /cook UI via headless CDP; its macOS path
+    // fallback would crash on the Linux runner, so the setup-chrome binary
+    // must be wired in — same pattern as verify-deployed.yml.
+    expect(MIC_REGRESSION).toContain('browser-actions/setup-chrome@v2');
+    expect(MIC_REGRESSION).toContain('id: chrome');
+    expect(MIC_REGRESSION).toContain('CHROME_PATH: ${{ steps.chrome.outputs.chrome-path }}');
+  });
+
+  it('wires the three owner credentials and keeps the run fork-safe', () => {
+    // Job-env wiring for each of the three owner secrets (the run step and
+    // loud guard reference them via job env, same as the emulator-compare
+    // smoke job).
+    for (const name of ['NEXT_PUBLIC_FIREBASE_API_KEY', 'FIREBASE_SERVICE_ACCOUNT', 'APP_OWNER_UID']) {
+      expect(MIC_REGRESSION.match(new RegExp(SECRET_WIRING(name).replace(/[$\\{\\}]/g, '\\$&'), 'g'))).toHaveLength(1);
+    }
+    // Fork safety: the run step is gated on the credentials (forks have no
+    // secrets — skip-not-fail keeps them green) and the loud guard fires only
+    // on the canonical repo (a missing credential there fails loudly, never a
+    // silent skip that looks like a green weekly pass).
+    expect(MIC_REGRESSION).toContain('if: ${{ env.NEXT_PUBLIC_FIREBASE_API_KEY != \'\' && env.FIREBASE_SERVICE_ACCOUNT != \'\' && env.APP_OWNER_UID != \'\' }}');
+    expect(MIC_REGRESSION).toContain("github.repository == 'LCHEROURI/cook-with-freebuff'");
+    expect(MIC_REGRESSION).toContain('::error::Owner-credential secrets missing');
+    expect(MIC_REGRESSION).toContain('exit 1');
+  });
+
+  it('fails the job loudly when any run drops a burst, and uploads the artifacts', () => {
+    // The whole point of a MONITOR is that nobody is watching it live, so a
+    // red run must be self-diagnosing: the batch step exits 1 with the pass
+    // rate and failed run numbers, and the run artifacts (including a failed
+    // run's copy-voice-details blob + screenshot) are always uploaded.
+    expect(MIC_REGRESSION).toContain('::error::phase-C batch:');
+    expect(MIC_REGRESSION).toContain('exit 1');
+    expect(MIC_REGRESSION).toContain('actions/upload-artifact@v4');
+    expect(MIC_REGRESSION).toContain('if: always()');
+    expect(MIC_REGRESSION).toContain('phase-c-runs');
   });
 });
