@@ -689,14 +689,21 @@ describe('GeminiLiveClient — mic capture + playback plumbing', () => {
     expect(audioFrameCount()).toBe(1);
     expect(client.getDiagnostics().stuckQueueSince).toBeGreaterThan(0);
 
+    // The derived duration is exposed too: 10s into the stuck state the blob
+    // shows stuckQueueMs ≈ 10000 — the paste reads "stuck for 10s" with no
+    // epoch math, still under the 15s watchdog threshold.
+    vi.setSystemTime(new Date('2026-01-01T00:00:10Z'));
+    expect(client.getDiagnostics().stuckQueueMs).toBe(10000);
+
     // 16s later — past the 15s threshold — the stuck-queue branch fires.
     vi.setSystemTime(new Date('2026-01-01T00:00:16Z'));
     procHolder.fn?.({ inputBuffer: { getChannelData: () => new Float32Array(4096).fill(0.3) } });
     expect(client.getDiagnostics().playbackStalls).toBe(1);
     // The queue is force-cleared and the mic unmuted: the next frame streams,
-    // and the blob's stuck marker resets to 0 (not stuck anymore).
+    // and the blob's stuck markers reset to 0 (not stuck anymore).
     expect(inner.playbackQueue.length).toBe(0);
     expect(client.getDiagnostics().stuckQueueSince).toBe(0);
+    expect(client.getDiagnostics().stuckQueueMs).toBe(0);
     procHolder.fn?.({ inputBuffer: { getChannelData: () => new Float32Array(4096).fill(0.3) } });
     expect(audioFrameCount()).toBe(2);
 

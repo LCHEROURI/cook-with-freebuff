@@ -135,6 +135,10 @@ export interface VoiceSessionDiagnostics {
    *  0 when not stuck. Non-zero in the blob means the exact "first burst then
    *  dead" drop signature is present at capture time. */
   stuckQueueSince: number;
+  /** How long the queue has been stuck at capture time (now − stuckQueueSince);
+   *  0 when not stuck — the human-readable form of the epoch above, so a paste
+   *  shows the stuck duration without epoch math. */
+  stuckQueueMs: number;
 }
 
 export interface GeminiLiveOptions {
@@ -238,6 +242,7 @@ export class GeminiLiveClient {
     playing: false,
     playbackQueueLength: 0,
     stuckQueueSince: 0,
+    stuckQueueMs: 0,
   };
 
   constructor(private readonly opts: GeminiLiveOptions = {}) {}
@@ -251,6 +256,7 @@ export class GeminiLiveClient {
       playing: this.playing,
       playbackQueueLength: this.playbackQueue.length,
       stuckQueueSince: this.stuckQueueSince,
+      stuckQueueMs: this.stuckQueueSince > 0 ? Date.now() - this.stuckQueueSince : 0,
     };
   }
 
