@@ -185,6 +185,19 @@ describe('app/page.tsx · landing page', () => {
     expect(HOME).toContain('📖 My recipes');
   });
 
+  it('reads the active session on the landing page and shows the resume card', () => {
+    // The resume card lets a signed-in user jump back into the current step
+    // without opening /cook. Load-bearing: the read goes through the SAME
+    // /api/cook status action (never a client-side Firestore read), it is
+    // gated on auth settle like /recipes (no tokenless request from signed-out
+    // visitors), and the card links to /cook.
+    expect(HOME).toContain("body: JSON.stringify({ action: 'status' })");
+    expect(HOME).toContain("if (auth.state !== 'ready' || !auth.user) return;");
+    expect(HOME).toContain('Resume cooking →');
+    expect(HOME).toContain('href="/cook"');
+    expect(HOME).toContain("import { detectVoiceEngine } from '@/lib/voice/self-check'");
+  });
+
 });
 
 describe('app/kitchen/page.tsx · protected kitchen surface', () => {

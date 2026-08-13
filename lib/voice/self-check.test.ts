@@ -3,6 +3,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import {
   composeHopReason,
   composeWebSpeechReason,
+  detectVoiceEngine,
   probeTokenEndpoint,
   probeWebSocket,
   probeWebSpeechMic,
@@ -200,6 +201,38 @@ describe('Web Speech self-check', () => {
     expect(r).toEqual({ api: false, mic: 'granted' });
     expect(err).toHaveBeenCalledWith('[voice:self-check] webspeech api=false mic=granted');
     err.mockRestore();
+  });
+});
+
+describe('detectVoiceEngine · the capability probe the landing card uses', () => {
+  function stubWebAudio(has: boolean) {
+    const w = window as unknown as { AudioContext?: unknown; webkitAudioContext?: unknown };
+    delete w.AudioContext;
+    delete w.webkitAudioContext;
+    if (has) w.AudioContext = class {};
+  }
+
+  afterEach(() => {
+    stubWebAudio(false);
+    const w = window as unknown as { SpeechRecognition?: unknown; webkitSpeechRecognition?: unknown };
+    delete w.SpeechRecognition;
+    delete w.webkitSpeechRecognition;
+  });
+
+  it('prefers Gemini Live when Web Audio is available (WebSocket + fetch exist)', () => {
+    stubWebAudio(true);
+    expect(detectVoiceEngine()).toBe('gemini-live');
+  });
+
+  it('falls back to Web Speech when Web Audio is missing but SpeechRecognition exists', () => {
+    stubWebAudio(false);
+    (window as unknown as { SpeechRecognition: unknown }).SpeechRecognition = class {};
+    expect(detectVoiceEngine()).toBe('web-speech');
+  });
+
+  it('reports none when neither engine is available', () => {
+    stubWebAudio(false);
+    expect(detectVoiceEngine()).toBe('none');
   });
 });
 
