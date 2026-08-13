@@ -15,10 +15,12 @@
 //   node scripts/verify-deployed-hash.mjs --url <host>
 //     → the commit THAT host serves (any App Hosting or dev URL)
 //   node scripts/verify-deployed-hash.mjs [--url <host>] --expect <sha>
-//     → exits nonzero unless the served commit sha starts with <sha>
+//     → exits nonzero unless the served commit sha starts with <sha>; an
+//       --expect assertion on a host exposing no commit FAILS (fail closed),
+//       so the stale-head guard can never silently accept an unchecked push
 //
-// Exit codes: 0 = PASS (or unverifiable skip), 1 = FAIL. Read-only against
-// the host; no source changes.
+// Exit codes: 0 = PASS, 1 = FAIL (mismatch or unverifiable --expect). Read-only
+// against the host; no source changes.
 // ============================================================================
 
 import { fileURLToPath } from 'node:url';
@@ -73,9 +75,12 @@ async function main() {
   }
 
   if (!sha) {
-    console.log('  ⚠ no commit exposed by this host — cannot verify against --expect (not a mismatch)');
-    console.log('\nRESULT: PASS (unverifiable)');
-    process.exit(0);
+    // Fail CLOSED: an --expect assertion that cannot be verified must not
+    // report PASS, or the stale-head guard (and the gate that wraps it) would
+    // silently accept an unchecked push while production's commit is unknown.
+    console.error('  ✗ no commit exposed by this host — cannot verify against --expect');
+    console.error('\nRESULT: FAIL (unverifiable — the live commit is unknown, so the expected sha cannot be confirmed)');
+    process.exit(1);
   }
 
   if (sha.toLowerCase().startsWith(EXPECT.toLowerCase())) {

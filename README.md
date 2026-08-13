@@ -589,7 +589,9 @@ whole branch → PR → checks → merge path as a single automated step. Pass
 > green. Moving the repo into an organization would unlock the real queue
 > (and branch-staleness auto-updating).
 
-The three required checks, the merge-when-green mechanics, and the history of
+The required checks (one PR-capable merge gate plus the push-only deploy
+smoke — the smoke is deliberately NOT a pull_request job, so it cannot and
+does not gate PR merges), the merge-when-green mechanics, and the history of
 the **bootstrap path** (the temporary-branch PR dance used before PR-only
 protection, now obsolete) are documented in
 [`DEPLOYMENT.md`](./DEPLOYMENT.md) under "Landing changes (strict flow)".

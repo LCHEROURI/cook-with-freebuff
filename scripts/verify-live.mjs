@@ -519,6 +519,13 @@ try {
   //       renamed/deleted but whose session escaped cleanup.
   // Archive (ABANDONED) — never delete — for stale sessions, preserving the
   // record; delete for recipe-gone sessions (their recipe is unrecoverable).
+  //
+  // Every write is CONDITIONAL, made inside a transaction that re-reads the
+  // session and confirms it is STILL stale before touching it: a session the
+  // shared owner resumed between our first read and this write must never be
+  // archived under it. The version field is bumped like updateSession's
+  // optimistic check, so a racing legitimate update surfaces as a conflict
+  // instead of being silently clobbered.
   try {
     const leftover = await db.collection('cooking_sessions').where('userId', '==', OWNER_UID).get();
     const idleCutoff = Date.now() - 10 * 60 * 1000;
@@ -527,6 +534,7 @@ try {
       if (s.status !== 'ACTIVE' && s.status !== 'PAUSED') continue;
       const lastActivity = typeof s.lastActivityAt === 'number' ? s.lastActivityAt : 0;
       const stale = lastActivity > 0 && lastActivity < idleCutoff;
+      if (!stale) continue;
       // Bare sessions (no recipeId — tool-free conversation sessions the
       // orchestrator creates via start_cooking_session when a turn arrives
       // without one) escape the pre-run sweep AND the recipe checks below: a
@@ -535,24 +543,56 @@ try {
       // as a stale probe (seen live: an idle bare session auto-resumed and
       // hid the starter on two consecutive runs).
       if (typeof s.recipeId !== 'string' || !s.recipeId) {
-        if (stale) {
-          await d.ref.update({ status: 'ABANDONED', lastActivityAt: Date.now() });
-          ok(`stale bare session ${d.id.slice(0, 8)}… (no recipe, idle ${Math.round((Date.now() - lastActivity) / 60000)}m) archived before the UI stage`);
-        }
+        await db.runTransaction(async (tx) => {
+          const fresh = await tx.get(d.ref);
+          if (!fresh.exists) return;
+          const cur = fresh.data();
+          if (cur.status !== 'ACTIVE' && cur.status !== 'PAUSED') return;
+          const curLast = typeof cur.lastActivityAt === 'number' ? cur.lastActivityAt : 0;
+          if (curLast < idleCutoff) {
+            tx.update(d.ref, {
+              status: 'ABANDONED',
+              lastActivityAt: Date.now(),
+              version: (typeof cur.version === 'number' ? cur.version : 0) + 1,
+            });
+            ok(`stale bare session ${d.id.slice(0, 8)}… (no recipe, idle ${Math.round((Date.now() - lastActivity) / 60000)}m) archived before the UI stage`);
+          }
+        });
         continue;
       }
       const recipeSnap = await db.collection('recipes').doc(s.recipeId).get();
-      if (recipeSnap.exists && !stale) continue;
       if (recipeSnap.exists) {
         // Stale probe on a still-existing recipe — archive, keep the record.
-        await d.ref.update({ status: 'ABANDONED', lastActivityAt: Date.now() });
-        ok(`stale session ${d.id.slice(0, 8)}… (recipe “${s.recipeId.slice(0, 30)}”, idle ${Math.round((Date.now() - lastActivity) / 60000)}m) archived before the UI stage`);
+        await db.runTransaction(async (tx) => {
+          const fresh = await tx.get(d.ref);
+          if (!fresh.exists) return;
+          const cur = fresh.data();
+          if (cur.status !== 'ACTIVE' && cur.status !== 'PAUSED') return;
+          const curLast = typeof cur.lastActivityAt === 'number' ? cur.lastActivityAt : 0;
+          if (curLast < idleCutoff) {
+            tx.update(d.ref, {
+              status: 'ABANDONED',
+              lastActivityAt: Date.now(),
+              version: (typeof cur.version === 'number' ? cur.version : 0) + 1,
+            });
+            ok(`stale session ${d.id.slice(0, 8)}… (recipe “${s.recipeId.slice(0, 30)}”, idle ${Math.round((Date.now() - lastActivity) / 60000)}m) archived before the UI stage`);
+          }
+        });
       } else {
-        const events = await db.collection('cooking_session_events').where('sessionId', '==', d.id).get();
-        const deletes = events.docs.map((e) => e.ref.delete());
-        deletes.push(d.ref.delete());
-        await Promise.allSettled(deletes);
-        ok(`orphan-recipe session ${d.id.slice(0, 8)}… (recipe “${s.recipeId.slice(0, 30)}” gone) settled (+ ${events.size} events)`);
+        // Recipe gone — delete, but only while the session is STILL the same
+        // stale one (a resumed session must never be deleted under the owner).
+        await db.runTransaction(async (tx) => {
+          const fresh = await tx.get(d.ref);
+          if (!fresh.exists) return;
+          const cur = fresh.data();
+          if (cur.status !== 'ACTIVE' && cur.status !== 'PAUSED') return;
+          const curLast = typeof cur.lastActivityAt === 'number' ? cur.lastActivityAt : 0;
+          if (curLast >= idleCutoff) return;
+          const events = await db.collection('cooking_session_events').where('sessionId', '==', d.id).get();
+          for (const e of events.docs) tx.delete(e.ref);
+          tx.delete(d.ref);
+          ok(`orphan-recipe session ${d.id.slice(0, 8)}… (recipe “${s.recipeId.slice(0, 30)}” gone) settled (+ ${events.size} events)`);
+        });
       }
     }
   } catch (e) {

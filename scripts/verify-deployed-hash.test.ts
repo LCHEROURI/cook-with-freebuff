@@ -17,7 +17,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 //      recovery (the GitHub Actions plain-scalar `run:` backslash trap) and
 //      the null-for-missing-value contract.
 //   3. resolveAppHostingCommit maps /api/build-info to the commit sha, with
-//      the unverifiable-skip contract (missing route or missing sha → '').
+//      missing route or missing sha → '' (the caller fails CLOSED on that
+//      when an --expect assertion is in play).
 //   4. The canonical production URL is the App Hosting URL.
 // ============================================================================
 
@@ -102,5 +103,19 @@ describe('resolveAppHostingCommit · /api/build-info → commit sha', () => {
 describe('constants · project identity', () => {
   it('targets the App Hosting canonical URL as the production URL', () => {
     expect(PRODUCTION_URL).toBe('https://cook-with-freebuff--portfolio-app-freebuff2.us-central1.hosted.app');
+  });
+});
+
+describe('main() · fail-closed --expect (Codex P1)', () => {
+  it('FAILS when --expect is given but the host exposes no commit — never a PASS that lets the stale-head guard silently through', () => {
+    // The old behavior exited 0 ("unverifiable skip") when build-info was
+    // missing, so verify-deployed-hash-gate.mjs's `code !== 1` branch passed
+    // while production's commit was unknown. An unverifiable assertion must
+    // fail closed.
+    expect(SCRIPT_SRC).toContain("if (!EXPECT)");
+    expect(SCRIPT_SRC).toContain("if (!sha)");
+    expect(SCRIPT_SRC).toContain('RESULT: FAIL (unverifiable — the live commit is unknown');
+    expect(SCRIPT_SRC).toContain('process.exit(1)');
+    expect(SCRIPT_SRC).not.toContain('RESULT: PASS (unverifiable)');
   });
 });
