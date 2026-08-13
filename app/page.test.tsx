@@ -255,6 +255,27 @@ describe('app/page.tsx · resume card', () => {
     expect(postedActions(fetchMock)).toEqual(['resume']);
   });
 
+  it('does NOT offer Pause in phases the state machine cannot pause (Codex P2)', async () => {
+    // The server only accepts a pause from PREP_GUIDANCE / COOKING_GUIDANCE /
+    // WAITING_FOR_TIMER — in PLATING (or RECIPE_READY, collection phases) a
+    // Pause click would be rejected and the error silently swallowed. The card
+    // must not render the button at all there; the resume link stays.
+    mockStatusFetch({
+      success: true,
+      data: {
+        alerts: [],
+        snapshot: { ...ACTIVE_SESSION.data.snapshot, phase: 'PLATING', instruction: 'Plate and serve.' },
+      },
+    });
+    render(<HomePage />);
+
+    await waitFor(() => {
+      expect(screen.getByText('Resume cooking →')).toBeInTheDocument();
+    });
+    expect(screen.queryByText('⏸ Pause')).not.toBeInTheDocument();
+    expect(screen.queryByText('▶ Resume')).not.toBeInTheDocument();
+  });
+
   it('freezes the timer readout while the session is paused', async () => {
     mockStatusFetch(PAUSED_SESSION);
     render(<HomePage />);

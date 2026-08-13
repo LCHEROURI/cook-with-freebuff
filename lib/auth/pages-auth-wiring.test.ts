@@ -199,6 +199,15 @@ describe('app/page.tsx · landing page', () => {
     expect(HOME).toContain("import { detectVoiceEngine } from '@/lib/voice/self-check'");
   });
 
+  it('only offers the Pause quick action in phases the server state machine accepts', () => {
+    // The server rejects a pause outside PREP_GUIDANCE / COOKING_GUIDANCE /
+    // WAITING_FOR_TIMER — the card gates the button on those phases (or being
+    // paused, for Resume) so a click can never produce a swallowed error.
+    expect(HOME).toContain("const CAN_PAUSE: ReadonlySet<string> = new Set(['PREP_GUIDANCE', 'COOKING_GUIDANCE', 'WAITING_FOR_TIMER']);");
+    expect(HOME).toContain('snap.paused || CAN_PAUSE.has(snap.phase)');
+    expect(HOME).toContain('canPause && (');
+  });
+
 });
 
 describe('app/kitchen/page.tsx · protected kitchen surface', () => {

@@ -6,7 +6,7 @@ import styles from './page.module.css';
 import { useAuthSession } from '@/lib/auth/useAuthSession';
 import { detectVoiceEngine } from '@/lib/voice/self-check';
 import { playTimerChime, unlockAudioOnGesture } from '@/lib/audio/timer-chime';
-import type { GuideSnapshot } from '@/lib/server/guide-service';
+import type { GuideSnapshot } from '@/lib/domain/guide';
 
 function formatCountdown(ms: number): string {
   const s = Math.max(0, Math.floor(ms / 1000));
@@ -17,28 +17,20 @@ function formatCountdown(ms: number): string {
 
 // Live countdown for one active timer on the resume card — ticks every second
 // from the server-reported endsAt (same shape CookScreen's timers use). While
-// the session is paused the countdown freezes at the value the server
-// reported when the pause happened, so a paused timer reads as frozen rather
-// than counting down.
+// the session is paused the server freezes the countdown at the at-pause
+// remainder (derived from pausedAt, so it survives reloads and polls), and
+// the card just displays that frozen value — no client-side capture.
 function ResumeTimer({ timer, paused }: { timer: { label: string; endsAt: number; remainingSeconds: number }; paused: boolean }) {
   const [remaining, setRemaining] = useState(Math.max(0, timer.endsAt - Date.now()));
-  // Captured ONCE on entering the paused state: the poll keeps running while
-  // paused and the server keeps counting toward the original endsAt, so the
-  // frozen readout must not track the shrinking server value.
-  const [frozenMs, setFrozenMs] = useState<number | null>(null);
   useEffect(() => {
-    if (paused) {
-      setFrozenMs((prev) => prev ?? timer.remainingSeconds * 1000);
-      return;
-    }
-    setFrozenMs(null);
+    if (paused) return; // the server reports the frozen at-pause remainder
     setRemaining(Math.max(0, timer.endsAt - Date.now()));
     const id = window.setInterval(() => {
       setRemaining(Math.max(0, timer.endsAt - Date.now()));
     }, 1000);
     return () => window.clearInterval(id);
-  }, [timer.endsAt, timer.remainingSeconds, paused]);
-  const shownMs = paused && frozenMs !== null ? frozenMs : remaining;
+  }, [timer.endsAt, paused]);
+  const shownMs = paused ? timer.remainingSeconds * 1000 : remaining;
   return (
     <span
       className={paused ? `${styles.resumeTimer} ${styles.resumeTimerPaused}` : styles.resumeTimer}
@@ -163,6 +155,13 @@ export default function HomePage() {
     return () => window.clearInterval(id);
   }, [auth.state, auth.user, fetchStatus]);
 
+  // The server's state machine only accepts a pause from these phases — offer
+  // the button there (and for the resume side when already paused), never in
+  // PLATING / RECIPE_READY / collection phases where the server would reject
+  // the transition.
+  const CAN_PAUSE: ReadonlySet<string> = new Set(['PREP_GUIDANCE', 'COOKING_GUIDANCE', 'WAITING_FOR_TIMER']);
+  const canPause = !!snap && (snap.paused || CAN_PAUSE.has(snap.phase));
+
   // Pause/resume straight from the card — no need to open /cook. Same
   // /api/cook action the page itself uses, and the response snapshot
   // replaces the card's state (server is the single source of truth).
@@ -253,14 +252,16 @@ export default function HomePage() {
             </div>
           )}
           <div className={styles.resumeActions}>
-            <button
-              className={styles.resumeQuickBtn}
-              onClick={() => void togglePause()}
-              disabled={toggling}
-              aria-label={snap.paused ? 'Resume the session' : 'Pause the session'}
-            >
-              {snap.paused ? '▶ Resume' : '⏸ Pause'}
-            </button>
+            {canPause && (
+              <button
+                className={styles.resumeQuickBtn}
+                onClick={() => void togglePause()}
+                disabled={toggling}
+                aria-label={snap.paused ? 'Resume the session' : 'Pause the session'}
+              >
+                {snap.paused ? '▶ Resume' : '⏸ Pause'}
+              </button>
+            )}
             <Link href="/cook" className={styles.resumeBtn}>
               {snap.paused ? 'Open session' : 'Resume cooking →'}
             </Link>

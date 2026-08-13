@@ -161,6 +161,14 @@ jobs:
     # unmerged work. workflow_dispatch stays operator-initiated.
     if: ${{ (github.event_name == 'push' && github.ref == 'refs/heads/main') || github.event_name == 'workflow_dispatch' }}
 
+    # Whether a rollout actually started this run. When FIREBASE_TOKEN is
+    # missing (fork, secretless dispatch) the deploy step is SKIPPED while the
+    # job still succeeds — verify-live waits on this output so it skips too
+    # instead of polling the canonical host for a sha that will never arrive
+    # and failing after 15 minutes. Preserves the skip-not-fail behavior.
+    outputs:
+      deployed: ${{ steps.deploy.outcome == 'success' }}
+
     env:
       FIREBASE_TOKEN: ${{ secrets.FIREBASE_TOKEN }}
 
@@ -185,6 +193,7 @@ jobs:
           exit 1
 
       - name: Deploy to Firebase App Hosting
+        id: deploy
         if: ${{ env.FIREBASE_TOKEN != '' }}
         run: |
           node scripts/write-commit.mjs
@@ -236,8 +245,14 @@ jobs:
   verify-live:
     name: Verify deployed app after deploy (verify:live)
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     needs: [deploy-apphosting]
+    # Skip when no rollout actually ran (fork / secretless dispatch): the
+    # deploy job succeeds with its deploy step skipped, and polling the
+    # canonical host for a sha that never arrives would fail after 15 minutes.
+    # A skipped or failed deploy skips this job anyway (needs edge); this
+    # handles the ran-but-no-rollout case.
+    if: ${{ needs.deploy-apphosting.outputs.deployed == 'true' }}
 
     env:
       NEXT_PUBLIC_FIREBASE_API_KEY: ${{ secrets.NEXT_PUBLIC_FIREBASE_API_KEY }}

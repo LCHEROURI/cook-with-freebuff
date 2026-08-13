@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import styles from './page.module.css';
+import { useAuthSession } from '@/lib/auth/useAuthSession';
 
 interface VerifyLive {
   verdict: string;
@@ -25,21 +26,25 @@ const formatTime = (iso: string) =>
 
 export default function StatusPage() {
   const [status, setStatus] = useState<Status | null>(null);
+  const auth = useAuthSession();
+  const getToken = auth.getToken;
 
   useEffect(() => {
     let cancelled = false;
-    void fetch('/api/status')
-      .then((r) => r.json())
-      .then((body: Status) => {
-        if (!cancelled) setStatus(body);
-      })
-      .catch(() => {
-        if (!cancelled) setStatus(null);
-      });
+    void (async () => {
+      const token = await getToken();
+      const headers: Record<string, string> = {};
+      if (token) headers.authorization = `Bearer ${token}`;
+      const res = await fetch('/api/status', { headers });
+      const body = (await res.json()) as Status;
+      if (!cancelled) setStatus(body);
+    })().catch(() => {
+      if (!cancelled) setStatus(null);
+    });
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [getToken]);
 
   const verdictClass =
     status?.verifyLive?.verdict === 'success'

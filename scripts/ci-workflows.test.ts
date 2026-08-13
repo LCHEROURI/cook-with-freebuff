@@ -184,6 +184,15 @@ describe('.github/workflows/ci.yml · deploy-apphosting job', () => {
     expect(deployBlock).toContain("env.FIREBASE_TOKEN == ''");
     expect(deployBlock).toContain('FIREBASE_TOKEN: ${{ secrets.FIREBASE_TOKEN }}');
   });
+
+  it('reports whether a rollout actually ran so verify-live can skip when it did not', () => {
+    // The deploy STEP is skipped (not failed) when FIREBASE_TOKEN is missing;
+    // the job still succeeds. The `deployed` output lets verify-live skip that
+    // case instead of polling the canonical host for a sha that never arrives.
+    expect(deployBlock).toContain("outputs:\n      deployed: ${{ steps.deploy.outcome == 'success' }}");
+    expect(deployBlock).toContain('id: deploy');
+    expect(deployBlock).toContain('if: ${{ env.FIREBASE_TOKEN != \'\' }}');
+  });
 });
 
 describe('.github/workflows/ci.yml · post-deploy verify:live needs-edge', () => {
@@ -195,18 +204,24 @@ describe('.github/workflows/ci.yml · post-deploy verify:live needs-edge', () =>
   const verifyStart = CI.indexOf('\n  verify-live:');
   const verifyBlock = CI.slice(verifyStart);
 
-  it('runs in the same CI run as the deploy, only after deploy-apphosting succeeds', () => {
+  it('runs in the same CI run as the deploy, only after a rollout actually started', () => {
     expect(verifyBlock.length).toBeGreaterThan(0);
     expect(verifyBlock).toContain('name: Verify deployed app after deploy (verify:live)');
     expect(verifyBlock).toContain('needs: [deploy-apphosting]');
     // deploy-apphosting only runs on real main pushes + workflow_dispatch; a
-    // skipped or failed deploy skips this job too. The job header (before the
-    // first step) must carry no `if:` override that could run it without a
-    // deploy, and no `if: always()` that would run it after a failed deploy.
+    // skipped or failed deploy skips this job too. On top of the needs edge,
+    // the job is gated on the deploy job's `deployed` output so a fork or
+    // secretless dispatch (deploy step skipped, job still success) skips
+    // verification instead of polling the canonical host for 15 minutes and
+    // failing. Never `if: always()` — that would run it after a failed deploy.
     const jobHeader = verifyBlock.slice(0, verifyBlock.indexOf('\n    steps:'));
-    expect(jobHeader).not.toContain('if:');
+    expect(jobHeader).toContain("if: ${{ needs.deploy-apphosting.outputs.deployed == 'true' }}");
     expect(jobHeader).not.toContain('always()');
-    expect(verifyBlock).toContain('timeout-minutes: 30');
+    expect(jobHeader).not.toContain('if: ${{ always() }}');
+    // 45 minutes: the SHA poll can consume up to 15 of the budget on a slow
+    // rollout, and verify:live itself is documented for 20-30 minute runs — a
+    // 30-minute cap could cancel a healthy verification mid-flight.
+    expect(verifyBlock).toContain('timeout-minutes: 45');
   });
 
   it('waits for the App Hosting rollout to serve the pushed commit BEFORE anything else', () => {

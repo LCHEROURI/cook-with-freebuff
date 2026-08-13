@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { GuideSnapshot } from '@/lib/server/guide-service';
+import type { GuideSnapshot } from '@/lib/domain/guide';
 
 export interface CookApiResponse {
   success: boolean;

@@ -15,6 +15,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import type { SessionService } from './session-service';
+import { rebaseTimersAfterResume } from './timer-rebase';
 import type { TimerStore, RecipeStore } from './tools/types';
 import type { PantryService, ConsumptionResult } from './pantry-service';
 import type { LeftoverService } from './leftover-service';
@@ -33,74 +34,26 @@ import { findSubstitutionCandidates, type SubstitutionCandidate } from '../recip
 import { recipeSchema } from '../domain/schemas';
 import { getSubstitutionService } from '../ai/provider';
 import type { RecipeValidationResult } from '../ai/types';
+import type {
+  ActiveTimerInfo,
+  GuideAction,
+  GuideSnapshot,
+  TimerAlert,
+  TimerStartedInfo,
+} from '../domain/guide';
 
 // ── Public shapes ────────────────────────────────────────────────────────────
-
-export interface ActiveTimerInfo {
-  timerId: string;
-  label: string;
-  durationSeconds: number;
-  endsAt: number;
-  remainingSeconds: number;
-}
-
-export interface TimerAlert {
-  timerId: string;
-  label: string;
-  message: string;
-}
-
-export interface TimerStartedInfo {
-  timerId: string;
-  label: string;
-  durationSeconds: number;
-  endsAt: number;
-}
-
-/** The single action the cook should do right now. */
-export interface GuideAction {
-  found: boolean;
-  sessionId?: string;
-  phase: SessionPhase;
-  status?: string;
-  /** Recipe context for the header. */
-  recipeId?: string;
-  recipeTitle?: string;
-  /** 1-based step number within the current phase. */
-  stepNumber?: number;
-  totalSteps?: number;
-  /** The ONE instruction. Always spokenInstruction when available. */
-  instruction?: string;
-  stepId?: string;
-  safetyNote?: string;
-  /**
-   * Set while the session is in SAFETY_WARNING: the step's safety note is a
-   * confirmation gate — the step is NOT completed until the cook acknowledges
-   * it. The same step is shown (progress is preserved).
-   */
-  safetyGate?: { note: string };
-  /** Auto-started when the current cooking step carries timerSeconds. */
-  timerStarted?: TimerStartedInfo;
-  activeTimers: ActiveTimerInfo[];
-  /** Set when a timer finished during this call (checkTimers / completion). */
-  alert?: string;
-  paused?: boolean;
-}
-
-/** Full state for the cooking UI (includes expandable recipe content). */
-export interface GuideSnapshot extends GuideAction {
-  availableIngredients: Ingredient[];
-  recipe?: {
-    id: string;
-    title: string;
-    servings: number;
-    ingredients: Ingredient[];
-    equipment: string[];
-    prepSteps: { stepNumber: number; instruction: string }[];
-    cookingSteps: { stepNumber: number; instruction: string; timerSeconds?: number }[];
-    safetyNotes: string[];
-  };
-}
+// The API response shapes live in the client-safe domain module
+// (lib/domain/guide.ts) so 'use client' modules can import them without
+// crossing the server boundary; this module re-exports them for its own
+// consumers. See lib/domain/guide.ts.
+export type {
+  ActiveTimerInfo,
+  GuideAction,
+  GuideSnapshot,
+  TimerAlert,
+  TimerStartedInfo,
+} from '../domain/guide';
 
 export class GuideError extends Error {
   constructor(
@@ -450,6 +403,12 @@ export class GuidedCookingService {
   async resume(userId: string, sessionId?: string, options?: { correlationId?: string }): Promise<GuideSnapshot> {
     const session = await this.resolveSession(userId, sessionId);
     if (!session) throw new GuideError('No cooking session found for this user', 'SESSION_NOT_FOUND', true);
+    // Pause genuinely froze the timers (snapshot reports the at-pause
+    // remainder); resume shifts endsAt forward by the paused duration so the
+    // countdown continues from where it froze instead of firing instantly.
+    if (session.pausedAt) {
+      await rebaseTimersAfterResume(this.timerStore, session.id, session.pausedAt);
+    }
     const updated = await this.sessionService.resumeSession(session.id, session.version, {
       correlationId: options?.correlationId,
     });
@@ -841,6 +800,14 @@ export class GuidedCookingService {
     const session = await this.resolveSession(userId, sessionId);
     if (!session) {
       return { alerts: [], snapshot: this.emptySnapshot() };
+    }
+
+    // A PAUSED session is frozen: never complete or detach a due timer while
+    // paused, or resume would restore the phase with no active timer and the
+    // session could never recover (Done stays disabled). The at-pause
+    // remainder is reported frozen via activeTimers instead.
+    if (session.currentPhase === 'PAUSED') {
+      return { alerts: [], snapshot: await this.buildSnapshot(userId, session) };
     }
 
     const running = await this.timerStore.listActiveTimers(session.id);
@@ -1247,12 +1214,16 @@ export class GuidedCookingService {
   private async activeTimers(session: CookingSession): Promise<ActiveTimerInfo[]> {
     const timers = await this.timerStore.listActiveTimers(session.id);
     const nowMs = Date.now();
+    // While paused the countdown is frozen at the at-pause remainder: derive
+    // it from pausedAt (the pause instant), so reloads and repeated polls
+    // always report the same frozen value — never the shrinking endsAt − now.
+    const anchor = session.currentPhase === 'PAUSED' && session.pausedAt ? session.pausedAt : nowMs;
     return timers.map((t) => ({
       timerId: t.id,
       label: t.label,
       durationSeconds: t.durationSeconds,
       endsAt: t.endsAt,
-      remainingSeconds: Math.max(0, Math.round((t.endsAt - nowMs) / 1000)),
+      remainingSeconds: Math.max(0, Math.round((t.endsAt - anchor) / 1000)),
     }));
   }
 

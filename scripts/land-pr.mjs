@@ -178,7 +178,13 @@ if (NO_MERGE) {
     let last = '';
     let merged = false;
     while (Date.now() < deadline) {
-      await sleep(20_000);
+      // Cap the sleep at the remaining budget so --wait-timeout is honored to
+      // the second — an unconditional 20s sleep could overrun a short timeout
+      // (or the final iteration of any timeout) and report a merge that
+      // happened after the declared deadline.
+      const remainingMs = deadline - Date.now();
+      if (remainingMs <= 0) break;
+      await sleep(Math.min(20_000, remainingMs));
       const state = runQuiet(`gh pr view "${prNumber}" --json state --jq .state`);
       if (state && state !== last) {
         console.log(`  [${new Date().toISOString().slice(11, 19)}] ${state}`);

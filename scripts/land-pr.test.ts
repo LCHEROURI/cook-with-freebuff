@@ -129,6 +129,14 @@ describe('scripts/land-pr.mjs · --wait (the whole landing as one step)', () => 
     expect(LAND).toContain('MERGED — branch + PR + checks + merge completed in one command');
   });
 
+  it('caps polling sleeps at the remaining timeout (Codex P2 — no 20s sleep past the deadline)', () => {
+    // An unconditional 20s sleep could overrun a short --wait-timeout (or the
+    // final iteration of any timeout) and report a merge after the deadline.
+    expect(LAND).toContain('const remainingMs = deadline - Date.now();');
+    expect(LAND).toContain('if (remainingMs <= 0) break;');
+    expect(LAND).toContain('await sleep(Math.min(20_000, remainingMs));');
+  });
+
   it('times out honestly (auto-merge stays armed) instead of hanging forever', () => {
     expect(LAND).toContain('did not merge within ${WAIT_TIMEOUT_S}s');
     expect(LAND).toContain('auto-merge stays armed, check ${prUrl}');

@@ -9,6 +9,7 @@ import { z } from 'zod';
 import { ok, fail, toToolError } from './types';
 import type { ToolDefinition, ToolContext, ToolResult } from './types';
 import type { CookingSession } from '../../domain/types';
+import { rebaseTimersAfterResume } from '../timer-rebase';
 import { createGuideService } from './guide-tools';
 
 /** Guided-cooking service bound to the tool context. */
@@ -170,6 +171,12 @@ export const resumeCookingSessionTool: ToolDefinition = {
     if (!resolved.ok) return resolved.result;
     const s = resolved.session;
     try {
+      // Pause froze the timers (snapshot reports the at-pause remainder);
+      // resume shifts endsAt forward by the paused duration so the countdown
+      // continues from where it froze instead of firing instantly.
+      if (s.pausedAt) {
+        await rebaseTimersAfterResume(ctx.timerStore, s.id, s.pausedAt);
+      }
       const updated = await ctx.sessionService.resumeSession(s.id, s.version, {
         correlationId: ctx.correlationId,
       });

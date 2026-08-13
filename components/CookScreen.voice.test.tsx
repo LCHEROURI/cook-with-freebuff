@@ -4,7 +4,7 @@ import { act, fireEvent, render, screen } from '@testing-library/react';
 import '@testing-library/jest-dom/vitest';
 import { createElement } from 'react';
 import { CookScreen } from './CookScreen';
-import type { GuideSnapshot } from '@/lib/server/guide-service';
+import type { GuideSnapshot } from '@/lib/domain/guide';
 
 function snapshot(overrides: Partial<GuideSnapshot> = {}): GuideSnapshot {
   return {

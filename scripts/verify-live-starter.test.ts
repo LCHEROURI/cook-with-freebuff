@@ -184,8 +184,23 @@ describe('scripts/verify-live.mjs · starter-flow gate (create → validate → 
     expect(SRC).toContain("db.collection('recipes').doc(s.recipeId).get()");
     expect(SRC).toContain('const idleCutoff = Date.now() - 10 * 60 * 1000;');
     expect(SRC).toContain('const stale = lastActivity > 0 && lastActivity < idleCutoff;');
-    expect(SRC).toContain('if (recipeSnap.exists && !stale) continue;');
-    expect(SRC).toContain("await d.ref.update({ status: 'ABANDONED', lastActivityAt: Date.now() });");
+    expect(SRC).not.toContain('if (recipeSnap.exists && !stale) continue;');
+    // Every archive/delete is CONDITIONAL inside a transaction: the session is
+    // re-read and must still be ACTIVE/PAUSED and still stale (the shared
+    // owner could have resumed it between our first read and the write) — the
+    // unconditional `d.ref.update` the old code used could mark a resumed
+    // session ABANDONED. The version field is bumped like updateSession's
+    // optimistic check so a racing legitimate update surfaces as a conflict.
+    expect(SRC).toContain('db.runTransaction');
+    expect(SRC).toContain("if (cur.status !== 'ACTIVE' && cur.status !== 'PAUSED') return;");
+    expect(SRC).toContain('if (curLast < idleCutoff)');
+    expect(SRC).toContain("status: 'ABANDONED'");
+    expect(SRC).toContain('version: (typeof cur.version === \'number\' ? cur.version : 0) + 1');
+    // The pre-run sweep (verify-live-* probe sessions only) may keep a plain
+    // update — those are unambiguous probe artifacts — but the leftover settle
+    // for NON-probe sessions must never use an unconditional write.
+    const leftoverSettle = SRC.slice(SRC.indexOf('// Archive (ABANDONED)'), SRC.indexOf('leftover settle best-effort'));
+    expect(leftoverSettle).not.toContain("await d.ref.update({ status: 'ABANDONED', lastActivityAt: Date.now() });");
     expect(SRC).toContain('archived before the UI stage');
     expect(SRC).toContain("ok(`orphan-recipe session ${d.id.slice(0, 8)}… (recipe “${s.recipeId.slice(0, 30)}” gone) settled (+ ${events.size} events)`)");
     // A TOOL-FREE conversation session (no recipeId — the orchestrator's
