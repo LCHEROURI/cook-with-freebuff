@@ -1,6 +1,15 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { composeHopReason, probeTokenEndpoint, probeWebSocket, runVoiceSelfCheck } from './self-check';
+import {
+  composeHopReason,
+  composeWebSpeechReason,
+  probeTokenEndpoint,
+  probeWebSocket,
+  probeWebSpeechMic,
+  runVoiceSelfCheck,
+  runWebSpeechSelfCheck,
+  webSpeechApiAvailable,
+} from './self-check';
 import { LIVE_WS_URL } from './gemini-live';
 
 // ============================================================================
@@ -138,6 +147,80 @@ describe('composeHopReason', () => {
   it('falls back to the session message when the probes are inconclusive', () => {
     const r = composeHopReason(base, { token: okToken, websocket: openedWs });
     expect(r).toBe(base);
+  });
+});
+
+describe('Web Speech self-check', () => {
+  function stubMediaDevices(getUserMedia?: (c: unknown) => Promise<unknown>) {
+    Object.defineProperty(navigator, 'mediaDevices', {
+      configurable: true,
+      value: getUserMedia ? { getUserMedia } : undefined,
+    });
+  }
+
+  afterEach(() => {
+    Object.defineProperty(navigator, 'mediaDevices', { configurable: true, value: undefined });
+  });
+
+  it('reports granted when the mic opens and releases the stream', async () => {
+    const stop = vi.fn();
+    stubMediaDevices(vi.fn().mockResolvedValue({ getTracks: () => [{ stop }] }));
+    expect(await probeWebSpeechMic()).toBe('granted');
+    expect(stop).toHaveBeenCalled();
+  });
+
+  it('reports denied on NotAllowedError and not-found when no device exists', async () => {
+    stubMediaDevices(vi.fn().mockRejectedValue(new DOMException('denied', 'NotAllowedError')));
+    expect(await probeWebSpeechMic()).toBe('denied');
+    stubMediaDevices(vi.fn().mockRejectedValue(new DOMException('none', 'NotFoundError')));
+    expect(await probeWebSpeechMic()).toBe('not-found');
+  });
+
+  it('reports unknown when getUserMedia is missing entirely', async () => {
+    stubMediaDevices(undefined);
+    expect(await probeWebSpeechMic()).toBe('unknown');
+  });
+
+  it('detects the browser SpeechRecognition constructor', () => {
+    const w = window as unknown as { SpeechRecognition?: unknown; webkitSpeechRecognition?: unknown };
+    delete w.SpeechRecognition;
+    delete w.webkitSpeechRecognition;
+    expect(webSpeechApiAvailable()).toBe(false);
+    (window as unknown as { webkitSpeechRecognition: unknown }).webkitSpeechRecognition = class {};
+    expect(webSpeechApiAvailable()).toBe(true);
+  });
+
+  it('logs the structured webspeech line', async () => {
+    const err = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const w = window as unknown as { SpeechRecognition?: unknown; webkitSpeechRecognition?: unknown };
+    delete w.SpeechRecognition;
+    delete w.webkitSpeechRecognition;
+    stubMediaDevices(vi.fn().mockResolvedValue({ getTracks: () => [] }));
+    const r = await runWebSpeechSelfCheck();
+    expect(r).toEqual({ api: false, mic: 'granted' });
+    expect(err).toHaveBeenCalledWith('[voice:self-check] webspeech api=false mic=granted');
+    err.mockRestore();
+  });
+});
+
+describe('composeWebSpeechReason', () => {
+  it('names the missing-API hop first', () => {
+    expect(composeWebSpeechReason('network', { api: false, mic: 'granted' })).toContain('not supported');
+  });
+
+  it('mic probes outrank error codes (ground truth for permission/device)', () => {
+    expect(composeWebSpeechReason('network', { api: true, mic: 'denied' })).toContain('permission is denied');
+    expect(composeWebSpeechReason('not-allowed', { api: true, mic: 'not-found' })).toContain('No microphone was detected');
+  });
+
+  it('maps the service error codes to named hops', () => {
+    expect(composeWebSpeechReason('service-not-allowed', { api: true, mic: 'granted' })).toContain('speech service is not allowed');
+    expect(composeWebSpeechReason('network', { api: true, mic: 'granted' })).toContain('unreachable');
+    expect(composeWebSpeechReason('audio-capture', { api: true, mic: 'granted' })).toContain('could not capture audio');
+  });
+
+  it('falls back to the raw code when nothing is known', () => {
+    expect(composeWebSpeechReason('no-speech', { api: true, mic: 'unknown' })).toBe('Speech recognition failed (no-speech).');
   });
 });
 

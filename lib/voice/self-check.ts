@@ -132,6 +132,97 @@ export async function runVoiceSelfCheck(opts: {
   return { token, websocket };
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Web Speech fallback self-check.
+//
+// The Gemini Live path probes a token endpoint + WebSocket. The Web Speech
+// fallback has different hops: browser API availability, microphone access
+// (getUserMedia), and the browser's speech-service error codes. When the
+// fallback fails, these probes name which hop actually broke.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface WebSpeechSelfCheckResult {
+  /** Whether the browser exposes a SpeechRecognition constructor at all. */
+  api: boolean;
+  /** Mic probe outcome: permission granted, denied, no device, or unknown. */
+  mic: 'granted' | 'denied' | 'not-found' | 'unknown';
+}
+
+/** True when the browser has a Web Speech recognition constructor. */
+export function webSpeechApiAvailable(): boolean {
+  if (typeof window === 'undefined') return false;
+  const w = window as unknown as {
+    SpeechRecognition?: unknown;
+    webkitSpeechRecognition?: unknown;
+  };
+  return Boolean(w.SpeechRecognition || w.webkitSpeechRecognition);
+}
+
+/** Probe microphone access directly — the probe that names the real hop. */
+export async function probeWebSpeechMic(timeoutMs = 3000): Promise<WebSpeechSelfCheckResult['mic']> {
+  const md = typeof navigator !== 'undefined' ? navigator.mediaDevices : undefined;
+  if (!md?.getUserMedia) return 'unknown';
+  // Timeout via a race (the DOM type for getUserMedia constraints has no
+  // signal field) so a hanging permission prompt never blocks the verdict.
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const stream = await Promise.race([
+      md.getUserMedia({ audio: true }),
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new DOMException('probe timed out', 'TimeoutError')), timeoutMs);
+      }),
+    ]);
+    // We only needed to know the mic is reachable — release it immediately.
+    stream.getTracks().forEach((t) => t.stop());
+    return 'granted';
+  } catch (e) {
+    const name = e instanceof DOMException ? e.name : (e as { name?: string })?.name;
+    if (name === 'NotAllowedError' || name === 'SecurityError') return 'denied';
+    if (name === 'NotFoundError' || name === 'DevicesNotFoundError') return 'not-found';
+    return 'unknown';
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+/**
+ * Probe the Web Speech hops independently and log a structured line, matching
+ * the Gemini self-check: a console paste alone names the failing hop.
+ */
+export async function runWebSpeechSelfCheck(): Promise<WebSpeechSelfCheckResult> {
+  const api = webSpeechApiAvailable();
+  const mic = await probeWebSpeechMic();
+  console.error(`[voice:self-check] webspeech api=${api} mic=${mic}`);
+  return { api, mic };
+}
+
+/** Name the failing Web Speech hop. Mic probes outrank error codes — the probe
+ *  is ground truth for permission/device state; codes speak for the service. */
+export function composeWebSpeechReason(errorCode: string | null, check: WebSpeechSelfCheckResult): string {
+  if (!check.api) {
+    return 'Speech recognition is not supported in this browser — type your message instead.';
+  }
+  if (check.mic === 'denied') {
+    return 'Microphone permission is denied — enable it in your browser settings, then tap the mic again.';
+  }
+  if (check.mic === 'not-found') {
+    return 'No microphone was detected on this device — check your microphone or headset connection.';
+  }
+  if (errorCode === 'service-not-allowed') {
+    return "The browser's speech service is not allowed — check your browser and device settings.";
+  }
+  if (errorCode === 'network') {
+    return "The browser's speech service is unreachable — check your connection, then tap the mic again.";
+  }
+  if (errorCode === 'audio-capture') {
+    return 'The microphone could not capture audio — check that no other app is using it.';
+  }
+  if (errorCode === 'not-allowed') {
+    return 'Microphone permission denied — enable it in your browser to speak.';
+  }
+  return errorCode ? `Speech recognition failed (${errorCode}).` : 'Speech recognition failed.';
+}
+
 /**
  * Name the exact failing hop from the self-check results. Falls back to the
  * session's own message when the probes are inconclusive.

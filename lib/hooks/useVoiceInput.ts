@@ -1,6 +1,12 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { composeWebSpeechReason, runWebSpeechSelfCheck } from '@/lib/voice/self-check';
+
+// Retryable failures (network / audio-capture) are retried this many times
+// before surfacing an honest error — a genuinely broken mic or a dead network
+// must not restart forever under a fake "Listening…".
+const MAX_WEB_SPEECH_RETRIES = 3;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // useVoiceInput — real microphone capture with speech-to-text for /cook.
@@ -76,6 +82,10 @@ export function useVoiceInput(options: UseVoiceInputOptions = {}) {
   // Tracks whether the user explicitly stopped — prevents the onend handler
   // from restarting after a deliberate stop() call.
   const stoppedByUserRef = useRef(false);
+  // Consecutive retryable failures (network / audio-capture) — bounded so a
+  // broken mic or dead network surfaces an honest hop-named reason instead of
+  // restarting forever under a fake "Listening…".
+  const consecutiveFailuresRef = useRef(0);
 
   const safeRestart = useCallback((rec: SpeechRecognitionLike) => {
     if (stoppedByUserRef.current) return;
@@ -111,6 +121,8 @@ export function useVoiceInput(options: UseVoiceInputOptions = {}) {
       }
       const last = results[results.length - 1];
       if (last?.isFinal) {
+        // A real utterance — the retry-exhaustion counter resets.
+        consecutiveFailuresRef.current = 0;
         const finalText = raw.trim();
         setInterim('');
         if (finalText) bufferRef.current.push(finalText);
@@ -128,22 +140,45 @@ export function useVoiceInput(options: UseVoiceInputOptions = {}) {
 
     rec.onerror = (event) => {
       if (event.error === 'aborted') return;
-      // Retryable: the browser hiccuped but the mic is still viable.
-      if (event.error === 'no-speech' || event.error === 'network' || event.error === 'audio-capture') {
+      const code = event.error;
+      // Normal silence — not a failure, keep the mic open.
+      if (code === 'no-speech') {
         if (!stoppedByUserRef.current && recognitionRef.current === rec) {
           safeRestart(rec);
         }
         return;
       }
-      // Fatal: permission denied or unrecognised error.
+      // Flaky-network / capture hiccups are retryable a few times, then must
+      // surface honestly instead of restarting forever (the silent drop).
+      if (code === 'network' || code === 'audio-capture') {
+        consecutiveFailuresRef.current += 1;
+        if (
+          consecutiveFailuresRef.current < MAX_WEB_SPEECH_RETRIES &&
+          !stoppedByUserRef.current &&
+          recognitionRef.current === rec
+        ) {
+          safeRestart(rec);
+          return;
+        }
+      } else {
+        consecutiveFailuresRef.current = 0;
+      }
+      // Fatal: show an immediate reason, then the self-check names the exact
+      // failing hop (API missing, mic permission, device, or speech service).
+      const immediate =
+        code === 'not-allowed'
+          ? 'Microphone permission denied — enable it in your browser to speak.'
+          : `Speech recognition failed (${code}).`;
       setListening(false);
       recognitionRef.current = null;
-      const message =
-        event.error === 'not-allowed'
-          ? 'Microphone permission denied — enable it in your browser to speak.'
-          : `Speech recognition failed (${event.error}).`;
-      setError(message);
-      optionsRef.current.onError?.(message);
+      setError(immediate);
+      optionsRef.current.onError?.(immediate);
+      void runWebSpeechSelfCheck().then((check) => {
+        const reason = composeWebSpeechReason(code, check);
+        // Structured verdict — logged even if the banner was dismissed.
+        console.error(`[voice:self-check] verdict: ${reason}`);
+        setError(reason);
+      });
     };
 
     return rec;
@@ -165,6 +200,7 @@ export function useVoiceInput(options: UseVoiceInputOptions = {}) {
     }
     // Starting fresh.
     stoppedByUserRef.current = false;
+    consecutiveFailuresRef.current = 0;
     const rec = createRecognition();
     if (!rec) return;
     recognitionRef.current = rec;

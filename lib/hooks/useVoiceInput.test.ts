@@ -3,6 +3,18 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { act, renderHook } from '@testing-library/react';
 import { useVoiceInput } from './useVoiceInput';
 import type { SpeechRecognitionLike } from './useVoiceInput';
+import { runWebSpeechSelfCheck } from '@/lib/voice/self-check';
+
+// The Web Speech self-check probes navigator.mediaDevices — swap it for a
+// deterministic stub. Healthy by default so non-fatal tests keep their own
+// error text; the fatal-path tests override the probe result.
+vi.mock('@/lib/voice/self-check', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/voice/self-check')>();
+  return {
+    ...actual,
+    runWebSpeechSelfCheck: vi.fn().mockResolvedValue({ api: true, mic: 'granted' }),
+  };
+});
 
 // ============================================================================
 // lib/hooks/useVoiceInput.test.ts — the real-microphone surface of /cook.
@@ -63,7 +75,9 @@ function resultEvent(transcript: string, isFinal: boolean, resultIndex = 0) {
 }
 
 beforeEach(() => {
-  vi.restoreAllMocks();
+  // clearAllMocks (not restoreAllMocks): the self-check mock's resolved
+  // value must survive between tests — restore would wipe it to undefined.
+  vi.clearAllMocks();
   vi.useFakeTimers();
   clearApi();
   lastInstance = null;
@@ -207,7 +221,7 @@ describe('useVoiceInput', () => {
     expect(lastInstance?.started).toBe(true);
   });
 
-  it('network errors trigger a restart, not a fatal error', () => {
+  it('a network error triggers a restart, not a fatal error (first time)', () => {
     installFake();
     const onError = vi.fn();
     const { result } = renderHook(() => useVoiceInput({ onError }));
@@ -220,7 +234,52 @@ describe('useVoiceInput', () => {
     expect(onError).not.toHaveBeenCalled();
   });
 
-  it('permission denied is still a fatal error', () => {
+  it('exhausts network retries, then fails with a hop-named reason (no silent drop)', async () => {
+    installFake();
+    const onError = vi.fn();
+    const { result } = renderHook(() => useVoiceInput({ onError }));
+    act(() => result.current.toggle());
+    // Two retryable failures are absorbed…
+    act(() => {
+      lastInstance?.onerror?.({ error: 'network' });
+      lastInstance?.onerror?.({ error: 'network' });
+    });
+    expect(result.current.error).toBeNull();
+    // …the third must surface honestly, naming the speech-service hop.
+    act(() => {
+      lastInstance?.onerror?.({ error: 'network' });
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(result.current.listening).toBe(false);
+    expect(result.current.error).toContain('unreachable');
+    expect(onError).toHaveBeenCalled();
+    expect(runWebSpeechSelfCheck).toHaveBeenCalled();
+    // Stale restart timers must not resurrect a failed session.
+    act(() => {
+      vi.advanceTimersByTime(150);
+    });
+    expect(result.current.listening).toBe(false);
+  });
+
+  it('bounds audio-capture retries the same way, naming the mic hop', async () => {
+    installFake();
+    const { result } = renderHook(() => useVoiceInput());
+    act(() => result.current.toggle());
+    act(() => {
+      lastInstance?.onerror?.({ error: 'audio-capture' });
+      lastInstance?.onerror?.({ error: 'audio-capture' });
+      lastInstance?.onerror?.({ error: 'audio-capture' });
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(result.current.listening).toBe(false);
+    expect(result.current.error).toContain('could not capture audio');
+  });
+
+  it('permission denied is still a fatal error, named by the mic probe', async () => {
     installFake();
     const onError = vi.fn();
     const { result } = renderHook(() => useVoiceInput({ onError }));
@@ -228,9 +287,14 @@ describe('useVoiceInput', () => {
     act(() => {
       lastInstance?.onerror?.({ error: 'not-allowed' });
     });
+    // Immediate reason first — the fallback must not wait on the probes.
     expect(result.current.error).toContain('Microphone permission denied');
     expect(result.current.listening).toBe(false);
     expect(onError).toHaveBeenCalled();
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(result.current.error).toContain('Microphone permission');
   });
 
   it('unmount aborts the active recognition — no dangling listeners', () => {

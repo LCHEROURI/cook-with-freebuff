@@ -62,6 +62,9 @@ const flag = (name, fallback) => {
 };
 const APP = (flag('--app', process.env.VERIFY_BASE_URL) ?? 'https://cook-with-freebuff.vercel.app').replace(/\/$/, '');
 const OUT = flag('--out', '/tmp/live-voice-drive');
+// Run ONLY the two-burst phase (used to measure its pass rate across repeated
+// runs — Phase A and B are skipped, and the owner session is injected fresh).
+const PHASE_C_ONLY = process.argv.includes('--phase-c-only');
 const CHROME = process.env.CHROME_PATH ?? '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
 const SPEECH_WAV = '/tmp/live-voice-speech.wav';
 const SILENCE_WAV = '/tmp/live-voice-silence.wav';
@@ -402,7 +405,11 @@ async function injectSession(evaluate) {
 }
 const pageText = (evaluate) => evaluate(`document.body?.innerText?.replace(/\\s+/g, ' ').slice(0, 1000) || ''`);
 
+// Shared page-text state (set by whichever phase runs; Phase C reads it).
+let text = '';
+
 // ── PHASE A: starter DICTATION mic ──────────────────────────────────────────
+if (!PHASE_C_ONLY) {
 console.log(`\n=== PHASE A — starter dictation mic (speech fake-audio) ===`);
 const a = launchChrome(SPEECH_WAV, 9473);
 let cdp;
@@ -418,7 +425,7 @@ await injectSession(evA);
 await cdp.send('Page.reload', { ignoreCache: true });
 await sleep(3500);
 
-let text = await pageText(evA);
+text = await pageText(evA);
 let sawStarter = text.includes('Create my recipe');
 for (let i = 0; i < 20 && !sawStarter; i++) {
   await sleep(1000);
@@ -493,11 +500,14 @@ if (stA.prompt) {
 }
 await shotA('02-dictation-prompt-filled');
 a.kill(); a.dropProfile(); try { cdp.ws.close(); } catch { /* socket already gone */ }
+}
 
 // ── PHASE B: active-screen Live mic ─────────────────────────────────────────
+let b = null;
+let cdpB = null;
+if (!PHASE_C_ONLY) {
 console.log(`\n=== PHASE B — active-screen Live mic (silence fake-audio) ===`);
-const b = launchChrome(SILENCE_WAV, 9474);
-let cdpB;
+b = launchChrome(SILENCE_WAV, 9474);
 try {
   cdpB = await connectCdp(9474);
 } catch (e) {
@@ -723,6 +733,7 @@ receivedFrames(netB).some((f) => f.includes('turnComplete'))
   ? ok('server signalled turnComplete for the replies')
   : note('no turnComplete frame observed');
 await shotB('04-live-spoken-replies');
+}
 
 // ── PHASE C: continuous voice — TWO spoken bursts through the active mic ────
 // The user's actual complaint: "mic drops after the first phrase". The active
@@ -842,12 +853,40 @@ if (got2) {
   ok(`TWO spoken bursts transcribed through the active mic — “${seen[0]}” / “${seen[1]}”`);
 } else {
   fail(`only ${seen.length} transcription(s) after 90s: ${JSON.stringify(seen.slice(-3))}`);
+  // The drop just happened — capture the copy-voice-details blob live, the
+  // exact artifact the deployed button produces, plus a screenshot.
+  try {
+    await cdpC.send('Browser.grantPermissions', {
+      permissions: ['clipboardReadWrite', 'clipboardSanitizedWrite'],
+      origin: APP,
+    });
+  } catch { /* older protocol — the page may still read the clipboard */ }
+  const blob = await evC(`(async () => {
+    const btn = document.querySelector('button[aria-label="Copy voice session details"]');
+    if (!btn) return 'NO_COPY_BUTTON (not listening / no error visible)';
+    // Patch writeText so the blob is captured directly — reading the clipboard
+    // back requires document focus, which a headless tab lacks.
+    let captured = null;
+    try {
+      const orig = navigator.clipboard.writeText.bind(navigator.clipboard);
+      navigator.clipboard.writeText = (t) => { captured = t; return orig(t).catch(() => undefined); };
+    } catch { /* clipboard unavailable — click still runs the handler */ }
+    btn.click();
+    await new Promise((r) => setTimeout(r, 400));
+    return captured ?? 'BLob_CAPTURE_MISS';
+  })()`);
+  console.log('\n=== copy-voice-details blob captured at the drop ===');
+  console.log(blob);
+  try { writeFileSync(`${OUT}/phase-c-drop-blob.json`, blob); note(`blob saved: phase-c-drop-blob.json`); } catch { /* non-fatal */ }
+  try { await cdpC.screenshot('phase-c-drop'); note('screenshot: phase-c-drop.png'); } catch { /* non-fatal */ }
 }
 c.kill(); c.dropProfile(); try { cdpC.ws.close(); } catch { /* socket already gone */ }
 
 // ── 6. Cleanup (idempotent; the handlers above also run it) ─────────────────
 console.log(`\n[6] Cleanup probe session + recipe`);
-b.kill(); b.dropProfile(); try { cdpB.ws.close(); } catch { /* socket already gone */ }
+if (!PHASE_C_ONLY) {
+  b.kill(); b.dropProfile(); try { cdpB.ws.close(); } catch { /* socket already gone */ }
+}
 await cleanup();
 ok('the owner account stays clean');
 
