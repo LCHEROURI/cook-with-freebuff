@@ -1,0 +1,67 @@
+name: Codex review gate
+
+# Fails a PR when the Codex review bot leaves an OPEN P1 finding, instead of
+# relying on the post-merge issue monitor to catch it after the fact. The bot
+# posts inline review comments shortly after a PR opens — often AFTER the
+# initial checks complete — so the gate re-runs on review-comment and review
+# events as well as the standard pull_request events: a P1 that lands after
+# the first check run still reddens this required check and blocks the merge.
+#
+# A finding is open until a human reply lands on its thread (in_reply_to_id) —
+# the resolution-note convention — so fixing the code and replying on the
+# thread turns the gate green. P2 findings never block (see
+# scripts/codex-review-pr-gate.mjs --include-p2).
+#
+# Add "Codex P1 gate" to the branch's required status checks for the gate to
+# actually block merges (this workflow only reports the check result).
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+  # The bot's inline comments and reviews arrive after the initial checks —
+  # re-run the gate the moment one lands so the required check reflects it.
+  pull_request_review_comment:
+    types: [created]
+  pull_request_review:
+    types: [submitted]
+  workflow_dispatch:
+    inputs:
+      pr:
+        description: PR number to gate
+        required: true
+
+concurrency:
+  group: codex-gate-${{ github.event.pull_request.number || github.event.issue.number || github.event.inputs.pr }}
+  cancel-in-progress: false
+
+jobs:
+  codex-gate:
+    name: Codex P1 gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    permissions:
+      contents: read
+      pull-requests: read
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v5
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      # gh is preinstalled on ubuntu runners but needs GH_TOKEN set explicitly
+      # inside Actions. The gate only READS the bot's comments via the API; no
+      # secrets required.
+      - name: Fail on open Codex P1 findings
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number || github.event.issue.number || github.event.inputs.pr }}
+        run: node scripts/codex-review-pr-gate.mjs
