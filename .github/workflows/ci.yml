@@ -288,14 +288,13 @@ jobs:
       # Manual workflow_dispatch re-runs stay exempt (operator-initiated,
       # skipped steps are visible to the operator).
       - name: Fail loudly if a verify secret is missing (main deploy)
-        if: ${{ github.event_name != 'workflow_dispatch' && github.repository == 'LCHEROURI/cook-with-freebuff' && (env.NEXT_PUBLIC_FIREBASE_API_KEY == '' || env.FIREBASE_SERVICE_ACCOUNT == '' || env.APP_OWNER_UID == '' || env.GOOGLE_AI_API_KEY == '' || env.NEXT_PUBLIC_FIREBASE_APP_ID == '') }}
+        if: ${{ github.event_name != 'workflow_dispatch' && github.repository == 'LCHEROURI/cook-with-freebuff' && (env.NEXT_PUBLIC_FIREBASE_API_KEY == '' || env.FIREBASE_SERVICE_ACCOUNT == '' || env.APP_OWNER_UID == '' || env.GOOGLE_AI_API_KEY == '') }}
         run: |
           echo "::error::Required GitHub Actions secret(s) missing on main deploy:"
           [ -z "$NEXT_PUBLIC_FIREBASE_API_KEY" ] && echo "  - NEXT_PUBLIC_FIREBASE_API_KEY (mints the owner ID token for verify:live)"
           [ -z "$FIREBASE_SERVICE_ACCOUNT" ] && echo "  - FIREBASE_SERVICE_ACCOUNT (seeds the owner recipe + mints the owner custom token)"
           [ -z "$APP_OWNER_UID" ] && echo "  - APP_OWNER_UID (the owner Firebase Auth uid verify:live signs in as)"
           [ -z "$GOOGLE_AI_API_KEY" ] && echo "  - GOOGLE_AI_API_KEY (the Gemini provider the agent turn must answer with)"
-          [ -z "$NEXT_PUBLIC_FIREBASE_APP_ID" ] && echo "  - NEXT_PUBLIC_FIREBASE_APP_ID (the web app id, to attest the driver via App Check)"
           echo "Add them under GitHub -> Settings -> Secrets and variables -> Actions, then re-run this job."
           exit 1
         env:
@@ -303,7 +302,6 @@ jobs:
           FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
           APP_OWNER_UID: ${{ secrets.APP_OWNER_UID }}
           GOOGLE_AI_API_KEY: ${{ secrets.GOOGLE_AI_API_KEY }}
-          NEXT_PUBLIC_FIREBASE_APP_ID: ${{ secrets.NEXT_PUBLIC_FIREBASE_APP_ID }}
 
       # The deploy job can exit while the rollout is still building. Prove the
       # host serves the pushed commit (github.sha — what write-commit.mjs
@@ -323,7 +321,7 @@ jobs:
       # Gated on the same four secrets as verify:live, so a fork that skips
       # the deep run also skips its pre-flight.
       - name: Post-deploy smoke (app up + build-info answers)
-        if: ${{ env.NEXT_PUBLIC_FIREBASE_API_KEY != '' && env.FIREBASE_SERVICE_ACCOUNT != '' && env.APP_OWNER_UID != '' && env.GOOGLE_AI_API_KEY != '' && env.NEXT_PUBLIC_FIREBASE_APP_ID != '' }}
+        if: ${{ env.NEXT_PUBLIC_FIREBASE_API_KEY != '' && env.FIREBASE_SERVICE_ACCOUNT != '' && env.APP_OWNER_UID != '' && env.GOOGLE_AI_API_KEY != '' }}
         run: |
           set -euo pipefail
           base="https://cook-with-freebuff--portfolio-app-freebuff2.us-central1.hosted.app"
@@ -365,7 +363,7 @@ jobs:
       # pushed commit before this runs.
       - name: Verify deployed app end to end (verify:live)
         id: verify
-        if: ${{ env.NEXT_PUBLIC_FIREBASE_API_KEY != '' && env.FIREBASE_SERVICE_ACCOUNT != '' && env.APP_OWNER_UID != '' && env.GOOGLE_AI_API_KEY != '' && env.NEXT_PUBLIC_FIREBASE_APP_ID != '' }}
+        if: ${{ env.NEXT_PUBLIC_FIREBASE_API_KEY != '' && env.FIREBASE_SERVICE_ACCOUNT != '' && env.APP_OWNER_UID != '' && env.GOOGLE_AI_API_KEY != '' }}
         run: npm run verify:live
         env:
           VERIFY_BASE_URL: https://cook-with-freebuff--portfolio-app-freebuff2.us-central1.hosted.app

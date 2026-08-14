@@ -72,11 +72,16 @@ The post-deploy verify:live driver is a server-side script, so it cannot use the
 browser's reCAPTCHA attestation. It mints its own App Check token via
 `admin.appCheck().createToken(NEXT_PUBLIC_FIREBASE_APP_ID)` and attaches it as
 `X-Firebase-AppCheck` on the `/api/cook` and `/api/agent` calls, so the gate
-keeps exercising those routes after enforcement. Before flipping
-`APP_CHECK_ENFORCED=1`, two things must be true or verify:live will redden:
-1. `NEXT_PUBLIC_FIREBASE_APP_ID` is set as a GitHub Actions secret (the public
+keeps exercising those routes after enforcement. Attestation is best-effort:
+until App Check is provisioned the mint fails and the routes still pass in
+monitor mode, so the driver notes it and carries on — but once enforcement is
+on, a missing token makes those routes 403 and the run goes red. Before
+flipping `APP_CHECK_ENFORCED=1`, three things must be true:
+1. The App Check API is enabled for the project (Firebase console → App Check
+   enables it; or `gcloud services enable firebaseappcheck.googleapis.com`).
+2. `NEXT_PUBLIC_FIREBASE_APP_ID` is set as a GitHub Actions secret (the public
    web app id from `apphosting.yaml`, `1:…:web:…`).
-2. The `FIREBASE_SERVICE_ACCOUNT` service account has the Firebase App Check
+3. The `FIREBASE_SERVICE_ACCOUNT` service account has the Firebase App Check
    Admin role (or the narrower App Check Token Exchange permission), so
    `createToken` can exchange the minted token.
 

@@ -28,11 +28,11 @@ const CI = readFileSync('.github/workflows/ci.yml', 'utf8');
 const MIC_REGRESSION = readFileSync('.github/workflows/mic-regression.yml', 'utf8');
 const CODEX_MONITOR = readFileSync('.github/workflows/codex-review-monitor.yml', 'utf8');
 
-// The verify step's gating `if:` — the five secrets must ALL be present for
+// The verify step's gating `if:` — the four secrets must ALL be present for
 // the deep gates to run (a missing one skips-not-fails, but only on forks;
 // the loud guard below turns that skip into a failure on main deploys).
 const FOUR_SECRETS_GATE =
-  "if: ${{ env.NEXT_PUBLIC_FIREBASE_API_KEY != '' && env.FIREBASE_SERVICE_ACCOUNT != '' && env.APP_OWNER_UID != '' && env.GOOGLE_AI_API_KEY != '' && env.NEXT_PUBLIC_FIREBASE_APP_ID != '' }}";
+  "if: ${{ env.NEXT_PUBLIC_FIREBASE_API_KEY != '' && env.FIREBASE_SERVICE_ACCOUNT != '' && env.APP_OWNER_UID != '' && env.GOOGLE_AI_API_KEY != '' }}";
 // Plain concatenation on purpose: a template literal containing the `${{`
 // GitHub expression syntax would parse as a nested interpolation and throw.
 const SECRET_WIRING = (name: string) => name + ': ${{ secrets.' + name + ' }}';
@@ -288,16 +288,27 @@ describe('.github/workflows/ci.yml · post-deploy verify:live needs-edge', () =>
     expect(verifyStepBlock).not.toContain('VERIFY_APPHOSTING_URL');
   });
 
-  it('wires all five secrets into the job env, the loud guard, AND the verify step env (3 wirings each)', () => {
+  it('wires all four secrets into the job env, the loud guard, AND the verify step env (3 wirings each)', () => {
     for (const name of [
       'NEXT_PUBLIC_FIREBASE_API_KEY',
       'FIREBASE_SERVICE_ACCOUNT',
       'APP_OWNER_UID',
       'GOOGLE_AI_API_KEY',
-      'NEXT_PUBLIC_FIREBASE_APP_ID',
     ]) {
       expect(verifyBlock.match(new RegExp(SECRET_WIRING(name).replace(/[$\\{\\}]/g, '\\$&'), 'g'))).toHaveLength(3);
     }
+  });
+
+  it('wires NEXT_PUBLIC_FIREBASE_APP_ID into the job env and the verify step env only (2 wirings, no guard)', () => {
+    // The app id attests the driver via App Check, but attestation is
+    // best-effort until App Check is provisioned — so it rides the job + step
+    // env and is NOT part of the loud guard (a missing one must not redden a
+    // monitor-mode deploy).
+    const wiring = new RegExp(SECRET_WIRING('NEXT_PUBLIC_FIREBASE_APP_ID').replace(/[$\\{\\}]/g, '\\$&'), 'g');
+    expect(verifyBlock.match(wiring)).toHaveLength(2);
+    const guardStart = verifyBlock.indexOf('name: Fail loudly if a verify secret is missing (main deploy)');
+    const guardBlock = verifyBlock.slice(guardStart, verifyBlock.indexOf('name: Wait for the App Hosting rollout'));
+    expect(guardBlock).not.toContain('NEXT_PUBLIC_FIREBASE_APP_ID');
   });
 
   it('records the verify:live verdict to Firestore after the verify step (runs even on failure)', () => {
@@ -313,7 +324,7 @@ describe('.github/workflows/ci.yml · post-deploy verify:live needs-edge', () =>
     expect(verifyBlock).toContain('--verdict "${{ steps.verify.outcome }}"');
     expect(verifyBlock).toContain('--commit "${{ github.sha }}"');
     expect(verifyBlock).toContain('--run-url "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"');
-    // Negative: the record step must not introduce a 6th secret wiring.
+    // Negative: the record step must not introduce another secret wiring.
     const recordStart = verifyBlock.indexOf('name: Record verify:live result for the status page');
     const recordBlock = verifyBlock.slice(recordStart);
     expect(recordBlock).not.toContain('secrets.');

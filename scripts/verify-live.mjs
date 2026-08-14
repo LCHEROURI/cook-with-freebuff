@@ -240,7 +240,6 @@ if (EMULATOR) {
   if (!API_KEY) { console.error('✗ FAIL: NEXT_PUBLIC_FIREBASE_API_KEY is required'); process.exit(1); }
   if (!OWNER_UID) { console.error('✗ FAIL: APP_OWNER_UID is required (the owner Firebase Auth uid)'); process.exit(1); }
   if (!SA_JSON) { console.error('✗ FAIL: FIREBASE_SERVICE_ACCOUNT (inline JSON) is required'); process.exit(1); }
-  if (!APP_ID) { console.error('✗ FAIL: NEXT_PUBLIC_FIREBASE_APP_ID is required (the web app id, to attest via App Check)'); process.exit(1); }
 }
 
 let app;
@@ -386,17 +385,23 @@ try {
   // (monitor mode today, enforced once APP_CHECK_ENFORCED=1). The driver
   // attests with admin.appCheck().createToken() — Firebase's supported CI
   // mechanism — so the post-deploy gate keeps reaching the tested flow after
-  // enforcement, instead of 403ing before it. A mint failure is recorded as
-  // a failure (and the gated routes then report their own 403s) but the run
-  // continues so every stage still reports.
+  // enforcement, instead of 403ing before it. Attestation is best-effort:
+  // until App Check is provisioned (API enabled + the service account holds
+  // the App Check Admin role) the mint fails and the routes still pass in
+  // monitor mode, so this is a note, not a failure — but once enforcement is
+  // on, a missing token makes the routes themselves 403 and the run goes red.
   let appCheckToken = null;
   if (!EMULATOR) {
-    try {
-      const minted = await getAppCheck(app).createToken(APP_ID);
-      appCheckToken = minted.token;
-      ok('App Check token minted (admin.appCheck().createToken)');
-    } catch (e) {
-      fail(`could not mint App Check token — ${e instanceof Error ? e.message : String(e)} (the service account needs the Firebase App Check Admin role, and NEXT_PUBLIC_FIREBASE_APP_ID must be the deployed web app id)`);
+    if (!APP_ID) {
+      note('NEXT_PUBLIC_FIREBASE_APP_ID not set — App Check attestation skipped (set it before enabling APP_CHECK_ENFORCED=1)');
+    } else {
+      try {
+        const minted = await getAppCheck(app).createToken(APP_ID);
+        appCheckToken = minted.token;
+        ok('App Check token minted (admin.appCheck().createToken)');
+      } catch (e) {
+        note(`App Check token NOT minted — ${e instanceof Error ? e.message : String(e)} (enable the App Check API and grant the service account the App Check Admin role; routes still pass in monitor mode)`);
+      }
     }
   }
   const AUTH = {
