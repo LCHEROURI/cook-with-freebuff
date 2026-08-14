@@ -110,7 +110,7 @@ describe.skipIf(!emulator)('correlation-marker cleanup · Firestore emulator', (
     expect((await db.collection('correlation_markers').doc(staleRaw).get()).exists).toBe(false);
     expect((await db.collection('correlation_markers').doc(staleEncoded).get()).exists).toBe(false);
     expect((await db.collection('correlation_markers').doc(fresh).get()).exists).toBe(true);
-  });
+  }, 60_000);
 
   it('DRY_RUN=1 reports what would be deleted and writes nothing', async () => {
     const run = `${Date.now()}-${Math.floor(Math.random() * 1_000_000)}`;
@@ -124,7 +124,7 @@ describe.skipIf(!emulator)('correlation-marker cleanup · Firestore emulator', (
 
     // Clear this doc so the multi-page test below sees exactly its own 550.
     await db.collection('correlation_markers').doc(stale).delete();
-  });
+  }, 60_000);
 
   it('sweeps more than one page (550 stale docs) and keeps fresh ones', async () => {
     const run = `${Date.now()}-${Math.floor(Math.random() * 1_000_000)}`;
@@ -149,5 +149,5 @@ describe.skipIf(!emulator)('correlation-marker cleanup · Firestore emulator', (
     expect(stdout).toContain('deleted 550 stale marker doc(s)');
     expect(stdout).toContain('across 2 page(s)');
     expect((await db.collection('correlation_markers').doc(fresh).get()).exists).toBe(true);
-  });
+  }, 60_000);
 });
