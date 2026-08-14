@@ -95,7 +95,13 @@ describe('verify:live · App Check enforcement probe', () => {
 
   it('only probes the deployed server, never the emulator (which always passes App Check)', () => {
     expect(VERIFY_LIVE).toContain('if (!EMULATOR) {');
-    expect(VERIFY_LIVE).toContain('App Check enforcement: unattested request rejected 403');
+    expect(VERIFY_LIVE).toContain('App Check enforced — unattested request rejected 403');
+  });
+
+  it('reports the probe result as a note, not a status line, so verify:live:compare stays clean', () => {
+    // A ✓ here would leak into verify-live-compare's status-line diff (the
+    // local leg runs monitor mode), so the enforced case must stay a note().
+    expect(VERIFY_LIVE).toContain("note(`App Check enforced — unattested request rejected 403");
   });
 
   it('fails the harness when enforcement is required but the server is in monitor mode', () => {

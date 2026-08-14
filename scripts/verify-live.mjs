@@ -432,7 +432,10 @@ try {
     });
     const enforced = noAppCheck.status === 403 && noAppCheck.body?.error?.code === 'APP_CHECK_FAILED';
     if (enforced) {
-      ok(`App Check enforcement: unattested request rejected 403 (${noAppCheck.body.error.code})`);
+      // note(), not ok(): the result is diagnostic, and a ✓ here would leak
+      // into verify-live-compare's status-line diff (the local leg is monitor
+      // mode), producing a false lifecycle divergence.
+      note(`App Check enforced — unattested request rejected 403 (${noAppCheck.body.error.code})`);
       if (!appCheckToken) {
         fail('App Check is enforced but the driver minted no token — enable the App Check API, grant the service account the App Check Admin role, and set NEXT_PUBLIC_FIREBASE_APP_ID');
       }
