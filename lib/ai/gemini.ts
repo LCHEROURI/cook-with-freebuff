@@ -22,6 +22,13 @@ export interface GeminiOptions {
   apiKey?: string;
   generationModel?: string;
   validationModel?: string;
+  /**
+   * Optional Remote Config model resolver: returns a model name for a role
+   * ('generation' | 'validation'), or undefined when Remote Config has no
+   * value. Sits above the env-var fallback so a model can change without a
+   * deploy. Injected by the server wiring (lib/server/stores.ts).
+   */
+  resolveModel?: (role: string) => Promise<string | undefined>;
 }
 
 const DEFAULT_MODEL = 'gemini-2.5-flash';
@@ -40,11 +47,10 @@ export function getGeminiModel(opts: GeminiOptions, model?: string): GenerativeM
   return genAI.getGenerativeModel({ model: model ?? DEFAULT_MODEL });
 }
 
-function getModel(opts: GeminiOptions, role: 'generation' | 'validation'): GenerativeModel | null {
-  const model =
-    role === 'generation'
-      ? (opts.generationModel ?? process.env.RECIPE_GENERATION_MODEL ?? DEFAULT_MODEL)
-      : (opts.validationModel ?? process.env.RECIPE_VALIDATION_MODEL ?? DEFAULT_MODEL);
+async function getModel(opts: GeminiOptions, role: 'generation' | 'validation'): Promise<GenerativeModel | null> {
+  const explicit = role === 'generation' ? opts.generationModel : opts.validationModel;
+  const envName = role === 'generation' ? process.env.RECIPE_GENERATION_MODEL : process.env.RECIPE_VALIDATION_MODEL;
+  const model = explicit ?? (await opts.resolveModel?.(role)) ?? envName ?? DEFAULT_MODEL;
   return getGeminiModel(opts, model);
 }
 
@@ -164,7 +170,7 @@ function buildGenerationPrompt(request: RecipeRequest): string {
 export function createGeminiRecipeGenerator(opts: GeminiOptions = {}): RecipeGenerator {
   return {
     async generate(request: RecipeRequest): Promise<Recipe> {
-      const model = getModel(opts, 'generation');
+      const model = await getModel(opts, 'generation');
       if (!model) {
         throw new Error('GOOGLE_AI_API_KEY is not configured for recipe generation');
       }
@@ -206,7 +212,7 @@ function buildValidationPrompt(recipe: Recipe): string {
 export function createGeminiRecipeValidator(opts: GeminiOptions = {}): RecipeValidator {
   return {
     async validate(recipe: Recipe): Promise<RecipeValidationResult> {
-      const model = getModel(opts, 'validation');
+      const model = await getModel(opts, 'validation');
       if (!model) {
         return { valid: true, errors: [], warnings: [], missingConfirmations: [] };
       }

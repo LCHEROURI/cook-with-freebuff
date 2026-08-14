@@ -23,7 +23,10 @@ export function createGeminiConversationAgent(opts: GeminiOptions = {}): Convers
       utterance: string;
       context: ConversationContext;
     }): Promise<{ message: string; toolCalls?: ToolCall[]; shouldSpeak: boolean }> {
-      const model = getGeminiModel(opts, opts.generationModel ?? process.env.CONVERSATION_MODEL);
+      const model = getGeminiModel(
+        opts,
+        opts.generationModel ?? (await opts.resolveModel?.('conversation')) ?? process.env.CONVERSATION_MODEL,
+      );
       if (!model) {
         throw new Error('GOOGLE_AI_API_KEY is not configured for conversation');
       }

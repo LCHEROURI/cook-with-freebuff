@@ -13,9 +13,12 @@ import { NextResponse } from 'next/server';
 import { resolveUserId } from '@/lib/server/admin';
 import { gateAppCheck } from '@/lib/server/app-check';
 import { createGeminiVisionScanner } from '@/lib/ai/gemini-vision';
+import { resolveGeminiModel } from '@/lib/server/model-config';
 import { logError } from '@/lib/server/logger';
 
-const scanner = createGeminiVisionScanner();
+// Vision model resolves from Remote Config first, then VISION_MODEL, then the
+// hardcoded default — so a vision model change needs no redeploy.
+const scanner = createGeminiVisionScanner({ resolveModel: () => resolveGeminiModel('vision') });
 
 export async function POST(req: Request) {
   const appCheck = await gateAppCheck(req, { consume: true });

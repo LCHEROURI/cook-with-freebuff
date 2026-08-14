@@ -12,6 +12,7 @@
 import { NextResponse } from 'next/server';
 import { resolveUserId } from '@/lib/server/admin';
 import { gateAppCheck } from '@/lib/server/app-check';
+import { resolveGeminiModel } from '@/lib/server/model-config';
 
 const MINT_URL = 'https://generativelanguage.googleapis.com/v1alpha/auth_tokens';
 const DEFAULT_LIVE_MODEL = 'gemini-3.1-flash-live-preview';
@@ -72,7 +73,9 @@ export async function POST(req: Request) {
     success: true,
     data: {
       token: minted.name,
-      model: process.env.LIVE_MODEL ?? DEFAULT_LIVE_MODEL,
+      // Live voice model resolves from Remote Config first, then LIVE_MODEL,
+      // then the hardcoded default — the client connects with what we return.
+      model: (await resolveGeminiModel('live-voice')) ?? process.env.LIVE_MODEL ?? DEFAULT_LIVE_MODEL,
       expiresAt: typeof minted.expireTime === 'string' ? minted.expireTime : null,
     },
   });

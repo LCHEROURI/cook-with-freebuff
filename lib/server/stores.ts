@@ -20,9 +20,12 @@ import type {
   GroceryStore,
 } from './tools/types';
 import { registerGeminiProviders } from '../ai/register';
+import { resolveGeminiModel, type GeminiModelRole } from './model-config';
 
 // Register concrete AI providers (no-op when GOOGLE_AI_API_KEY is missing).
-registerGeminiProviders();
+// Model names resolve from Firebase Remote Config first, then env, then the
+// hardcoded default — so a model version can change without a redeploy.
+registerGeminiProviders({}, { resolveModel: (role) => resolveGeminiModel(role as GeminiModelRole) });
 
 export const firestoreSessionStore: SessionStore = {
   getSession: (id) => repo.getSession(id),

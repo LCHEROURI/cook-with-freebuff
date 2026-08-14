@@ -10,6 +10,8 @@
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import type { RecognitionResult, VisualIngredientProvider } from '../vision/types';
 
+const DEFAULT_VISION_MODEL = 'gemini-2.5-flash';
+
 function getKey(): string | undefined {
   return process.env.GOOGLE_AI_API_KEY;
 }
@@ -19,12 +21,12 @@ function getKey(): string | undefined {
  * Returns a structured JSON array of recognized items with honest confidences.
  * The model is instructed to ONLY name items it can see — never invent.
  */
-async function scanImage(base64Image: string, mimeType: string): Promise<RecognitionResult[]> {
+async function scanImage(base64Image: string, mimeType: string, modelName: string): Promise<RecognitionResult[]> {
   const key = getKey();
   if (!key) throw new Error('GOOGLE_AI_API_KEY is not configured');
 
   const genAI = new GoogleGenerativeAI(key);
-  const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
+  const model = genAI.getGenerativeModel({ model: modelName });
 
   const prompt = [
     'You are a kitchen ingredient scanner. Look at this image and identify ONLY food ingredients, groceries, and pantry items you can actually see.',
@@ -98,7 +100,12 @@ async function scanImage(base64Image: string, mimeType: string): Promise<Recogni
   throw new Error('Unbalanced JSON array in model response');
 }
 
-export function createGeminiVisionScanner(): VisualIngredientProvider {
+export interface GeminiVisionScannerOptions {
+  /** Remote Config model resolver — returns a model name or undefined. */
+  resolveModel?: () => Promise<string | undefined>;
+}
+
+export function createGeminiVisionScanner(opts: GeminiVisionScannerOptions = {}): VisualIngredientProvider {
   return {
     id: 'gemini-vision',
     async detectIngredients(imageRef: string): Promise<RecognitionResult[]> {
@@ -110,7 +117,8 @@ export function createGeminiVisionScanner(): VisualIngredientProvider {
         mimeType = dataUri[1];
         base64 = dataUri[2];
       }
-      return scanImage(base64, mimeType);
+      const modelName = (await opts.resolveModel?.()) ?? process.env.VISION_MODEL ?? DEFAULT_VISION_MODEL;
+      return scanImage(base64, mimeType, modelName);
     },
   };
 }

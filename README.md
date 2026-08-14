@@ -92,6 +92,25 @@ enforcement is on. Run `npm run verify:live -- --require-app-check-enforced`
 failure instead of a note, and set that in CI when you flip enforcement so the
 post-deploy gate proves enforcement rather than tolerating its absence.
 
+## Model config (Remote Config)
+
+Gemini model names are resolved server-side in this order: Firebase Remote
+Config → environment variable → hardcoded default. Create and publish these
+parameters in Firebase → Remote Config to change a model without a deploy:
+
+| Role | Remote Config parameter | Env fallback | Default |
+|---|---|---|---|
+| Recipe generation | `recipe_generation_model` | `RECIPE_GENERATION_MODEL` | `gemini-2.5-flash` |
+| Recipe validation | `recipe_validation_model` | `RECIPE_VALIDATION_MODEL` | `gemini-2.5-flash` |
+| Conversation | `conversation_model` | `CONVERSATION_MODEL` | `gemini-2.5-flash` |
+| Vision scanner | `vision_model` | `VISION_MODEL` | `gemini-2.5-flash` |
+| Live voice | `live_voice_model` | `LIVE_MODEL` | `gemini-3.1-flash-live-preview` |
+
+The live-voice model is server-authoritative: `/api/voice/token` returns the
+resolved model and the client connects with what it's given. The template is
+fetched via the Admin SDK and cached for 5 minutes; a fetch failure keeps the
+last-good value, so a Remote Config outage can't take the app down.
+
 ## Domain model
 
 All data is structured as typed objects (no prose-only storage). The core domains are:
