@@ -435,10 +435,21 @@ export class GuidedCookingService {
         // PR #30 review): resumeSession already marked that ID as processed,
         // so transitionTo would treat the re-pause as a duplicate and return
         // the ACTIVE session without pausing — silently undoing the rollback.
-        await this.sessionService.pauseSession(updated.id, updated.version, {
-          correlationId: options?.correlationId ? `resume-rollback:${options.correlationId}` : undefined,
-          pausedAt,
-        }).catch(() => undefined);
+        await this.sessionService
+          .pauseSession(updated.id, updated.version, {
+            correlationId: options?.correlationId ? `resume-rollback:${options.correlationId}` : undefined,
+            pausedAt,
+          })
+          .then(() => {
+            // The rollback put the session back to PAUSED with the ORIGINAL
+            // pausedAt — so the ORIGINAL resume ID is valid again. Forget it,
+            // or the client's idempotent retry with that same ID would be
+            // swallowed as a processed duplicate while the session sits
+            // PAUSED, and the handler would still rebase timers a second
+            // time (Codex P1, PR #51 review).
+            this.sessionService.clearProcessed(options?.correlationId);
+          })
+          .catch(() => undefined);
         throw new GuideError(
           'Resume could not finish syncing the paused timers — the session was paused again. Please resume once more.',
           'TIMER_REBASE_FAILED',

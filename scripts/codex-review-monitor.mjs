@@ -56,8 +56,11 @@ function fetchJson(cmd) {
 
 const cutoff = Date.now() - lookbackDays * 86_400_000;
 
+// --paginate on every collection (Codex P2, PR #51 review): gh api caps each
+// request at per_page, so without it the sweep silently sees only the first
+// page once the repo grows past 50 PRs / 100 comments / 100 issues.
 const pulls = fetchJson(
-  `gh api "repos/${repo}/pulls?state=all&sort=updated&direction=desc&per_page=50"`,
+  `gh api --paginate "repos/${repo}/pulls?state=all&sort=updated&direction=desc&per_page=50"`,
 );
 // Open PRs always count; merged/closed PRs only within the lookback window
 // (the bot comments shortly after a PR opens, so a fresh PR is caught even if
@@ -67,7 +70,9 @@ const inWindow = pulls.filter((p) => p.state === 'open' || Date.parse(p.updated_
 /** @type {{ commentId: string; prNumber: number; prTitle: string; path: string; line: string; summary: string; url: string }[]} */
 const findings = [];
 for (const pr of inWindow) {
-  const comments = fetchJson(`gh api "repos/${repo}/pulls/${pr.number}/comments?per_page=100"`);
+  const comments = fetchJson(
+    `gh api --paginate "repos/${repo}/pulls/${pr.number}/comments?per_page=100"`,
+  );
   for (const c of comments) {
     if (c.user?.login !== BOT_LOGIN) continue;
     const firstLine = c.body.split('\n').find((l) => l.trim().length > 0) ?? '';
@@ -87,7 +92,9 @@ for (const pr of inWindow) {
 // Read ALL issues (open + closed): a finding whose issue was closed after the
 // fix must still suppress re-reporting — otherwise the next run would re-open
 // the same finding every time someone closed its issue.
-const issues = fetchJson(`gh api "repos/${repo}/issues?state=all&labels=${LABEL}&per_page=100"`);
+const issues = fetchJson(
+  `gh api --paginate "repos/${repo}/issues?state=all&labels=${LABEL}&per_page=100"`,
+);
 const reported = new Set();
 for (const issue of issues) {
   const body = issue.body ?? '';

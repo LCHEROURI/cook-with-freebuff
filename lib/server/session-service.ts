@@ -47,6 +47,10 @@ function markProcessed(correlationId?: string): void {
   if (correlationId) processedCorrelationIds.add(correlationId);
 }
 
+function clearProcessed(correlationId?: string): void {
+  if (correlationId) processedCorrelationIds.delete(correlationId);
+}
+
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
 function now(): EpochMs {
@@ -100,6 +104,17 @@ export class VersionConflictError extends SessionError {
 export class SessionService {
   constructor(private readonly store: SessionStore) {}
 
+  /**
+   * Forget a correlation ID so its operation becomes retryable again. Used
+   * after a compensating rollback (resume → rebase failure → re-pause): the
+   * ORIGINAL resume ID was marked processed by the transition that then got
+   * rolled back, so a client retry with that same ID would otherwise be
+   * swallowed as a duplicate while the session sits PAUSED — and the handler
+   * would still rebase its timers a second time (Codex P1, PR #51 review).
+   */
+  clearProcessed(correlationId?: string): void {
+    clearProcessed(correlationId);
+  }
   /**
    * Create a new cooking session for a user.
    * Starts at IDLE and immediately transitions to COLLECTING_INGREDIENTS.
