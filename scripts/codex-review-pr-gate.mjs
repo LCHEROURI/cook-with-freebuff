@@ -11,8 +11,10 @@
 //
 //   • scans the PR's inline review comments (pulls/{n}/comments, paginated),
 //   • classifies severity from the badge URL in the comment body (P0/P1/P2),
-//   • blocks on P0 and P1 by default (P2 only with --include-p2; other P
-//     severities never block),
+//   • blocks on P0 and P1 by default; the stricter bar (also blocking P2)
+//     comes from --include-p2, the CODEX_GATE_INCLUDE_P2 repo variable, or
+//     the workflow_dispatch include_p2 input — other P severities never
+//     block,
 //   • only considers bot comments ON THE CURRENT HEAD — a finding left on an
 //     earlier commit that a push already addressed cannot block the new head,
 //   • treats a finding as OPEN until a human reply lands on its thread
@@ -40,6 +42,8 @@
 //   node scripts/codex-review-pr-gate.mjs --pr 42 --include-p2
 //   node scripts/codex-review-pr-gate.mjs --pr 42 --allow-no-review
 //   CODEX_GATE_WAIT_SECONDS=60 node scripts/codex-review-pr-gate.mjs --pr 42
+//   CODEX_GATE_INCLUDE_P2=true node scripts/codex-review-pr-gate.mjs --pr 42
+//     (repo variable: same stricter bar as --include-p2)
 // ============================================================================
 
 import { execSync } from 'node:child_process';
@@ -66,7 +70,13 @@ const take = (flag) => {
 };
 const repo = take('--repo') ?? process.env.GITHUB_REPOSITORY ?? DEFAULT_REPO;
 const pr = take('--pr') ?? process.env.PR_NUMBER;
-const includeP2 = args.includes('--include-p2');
+// --include-p2 (CLI flag, local runs) or the CODEX_GATE_INCLUDE_P2 repo
+// variable (persistent team-wide stricter bar) turn on blocking P2 findings;
+// otherwise only P0/P1 block. The variable is the only workflow path that can
+// strengthen the required merge gate (a dispatch input never enters the PR
+// status rollup — Codex P2, PR #78 review).
+const includeP2 =
+  args.includes('--include-p2') || process.env.CODEX_GATE_INCLUDE_P2 === 'true';
 // Certification comes from --allow-no-review (local run / dispatch input) or
 // from the CODEX_GATE_BOT_SKIPPED_PRS repo variable (comma-separated PR
 // numbers). A workflow_dispatch check never enters the PR status rollup, so
