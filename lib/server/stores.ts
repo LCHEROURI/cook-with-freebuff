@@ -38,6 +38,7 @@ export const firestoreTimerStore: TimerStore = {
   getTimer: (id) => repo.getTimer(id),
   updateTimer: (id, partial) => repo.updateTimer(id, partial),
   listActiveTimers: (sessionId) => repo.listActiveTimers(sessionId),
+  rebaseActiveTimers: (sessionId, elapsedMs) => repo.rebaseActiveTimers(sessionId, elapsedMs),
 };
 
 export const firestoreLogStore: LogStore = {

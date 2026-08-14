@@ -490,29 +490,7 @@ describe('pause freezes timers', () => {
     vi.useFakeTimers();
     vi.setSystemTime(1_000_000_000_000);
     try {
-      const flaky = new (class extends InMemoryTimerStore {
-        failing = false;
-        override async updateTimer(id: string, partial: Partial<CookingTimer>): Promise<void> {
-          if (this.failing) throw new Error('simulated rebase write failure');
-          return super.updateTimer(id, partial);
-        }
-      })();
-
-      const store = new InMemorySessionStore();
-      const recipes = new InMemoryRecipeStore();
-      const sessionService = new SessionService(store);
-      const guide = new GuidedCookingService(sessionService, flaky, recipes);
-      await recipes.createRecipe(makeRecipe());
-      await guide.launchCookWithMe('user-1', 'recipe-1');
-      await guide.completeCurrentAction('user-1');
-      let snap = await guide.completeCurrentAction('user-1'); // WAITING_FOR_TIMER + 240s timer
-      const sessionId = snap.sessionId!;
-      const [timer] = await flaky.listActiveTimers(sessionId);
-      await flaky.updateTimer(timer.id, { startedAt: Date.now() - 60_000, endsAt: Date.now() + 180_000 });
-
-      snap = await guide.pause('user-1', sessionId);
-      const pausedAt = snap.pausedAt!;
-      expect(snap.phase).toBe('PAUSED');
+      const { store, sessionService, flaky, guide, sessionId, pausedAt } = await launchRecoverablePause();
 
       // Two minutes of wall clock pass while paused, so the rebase has real
       // elapsed time to shift.
@@ -546,7 +524,67 @@ describe('pause freezes timers', () => {
       vi.useRealTimers();
     }
   });
+
+  it('the rollback re-pause uses a DISTINCT correlation ID so it actually pauses (Codex P1 — PR #30)', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(1_000_000_000_000);
+    try {
+      const { store, flaky, guide, sessionId, pausedAt } = await launchRecoverablePause();
+      vi.setSystemTime(1_000_000_000_000 + 120_000);
+
+      // resumeSession marks the correlation ID as processed BEFORE the rebase;
+      // the rollback re-pause must NOT reuse it or transitionTo would treat
+      // the re-pause as a duplicate and return the ACTIVE session without
+      // pausing — silently undoing the rollback (Codex P1, PR #30 review).
+      flaky.failing = true;
+      await expect(guide.resume('user-1', sessionId, { correlationId: 'resume-op-1' })).rejects.toMatchObject({
+        code: 'TIMER_REBASE_FAILED',
+        recoverable: true,
+      });
+
+      const rolledBack = await store.getSession(sessionId);
+      expect(rolledBack?.currentPhase).toBe('PAUSED');
+      expect(rolledBack?.pausedAt).toBe(pausedAt);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
+
+/**
+ * Build the paused-WAITING_FOR_TIMER state the two rebase tests share, with a
+ * timer store that can be made to fail its rebase writes.
+ */
+async function launchRecoverablePause() {
+  // The rebase runs through the ATOMIC store call (rebaseActiveTimers), so
+  // the flaky store fails THAT — not per-timer updateTimer — exactly the
+  // failure surface Codex flagged.
+  const flaky = new (class extends InMemoryTimerStore {
+    failing = false;
+    override async rebaseActiveTimers(sessionId: string, elapsedMs: number): Promise<void> {
+      if (this.failing) throw new Error('simulated rebase write failure');
+      return super.rebaseActiveTimers(sessionId, elapsedMs);
+    }
+  })();
+
+  const store = new InMemorySessionStore();
+  const recipes = new InMemoryRecipeStore();
+  const sessionService = new SessionService(store);
+  const guide = new GuidedCookingService(sessionService, flaky, recipes);
+  await recipes.createRecipe(makeRecipe());
+  await guide.launchCookWithMe('user-1', 'recipe-1');
+  await guide.completeCurrentAction('user-1');
+  let snap = await guide.completeCurrentAction('user-1'); // WAITING_FOR_TIMER + 240s timer
+  const sessionId = snap.sessionId!;
+  const [timer] = await flaky.listActiveTimers(sessionId);
+  await flaky.updateTimer(timer.id, { startedAt: Date.now() - 60_000, endsAt: Date.now() + 180_000 });
+
+  snap = await guide.pause('user-1', sessionId);
+  const pausedAt = snap.pausedAt!;
+  expect(snap.phase).toBe('PAUSED');
+
+  return { store, sessionService, flaky, guide, sessionId, pausedAt };
+}
 
 // ── Navigation ───────────────────────────────────────────────────────────────
 

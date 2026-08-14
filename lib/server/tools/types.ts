@@ -68,6 +68,14 @@ export interface TimerStore {
   getTimer(id: string): Promise<CookingTimer | null>;
   updateTimer(id: string, partial: Partial<CookingTimer>): Promise<void>;
   listActiveTimers(sessionId: string): Promise<CookingTimer[]>;
+  /**
+   * Shift every RUNNING timer of a session by elapsedMs in ONE atomic
+   * operation (Codex P1 — PR #30 review). The resume rebase must be
+   * all-or-nothing: a partial rebase leaves inconsistent countdowns and no
+   * safe retry. Implementations commit all-or-none (Firestore batch / an
+   * in-memory loop that cannot fail midway).
+   */
+  rebaseActiveTimers(sessionId: string, elapsedMs: number): Promise<void>;
 }
 
 export interface LogStore {

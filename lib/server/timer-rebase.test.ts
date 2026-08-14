@@ -1,13 +1,15 @@
 // ============================================================================
-// lib/server/timer-rebase.test.ts — lock the all-or-nothing rebase contract.
+// lib/server/timer-rebase.test.ts — lock the atomic rebase contract.
 //
-// Codex P1 (PR #27 review): a rebase that fails midway must leave the timer
-// store untouched — a partial rebase would leave inconsistent countdowns AND
-// poison the retry (a retry would shift the already-shifted timers a second
-// time). rebaseTimersAfterResume now computes every shift before writing and
-// rolls back the writes that already landed when any write fails, so the
-// caller can re-pause + retry resume and the rebase runs from the ORIGINAL
-// endsAt exactly once.
+// Codex P1 (PR #30 review): the resume rebase must be all-or-nothing. A
+// per-timer update loop could leave some timers shifted and others not, and a
+// compensating rollback of the already-written ones could itself fail during
+// a continuing store outage — silently presenting the rebase as safely
+// reverted when it was not. rebaseTimersAfterResume now delegates the shift
+// to the store's atomic rebaseActiveTimers (Firestore batch / in-memory loop)
+// and performs NO compensating writes of its own. The unit tests lock the
+// contract at this module's boundary: elapsed-time guard, no partial state on
+// failure, and exactly one atomic store call.
 // ============================================================================
 
 import { describe, it, expect, vi } from 'vitest';
@@ -33,22 +35,21 @@ function makeTimer(id: string, sessionId: string, endsAt: number): CookingTimer 
   };
 }
 
-/** A timer store that fails the Nth updateTimer call. */
-class FlakyTimerStore extends InMemoryTimerStore {
-  failOnUpdate: number | null = null;
-  private updates = 0;
+/** A store that fails the atomic rebase once (the whole batch, not one write). */
+class FlakyRebaseStore extends InMemoryTimerStore {
+  failNextRebase = false;
 
-  override async updateTimer(id: string, partial: Partial<CookingTimer>): Promise<void> {
-    this.updates += 1;
-    if (this.failOnUpdate !== null && this.updates === this.failOnUpdate) {
-      throw new Error('simulated write failure');
+  override async rebaseActiveTimers(sessionId: string, elapsedMs: number): Promise<void> {
+    if (this.failNextRebase) {
+      this.failNextRebase = false;
+      throw new Error('simulated atomic rebase failure');
     }
-    return super.updateTimer(id, partial);
+    return super.rebaseActiveTimers(sessionId, elapsedMs);
   }
 }
 
-describe('rebaseTimersAfterResume — all-or-nothing', () => {
-  it('shifts every timer forward by the paused duration', async () => {
+describe('rebaseTimersAfterResume — atomic', () => {
+  it('shifts every active timer forward by the paused duration in one store call', async () => {
     vi.useFakeTimers();
     vi.setSystemTime(NOW);
     try {
@@ -56,7 +57,6 @@ describe('rebaseTimersAfterResume — all-or-nothing', () => {
       await timers.createTimer(makeTimer('t1', 's1', NOW + 60_000));
       await timers.createTimer(makeTimer('t2', 's1', NOW + 120_000));
 
-      // Paused at PAUSE_AT (= NOW−2m): both timers shift by exactly 2m.
       await rebaseTimersAfterResume(timers, 's1', PAUSE_AT);
       const [t1, t2] = await timers.listActiveTimers('s1');
       expect(t1.endsAt).toBe(NOW + 60_000 + 120_000);
@@ -66,49 +66,44 @@ describe('rebaseTimersAfterResume — all-or-nothing', () => {
     }
   });
 
-  it('rolls back the already-written timers when a later write fails', async () => {
-    vi.useFakeTimers();
-    vi.setSystemTime(NOW);
-    try {
-      const timers = new FlakyTimerStore();
-      await timers.createTimer(makeTimer('t1', 's1', NOW + 60_000));
-      await timers.createTimer(makeTimer('t2', 's1', NOW + 120_000));
-      await timers.createTimer(makeTimer('t3', 's1', NOW + 180_000));
-
-      // The SECOND write fails (t1 already shifted, t2/t3 untouched). The
-      // store must end up exactly as it started — t1 rolled back.
-      timers.failOnUpdate = 2;
-      await expect(
-        rebaseTimersAfterResume(timers, 's1', PAUSE_AT),
-      ).rejects.toThrow('simulated write failure');
-
-      const after = await timers.listActiveTimers('s1');
-      const byId = new Map(after.map((t) => [t.id, t.endsAt]));
-      expect(byId.get('t1')).toBe(NOW + 60_000); // rolled back
-      expect(byId.get('t2')).toBe(NOW + 120_000); // never written
-      expect(byId.get('t3')).toBe(NOW + 180_000); // never written
-    } finally {
-      vi.useRealTimers();
-    }
+  it('delegates to the atomic store call — never per-timer compensating writes', async () => {
+    // The whole point of the atomic contract: no rollback loop exists here to
+    // fail. rebaseTimersAfterResume performs exactly ONE store operation.
+    const timers = {
+      rebaseCalls: 0,
+      updateTimerCalls: 0,
+      rebaseActiveTimers: vi.fn(async () => {
+        timers.rebaseCalls += 1;
+      }),
+      updateTimer: vi.fn(async () => {
+        timers.updateTimerCalls += 1;
+      }),
+    };
+    await rebaseTimersAfterResume(timers as unknown as import('./tools/types').TimerStore, 's1', PAUSE_AT);
+    expect(timers.rebaseCalls).toBe(1);
+    expect(timers.updateTimerCalls).toBe(0);
   });
 
-  it('a retry after the rollback shifts from the ORIGINAL endsAt exactly once', async () => {
+  it('an atomic failure leaves the store untouched (no partial state, no rollback needed)', async () => {
     vi.useFakeTimers();
     vi.setSystemTime(NOW);
     try {
-      const timers = new FlakyTimerStore();
+      const timers = new FlakyRebaseStore();
       await timers.createTimer(makeTimer('t1', 's1', NOW + 60_000));
       await timers.createTimer(makeTimer('t2', 's1', NOW + 120_000));
 
-      // First attempt fails on the second write (t1 rolled back).
-      timers.failOnUpdate = 2;
-      await expect(
-        rebaseTimersAfterResume(timers, 's1', PAUSE_AT),
-      ).rejects.toThrow();
+      // The whole rebase fails atomically — nothing was written.
+      timers.failNextRebase = true;
+      await expect(rebaseTimersAfterResume(timers, 's1', PAUSE_AT)).rejects.toThrow(
+        'simulated atomic rebase failure',
+      );
+      const after = await timers.listActiveTimers('s1');
+      const byId = new Map(after.map((t) => [t.id, t.endsAt]));
+      expect(byId.get('t1')).toBe(NOW + 60_000); // untouched
+      expect(byId.get('t2')).toBe(NOW + 120_000); // untouched
 
-      // Retry (store healthy again): both timers shift by the full paused
-      // duration — t1 must NOT be double-shifted by the failed attempt.
-      timers.failOnUpdate = null;
+      // Retry: healthy store, shift runs from the ORIGINAL endsAt exactly
+      // once — no double shift from a half-applied first attempt.
       await rebaseTimersAfterResume(timers, 's1', PAUSE_AT);
       const [t1, t2] = await timers.listActiveTimers('s1');
       expect(t1.endsAt).toBe(NOW + 60_000 + 120_000);
