@@ -6,6 +6,10 @@ vi.mock('@/lib/server/admin', () => ({
   resolveUserId: vi.fn(),
 }));
 
+vi.mock('@/lib/server/app-check', () => ({
+  gateAppCheck: vi.fn(async () => null),
+}));
+
 import { resolveUserId } from '@/lib/server/admin';
 
 const API_KEY = 'AIzaSy-fake-test-key-00000000000000000';

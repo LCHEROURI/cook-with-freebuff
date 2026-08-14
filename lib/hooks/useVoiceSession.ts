@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { nextVoiceStatus } from '@/lib/agent/voice-status';
 import type { AgentTurn, VoiceStatus } from '@/lib/agent/types';
+import { appCheckHeaders } from '@/lib/firebase/app-check';
 
 export interface UseVoiceSessionOptions {
   endpoint?: string;
@@ -31,9 +32,12 @@ export function useVoiceSession(opts: UseVoiceSessionOptions = {}) {
   // Honest offline state until the endpoint responds.
   useEffect(() => {
     let cancelled = false;
-    fetch(endpoint, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ utterance: '__ping__' }) })
-      .then(() => !cancelled && set('LISTENING'))
-      .catch(() => !cancelled && set('OFFLINE'));
+    void (async () => {
+      const headers = { 'content-type': 'application/json', ...(await appCheckHeaders()) };
+      fetch(endpoint, { method: 'POST', headers, body: JSON.stringify({ utterance: '__ping__' }) })
+        .then(() => !cancelled && set('LISTENING'))
+        .catch(() => !cancelled && set('OFFLINE'));
+    })();
     return () => {
       cancelled = true;
     };
@@ -55,6 +59,7 @@ export function useVoiceSession(opts: UseVoiceSessionOptions = {}) {
           headers: {
             'content-type': 'application/json',
             ...(token ? { authorization: `Bearer ${token}` } : {}),
+            ...(await appCheckHeaders()),
           },
           body: JSON.stringify({ utterance: text }),
         });

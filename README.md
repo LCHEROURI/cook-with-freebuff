@@ -9,6 +9,7 @@ Voice-first / screen-light intelligent cooking companion.
 | Frontend | Next.js 15, React 19, TypeScript |
 | Auth / Data | Firebase Auth + Firestore (owner-scoped rules) |
 | Admin | firebase-admin (server-only, service-account) |
+| App Check | Firebase App Check (reCAPTCHA v3) — Gemini-quota protection |
 | AI | Provider boundary (Gemini ready, swappable) |
 | Validation | Zod (runtime input/output validation) |
 | Tests | Vitest |
@@ -45,6 +46,44 @@ FIRESTORE
  ├──── pantry_items
  └──── agent_tool_logs
 ```
+
+## App Check
+
+App Check proves a request comes from the real app before any Gemini-quota
+work runs. The client sends an `X-Firebase-AppCheck` token with every call to
+the quota-bearing routes (`/api/cook`, `/api/tools`, `/api/agent`,
+`/api/vision/scan`, `/api/voice/token`); the server verifies it with
+`firebase-admin`'s `appCheck().verifyToken()` before any model work.
+
+Rollout is safe by default: `APP_CHECK_ENFORCED` unset means "verify a present
+token but never block" (monitor mode); setting it to `1` rejects a missing or
+invalid token with 403. Emulators always pass.
+
+To turn it on:
+1. Firebase console → App Check → Apps → Web: register a reCAPTCHA v3 site key.
+2. Add `NEXT_PUBLIC_FIREBASE_APP_CHECK_SITE_KEY` (see `.env.example`) and deploy.
+3. Confirm requests now carry the token (monitor mode logs verify failures).
+4. Set `APP_CHECK_ENFORCED=1` to hard-block unattested requests.
+
+Local dev: set `NEXT_PUBLIC_APP_CHECK_DEBUG=1` to use the debug provider, then
+register the printed token under App Check → Manage debug tokens.
+
+The post-deploy verify:live driver is a server-side script, so it cannot use the
+browser's reCAPTCHA attestation. It mints its own App Check token via
+`admin.appCheck().createToken(NEXT_PUBLIC_FIREBASE_APP_ID)` and attaches it as
+`X-Firebase-AppCheck` on the `/api/cook` and `/api/agent` calls, so the gate
+keeps exercising those routes after enforcement. Attestation is best-effort:
+until App Check is provisioned the mint fails and the routes still pass in
+monitor mode, so the driver notes it and carries on — but once enforcement is
+on, a missing token makes those routes 403 and the run goes red. Before
+flipping `APP_CHECK_ENFORCED=1`, three things must be true:
+1. The App Check API is enabled for the project (Firebase console → App Check
+   enables it; or `gcloud services enable firebaseappcheck.googleapis.com`).
+2. `NEXT_PUBLIC_FIREBASE_APP_ID` is set as a GitHub Actions secret (the public
+   web app id from `apphosting.yaml`, `1:…:web:…`).
+3. The `FIREBASE_SERVICE_ACCOUNT` service account has the Firebase App Check
+   Admin role (or the narrower App Check Token Exchange permission), so
+   `createToken` can exchange the minted token.
 
 ## Domain model
 

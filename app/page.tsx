@@ -5,6 +5,7 @@ import Link from 'next/link';
 import styles from './page.module.css';
 import { useAuthSession } from '@/lib/auth/useAuthSession';
 import { detectVoiceEngine } from '@/lib/voice/self-check';
+import { appCheckHeaders } from '@/lib/firebase/app-check';
 import { playTimerChime, unlockAudioOnGesture } from '@/lib/audio/timer-chime';
 import { formatPausedAgo, type GuideSnapshot } from '@/lib/domain/guide';
 
@@ -136,7 +137,7 @@ export default function HomePage() {
     try {
       const res = await fetch('/api/cook', {
         method: 'POST',
-        headers: { 'content-type': 'application/json', ...(token ? { authorization: `Bearer ${token}` } : {}) },
+        headers: { 'content-type': 'application/json', ...(token ? { authorization: `Bearer ${token}` } : {}), ...(await appCheckHeaders()) },
         body: JSON.stringify({ action: 'timers' }),
       });
       const body = (await res.json()) as {
@@ -189,7 +190,7 @@ export default function HomePage() {
     try {
       const res = await fetch('/api/cook', {
         method: 'POST',
-        headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
+        headers: { 'content-type': 'application/json', authorization: `Bearer ${token}`, ...(await appCheckHeaders()) },
         body: JSON.stringify({ action: snap.paused ? 'resume' : 'pause' }),
       });
       const body = (await res.json()) as { success: boolean; data?: GuideSnapshot };

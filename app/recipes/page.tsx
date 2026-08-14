@@ -17,6 +17,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import styles from './page.module.css';
 import { useAuthSession } from '@/lib/auth/useAuthSession';
+import { appCheckHeaders } from '@/lib/firebase/app-check';
 import RecipeRowMeta from '../cook/RecipeRowMeta';
 import {
   availableCategories,
@@ -50,7 +51,7 @@ export default function RecipesPage() {
       const token = await getToken();
       const res = await fetch('/api/cook', {
         method: 'POST',
-        headers: { 'content-type': 'application/json', ...(token ? { authorization: `Bearer ${token}` } : {}) },
+        headers: { 'content-type': 'application/json', ...(token ? { authorization: `Bearer ${token}` } : {}), ...(await appCheckHeaders()) },
         body: JSON.stringify({ action: 'list_recipes' }),
       });
       const body = (await res.json()) as { success: boolean; data?: { recipes: RecipeSummary[] } };
@@ -87,7 +88,7 @@ export default function RecipesPage() {
       const token = await getToken();
       const res = await fetch('/api/cook', {
         method: 'POST',
-        headers: { 'content-type': 'application/json', ...(token ? { authorization: `Bearer ${token}` } : {}) },
+        headers: { 'content-type': 'application/json', ...(token ? { authorization: `Bearer ${token}` } : {}), ...(await appCheckHeaders()) },
         body: JSON.stringify({ action: 'launch', recipeId }),
       });
       const body = (await res.json()) as { success: boolean; error?: { message?: string } };
@@ -114,7 +115,7 @@ export default function RecipesPage() {
       const token = await getToken();
       const res = await fetch('/api/cook', {
         method: 'POST',
-        headers: { 'content-type': 'application/json', ...(token ? { authorization: `Bearer ${token}` } : {}) },
+        headers: { 'content-type': 'application/json', ...(token ? { authorization: `Bearer ${token}` } : {}), ...(await appCheckHeaders()) },
         body: JSON.stringify({ action: 'delete_recipe', recipeId }),
       });
       const body = (await res.json()) as { success: boolean; error?: { message?: string } };

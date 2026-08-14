@@ -11,12 +11,16 @@
 
 import { NextResponse } from 'next/server';
 import { resolveUserId } from '@/lib/server/admin';
+import { gateAppCheck } from '@/lib/server/app-check';
 import { createGeminiVisionScanner } from '@/lib/ai/gemini-vision';
 import { logError } from '@/lib/server/logger';
 
 const scanner = createGeminiVisionScanner();
 
 export async function POST(req: Request) {
+  const appCheck = await gateAppCheck(req, { consume: true });
+  if (appCheck) return appCheck;
+
   const auth = req.headers.get('authorization');
   const token = auth?.startsWith('Bearer ') ? auth.slice(7) : null;
   const userId = await resolveUserId(token);

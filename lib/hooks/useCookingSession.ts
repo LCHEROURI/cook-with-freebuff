@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { GuideSnapshot } from '@/lib/domain/guide';
+import { appCheckHeaders } from '@/lib/firebase/app-check';
 
 export interface CookApiResponse {
   success: boolean;
@@ -43,6 +44,7 @@ export function useCookingSession(opts: UseCookingSessionOptions = {}) {
         headers: {
           'content-type': 'application/json',
           ...(token ? { authorization: `Bearer ${token}` } : {}),
+          ...(await appCheckHeaders()),
         },
         body: JSON.stringify({ action, ...extra }),
       });

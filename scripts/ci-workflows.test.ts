@@ -299,6 +299,18 @@ describe('.github/workflows/ci.yml · post-deploy verify:live needs-edge', () =>
     }
   });
 
+  it('wires NEXT_PUBLIC_FIREBASE_APP_ID into the job env and the verify step env only (2 wirings, no guard)', () => {
+    // The app id attests the driver via App Check, but attestation is
+    // best-effort until App Check is provisioned — so it rides the job + step
+    // env and is NOT part of the loud guard (a missing one must not redden a
+    // monitor-mode deploy).
+    const wiring = new RegExp(SECRET_WIRING('NEXT_PUBLIC_FIREBASE_APP_ID').replace(/[$\\{\\}]/g, '\\$&'), 'g');
+    expect(verifyBlock.match(wiring)).toHaveLength(2);
+    const guardStart = verifyBlock.indexOf('name: Fail loudly if a verify secret is missing (main deploy)');
+    const guardBlock = verifyBlock.slice(guardStart, verifyBlock.indexOf('name: Wait for the App Hosting rollout'));
+    expect(guardBlock).not.toContain('NEXT_PUBLIC_FIREBASE_APP_ID');
+  });
+
   it('records the verify:live verdict to Firestore after the verify step (runs even on failure)', () => {
     // The status page needs the last verify:live result at a glance. The
     // record step reads the verdict from the verify step's own outcome (so a
@@ -312,7 +324,7 @@ describe('.github/workflows/ci.yml · post-deploy verify:live needs-edge', () =>
     expect(verifyBlock).toContain('--verdict "${{ steps.verify.outcome }}"');
     expect(verifyBlock).toContain('--commit "${{ github.sha }}"');
     expect(verifyBlock).toContain('--run-url "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"');
-    // Negative: the record step must not introduce a 4th secret wiring.
+    // Negative: the record step must not introduce another secret wiring.
     const recordStart = verifyBlock.indexOf('name: Record verify:live result for the status page');
     const recordBlock = verifyBlock.slice(recordStart);
     expect(recordBlock).not.toContain('secrets.');
