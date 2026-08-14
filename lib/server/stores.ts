@@ -7,7 +7,7 @@
 
 import 'server-only';
 import * as repo from './repositories';
-import { SessionService } from './session-service';
+import { SessionService, type CorrelationMarkerStore } from './session-service';
 import type { SessionStore } from './session-service';
 import type {
   ToolContext,
@@ -80,8 +80,22 @@ export const firestoreGroceryStore: GroceryStore = {
   deleteGroceryItem: (id) => repo.deleteGroceryItem(id),
 };
 
-/** Singleton session service over Firestore. */
-export const productionSessionService = new SessionService(firestoreSessionStore);
+/**
+ * Durable idempotency markers: processed correlation IDs survive restarts so
+ * the resume-rollback uniqueness holds across server restarts, not just within
+ * one process (Codex P1 chain).
+ */
+export const firestoreCorrelationMarkerStore: CorrelationMarkerStore = {
+  has: (id) => repo.hasCorrelationMarker(id),
+  mark: (id) => repo.markCorrelationMarker(id),
+  clear: (id) => repo.clearCorrelationMarker(id),
+};
+
+/** Singleton session service over Firestore with durable markers. */
+export const productionSessionService = new SessionService(
+  firestoreSessionStore,
+  firestoreCorrelationMarkerStore,
+);
 
 /** Build a ToolContext for an authenticated user. */
 export function buildProductionContext(
