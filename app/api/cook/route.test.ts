@@ -148,6 +148,66 @@ describe('/api/cook', () => {
     expect(body.data.timerStarted?.label).toBe('four-minute timer');
   });
 
+  it('a resume retry after a TIMER_REBASE_FAILED rollback yields exactly ONE rebase end to end (Codex P1 — PR #53)', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(1_000_000_000_000);
+    try {
+      // Swap the shared ctx's timer store for a flaky one that fails the
+      // ATOMIC rebase on demand — the exact failure surface of the P1 chain:
+      // transition → rebase fails → rollback to PAUSED → client retries with
+      // the SAME correlation ID. The retry must transition once and rebase
+      // from the ORIGINAL endsAt exactly once, end to end through the route.
+      const flaky = new (class extends InMemoryTimerStore {
+        failing = false;
+        override async rebaseActiveTimers(sessionId: string, elapsedMs: number): Promise<void> {
+          if (this.failing) throw new Error('simulated rebase write failure');
+          return super.rebaseActiveTimers(sessionId, elapsedMs);
+        }
+      })();
+      ctx = { ...ctx, timerStore: flaky };
+
+      await (ctx.recipeStore as InMemoryRecipeStore).createRecipe(makeRecipe());
+      await post({ action: 'launch', recipeId: 'recipe-1' });
+      await post({ action: 'done' }); // → WAITING_FOR_TIMER, 240s timer auto-started
+      const session = await ctx.sessionService.getActiveSession('user-1');
+      const sessionId = session!.id;
+      const [timer] = await flaky.listActiveTimers(sessionId);
+      await flaky.updateTimer(timer.id, { startedAt: 1_000_000_000_000, endsAt: 1_000_000_000_000 + 180_000 });
+      await post({ action: 'pause' });
+      vi.setSystemTime(1_000_000_000_000 + 120_000);
+
+      // First resume: rebase fails → route returns 400 TIMER_REBASE_FAILED
+      // and the session rolls back to PAUSED with the ORIGINAL pausedAt.
+      flaky.failing = true;
+      const failed = await post({ action: 'resume', correlationId: 'route-resume-53' });
+      expect(failed.status).toBe(400);
+      const failedBody = await failed.json();
+      expect(failedBody.success).toBe(false);
+      expect(failedBody.error.code).toBe('TIMER_REBASE_FAILED');
+      expect(failedBody.error.recoverable).toBe(true);
+      const rolledBack = await ctx.sessionService.getSession(sessionId);
+      expect(rolledBack?.currentPhase).toBe('PAUSED');
+
+      // Retry with the SAME correlation ID while the store is healthy. The
+      // rollback cleared the original ID, so this transitions PAUSED → ACTIVE
+      // once and rebases from the untouched endsAt — exactly one shift, never
+      // a swallowed duplicate or a second rebase.
+      flaky.failing = false;
+      const retried = await post({ action: 'resume', correlationId: 'route-resume-53' });
+      expect(retried.status).toBe(200);
+      const retriedBody = await retried.json();
+      expect(retriedBody.success).toBe(true);
+      expect(retriedBody.data.phase).toBe('WAITING_FOR_TIMER');
+
+      const [rebased] = await flaky.listActiveTimers(sessionId);
+      // endsAt was t0 + 180s at pause; 120s elapsed; a single rebase lands it
+      // at now + 180s (a second shift would push it to now + 300s).
+      expect(rebased.endsAt).toBe(Date.now() + 180_000);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('done surfaces a safety gate before completing a step with a safetyNote', async () => {
     const recipes = ctx.recipeStore as InMemoryRecipeStore;
     await recipes.createRecipe({
