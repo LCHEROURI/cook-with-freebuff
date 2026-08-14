@@ -43,7 +43,7 @@
 //   node scripts/codex-review-pr-gate.mjs --pr 42 --allow-no-review
 //   CODEX_GATE_WAIT_SECONDS=60 node scripts/codex-review-pr-gate.mjs --pr 42
 //   CODEX_GATE_INCLUDE_P2=true node scripts/codex-review-pr-gate.mjs --pr 42
-//     (repo variable / dispatch input: same stricter bar as --include-p2)
+//     (repo variable: same stricter bar as --include-p2)
 // ============================================================================
 
 import { execSync } from 'node:child_process';
@@ -70,9 +70,11 @@ const take = (flag) => {
 };
 const repo = take('--repo') ?? process.env.GITHUB_REPOSITORY ?? DEFAULT_REPO;
 const pr = take('--pr') ?? process.env.PR_NUMBER;
-// --include-p2 (CLI flag), the CODEX_GATE_INCLUDE_P2 repo variable (persistent
-// team-wide stricter bar), or the workflow_dispatch include_p2 input all turn
-// on blocking P2 findings; otherwise only P0/P1 block.
+// --include-p2 (CLI flag, local runs) or the CODEX_GATE_INCLUDE_P2 repo
+// variable (persistent team-wide stricter bar) turn on blocking P2 findings;
+// otherwise only P0/P1 block. The variable is the only workflow path that can
+// strengthen the required merge gate (a dispatch input never enters the PR
+// status rollup — Codex P2, PR #78 review).
 const includeP2 =
   args.includes('--include-p2') || process.env.CODEX_GATE_INCLUDE_P2 === 'true';
 // Certification comes from --allow-no-review (local run / dispatch input) or

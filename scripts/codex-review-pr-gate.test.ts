@@ -55,11 +55,14 @@ describe('scripts/codex-review-pr-gate.mjs', () => {
     expect(GATE).toContain("const BLOCKING_DEFAULT = new Set(['P0', 'P1'])");
     expect(GATE).toContain("const BLOCKING_INCLUDE_P2 = new Set(['P0', 'P1', 'P2'])");
     expect(GATE).toContain('args.includes(\'--include-p2\')');
-    // The stricter bar is also configurable via the repo variable / dispatch
-    // input, so the workflow can enforce it through the same required check.
+    // The stricter bar is also configurable via the CODEX_GATE_INCLUDE_P2
+    // repo variable, enforced through the same required check. Variable-only
+    // by design: a workflow_dispatch input cannot strengthen the merge gate,
+    // because dispatch checks never enter the PR status rollup (Codex P2,
+    // PR #78 review).
     expect(GATE).toContain("process.env.CODEX_GATE_INCLUDE_P2 === 'true'");
-    expect(WORKFLOW).toContain('include_p2:');
-    expect(WORKFLOW).toContain("CODEX_GATE_INCLUDE_P2: ${{ github.event.inputs.include_p2 == 'true' || vars.CODEX_GATE_INCLUDE_P2 == 'true' }}");
+    expect(WORKFLOW).toContain('CODEX_GATE_INCLUDE_P2: ${{ vars.CODEX_GATE_INCLUDE_P2 == \'true\' }}');
+    expect(WORKFLOW).not.toContain('include_p2:');
   });
 
   it('treats a finding as resolved only once its thread has a reply', () => {
