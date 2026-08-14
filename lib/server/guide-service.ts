@@ -437,7 +437,15 @@ export class GuidedCookingService {
         // the ACTIVE session without pausing — silently undoing the rollback.
         await this.sessionService
           .pauseSession(updated.id, updated.version, {
-            correlationId: options?.correlationId ? `resume-rollback:${options.correlationId}` : undefined,
+            // UNIQUE per attempt (Codex P1, PR #53 review): resume-rollback:<id>
+            // alone would collide on a second failed retry — the first rollback
+            // already marked it processed, so the second re-pause would be
+            // swallowed as a duplicate while the session sat ACTIVE, yet the
+            // .then still claimed "paused again". A fresh suffix makes every
+            // rollback a distinct operation.
+            correlationId: options?.correlationId
+              ? `resume-rollback:${options.correlationId}:${newId()}`
+              : undefined,
             pausedAt,
           })
           .then(() => {

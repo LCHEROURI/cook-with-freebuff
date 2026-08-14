@@ -12,6 +12,11 @@ import type { CookingSession } from '../../domain/types';
 import { rebaseTimersAfterResume } from '../timer-rebase';
 import { createGuideService } from './guide-tools';
 
+/** Random opaque token for per-attempt correlation-ID suffixes (see below). */
+function rollbackNonce(): string {
+  return Math.random().toString(36).slice(2) + Date.now().toString(36);
+}
+
 /** Guided-cooking service bound to the tool context. */
 function guide(ctx: ToolContext) {
   return createGuideService(ctx);
@@ -197,7 +202,14 @@ export const resumeCookingSessionTool: ToolDefinition = {
           // without pausing and silently undo the rollback.
           await ctx.sessionService
             .pauseSession(updated.id, updated.version, {
-              correlationId: ctx.correlationId ? `resume-rollback:${ctx.correlationId}` : undefined,
+              // UNIQUE per attempt (Codex P1, PR #53 review): a deterministic
+              // resume-rollback:<id> would collide on a second failed retry —
+              // the first rollback already marked it processed, so the second
+              // re-pause would be swallowed as a duplicate while the session
+              // sat ACTIVE. Fresh nonce every attempt.
+              correlationId: ctx.correlationId
+                ? `resume-rollback:${ctx.correlationId}:${rollbackNonce()}`
+                : undefined,
               pausedAt,
             })
             .then(() => {

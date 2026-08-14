@@ -594,6 +594,46 @@ describe('pause freezes timers', () => {
       vi.useRealTimers();
     }
   });
+
+  it('every failed retry rolls back — the rollback ID is unique per attempt (Codex P1 — PR #53)', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(1_000_000_000_000);
+    try {
+      const { store, flaky, guide, sessionId, pausedAt } = await launchRecoverablePause();
+      vi.setSystemTime(1_000_000_000_000 + 120_000);
+
+      // The rebase keeps failing across TWO client retries with the SAME
+      // original ID. A deterministic rollback ID (resume-rollback:<id>) would
+      // collide: the first rollback marked it processed, so the SECOND
+      // rollback would be swallowed as a duplicate while the session sat
+      // ACTIVE — yet its .then would still clear the original ID and claim
+      // "paused again", leaving timers unrebased and the next resume stuck on
+      // NOT_PAUSED (Codex P1, PR #53 review).
+      flaky.failing = true;
+      for (let attempt = 1; attempt <= 2; attempt++) {
+        await expect(
+          guide.resume('user-1', sessionId, { correlationId: 'resume-op-53' }),
+        ).rejects.toMatchObject({
+          code: 'TIMER_REBASE_FAILED',
+          recoverable: true,
+        });
+        const rolledBack = await store.getSession(sessionId);
+        expect(rolledBack?.currentPhase).toBe('PAUSED');
+        expect(rolledBack?.pausedAt).toBe(pausedAt);
+      }
+
+      // Store healthy; the SAME-ID retry still transitions exactly once and
+      // rebases from the ORIGINAL endsAt — proving no state was corrupted by
+      // the two failed attempts.
+      flaky.failing = false;
+      const retried = await guide.resume('user-1', sessionId, { correlationId: 'resume-op-53' });
+      expect(retried.phase).toBe('WAITING_FOR_TIMER');
+      const [rebased] = await flaky.listActiveTimers(sessionId);
+      expect(rebased.endsAt).toBe(Date.now() + 180_000);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
 
 /**
