@@ -42,6 +42,17 @@ describe('scripts/codex-review-monitor.mjs', () => {
     expect(MONITOR).toContain('gh api --paginate "repos/${repo}/issues?state=all');
   });
 
+  it('slurps + flattens paginated responses so a multi-page collection parses', () => {
+    // Codex P2 (PR #53 review): gh api --paginate emits one JSON document per
+    // page, so JSON.parse throws on a collection larger than one page. --slurp
+    // wraps every page in one outer array and the helper flattens it. Every
+    // collection fetch goes through the slurping helper — never bare fetchJson.
+    expect(MONITOR).toContain("return JSON.parse(runQuiet(`${cmd} --slurp`)).flat();");
+    const collectionCalls = MONITOR.match(/const (?:pulls|comments|issues) = fetchPaginated\(/g) ?? [];
+    expect(collectionCalls).toHaveLength(3);
+    expect(MONITOR).not.toContain('gh api --paginate "repos/${repo}/pulls?state=all"');
+  });
+
   it('dedupes durably by comment ID embedded in the issue body', () => {
     // The marker survives in the issue body, so the next run reads it back and
     // never re-opens the same finding — even after the issue is closed.

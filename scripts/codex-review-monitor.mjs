@@ -52,14 +52,31 @@ function fetchJson(cmd) {
   }
 }
 
+/**
+ * Paginated collection fetch. gh api --paginate emits ONE JSON document per
+ * page, so JSON.parse breaks the moment a collection exceeds one page (Codex
+ * P2, PR #53 review). --slurp wraps every page in one outer array; each page
+ * here is itself an array of records, so flatten one level.
+ */
+function fetchPaginated(cmd) {
+  try {
+    return JSON.parse(runQuiet(`${cmd} --slurp`)).flat();
+  } catch (e) {
+    console.error(`✗ API call failed: ${cmd}`);
+    console.error(e instanceof Error ? e.message : String(e));
+    process.exit(1);
+  }
+}
+
 // ── Sweep: open + recently-updated PRs, Codex's inline comments ─────────────
 
 const cutoff = Date.now() - lookbackDays * 86_400_000;
 
-// --paginate on every collection (Codex P2, PR #51 review): gh api caps each
-// request at per_page, so without it the sweep silently sees only the first
-// page once the repo grows past 50 PRs / 100 comments / 100 issues.
-const pulls = fetchJson(
+// --paginate --slurp on every collection (Codex P2, PR #51 + #53 reviews): gh
+// api caps each request at per_page, and emits one JSON document per page — so
+// without pagination the sweep silently truncates past 50 PRs / 100 comments /
+// 100 issues, and without slurping a multi-page collection breaks JSON.parse.
+const pulls = fetchPaginated(
   `gh api --paginate "repos/${repo}/pulls?state=all&sort=updated&direction=desc&per_page=50"`,
 );
 // Open PRs always count; merged/closed PRs only within the lookback window
@@ -70,7 +87,7 @@ const inWindow = pulls.filter((p) => p.state === 'open' || Date.parse(p.updated_
 /** @type {{ commentId: string; prNumber: number; prTitle: string; path: string; line: string; summary: string; url: string }[]} */
 const findings = [];
 for (const pr of inWindow) {
-  const comments = fetchJson(
+  const comments = fetchPaginated(
     `gh api --paginate "repos/${repo}/pulls/${pr.number}/comments?per_page=100"`,
   );
   for (const c of comments) {
@@ -92,7 +109,7 @@ for (const pr of inWindow) {
 // Read ALL issues (open + closed): a finding whose issue was closed after the
 // fix must still suppress re-reporting — otherwise the next run would re-open
 // the same finding every time someone closed its issue.
-const issues = fetchJson(
+const issues = fetchPaginated(
   `gh api --paginate "repos/${repo}/issues?state=all&labels=${LABEL}&per_page=100"`,
 );
 const reported = new Set();
