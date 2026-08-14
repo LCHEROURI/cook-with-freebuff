@@ -81,3 +81,31 @@ describe('verify:live:emulator · contract lock', () => {
     expect(PKG).toContain('"verify:live:emulator": "node scripts/verify-live-emulator.mjs"');
   });
 });
+
+describe('verify:live · App Check enforcement probe', () => {
+  it('probes an unattested request and treats 403 APP_CHECK_FAILED as enforced', () => {
+    // The negative path the happy flow can't show: a valid owner request with
+    // NO App Check token must be 403'd when enforcement is on, so a silently
+    // disabled gate can't masquerade as a green run. list_recipes is the
+    // read-only action, so the probe writes nothing.
+    expect(VERIFY_LIVE).toContain("headers: { authorization: `Bearer ${idToken}`, 'content-type': 'application/json' }");
+    expect(VERIFY_LIVE).toContain("{ action: 'list_recipes' }");
+    expect(VERIFY_LIVE).toContain("noAppCheck.status === 403 && noAppCheck.body?.error?.code === 'APP_CHECK_FAILED'");
+  });
+
+  it('only probes the deployed server, never the emulator (which always passes App Check)', () => {
+    expect(VERIFY_LIVE).toContain('if (!EMULATOR) {');
+    expect(VERIFY_LIVE).toContain('App Check enforced — unattested request rejected 403');
+  });
+
+  it('reports the probe result as a note, not a status line, so verify:live:compare stays clean', () => {
+    // A ✓ here would leak into verify-live-compare's status-line diff (the
+    // local leg runs monitor mode), so the enforced case must stay a note().
+    expect(VERIFY_LIVE).toContain("note(`App Check enforced — unattested request rejected 403");
+  });
+
+  it('fails the harness when enforcement is required but the server is in monitor mode', () => {
+    expect(VERIFY_LIVE).toContain("process.argv.includes('--require-app-check-enforced')");
+    expect(VERIFY_LIVE).toContain('App Check enforcement required but the deployed server accepted an unattested request');
+  });
+});
