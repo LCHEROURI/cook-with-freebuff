@@ -406,6 +406,9 @@ describe('.github/workflows/codex-review-monitor.yml · the daily Codex sweep', 
     expect(CODEX_MONITOR).toContain('permissions:');
     expect(CODEX_MONITOR).toContain('issues: write');
     expect(CODEX_MONITOR).toContain('pull-requests: read');
+    // gh inside Actions needs the token wired explicitly — without it the
+    // sweep dies on the very first API call (proven by the dispatch run).
+    expect(CODEX_MONITOR).toContain('GH_TOKEN: ${{ github.token }}');
   });
 
   it('keeps the concurrency guard so overlapping sweeps never double-report', () => {

@@ -45,8 +45,11 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      # gh is preinstalled on ubuntu runners; the sweep reads the bot's
-      # comments via the API (tokenless data for public repos, GITHUB_TOKEN
-      # for the issues write below). No secrets required.
+      # gh is preinstalled on ubuntu runners but needs GH_TOKEN set explicitly
+      # inside Actions (it is not inherited from the runner env). The sweep
+      # reads the bot's comments via the API and writes issues; the token's
+      # issues:write permission above covers both. No secrets required.
       - name: Sweep and open issues for new findings
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: node scripts/codex-review-monitor.mjs
