@@ -15,7 +15,12 @@ import { buildProductionContext } from '@/lib/server/stores';
 import { getConversationAgent } from '@/lib/ai/provider';
 import { ConversationOrchestrator } from '@/lib/agent';
 import { logError, logInfo } from '@/lib/server/logger';
-import { generateCorrelationId, runWithContext } from '@/lib/server/requestContext';
+import {
+  generateCorrelationId,
+  runWithContext,
+  validateClientCorrelationId,
+  INVALID_CORRELATION_ID_MESSAGE,
+} from '@/lib/server/requestContext';
 
 export async function POST(req: Request) {
   const auth = req.headers.get('authorization');
@@ -48,8 +53,16 @@ export async function POST(req: Request) {
   }
 
   const sessionId = typeof parsed.sessionId === 'string' ? parsed.sessionId : undefined;
-  const correlationId =
-    (typeof parsed.correlationId === 'string' ? parsed.correlationId : undefined) ?? generateCorrelationId();
+  // Boundary contract: a malformed client correlation id is rejected before it
+  // can reach the tool layer (and from there the marker namespace).
+  const cid = validateClientCorrelationId(parsed.correlationId);
+  if (!cid.valid) {
+    return NextResponse.json(
+      { success: false, error: { code: 'INVALID_BODY', message: INVALID_CORRELATION_ID_MESSAGE, recoverable: false } },
+      { status: 400 },
+    );
+  }
+  const correlationId = cid.id ?? generateCorrelationId();
 
   const startedAt = Date.now();
   logInfo('api.agent.request', {

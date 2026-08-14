@@ -119,10 +119,14 @@ async function deleteDoc(collectionPath: string, id: string): Promise<void> {
 // pause always carries its clear) — they cannot diverge across a crash or a
 // partial failure (Codex P1 chain, PR #58 review).
 //
-// Correlation IDs are client-supplied strings and can contain path separators
-// (e.g. 'a/b'), so the raw value is never used as a Firestore doc id — every
-// marker is keyed by a base64url encoding that is safe for a single path
-// segment (Codex P2, PR #58 review).
+// Correlation IDs are now validated at the API boundary (charset + length,
+// see correlationIdSchema), so a client-supplied id can no longer contain a
+// path separator or run unbounded. The raw value is STILL never used as a
+// Firestore doc id: server-constructed ids (e.g. `idle->…`,
+// `resume-rollback:<id>:<nonce>`) legitimately carry characters the client
+// schema forbids, and historical docs predate the boundary — so every marker
+// is keyed by a base64url encoding that is safe for a single path segment
+// (Codex P2, PR #58 review).
 
 const CORRELATION_MARKERS = 'correlation_markers';
 

@@ -82,4 +82,22 @@ describe('POST /api/agent', () => {
     const body = await res.json();
     expect(body.response).toContain('did not work');
   });
+
+  it('rejects a malformed correlationId with 400 INVALID_BODY before orchestrating', async () => {
+    const res = await POST(new Request('http://localhost/api/agent', {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        authorization: 'Bearer fake-token',
+      },
+      body: JSON.stringify({ utterance: 'hello', correlationId: 'bad/id' }),
+    }));
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.error.code).toBe('INVALID_BODY');
+    expect(body.error.message).toContain('correlationId');
+    // The context is built inside runWithContext AFTER the check — a rejected
+    // id never reaches the tool layer, so no marker could be written.
+    expect(mockBuild).not.toHaveBeenCalled();
+  });
 });

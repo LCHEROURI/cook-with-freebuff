@@ -8,6 +8,22 @@
 
 import { z } from 'zod';
 
+// ── Correlation id (API boundary contract) ───────────────────────────────────
+//
+// Client-supplied correlation ids thread idempotency through transitions and
+// become correlation_markers doc ids. The API boundary validates them BEFORE
+// any service call so malformed values (path separators, control chars,
+// unbounded length) can never reach the marker namespace; the marker repo
+// keeps its own base64url encoding as defense-in-depth for server-constructed
+// variants (e.g. `resume-rollback:<id>:<nonce>`), which never pass this
+// schema.
+
+export const correlationIdSchema = z
+  .string()
+  .min(1)
+  .max(128)
+  .regex(/^[A-Za-z0-9_.-]+$/, 'may only contain letters, digits, dot, underscore and hyphen');
+
 // ── Ingredient ───────────────────────────────────────────────────────────────
 
 export const ingredientSchema = z.object({

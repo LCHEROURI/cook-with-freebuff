@@ -558,3 +558,33 @@ describe('/api/cook', () => {
     });
   });
 });
+
+describe('/api/cook — correlationId boundary', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockResolve.mockResolvedValue('user-1');
+    mockBuild.mockImplementation(() => testContext('user-1'));
+    resetProviders();
+  });
+
+  it('rejects a malformed correlationId with 400 INVALID_BODY before anything is built', async () => {
+    for (const bad of ['bad/id', 'a'.repeat(200), 123, '']) {
+      const res = await post({ action: 'status', correlationId: bad });
+      expect(res.status, `correlationId ${JSON.stringify(bad)}`).toBe(400);
+      const body = await res.json();
+      expect(body.error.code).toBe('INVALID_BODY');
+      expect(body.error.message).toContain('correlationId');
+    }
+    // Nothing reached the service layer, so no marker could have been written
+    // and no session could have been touched.
+    expect(mockBuild).not.toHaveBeenCalled();
+  });
+
+  it('threads a valid correlationId through to the service layer unchanged', async () => {
+    const ctx = testContext('user-1');
+    mockBuild.mockImplementation(() => ctx);
+    const res = await post({ action: 'status', correlationId: 'boundary-ok-1' });
+    expect(res.status).toBe(200);
+    expect(mockBuild).toHaveBeenCalledWith('user-1', 'boundary-ok-1');
+  });
+});
