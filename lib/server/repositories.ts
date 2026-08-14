@@ -170,14 +170,19 @@ function legacyKeyable(id: string): boolean {
  */
 export async function hasCorrelationMarker(id: string): Promise<boolean> {
   const encoded = await readDoc(CORRELATION_MARKERS, markerKey(id));
+  let encodedForeign = false;
   if (encoded !== null) {
     // A doc at the encoded key belongs to THIS id only when it predates rawId
     // recording or names this id. A raw write that historically collided here
     // carries a foreign rawId — never report a duplicate for it (Codex P2,
-    // PR #64 review).
+    // PR #64 review), but fall through to this id's own legacy marker below
+    // rather than answering absent (Codex P1, PR #66 review).
     const data = encoded.data as { rawId?: string } | null;
-    if (data?.rawId !== undefined && data.rawId !== id) return false;
-    return true;
+    if (data?.rawId !== undefined && data.rawId !== id) {
+      encodedForeign = true;
+    } else {
+      return true;
+    }
   }
   if (!legacyKeyable(id)) return false;
   const legacy = await readDoc(CORRELATION_MARKERS, id);
@@ -185,12 +190,17 @@ export async function hasCorrelationMarker(id: string): Promise<boolean> {
   const data = legacy.data as { markedAt?: number; rawId?: string } | null;
   if (data?.rawId !== undefined && data.rawId !== id) return false;
   // Copy to the encoded key, retain the raw key for still-serving old
-  // instances. Idempotent: later reads hit the encoded key directly.
-  await writeDoc(
-    CORRELATION_MARKERS,
-    markerKey(id),
-    correlationMarkerSchema.parse({ markedAt: now(), rawId: id }),
-  );
+  // instances. Idempotent: later reads hit the encoded key directly. A
+  // foreign occupant of the encoded slot is left untouched — copying would
+  // clobber the other id's marker — and the retained legacy doc keeps
+  // serving this id (Codex P1, PR #66 review).
+  if (!encodedForeign) {
+    await writeDoc(
+      CORRELATION_MARKERS,
+      markerKey(id),
+      correlationMarkerSchema.parse({ markedAt: now(), rawId: id }),
+    );
+  }
   return true;
 }
 
