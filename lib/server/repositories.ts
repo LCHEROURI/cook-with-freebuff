@@ -510,6 +510,23 @@ export async function rebaseActiveTimers(
   await batch.commit();
 }
 
+/**
+ * Fast-path a timer status change from the voice flow (e.g. marking a timer
+ * done the moment the speaker confirms) without the full read-modify-write
+ * round-trip the regular update path pays.
+ */
+export async function forceTimerStatus(
+  id: string,
+  status: CookingTimer['status'],
+): Promise<void> {
+  const db = getAdminDb();
+  if (!db) throw new Error('Firestore not initialized');
+  await db
+    .collection(TIMERS)
+    .doc(id)
+    .update({ status } as unknown as Record<string, unknown>);
+}
+
 // ── Pantry repository ────────────────────────────────────────────────────────
 
 const PANTRY = 'pantry_items';
