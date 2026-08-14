@@ -200,6 +200,12 @@ export const resumeCookingSessionTool: ToolDefinition = {
           // NOT reuse ctx.correlationId, which resumeSession already marked
           // processed, or transitionTo would return the ACTIVE session
           // without pausing and silently undo the rollback.
+          // The rollback restored the PAUSED state with the ORIGINAL
+          // pausedAt — the original resume ID is valid again. The clear rides
+          // the SAME transaction as the re-pause (Codex P1, PR #58 review): a
+          // pause that commits always forgets the original ID, and a failed
+          // pause leaves both untouched — no swallowed clear while the session
+          // sits PAUSED with the marker still set.
           await ctx.sessionService
             .pauseSession(updated.id, updated.version, {
               // UNIQUE per attempt (Codex P1, PR #53 review): a deterministic
@@ -211,13 +217,7 @@ export const resumeCookingSessionTool: ToolDefinition = {
                 ? `resume-rollback:${ctx.correlationId}:${rollbackNonce()}`
                 : undefined,
               pausedAt,
-            })
-            .then(async () => {
-              // The rollback restored the PAUSED state with the ORIGINAL
-              // pausedAt — the original resume ID is valid again. Forget it so
-              // a client retry with that same ID transitions once instead of
-              // being swallowed as a processed duplicate (Codex P1, PR #51).
-              await ctx.sessionService.clearProcessed(ctx.correlationId);
+              clearCorrelationId: ctx.correlationId,
             })
             .catch(() => undefined);
           return fail(

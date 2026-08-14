@@ -30,6 +30,7 @@ import {
   agentToolLogSchema,
   leftoverSchema,
   groceryItemSchema,
+  correlationMarkerSchema,
 } from '../domain/schemas';
 
 // ── Base Firestore helpers ───────────────────────────────────────────────────
@@ -112,25 +113,43 @@ async function deleteDoc(collectionPath: string, id: string): Promise<void> {
 }
 
 // ── Correlation-marker repository ────────────────────────────────────────────
-// Durable idempotency markers (processed correlation IDs). Production wires
-// this into SessionService so resume-rollback uniqueness survives server
-// restarts, unlike the in-memory default (Codex P1 chain).
+// Durable idempotency markers (processed correlation IDs). The Firestore
+// session store writes and clears these in the SAME transaction as the session
+// update, so a committed transition always carries its marker (and a rollback
+// pause always carries its clear) — they cannot diverge across a crash or a
+// partial failure (Codex P1 chain, PR #58 review).
+//
+// Correlation IDs are client-supplied strings and can contain path separators
+// (e.g. 'a/b'), so the raw value is never used as a Firestore doc id — every
+// marker is keyed by a base64url encoding that is safe for a single path
+// segment (Codex P2, PR #58 review).
 
 const CORRELATION_MARKERS = 'correlation_markers';
 
+/**
+ * Safe single-segment Firestore key for an arbitrary correlation ID.
+ * base64url is reversible, collision-free for distinct inputs, and contains
+ * no '/' or other path separators (Codex P2, PR #58 review — a raw id like
+ * 'a/b' would otherwise be split into path components by Firestore's doc()).
+ */
+export function markerKey(id: string): string {
+  return Buffer.from(id, 'utf8').toString('base64url');
+}
+
 /** True when the id was ever marked (a processed correlation ID). */
 export async function hasCorrelationMarker(id: string): Promise<boolean> {
-  return (await readDoc(CORRELATION_MARKERS, id)) !== null;
+  return (await readDoc(CORRELATION_MARKERS, markerKey(id))) !== null;
 }
 
 /** Persist the marker. Idempotent — re-marking the same id is a no-op write. */
 export async function markCorrelationMarker(id: string): Promise<void> {
-  await writeDoc(CORRELATION_MARKERS, id, { markedAt: now() });
+  const doc = correlationMarkerSchema.parse({ markedAt: now() });
+  await writeDoc(CORRELATION_MARKERS, markerKey(id), doc);
 }
 
 /** Forget the marker so its operation becomes retryable (rollback path). */
 export async function clearCorrelationMarker(id: string): Promise<void> {
-  await deleteDoc(CORRELATION_MARKERS, id);
+  await deleteDoc(CORRELATION_MARKERS, markerKey(id));
 }
 
 // ── Recipe repository ────────────────────────────────────────────────────────
@@ -187,16 +206,24 @@ export async function getActiveSession(userId: UserId): Promise<CookingSession |
 /**
  * Update a session with optimistic concurrency.
  * Throws if the version doesn't match, preventing conflicting updates.
+ *
+ * Marker ops (mark/clear a correlation ID) commit in the SAME transaction as
+ * the session update, so a transition can never be durable without its marker
+ * and a rollback pause can never survive without its clear (Codex P1s, PR #58
+ * review — previously the marker write was a separate call that could fail
+ * after the transition had already committed).
  */
 export async function updateSession(
   id: string,
   partial: Partial<CookingSession>,
   expectedVersion: number,
+  marker?: { mark?: string | string[]; clear?: string },
 ): Promise<CookingSession> {
   const db = getAdminDb();
   if (!db) throw new Error('Firestore not initialized');
 
   const ref = db.collection(SESSIONS).doc(id);
+  const markers = db.collection(CORRELATION_MARKERS);
 
   const result = await db.runTransaction(async (tx) => {
     const snap = await tx.get(ref);
@@ -218,6 +245,15 @@ export async function updateSession(
 
     cookingSessionSchema.parse(updated);
     tx.update(ref, updated as unknown as Record<string, unknown>);
+
+    const marks = marker?.mark ? (Array.isArray(marker.mark) ? marker.mark : [marker.mark]) : [];
+    for (const id of marks) {
+      const doc = correlationMarkerSchema.parse({ markedAt: now() });
+      tx.set(markers.doc(markerKey(id)), doc as unknown as Record<string, unknown>);
+    }
+    if (marker?.clear) {
+      tx.delete(markers.doc(markerKey(marker.clear)));
+    }
     return updated;
   });
 

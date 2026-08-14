@@ -570,6 +570,12 @@ describe('pause freezes timers', () => {
         recoverable: true,
       });
 
+      // The rollback's clear rides the SAME transaction as the re-pause
+      // (Codex P1, PR #58 review): the ORIGINAL resume ID must already be
+      // forgotten the moment the session is PAUSED again — otherwise the
+      // retry below would be swallowed as a duplicate.
+      expect(await store.hasCorrelationMarker('resume-op-51')).toBe(false);
+
       // Store healthy again; retry with the SAME correlation ID the client
       // used before. It must actually transition PAUSED → ACTIVE once and
       // rebase from the ORIGINAL endsAt exactly once — never a swallowed

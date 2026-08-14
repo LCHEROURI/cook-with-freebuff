@@ -134,6 +134,13 @@ export const sessionStateSchema = z.object({
   activeTimerIds: z.array(z.string()).default([]),
 });
 
+/** Durable idempotency marker (processed correlation ID). */
+export const correlationMarkerSchema = z.object({
+  markedAt: z.number(),
+});
+
+export type CorrelationMarker = z.infer<typeof correlationMarkerSchema>;
+
 export const recoveryContextSchema = z.object({
   errorCode: z.string().min(1),
   errorMessage: z.string(),

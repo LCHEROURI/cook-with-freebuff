@@ -435,6 +435,13 @@ export class GuidedCookingService {
         // PR #30 review): resumeSession already marked that ID as processed,
         // so transitionTo would treat the re-pause as a duplicate and return
         // the ACTIVE session without pausing — silently undoing the rollback.
+        // The rollback put the session back to PAUSED with the ORIGINAL
+        // pausedAt — so the ORIGINAL resume ID is valid again. The clear of
+        // that ID rides the SAME transaction as the re-pause (Codex P1, PR
+        // #58 review): a pause that commits always forgets the original ID,
+        // and a failed pause leaves both untouched — the clear can no longer
+        // be swallowed by the catch after a successful pause while the
+        // session sits PAUSED with the marker still set.
         await this.sessionService
           .pauseSession(updated.id, updated.version, {
             // UNIQUE per attempt (Codex P1, PR #53 review): resume-rollback:<id>
@@ -447,15 +454,7 @@ export class GuidedCookingService {
               ? `resume-rollback:${options.correlationId}:${newId()}`
               : undefined,
             pausedAt,
-          })
-          .then(async () => {
-            // The rollback put the session back to PAUSED with the ORIGINAL
-            // pausedAt — so the ORIGINAL resume ID is valid again. Forget it,
-            // or the client's idempotent retry with that same ID would be
-            // swallowed as a processed duplicate while the session sits
-            // PAUSED, and the handler would still rebase timers a second
-            // time (Codex P1, PR #51 review).
-            await this.sessionService.clearProcessed(options?.correlationId);
+            clearCorrelationId: options?.correlationId,
           })
           .catch(() => undefined);
         throw new GuideError(

@@ -7,7 +7,7 @@
 
 import 'server-only';
 import * as repo from './repositories';
-import { SessionService, type CorrelationMarkerStore } from './session-service';
+import { SessionService } from './session-service';
 import type { SessionStore } from './session-service';
 import type {
   ToolContext,
@@ -27,10 +27,14 @@ registerGeminiProviders();
 export const firestoreSessionStore: SessionStore = {
   getSession: (id) => repo.getSession(id),
   createSession: (s) => repo.createSession(s),
-  updateSession: (id, partial, expectedVersion) => repo.updateSession(id, partial, expectedVersion),
+  updateSession: (id, partial, expectedVersion, marker) =>
+    repo.updateSession(id, partial, expectedVersion, marker),
   getActiveSession: (userId) => repo.getActiveSession(userId),
   createEvent: (e) => repo.createEvent(e),
   listSessionEvents: (sessionId) => repo.listSessionEvents(sessionId),
+  hasCorrelationMarker: (id) => repo.hasCorrelationMarker(id),
+  markCorrelationMarker: (id) => repo.markCorrelationMarker(id),
+  clearCorrelationMarker: (id) => repo.clearCorrelationMarker(id),
 };
 
 export const firestoreTimerStore: TimerStore = {
@@ -80,22 +84,8 @@ export const firestoreGroceryStore: GroceryStore = {
   deleteGroceryItem: (id) => repo.deleteGroceryItem(id),
 };
 
-/**
- * Durable idempotency markers: processed correlation IDs survive restarts so
- * the resume-rollback uniqueness holds across server restarts, not just within
- * one process (Codex P1 chain).
- */
-export const firestoreCorrelationMarkerStore: CorrelationMarkerStore = {
-  has: (id) => repo.hasCorrelationMarker(id),
-  mark: (id) => repo.markCorrelationMarker(id),
-  clear: (id) => repo.clearCorrelationMarker(id),
-};
-
 /** Singleton session service over Firestore with durable markers. */
-export const productionSessionService = new SessionService(
-  firestoreSessionStore,
-  firestoreCorrelationMarkerStore,
-);
+export const productionSessionService = new SessionService(firestoreSessionStore);
 
 /** Build a ToolContext for an authenticated user. */
 export function buildProductionContext(
