@@ -169,7 +169,16 @@ function legacyKeyable(id: string): boolean {
  * misreport a processed duplicate (Codex P2, PR #62 review).
  */
 export async function hasCorrelationMarker(id: string): Promise<boolean> {
-  if ((await readDoc(CORRELATION_MARKERS, markerKey(id))) !== null) return true;
+  const encoded = await readDoc(CORRELATION_MARKERS, markerKey(id));
+  if (encoded !== null) {
+    // A doc at the encoded key belongs to THIS id only when it predates rawId
+    // recording or names this id. A raw write that historically collided here
+    // carries a foreign rawId — never report a duplicate for it (Codex P2,
+    // PR #64 review).
+    const data = encoded.data as { rawId?: string } | null;
+    if (data?.rawId !== undefined && data.rawId !== id) return false;
+    return true;
+  }
   if (!legacyKeyable(id)) return false;
   const legacy = await readDoc(CORRELATION_MARKERS, id);
   if (!legacy) return false;
@@ -188,16 +197,16 @@ export async function hasCorrelationMarker(id: string): Promise<boolean> {
 /**
  * Persist the marker. Idempotent — re-marking the same id is a no-op write.
  *
- * Dual-writes: the encoded key (new readers) AND the raw key (old instances
- * still serving read only the raw key). The raw copy carries rawId so a later
- * has() can tell it apart from another id's encoded marker (Codex P2, PR #62).
+ * Encoded key only. The raw-key dual-write was removed: it existed so old
+ * instances (pre-encoding) could see new markers during the rolling deploy,
+ * a window long past — and it was unsafe, since a raw copy could occupy
+ * another id's encoded key and falsely suppress its transition (Codex P2,
+ * PR #64 review). Raw-key docs are now historical only, drained by the
+ * legacy read fallback and the conditional clear.
  */
 export async function markCorrelationMarker(id: string): Promise<void> {
   const doc = correlationMarkerSchema.parse({ markedAt: now(), rawId: id });
   await writeDoc(CORRELATION_MARKERS, markerKey(id), doc);
-  if (legacyKeyable(id)) {
-    await writeDoc(CORRELATION_MARKERS, id, doc);
-  }
 }
 
 /**
@@ -296,6 +305,17 @@ export async function updateSession(
       );
     }
 
+    // Read the legacy raw marker BEFORE queuing any writes: Firestore
+    // transactions require every read to precede every write, and the rollback
+    // clear below conditionally deletes that doc (Codex P1, PR #64 review).
+    let legacyClearData: { rawId?: string } | undefined;
+    if (marker?.clear && legacyKeyable(marker.clear)) {
+      const legacySnap = await tx.get(markers.doc(marker.clear));
+      legacyClearData = legacySnap.exists
+        ? (legacySnap.data() as { rawId?: string })
+        : undefined;
+    }
+
     const updated: CookingSession = {
       ...current,
       ...partial,
@@ -310,22 +330,15 @@ export async function updateSession(
     for (const id of marks) {
       const doc = correlationMarkerSchema.parse({ markedAt: now(), rawId: id });
       tx.set(markers.doc(markerKey(id)), doc as unknown as Record<string, unknown>);
-      // Dual-write the raw key for old instances still serving (PR #62 P1).
-      if (legacyKeyable(id)) {
-        tx.set(markers.doc(id), doc as unknown as Record<string, unknown>);
-      }
     }
     if (marker?.clear) {
       const id = marker.clear;
       tx.delete(markers.doc(markerKey(id)));
-      if (legacyKeyable(id)) {
-        // Conditional: only delete the raw doc when it is a legacy marker for
-        // THIS id — never another id's encoded marker living at that key.
-        const legacy = await tx.get(markers.doc(id));
-        const data = legacy.data() as { rawId?: string } | undefined;
-        if (data?.rawId === undefined || data.rawId === id) {
-          tx.delete(markers.doc(id));
-        }
+      // Conditional raw delete: only when the raw doc is a legacy marker for
+      // THIS id (rawId matches or predates recording) — never another id's
+      // encoded marker living at that key. Historical raw docs drain here.
+      if (legacyKeyable(id) && (legacyClearData?.rawId === undefined || legacyClearData.rawId === id)) {
+        tx.delete(markers.doc(id));
       }
     }
     return updated;
