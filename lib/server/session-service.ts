@@ -28,42 +28,19 @@ import type {
 export interface SessionStore {
   getSession(id: string): Promise<CookingSession | null>;
   createSession(session: CookingSession): Promise<void>;
-  updateSession(id: string, partial: Partial<CookingSession>, expectedVersion: number): Promise<CookingSession>;
+  updateSession(
+    id: string,
+    partial: Partial<CookingSession>,
+    expectedVersion: number,
+    marker?: { mark?: string | string[]; clear?: string },
+  ): Promise<CookingSession>;
   getActiveSession(userId: string): Promise<CookingSession | null>;
   createEvent(event: CookingSessionEvent): Promise<void>;
   listSessionEvents(sessionId: string): Promise<CookingSessionEvent[]>;
+  hasCorrelationMarker(id: string): Promise<boolean>;
+  markCorrelationMarker(id: string): Promise<void>;
+  clearCorrelationMarker(id: string): Promise<void>;
 }
-
-// ── Idempotency tracker ──────────────────────────────────────────────────────
-
-/**
- * Durable record of processed correlation IDs. The DEFAULT is in-memory (and
- * process-local); production injects the Firestore-backed store so the
- * resume-rollback uniqueness holds across server restarts, not just within one
- * process (Codex P1 chain, PR #51/#53 reviews).
- */
-export interface CorrelationMarkerStore {
-  has(id: string): Promise<boolean>;
-  mark(id: string): Promise<void>;
-  clear(id: string): Promise<void>;
-}
-
-/** Process-local marker store — the default; all existing tests rely on it. */
-export class InMemoryCorrelationMarkerStore implements CorrelationMarkerStore {
-  private readonly ids = new Set<string>();
-  async has(id: string): Promise<boolean> {
-    return this.ids.has(id);
-  }
-  async mark(id: string): Promise<void> {
-    this.ids.add(id);
-  }
-  async clear(id: string): Promise<void> {
-    this.ids.delete(id);
-  }
-}
-
-/** Shared default so `new SessionService(store)` dedupes across instances. */
-export const sharedInMemoryCorrelationMarkers = new InMemoryCorrelationMarkerStore();
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -116,10 +93,7 @@ export class VersionConflictError extends SessionError {
 // ── Session service ──────────────────────────────────────────────────────────
 
 export class SessionService {
-  constructor(
-    private readonly store: SessionStore,
-    private readonly markers: CorrelationMarkerStore = sharedInMemoryCorrelationMarkers,
-  ) {}
+  constructor(private readonly store: SessionStore) {}
 
   /**
    * Forget a correlation ID so its operation becomes retryable again. Used
@@ -130,15 +104,15 @@ export class SessionService {
    * would still rebase its timers a second time (Codex P1, PR #51 review).
    */
   async clearProcessed(correlationId?: string): Promise<void> {
-    if (correlationId) await this.markers.clear(correlationId);
+    if (correlationId) await this.store.clearCorrelationMarker(correlationId);
   }
 
   private async hasBeenProcessed(correlationId?: string): Promise<boolean> {
-    return correlationId ? this.markers.has(correlationId) : false;
+    return correlationId ? this.store.hasCorrelationMarker(correlationId) : false;
   }
 
   private async markProcessed(correlationId?: string): Promise<void> {
-    if (correlationId) await this.markers.mark(correlationId);
+    if (correlationId) await this.store.markCorrelationMarker(correlationId);
   }
   /**
    * Create a new cooking session for a user.
@@ -183,12 +157,16 @@ export class SessionService {
       correlationId: options?.correlationId,
     });
 
-    // Auto-transition IDLE → COLLECTING_INGREDIENTS
+    // Auto-transition IDLE → COLLECTING_INGREDIENTS. The OUTER create id and
+    // the derived idle-transition id both ride the same transaction, so a
+    // committed create always carries both markers (Codex P1, PR #58 review:
+    // a separate outer-mark write could fail after the transition committed,
+    // leaving a retried createSession to spawn a second session).
     const updated = await this.transitionTo(id, 1, 'COLLECTING_INGREDIENTS', 'USER_INPUT', {
       correlationId: options?.correlationId ? `idle->${options.correlationId}` : undefined,
+      additionalMarks: options?.correlationId ? [options.correlationId] : undefined,
     });
 
-    await this.markProcessed(options?.correlationId);
     return updated;
   }
 
@@ -202,7 +180,20 @@ export class SessionService {
     expectedVersion: number,
     to: SessionPhase,
     reason: 'USER_INPUT' | 'AGENT_TOOL' | 'TIMER_COMPLETED' | 'RECOVERY' | 'SYSTEM',
-    options?: { correlationId?: string; pausedAt?: number },
+    options?: {
+      correlationId?: string;
+      pausedAt?: number;
+      /**
+       * Correlation ID to FORGET in the same transaction as this transition
+       * (the resume-rollback path: the re-pause must clear the ORIGINAL resume
+       * marker atomically — Codex P1, PR #58 review — or a pause that commits
+       * without its clear would swallow the client's retry as a duplicate
+       * while the session sits PAUSED).
+       */
+      clearCorrelationId?: string;
+      /** Additional correlation IDs to mark in the same transaction. */
+      additionalMarks?: string[];
+    },
   ): Promise<CookingSession> {
     if (await this.hasBeenProcessed(options?.correlationId)) {
       const session = await this.store.getSession(sessionId);
@@ -269,7 +260,18 @@ export class SessionService {
       partial.status = 'ACTIVE';
     }
 
-    const updated = await this.store.updateSession(sessionId, partial, expectedVersion);
+    // The marker (and any rollback clear) rides the SAME transaction as the
+    // session update — a committed transition always carries its marker, so a
+    // client retry dedupes instead of re-running the transition (Codex P1,
+    // PR #58 review: previously the marker was a separate write that could
+    // fail after the transition had already committed).
+    const marks = [options?.correlationId, ...(options?.additionalMarks ?? [])].filter(
+      (x): x is string => Boolean(x),
+    );
+    const updated = await this.store.updateSession(sessionId, partial, expectedVersion, {
+      mark: marks.length > 0 ? marks : undefined,
+      clear: options?.clearCorrelationId,
+    });
 
     // Log the event
     await this.store.createEvent({
@@ -287,7 +289,6 @@ export class SessionService {
       correlationId: options?.correlationId,
     });
 
-    await this.markProcessed(options?.correlationId);
     return updated;
   }
 
@@ -340,7 +341,9 @@ export class SessionService {
       partial.currentCookingStepIndex = session.currentCookingStepIndex + 1;
     }
 
-    const updated = await this.store.updateSession(sessionId, partial, expectedVersion);
+    const updated = await this.store.updateSession(sessionId, partial, expectedVersion, {
+      mark: options?.correlationId,
+    });
 
     await this.store.createEvent({
       id: newId(),
@@ -358,7 +361,6 @@ export class SessionService {
       correlationId: options?.correlationId,
     });
 
-    await this.markProcessed(options?.correlationId);
     return updated;
   }
 
@@ -443,7 +445,9 @@ export class SessionService {
       partial.currentCookingStepIndex = newIndex;
     }
 
-    const updated = await this.store.updateSession(sessionId, partial, expectedVersion);
+    const updated = await this.store.updateSession(sessionId, partial, expectedVersion, {
+      mark: options?.correlationId,
+    });
 
     await this.store.createEvent({
       id: newId(),
@@ -461,17 +465,18 @@ export class SessionService {
       correlationId: options?.correlationId,
     });
 
-    await this.markProcessed(options?.correlationId);
     return updated;
   }
 
   /**
    * Pause the session. Captures the current state as resumableState.
+   * `clearCorrelationId` forgets that marker in the SAME transaction as the
+   * pause (the resume-rollback path — Codex P1, PR #58 review).
    */
   async pauseSession(
     sessionId: string,
     expectedVersion: number,
-    options?: { correlationId?: string; pausedAt?: number },
+    options?: { correlationId?: string; pausedAt?: number; clearCorrelationId?: string },
   ): Promise<CookingSession> {
     return this.transitionTo(sessionId, expectedVersion, 'PAUSED', 'USER_INPUT', options);
   }
@@ -558,7 +563,9 @@ export class SessionService {
       recoveryContext,
     };
 
-    const updated = await this.store.updateSession(sessionId, partial, expectedVersion);
+    const updated = await this.store.updateSession(sessionId, partial, expectedVersion, {
+      mark: options?.correlationId,
+    });
 
     await this.store.createEvent({
       id: newId(),
@@ -575,7 +582,6 @@ export class SessionService {
       correlationId: options?.correlationId,
     });
 
-    await this.markProcessed(options?.correlationId);
     return updated;
   }
 
@@ -623,7 +629,9 @@ export class SessionService {
       resumableState: undefined,
     };
 
-    const updated = await this.store.updateSession(sessionId, partial, expectedVersion);
+    const updated = await this.store.updateSession(sessionId, partial, expectedVersion, {
+      mark: options?.correlationId,
+    });
 
     await this.store.createEvent({
       id: newId(),
@@ -639,7 +647,6 @@ export class SessionService {
       correlationId: options?.correlationId,
     });
 
-    await this.markProcessed(options?.correlationId);
     return updated;
   }
 
@@ -681,8 +688,9 @@ export class SessionService {
       partial.pendingPantryItems = metadata.pendingPantryItems ?? undefined;
     }
 
-    const updated = await this.store.updateSession(sessionId, partial, expectedVersion);
-    await this.markProcessed(options?.correlationId);
+    const updated = await this.store.updateSession(sessionId, partial, expectedVersion, {
+      mark: options?.correlationId,
+    });
     return updated;
   }
 
@@ -738,7 +746,9 @@ export class SessionService {
       lastActivityAt: now(),
     };
 
-    const updated = await this.store.updateSession(sessionId, partial, expectedVersion);
+    const updated = await this.store.updateSession(sessionId, partial, expectedVersion, {
+      mark: options?.correlationId,
+    });
 
     await this.store.createEvent({
       id: newId(),
@@ -750,7 +760,6 @@ export class SessionService {
       correlationId: options?.correlationId,
     });
 
-    await this.markProcessed(options?.correlationId);
     return updated;
   }
 
@@ -810,7 +819,9 @@ export class SessionService {
       next = Array.from(merged.values());
     }
 
-    const updated = await this.store.updateSession(sessionId, { availableIngredients: next }, expectedVersion);
+    const updated = await this.store.updateSession(sessionId, { availableIngredients: next }, expectedVersion, {
+      mark: options?.correlationId,
+    });
 
     const prev = new Map(session.availableIngredients.map((i) => [normalize(i.name), i]));
     const nextNames = new Set(next.map((i) => normalize(i.name)));
@@ -852,7 +863,6 @@ export class SessionService {
       }
     }
 
-    await this.markProcessed(options?.correlationId);
     return updated;
   }
 
@@ -881,14 +891,15 @@ export class SessionService {
       ? session.activeTimerIds
       : [...session.activeTimerIds, timerId];
 
-    const updated = await this.store.updateSession(sessionId, { activeTimerIds: active }, expectedVersion);
+    const updated = await this.store.updateSession(sessionId, { activeTimerIds: active }, expectedVersion, {
+      mark: options?.correlationId,
+    });
 
     await this.store.createEvent({
       id: newId(), sessionId, userId: session.userId, type: 'TIMER_STARTED',
       data: { timerId }, at: now(), correlationId: options?.correlationId,
     });
 
-    await this.markProcessed(options?.correlationId);
     return updated;
   }
 
@@ -926,6 +937,9 @@ export class SessionService {
       id: newId(), sessionId, userId: session.userId, type, data,
       at: now(), correlationId: options?.correlationId,
     });
+    // Event-only op: no session write exists to ride the marker on, so the
+    // standalone mark stays (a duplicate event log is benign — the P1s target
+    // session-transition/marker divergence, which cannot happen here).
     await this.markProcessed(options?.correlationId);
   }
 
@@ -957,6 +971,7 @@ export class SessionService {
 export class InMemorySessionStore implements SessionStore {
   private sessions = new Map<string, CookingSession>();
   private events: CookingSessionEvent[] = [];
+  private markers = new Set<string>();
 
   async getSession(id: string): Promise<CookingSession | null> {
     return this.sessions.get(id) ?? null;
@@ -970,6 +985,7 @@ export class InMemorySessionStore implements SessionStore {
     id: string,
     partial: Partial<CookingSession>,
     expectedVersion: number,
+    marker?: { mark?: string | string[]; clear?: string },
   ): Promise<CookingSession> {
     const current = this.sessions.get(id);
     if (!current) throw new Error(`Session ${id} not found`);
@@ -983,6 +999,12 @@ export class InMemorySessionStore implements SessionStore {
       lastActivityAt: now(),
     };
     this.sessions.set(id, updated);
+    // Marker ops apply atomically with the session write (mirrors the
+    // Firestore tx): a version conflict above throws BEFORE any marker is
+    // touched, so a failed update never leaves a stray marker.
+    const marks = marker?.mark ? (Array.isArray(marker.mark) ? marker.mark : [marker.mark]) : [];
+    for (const m of marks) this.markers.add(m);
+    if (marker?.clear) this.markers.delete(marker.clear);
     return { ...updated };
   }
 
@@ -1001,5 +1023,17 @@ export class InMemorySessionStore implements SessionStore {
     return this.events
       .filter((e) => e.sessionId === sessionId)
       .sort((a, b) => a.at - b.at);
+  }
+
+  async hasCorrelationMarker(id: string): Promise<boolean> {
+    return this.markers.has(id);
+  }
+
+  async markCorrelationMarker(id: string): Promise<void> {
+    this.markers.add(id);
+  }
+
+  async clearCorrelationMarker(id: string): Promise<void> {
+    this.markers.delete(id);
   }
 }

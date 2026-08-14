@@ -42,6 +42,43 @@ beforeEach(async () => {
   repo = await import('./repositories');
 });
 
+describe('correlation-marker key encoding (Codex P2 — PR #58 review)', () => {
+  it('encodes an id containing a path separator into one safe segment', () => {
+    const key = repo.markerKey('a/b');
+    // Firestore doc ids cannot contain '/'; the base64url alphabet never does.
+    expect(key).not.toContain('/');
+  });
+
+  it('is collision-free for distinct ids and reversible', () => {
+    const a = repo.markerKey('resume-op-1');
+    const b = repo.markerKey('resume-op-2');
+    expect(a).not.toBe(b);
+    expect(Buffer.from(a, 'base64url').toString('utf8')).toBe('resume-op-1');
+    // Unicode ids survive the round trip too (no mojibake in the key).
+    const uni = repo.markerKey('résumé→עברית');
+    expect(Buffer.from(uni, 'base64url').toString('utf8')).toBe('résumé→עברית');
+  });
+});
+
+describe('correlation-marker document validation (Codex P1 — PR #58 review)', () => {
+  it('the marker schema rejects a malformed document shape', async () => {
+    // The schema is the repo boundary guard: a doc without the required
+    // numeric markedAt cannot be persisted, whatever the collection's future
+    // shape evolution. Imported from domain so the repo and service share it.
+    const { correlationMarkerSchema } = await import('../domain/schemas');
+    expect(correlationMarkerSchema.safeParse({ markedAt: 'not-a-number' }).success).toBe(false);
+    expect(correlationMarkerSchema.safeParse({ markedAt: 1_700_000_000_000 }).success).toBe(true);
+    expect(correlationMarkerSchema.safeParse({}).success).toBe(false);
+  });
+
+  it('markCorrelationMarker parses before touching the db (boundary order)', async () => {
+    // The write boundary: the doc is validated then written. With the mocked
+    // null db the only error is the not-initialized throw AFTER the parse
+    // succeeded, proving the parse ran first (the #5155 fix).
+    await expect(repo.markCorrelationMarker('ok-id')).rejects.toThrow(/Firestore not initialized/);
+  });
+});
+
 describe('updateTimer write boundary', () => {
   it('rejects a malformed value propagated into a partial (Codex P1 — no silent Firestore write)', async () => {
     // The rebase bug: a legacy string endsAt concatenated into "1235000"

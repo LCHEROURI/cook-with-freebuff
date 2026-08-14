@@ -2,7 +2,6 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import {
   SessionService,
   InMemorySessionStore,
-  InMemoryCorrelationMarkerStore,
   SessionError,
   VersionConflictError,
 } from './session-service';
@@ -35,6 +34,7 @@ describe('SessionService', () => {
     sessionId: string,
     startVersion: number,
     target: keyof typeof PHASE_PATH,
+    svc: SessionService = service,
   ): Promise<{ id: string; version: number }> {
     const phases = PHASE_PATH[target];
     let version = startVersion;
@@ -47,7 +47,7 @@ describe('SessionService', () => {
         phase === 'PLATING'
       ) ? 'AGENT_TOOL' as const : 'USER_INPUT' as const;
 
-      const s = await service.transitionTo(sessionId, version, phase as any, reason);
+      const s = await svc.transitionTo(sessionId, version, phase as any, reason);
       version = s.version;
     }
     return { id: sessionId, version };
@@ -443,13 +443,14 @@ describe('SessionService', () => {
     });
 
     it('dedupes across service instances sharing a durable marker store (survives a restart)', async () => {
-      // A fresh marker store simulates the persisted (Firestore-backed) one:
-      // two SessionService instances built on it must see the SAME processed
-      // markers — a transition marked through instance 1 is still processed
-      // when instance 2 (a new server process) retries the identical request.
-      const markers = new InMemoryCorrelationMarkerStore();
-      const service1 = new SessionService(store, markers);
-      const service2 = new SessionService(store, markers);
+      // The session store OWNS the durable markers (PR #58: the Firestore
+      // store persists them; the in-memory store keeps them in the same
+      // object). Two SessionService instances built on the SAME store must
+      // see the SAME processed markers — a transition marked through
+      // instance 1 is still processed when instance 2 (a new server process)
+      // retries the identical request.
+      const service1 = new SessionService(store);
+      const service2 = new SessionService(store);
 
       const session = await service1.createSession('user-1');
       const p = await advanceToPhase(session.id, session.version, 'PREP_GUIDANCE');
@@ -457,20 +458,64 @@ describe('SessionService', () => {
       const result1 = await service1.completeCurrentStep(p.id, p.version, { correlationId: 'restart-safe' });
       expect(result1.currentPrepStepIndex).toBe(1);
 
-      // "Restart": instance 2 sees the SAME marker store, so the duplicate
-      // request is idempotent — never a second advance.
+      // "Restart": instance 2 sees the SAME store (and its markers), so the
+      // duplicate request is idempotent — never a second advance.
       const reloaded = await service2.getSession(p.id);
       const result2 = await service2.completeCurrentStep(p.id, reloaded!.version, { correlationId: 'restart-safe' });
       expect(result2.currentPrepStepIndex).toBe(1);
+    });
+
+    it('a transition marks even when the standalone marker write would fail (Codex P1 — PR #58)', async () => {
+      // The old design called markers.mark() as a SEPARATE write after the
+      // session update — a failure there rejected the method even though the
+      // transition had committed, leaving the session ACTIVE with no marker
+      // (the next retry re-ran the transition or hit a version conflict). The
+      // fix rides the marker through updateSession's transaction, so a
+      // broken standalone marker store cannot split the two.
+      const broken = new InMemorySessionStore();
+      const serviceBroken = new SessionService(broken);
+      // Sabotage ONLY the standalone marker write (event-only paths); the
+      // transactional path in updateSession must not care.
+      broken.markCorrelationMarker = async () => {
+        throw new Error('simulated marker write failure');
+      };
+
+      const session = await serviceBroken.createSession('user-1');
+      const p = await advanceToPhase(session.id, session.version, 'PREP_GUIDANCE', serviceBroken);
+
+      const ok = await serviceBroken.completeCurrentStep(p.id, p.version, { correlationId: 'atomic-write' });
+      expect(ok.currentPrepStepIndex).toBe(1);
+      // The marker was written atomically with the transition, not via the
+      // sabotaged standalone path.
+      expect(await broken.hasCorrelationMarker('atomic-write')).toBe(true);
+    });
+
+    it('a failed transition leaves NO marker — marker and state are atomic (Codex P1 — PR #58)', async () => {
+      // The fix: the marker rides the SAME transaction as the session write.
+      // A version-conflict rejection must therefore leave no marker behind —
+      // otherwise a retry would be swallowed as a "processed" duplicate even
+      // though the transition never committed.
+      const session = await service.createSession('user-1');
+      const p = await advanceToPhase(session.id, session.version, 'PREP_GUIDANCE');
+
+      // Stale version → transition throws BEFORE any write, so no marker.
+      await expect(
+        service.completeCurrentStep(p.id, p.version - 1, { correlationId: 'atomic-fail' }),
+      ).rejects.toThrow(VersionConflictError);
+      expect(await store.hasCorrelationMarker('atomic-fail')).toBe(false);
+
+      // Retry with the CURRENT version succeeds and marks atomically.
+      const ok = await service.completeCurrentStep(p.id, p.version, { correlationId: 'atomic-ok' });
+      expect(ok.currentPrepStepIndex).toBe(1);
+      expect(await store.hasCorrelationMarker('atomic-ok')).toBe(true);
     });
 
     it('a cleared marker is retryable again across instances (rollback recovery)', async () => {
       // Mirrors the resume-rollback contract: mark → clear → the SAME id
       // must be processed again by a fresh instance (the client retry after a
       // TIMER_REBASE_FAILED rollback) without being swallowed as a duplicate.
-      const markers = new InMemoryCorrelationMarkerStore();
-      const service1 = new SessionService(store, markers);
-      const service2 = new SessionService(store, markers);
+      const service1 = new SessionService(store);
+      const service2 = new SessionService(store);
 
       const session = await service1.createSession('user-1');
       const p = await advanceToPhase(session.id, session.version, 'PREP_GUIDANCE');
