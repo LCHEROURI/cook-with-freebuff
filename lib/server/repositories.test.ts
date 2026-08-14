@@ -9,7 +9,7 @@
 // fails on validation even with no database in play.
 // ============================================================================
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 vi.mock('server-only', () => ({}));
 
@@ -40,6 +40,81 @@ beforeEach(async () => {
   vi.resetModules();
   vi.clearAllMocks();
   repo = await import('./repositories');
+});
+
+describe('correlation-marker legacy-key fallback (Codex P1 — PR #59 review)', () => {
+  // A minimal fake Firestore that records marker reads/writes, so the legacy
+  // fallback (a marker stored under the RAW correlation ID before the encoding
+  // change) can be proven without the emulator.
+  function fakeDb(seed: Record<string, Record<string, unknown>> = {}) {
+    const store = new Map<string, Record<string, unknown>>(Object.entries(seed));
+    const db: any = {
+      collection: (path: string) => ({
+        doc: (id: string) => ({
+          id,
+          get: async () => ({
+            exists: store.has(`${path}/${id}`),
+            id,
+            data: () => store.get(`${path}/${id}`) ?? null,
+          }),
+          set: async (data: unknown) => {
+            store.set(`${path}/${id}`, data as Record<string, unknown>);
+          },
+          delete: async () => {
+            store.delete(`${path}/${id}`);
+          },
+        }),
+      }),
+    };
+    return { db, store };
+  }
+
+  afterEach(async () => {
+    // Restore the no-db default so later tests still hit the boundary throw.
+    const { getAdminDb } = await import('./admin');
+    vi.mocked(getAdminDb).mockImplementation(() => null);
+  });
+
+  it('a marker written under the legacy raw key is still seen and migrated', async () => {
+    const { db, store } = fakeDb({ 'correlation_markers/resume-op-99': { markedAt: 1 } });
+    const { getAdminDb } = await import('./admin');
+    vi.mocked(getAdminDb).mockReturnValue(db);
+
+    // Raw key present, encoded key absent → legacy fallback reports processed.
+    expect(await repo.hasCorrelationMarker('resume-op-99')).toBe(true);
+
+    // Migrated: the raw key is gone, the encoded key now holds the marker.
+    expect(store.has('correlation_markers/resume-op-99')).toBe(false);
+    const encoded = repo.markerKey('resume-op-99');
+    expect(store.has(`correlation_markers/${encoded}`)).toBe(true);
+
+    // Second read hits the encoded key directly (legacy already migrated).
+    expect(await repo.hasCorrelationMarker('resume-op-99')).toBe(true);
+    expect(store.has('correlation_markers/resume-op-99')).toBe(false);
+  });
+
+  it('clear removes BOTH the encoded and legacy keys', async () => {
+    const encoded = repo.markerKey('resume-op-100');
+    const { db, store } = fakeDb({
+      [`correlation_markers/${encoded}`]: { markedAt: 1 },
+      'correlation_markers/resume-op-100': { markedAt: 1 },
+    });
+    const { getAdminDb } = await import('./admin');
+    vi.mocked(getAdminDb).mockReturnValue(db);
+
+    await repo.clearCorrelationMarker('resume-op-100');
+    expect(store.size).toBe(0);
+  });
+
+  it('mark clears the legacy key so the fallback never double-reads', async () => {
+    const { db, store } = fakeDb({ 'correlation_markers/resume-op-101': { markedAt: 1 } });
+    const { getAdminDb } = await import('./admin');
+    vi.mocked(getAdminDb).mockReturnValue(db);
+
+    await repo.markCorrelationMarker('resume-op-101');
+    expect(store.has('correlation_markers/resume-op-101')).toBe(false);
+    expect(store.has(`correlation_markers/${repo.markerKey('resume-op-101')}`)).toBe(true);
+  });
 });
 
 describe('correlation-marker key encoding (Codex P2 — PR #58 review)', () => {
