@@ -55,6 +55,11 @@ describe('scripts/codex-review-pr-gate.mjs', () => {
     expect(GATE).toContain("const BLOCKING_DEFAULT = new Set(['P0', 'P1'])");
     expect(GATE).toContain("const BLOCKING_INCLUDE_P2 = new Set(['P0', 'P1', 'P2'])");
     expect(GATE).toContain('args.includes(\'--include-p2\')');
+    // The stricter bar is also configurable via the repo variable / dispatch
+    // input, so the workflow can enforce it through the same required check.
+    expect(GATE).toContain("process.env.CODEX_GATE_INCLUDE_P2 === 'true'");
+    expect(WORKFLOW).toContain('include_p2:');
+    expect(WORKFLOW).toContain("CODEX_GATE_INCLUDE_P2: ${{ github.event.inputs.include_p2 == 'true' || vars.CODEX_GATE_INCLUDE_P2 == 'true' }}");
   });
 
   it('treats a finding as resolved only once its thread has a reply', () => {
@@ -222,5 +227,11 @@ if (url.includes('/42/comments?')) {
         extraEnv: { CODEX_GATE_WAIT_SECONDS: '1', CODEX_GATE_BOT_SKIPPED_PRS: '41, 42' },
       }).status,
     ).toBe(0);
+
+    // The stricter bar via env (repo variable / dispatch input) blocks a P2
+    // the same way the --include-p2 flag does — no flag needed.
+    expect(run([P(61, 'P2')], { extraEnv: { CODEX_GATE_INCLUDE_P2: 'true' } }).status).toBe(1);
+    // And P3 still never blocks, even under the stricter bar.
+    expect(run([P(63, 'P3')], { extraEnv: { CODEX_GATE_INCLUDE_P2: 'true' } }).status).toBe(0);
   }, 20_000);
 });

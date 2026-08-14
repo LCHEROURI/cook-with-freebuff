@@ -10,8 +10,11 @@ name: Codex review gate
 #
 # A finding is open until a human reply lands on its thread (in_reply_to_id) —
 # the resolution-note convention — so fixing the code and replying on the
-# thread turns the gate green. P2 findings never block by default (see
-# scripts/codex-review-pr-gate.mjs --include-p2). The gate also waits for a
+# thread turns the gate green. P2 findings never block by default; the
+# stricter bar (also blocking P2) is the CODEX_GATE_INCLUDE_P2 repo variable
+# or the workflow_dispatch include_p2 input — same required check, stronger
+# gate (see scripts/codex-review-pr-gate.mjs --include-p2). The gate also
+# waits for a
 # real Codex review of the current head before passing — an empty comment
 # list is not a clean review (see the script header).
 #
@@ -37,6 +40,11 @@ on:
         required: true
       allow_no_review:
         description: Certify when the bot has not reviewed this PR (human-confirmed skip)
+        required: false
+        default: 'false'
+        type: boolean
+      include_p2:
+        description: Also block on open P2 findings (stricter bar; same as the CODEX_GATE_INCLUDE_P2 repo variable)
         required: false
         default: 'false'
         type: boolean
@@ -81,4 +89,8 @@ jobs:
           # pass satisfies the required merge gate (a workflow_dispatch check
           # never enters the PR status rollup).
           CODEX_GATE_BOT_SKIPPED_PRS: ${{ vars.CODEX_GATE_BOT_SKIPPED_PRS }}
+          # Stricter bar: the repo variable CODEX_GATE_INCLUDE_P2=true (or the
+          # dispatch include_p2 input) also blocks on open P2 findings, via
+          # the same required check.
+          CODEX_GATE_INCLUDE_P2: ${{ github.event.inputs.include_p2 == 'true' || vars.CODEX_GATE_INCLUDE_P2 == 'true' }}
         run: node scripts/codex-review-pr-gate.mjs
