@@ -200,10 +200,13 @@ if (url.includes('issues/42/comments?')) {
       try {
         try {
           const env: NodeJS.ProcessEnv = { ...process.env };
-          // Deterministic: local runs must not post comments — only the
-          // workflow (GH_TOKEN set) does.
+          // Deterministic: local runs must not post comments — only a real
+          // Actions run (GITHUB_ACTIONS=true AND GH_TOKEN) does. CI runners
+          // carry GITHUB_ACTIONS=true in process.env, so it must be scrubbed
+          // here or the 'local run' case would leak into a posting run.
           delete env.GH_TOKEN;
           delete env.GITHUB_TOKEN;
+          delete env.GITHUB_ACTIONS;
           Object.assign(env, { PATH: `${stubDir}:${process.env.PATH}` }, extraEnv);
           const out = execSync(
             `node scripts/codex-review-pr-gate.mjs --repo fake/repo --pr 42 ${extraArgs}`,
