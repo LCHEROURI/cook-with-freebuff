@@ -67,8 +67,20 @@ const take = (flag) => {
 const repo = take('--repo') ?? process.env.GITHUB_REPOSITORY ?? DEFAULT_REPO;
 const pr = take('--pr') ?? process.env.PR_NUMBER;
 const includeP2 = args.includes('--include-p2');
+// Certification comes from --allow-no-review (local run / dispatch input) or
+// from the CODEX_GATE_BOT_SKIPPED_PRS repo variable (comma-separated PR
+// numbers). A workflow_dispatch check never enters the PR status rollup, so
+// only a pull_request-triggered run can satisfy the required merge gate for
+// a bot-skipped PR — hence the repo variable path, which rides the next
+// synchronize run.
 const allowNoReview =
-  args.includes('--allow-no-review') || process.env.CODEX_GATE_ALLOW_NO_REVIEW === 'true';
+  args.includes('--allow-no-review') ||
+  process.env.CODEX_GATE_ALLOW_NO_REVIEW === 'true' ||
+  (process.env.CODEX_GATE_BOT_SKIPPED_PRS ?? '')
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean)
+    .includes(String(pr));
 const waitMs =
   (Number(process.env.CODEX_GATE_WAIT_SECONDS ?? DEFAULT_WAIT_SECONDS) || DEFAULT_WAIT_SECONDS) * 1000;
 const blockingSet = includeP2 ? BLOCKING_INCLUDE_P2 : BLOCKING_DEFAULT;

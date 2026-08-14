@@ -69,6 +69,11 @@ describe('scripts/codex-review-pr-gate.mjs', () => {
     expect(GATE).toContain('cannot be');
     expect(GATE).toContain('distinguished from no review yet');
     expect(GATE).toContain('process.env.CODEX_GATE_ALLOW_NO_REVIEW === \'true\'');
+    // The bot-skipped-PR certification must ride a pull_request-triggered
+    // run (a workflow_dispatch check never enters the PR status rollup, so
+    // only the repo-variable path can satisfy the required merge gate).
+    expect(GATE).toContain('CODEX_GATE_BOT_SKIPPED_PRS');
+    expect(WORKFLOW).toContain('CODEX_GATE_BOT_SKIPPED_PRS: ${{ vars.CODEX_GATE_BOT_SKIPPED_PRS }}');
   });
 
   it('exits 1 with the blocking findings listed when an open P0/P1 exists', () => {
@@ -207,6 +212,15 @@ if (url.includes('/42/comments?')) {
     // --allow-no-review certifies a bot-skipped PR.
     expect(
       run([], { reviews: [], extraArgs: '--allow-no-review', extraEnv: { CODEX_GATE_WAIT_SECONDS: '1' } }).status,
+    ).toBe(0);
+
+    // The CODEX_GATE_BOT_SKIPPED_PRS repo variable certifies the same way,
+    // so a pull_request-triggered run can satisfy the required merge gate.
+    expect(
+      run([], {
+        reviews: [],
+        extraEnv: { CODEX_GATE_WAIT_SECONDS: '1', CODEX_GATE_BOT_SKIPPED_PRS: '41, 42' },
+      }).status,
     ).toBe(0);
   }, 20_000);
 });
