@@ -9,6 +9,7 @@ Voice-first / screen-light intelligent cooking companion.
 | Frontend | Next.js 15, React 19, TypeScript |
 | Auth / Data | Firebase Auth + Firestore (owner-scoped rules) |
 | Admin | firebase-admin (server-only, service-account) |
+| App Check | Firebase App Check (reCAPTCHA v3) — Gemini-quota protection |
 | AI | Provider boundary (Gemini ready, swappable) |
 | Validation | Zod (runtime input/output validation) |
 | Tests | Vitest |
@@ -45,6 +46,27 @@ FIRESTORE
  ├──── pantry_items
  └──── agent_tool_logs
 ```
+
+## App Check
+
+App Check proves a request comes from the real app before any Gemini-quota
+work runs. The client sends an `X-Firebase-AppCheck` token with every call to
+the quota-bearing routes (`/api/cook`, `/api/tools`, `/api/agent`,
+`/api/vision/scan`, `/api/voice/token`); the server verifies it with
+`firebase-admin`'s `appCheck().verifyToken()` before any model work.
+
+Rollout is safe by default: `APP_CHECK_ENFORCED` unset means "verify a present
+token but never block" (monitor mode); setting it to `1` rejects a missing or
+invalid token with 403. Emulators always pass.
+
+To turn it on:
+1. Firebase console → App Check → Apps → Web: register a reCAPTCHA v3 site key.
+2. Add `NEXT_PUBLIC_FIREBASE_APP_CHECK_SITE_KEY` (see `.env.example`) and deploy.
+3. Confirm requests now carry the token (monitor mode logs verify failures).
+4. Set `APP_CHECK_ENFORCED=1` to hard-block unattested requests.
+
+Local dev: set `NEXT_PUBLIC_APP_CHECK_DEBUG=1` to use the debug provider, then
+register the printed token under App Check → Manage debug tokens.
 
 ## Domain model
 

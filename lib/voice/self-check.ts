@@ -38,6 +38,7 @@ export function probeTokenEndpoint(
   tokenUrl: string,
   getToken: (() => Promise<string | null> | string | null) | undefined,
   timeoutMs = PROBE_TIMEOUT_MS,
+  getAppCheckHeaders?: () => Promise<Record<string, string>>,
 ): Promise<TokenProbe> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -46,7 +47,7 @@ export function probeTokenEndpoint(
       const bearer = await getToken?.();
       const res = await fetch(tokenUrl, {
         method: 'POST',
-        headers: bearer ? { authorization: `Bearer ${bearer}` } : {},
+        headers: { ...(bearer ? { authorization: `Bearer ${bearer}` } : {}), ...(await getAppCheckHeaders?.()) },
         signal: controller.signal,
       });
       return { ok: res.ok, httpStatus: res.status, error: null };
@@ -114,11 +115,12 @@ export function probeWebSocket(wsUrl: string, timeoutMs = PROBE_TIMEOUT_MS): Pro
 export async function runVoiceSelfCheck(opts: {
   tokenUrl: string;
   getToken?: (() => Promise<string | null> | string | null) | undefined;
+  getAppCheckHeaders?: () => Promise<Record<string, string>>;
   /** Live WebSocket base URL (no query string). Defaults to LIVE_WS_URL. */
   wsUrl?: string;
 }): Promise<VoiceSelfCheckResult> {
   const [token, websocket] = await Promise.all([
-    probeTokenEndpoint(opts.tokenUrl, opts.getToken),
+    probeTokenEndpoint(opts.tokenUrl, opts.getToken, PROBE_TIMEOUT_MS, opts.getAppCheckHeaders),
     probeWebSocket(opts.wsUrl ?? LIVE_WS_URL),
   ]);
   // Structured hop results — a console paste alone then diagnoses the failure

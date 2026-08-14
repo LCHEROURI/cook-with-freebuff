@@ -27,6 +27,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { GeminiLiveClient, DEFAULT_TOKEN_URL } from '@/lib/voice/gemini-live';
 import { composeHopReason, runVoiceSelfCheck } from '@/lib/voice/self-check';
+import { appCheckHeaders } from '@/lib/firebase/app-check';
 
 export type LiveDictationStatus = 'IDLE' | 'LISTENING' | 'THINKING' | 'ERROR';
 
@@ -109,6 +110,7 @@ export function useLiveDictation(options: UseLiveDictationOptions = {}) {
     const client = new GeminiLiveClient({
       tokenUrl: o.tokenUrl ?? DEFAULT_TOKEN_URL,
       getToken: o.getToken,
+      getAppCheckHeaders: appCheckHeaders,
       systemInstruction: DICTATION_SYSTEM_INSTRUCTION,
       // No tools: the model can never act on the spoken prompt — the user
       // reviews the transcribed text in the input before anything happens.
@@ -186,6 +188,7 @@ export function useLiveDictation(options: UseLiveDictationOptions = {}) {
       void runVoiceSelfCheck({
         tokenUrl: optionsRef.current.tokenUrl ?? DEFAULT_TOKEN_URL,
         getToken: optionsRef.current.getToken,
+        getAppCheckHeaders: appCheckHeaders,
       }).then((check) => {
         const enriched = composeHopReason(immediate, check, 'you can type your ingredients instead.');
         // Structured verdict — logged even if the banner was dismissed.

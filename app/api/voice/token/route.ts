@@ -11,6 +11,7 @@
 
 import { NextResponse } from 'next/server';
 import { resolveUserId } from '@/lib/server/admin';
+import { gateAppCheck } from '@/lib/server/app-check';
 
 const MINT_URL = 'https://generativelanguage.googleapis.com/v1alpha/auth_tokens';
 const DEFAULT_LIVE_MODEL = 'gemini-3.1-flash-live-preview';
@@ -18,6 +19,9 @@ const SESSION_TTL_MS = 30 * 60 * 1000; // messages allowed for 30 minutes
 const START_TTL_MS = 2 * 60 * 1000; // must open the session within 2 minutes
 
 export async function POST(req: Request) {
+  const appCheck = await gateAppCheck(req);
+  if (appCheck) return appCheck;
+
   const auth = req.headers.get('authorization');
   const bearer = auth?.startsWith('Bearer ') ? auth.slice(7) : null;
 

@@ -13,6 +13,7 @@
 
 import { NextResponse } from 'next/server';
 import { resolveUserId } from '@/lib/server/admin';
+import { gateAppCheck } from '@/lib/server/app-check';
 import { buildProductionContext } from '@/lib/server/stores';
 import { createGuideService } from '@/lib/server/tools/guide-tools';
 import { generateRecipeTool } from '@/lib/server/tools/recipe-tools';
@@ -365,6 +366,9 @@ async function handle(userId: string, body: unknown): Promise<NextResponse> {
 }
 
 export async function POST(req: Request) {
+  const appCheck = await gateAppCheck(req);
+  if (appCheck) return appCheck;
+
   const auth = req.headers.get('authorization');
   const token = auth?.startsWith('Bearer ') ? auth.slice(7) : null;
 

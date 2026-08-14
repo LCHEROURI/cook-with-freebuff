@@ -10,6 +10,7 @@
 
 import { NextResponse } from 'next/server';
 import { resolveUserId } from '@/lib/server/admin';
+import { gateAppCheck } from '@/lib/server/app-check';
 import { defaultToolRegistry } from '@/lib/server/tools';
 import { buildProductionContext } from '@/lib/server/stores';
 import { getConversationAgent } from '@/lib/ai/provider';
@@ -23,6 +24,9 @@ import {
 } from '@/lib/server/requestContext';
 
 export async function POST(req: Request) {
+  const appCheck = await gateAppCheck(req);
+  if (appCheck) return appCheck;
+
   const auth = req.headers.get('authorization');
   const token = auth?.startsWith('Bearer ') ? auth.slice(7) : null;
 

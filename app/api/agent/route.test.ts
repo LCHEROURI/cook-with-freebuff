@@ -6,6 +6,7 @@ import type { ToolContext } from '@/lib/server/tools/types';
 
 vi.mock('@/lib/server/admin', () => ({ resolveUserId: vi.fn() }));
 vi.mock('@/lib/server/stores', () => ({ buildProductionContext: vi.fn() }));
+vi.mock('@/lib/server/app-check', () => ({ gateAppCheck: vi.fn(async () => null) }));
 
 import { resolveUserId } from '@/lib/server/admin';
 import { buildProductionContext } from '@/lib/server/stores';

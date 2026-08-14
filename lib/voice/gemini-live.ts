@@ -144,6 +144,8 @@ export interface VoiceSessionDiagnostics {
 export interface GeminiLiveOptions {
   tokenUrl?: string;
   getToken?: () => Promise<string | null> | string | null;
+  /** App Check headers for the token endpoint (attached by the hook). */
+  getAppCheckHeaders?: () => Promise<Record<string, string>>;
   model?: string;
   systemInstruction?: string;
   /** Gemini function declarations (lib/ai/tool-declarations). */
@@ -537,11 +539,12 @@ export class GeminiLiveClient {
   private async mintToken(): Promise<string | null> {
     const tokenUrl = this.opts.tokenUrl ?? DEFAULT_TOKEN_URL;
     const getToken = this.opts.getToken ?? (() => null);
+    const getAppCheckHeaders = this.opts.getAppCheckHeaders ?? (async () => ({}));
     try {
       const bearer = await getToken();
       const res = await fetch(tokenUrl, {
         method: 'POST',
-        headers: { ...(bearer ? { authorization: `Bearer ${bearer}` } : {}) },
+        headers: { ...(bearer ? { authorization: `Bearer ${bearer}` } : {}), ...(await getAppCheckHeaders()) },
       });
       this.diag.tokenHttpStatus = res.status;
       const body = (await res.json()) as {
