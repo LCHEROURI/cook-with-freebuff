@@ -124,20 +124,21 @@ let reviews = fetchReviews();
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // ── Wait-for-review: empty is NOT clean (Codex P1, PR #73 review) ───────────
-const deadline = Date.now() + waitMs;
-while (!botObservedOnHead(comments, reviews) && Date.now() < deadline) {
-  // Poll to the deadline (bounded), re-checking for the bot's review to land.
-  await sleep(Math.min(POLL_MS, Math.max(500, deadline - Date.now())));
-  comments = fetchComments();
-  reviews = fetchReviews();
-}
-
-if (!botObservedOnHead(comments, reviews)) {
-  if (allowNoReview) {
-    console.log(
-      `⚠ no Codex review observed on head ${headSha} — continuing with --allow-no-review (human-confirmed skip)`,
-    );
-  } else {
+if (allowNoReview) {
+  // Human-confirmed certification: the bot is not going to review this PR, so
+  // skip the wait — the scan below still runs on whatever findings exist.
+  console.log(
+    `⚠ certifying PR #${pr} with --allow-no-review (human-confirmed: the bot is not reviewing this PR)`,
+  );
+} else {
+  const deadline = Date.now() + waitMs;
+  while (!botObservedOnHead(comments, reviews) && Date.now() < deadline) {
+    // Poll to the deadline (bounded), re-checking for the bot's review to land.
+    await sleep(Math.min(POLL_MS, Math.max(500, deadline - Date.now())));
+    comments = fetchComments();
+    reviews = fetchReviews();
+  }
+  if (!botObservedOnHead(comments, reviews)) {
     console.error(
       `✗ FAIL: no Codex review observed on head ${headSha} — a clean review cannot be ` +
         `distinguished from no review yet, so the PR stays blocked until the bot reviews ` +
