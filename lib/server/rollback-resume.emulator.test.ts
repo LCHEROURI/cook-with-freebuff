@@ -30,133 +30,16 @@
 // ============================================================================
 
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
-import { spawn } from 'node:child_process';
-import net from 'node:net';
 import type { Recipe } from '../domain/types';
 import type { TimerStore } from './tools/types';
+import {
+  EMULATOR_HOST,
+  AUTO_BOOT,
+  bootEmulator,
+  sleep,
+} from '../../scripts/emulator-test-helper';
 
 vi.mock('server-only', () => ({}));
-
-const EMULATOR_HOST = process.env.FIRESTORE_EMULATOR_HOST || 'localhost:8080';
-const EMULATOR_PORT = Number(EMULATOR_HOST.split(':').slice(-1)[0]);
-const AUTO_BOOT = process.env.RUN_EMULATOR_TESTS === '1';
-const EMULATOR_PROJECT = 'demo-cook-with-freebuff';
-
-// ── Emulator lifecycle (boot or reuse, mirroring scripts/verify-live-emulator.mjs)
-
-function portInUse(port: number, host = '127.0.0.1', timeoutMs = 800): Promise<boolean> {
-  return new Promise((res) => {
-    const s = net.connect({ port, host });
-    let done = false;
-    const finish = (v: boolean) => {
-      if (!done) {
-        done = true;
-        res(v);
-      }
-    };
-    s.once('connect', () => {
-      s.destroy();
-      finish(true);
-    });
-    s.once('error', () => finish(false));
-    s.setTimeout(timeoutMs, () => {
-      s.destroy();
-      finish(false);
-    });
-  });
-}
-
-const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
-
-/** PIDs currently listening on a TCP port (lsof -t), for orphan sweeping. */
-async function listenersOnPort(port: number): Promise<number[]> {
-  try {
-    const { execFileSync } = await import('node:child_process');
-    const out = execFileSync(
-      'lsof',
-      ['-nP', `-iTCP:${port}`, '-sTCP:LISTEN', '-t'],
-      { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] },
-    );
-    return out
-      .split('\n')
-      .map((l) => Number(l.trim()))
-      .filter((n) => Number.isFinite(n) && n > 0);
-  } catch {
-    return [];
-  }
-}
-
-async function bootEmulator(): Promise<{ stop: () => Promise<void> } | null> {
-  if (await portInUse(EMULATOR_PORT)) return { stop: async () => {} };
-  if (!AUTO_BOOT) return null;
-
-  const child = spawn(
-    'npx',
-    ['-y', 'firebase-tools@latest', 'emulators:start', '--only', 'firestore', '--project', EMULATOR_PROJECT],
-    { cwd: process.cwd(), detached: true, stdio: ['ignore', 'pipe', 'pipe'] },
-  );
-  let log = '';
-  child.stdout?.on('data', (d) => {
-    log += d.toString();
-  });
-  child.stderr?.on('data', (d) => {
-    log += d.toString();
-  });
-
-  const deadline = Date.now() + 180_000;
-  let up = false;
-  while (Date.now() < deadline) {
-    if (child.exitCode !== null) break;
-    if (await portInUse(EMULATOR_PORT, '127.0.0.1', 500)) {
-      up = true;
-      break;
-    }
-    await sleep(1_000);
-  }
-  if (!up) {
-    try {
-      process.kill(-child.pid!, 'SIGKILL');
-    } catch {
-      /* already gone */
-    }
-    throw new Error(
-      `Firestore emulator did not come up on :${EMULATOR_PORT}\n${log.split('\n').filter(Boolean).slice(-8).join('\n')}`,
-    );
-  }
-  // The port binds just before the emulator finishes internal init.
-  await sleep(1_500);
-  return {
-    stop: async () => {
-      // firebase-tools runs the Java emulator as a child that can survive the
-      // npx process-group kill (seen locally: the java process kept 8080 bound
-      // after the group was killed). SIGTERM the group first, then SIGKILL,
-      // then sweep the port for any orphaned listener.
-      try {
-        process.kill(-child.pid!, 'SIGTERM');
-      } catch {
-        /* already gone */
-      }
-      await sleep(1_000);
-      try {
-        process.kill(-child.pid!, 'SIGKILL');
-      } catch {
-        /* already gone */
-      }
-      for (let i = 0; i < 6; i++) {
-        if (!(await portInUse(EMULATOR_PORT))) return;
-        await sleep(500);
-      }
-      for (const pid of await listenersOnPort(EMULATOR_PORT)) {
-        try {
-          process.kill(pid, 'SIGKILL');
-        } catch {
-          /* already gone */
-        }
-      }
-      await sleep(500);
-    },
-  };
-}
 
 let emulator: { stop: () => Promise<void> } | null = null;
 let bootError = '';

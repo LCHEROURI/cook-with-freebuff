@@ -1,0 +1,66 @@
+name: Correlation-marker cleanup (weekly TTL)
+
+# Weekly bounded sweep of the correlation_markers collection. Every session
+# transition that carries a correlation id writes one marker doc (cleared only
+# on the rollback path), so the collection grows indefinitely; a marker older
+# than the TTL can never suppress a live transition — the retry window is
+# seconds to minutes — so stale markers are pure growth. This job deletes
+# docs with markedAt older than MARKER_TTL_DAYS (default 30) in bounded
+# batches. Script safety is locked by scripts/cleanup-correlation-markers
+# .test.ts and proven behaviorally against the emulator.
+#
+# Event notes:
+#   - `schedule` runs on the default branch only (no fork PRs), but keep the
+#     same fork discipline as the other scheduled jobs: the run step is gated
+#     on the service account (skip-not-fail) and the loud guard is
+#     canonical-repo-only, so a missing credential never masquerades as a
+#     green weekly cleanup.
+#   - The sweep is idempotent and resumable, so a red run (e.g. a Firestore
+#     outage) can simply be re-run; nothing is ever partially applied.
+
+on:
+  schedule:
+    # Saturdays 06:30 UTC — clear of the Monday mic-regression monitor so the
+    # two weekly production-touching jobs never contend.
+    - cron: '30 6 * * 6'
+  workflow_dispatch:
+
+concurrency:
+  group: marker-cleanup
+  cancel-in-progress: false
+
+jobs:
+  cleanup:
+    name: Delete stale correlation markers
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    permissions:
+      contents: read
+
+    env:
+      FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v5
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run the correlation-marker cleanup
+        if: ${{ env.FIREBASE_SERVICE_ACCOUNT != '' }}
+        run: npm run cleanup:markers
+
+      - name: Fail loudly if the service account is missing (canonical repo)
+        if: ${{ github.repository == 'LCHEROURI/cook-with-freebuff' && env.FIREBASE_SERVICE_ACCOUNT == '' }}
+        run: |
+          echo "::error::FIREBASE_SERVICE_ACCOUNT missing — the weekly marker cleanup cannot run."
+          echo "Add FIREBASE_SERVICE_ACCOUNT (inline service-account JSON) under GitHub -> Settings -> Secrets and variables -> Actions, then re-run."
+          exit 1
