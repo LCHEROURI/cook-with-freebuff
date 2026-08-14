@@ -104,6 +104,8 @@ describe.skipIf(!emulator)('rollback-resume marker atomicity · Firestore emulat
     await emulator?.stop();
   });
 
+  // The real-stack cycle includes a 3s pause and several emulator round trips;
+  // CI runners are slower than a dev Mac, so 60s beats vitest's 5s default.
   it(
     'replays pause → failed rebase rollback → same-ID retry through the real repositories ' +
       'and proves the marker clear rides the re-pause transaction',
@@ -244,5 +246,6 @@ describe.skipIf(!emulator)('rollback-resume marker atomicity · Firestore emulat
         }
       }
     },
+    60_000,
   );
 });
