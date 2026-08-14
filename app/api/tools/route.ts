@@ -13,7 +13,12 @@ import { resolveUserId } from '@/lib/server/admin';
 import { defaultToolRegistry, executeTool } from '@/lib/server/tools';
 import { buildProductionContext } from '@/lib/server/stores';
 import { logInfo } from '@/lib/server/logger';
-import { generateCorrelationId, runWithContext } from '@/lib/server/requestContext';
+import {
+  generateCorrelationId,
+  runWithContext,
+  validateClientCorrelationId,
+  INVALID_CORRELATION_ID_MESSAGE,
+} from '@/lib/server/requestContext';
 
 const TOOL_BODY_SCHEMA = {
   tool: (v: unknown): v is string => typeof v === 'string' && v.length > 0,
@@ -50,8 +55,16 @@ export async function POST(req: Request) {
     );
   }
 
-  const rawCid = parsed.correlationId;
-  const correlationId: string = (typeof rawCid === 'string' ? rawCid : undefined) ?? generateCorrelationId();
+  // Boundary contract: a malformed client correlation id is rejected before it
+  // can reach the tool layer (and from there the marker namespace).
+  const cid = validateClientCorrelationId(parsed.correlationId);
+  if (!cid.valid) {
+    return NextResponse.json(
+      { success: false, error: { code: 'INVALID_BODY', message: INVALID_CORRELATION_ID_MESSAGE, recoverable: false } },
+      { status: 400 },
+    );
+  }
+  const correlationId: string = cid.id ?? generateCorrelationId();
   const toolName: string = parsed.tool as string;
 
   const startedAt = Date.now();

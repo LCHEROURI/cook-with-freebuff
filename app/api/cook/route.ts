@@ -20,7 +20,12 @@ import { extractIngredients, extractRecipePreferences } from '@/lib/agent/extrac
 import { validateRecipe } from '@/lib/recipe/validate';
 import type { Recipe } from '@/lib/domain/types';
 import { logError, logInfo } from '@/lib/server/logger';
-import { generateCorrelationId, runWithContext } from '@/lib/server/requestContext';
+import {
+  generateCorrelationId,
+  runWithContext,
+  validateClientCorrelationId,
+  INVALID_CORRELATION_ID_MESSAGE,
+} from '@/lib/server/requestContext';
 
 const ACTIONS = [
   'launch', 'status', 'done', 'repeat', 'back', 'pause', 'resume', 'timers',
@@ -55,7 +60,17 @@ async function handle(userId: string, body: unknown): Promise<NextResponse> {
   const action: CookAction = isCookAction(parsed.action) ? parsed.action : 'status';
   const sessionId = typeof parsed.sessionId === 'string' ? parsed.sessionId : undefined;
   const recipeId = typeof parsed.recipeId === 'string' ? parsed.recipeId : undefined;
-  const correlationId = typeof parsed.correlationId === 'string' ? parsed.correlationId : undefined;
+  // Boundary contract: a malformed client correlation id is rejected here,
+  // before it can reach the marker namespace (the POST wrapper already
+  // validated, but handle() is also reachable directly — belt and braces).
+  const cid = validateClientCorrelationId(parsed.correlationId);
+  if (!cid.valid) {
+    return NextResponse.json(
+      { success: false, error: { code: 'INVALID_BODY', message: INVALID_CORRELATION_ID_MESSAGE, recoverable: false } },
+      { status: 400 },
+    );
+  }
+  const correlationId = cid.id;
   const unavailableIngredient = typeof parsed.unavailableIngredient === 'string' ? parsed.unavailableIngredient : undefined;
   const replacement = typeof parsed.replacement === 'string' ? parsed.replacement : undefined;
   const name = typeof parsed.name === 'string' ? parsed.name : undefined;
@@ -372,9 +387,18 @@ export async function POST(req: Request) {
   }
 
   // Auto-generate correlation ID when the client doesn't supply one.
-  // This threads the same id through every logger call + tool log inside this request.
-  const rawCid = (body as Record<string, unknown> | null)?.correlationId;
-  const correlationId: string = (typeof rawCid === 'string' ? rawCid : undefined) ?? generateCorrelationId();
+  // This threads the same id through every logger call + tool log inside this
+  // request. A PRESENT-but-malformed id is rejected here — never silently
+  // replaced with a generated one, so a bad id can never reach the marker
+  // namespace under a different identity.
+  const cid = validateClientCorrelationId((body as Record<string, unknown> | null)?.correlationId);
+  if (!cid.valid) {
+    return NextResponse.json(
+      { success: false, error: { code: 'INVALID_BODY', message: INVALID_CORRELATION_ID_MESSAGE, recoverable: false } },
+      { status: 400 },
+    );
+  }
+  const correlationId: string = cid.id ?? generateCorrelationId();
 
   const startedAt = Date.now();
   logInfo('api.cook.request', {
