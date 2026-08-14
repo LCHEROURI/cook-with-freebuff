@@ -33,7 +33,7 @@
 // 1 = nothing to commit / git or gh failed; 2 = wrong base branch.
 // ============================================================================
 
-import { execSync } from 'node:child_process';
+import { execSync, execFileSync } from 'node:child_process';
 import { setTimeout as sleep } from 'node:timers/promises';
 
 function run(cmd, opts = {}) {
@@ -45,6 +45,24 @@ function run(cmd, opts = {}) {
 
 function runQuiet(cmd) {
   return run(cmd, { silent: true });
+}
+
+// Run WITHOUT a shell (execFileSync passes each argument as a separate argv
+// element). User-controlled values (the commit message, branch, PR title and
+// body) are never interpolated into a shell string, so backticks, $(), $HOME
+// and friends can never be reinterpreted — the quoting that only escaped
+// double quotes is gone (Codex P2, PR #9 review).
+function runFile(file, args, opts = {}) {
+  const out = execFileSync(file, args, {
+    encoding: 'utf8',
+    stdio: opts.silent ? 'pipe' : 'inherit',
+    ...opts,
+  });
+  return out == null ? '' : String(out).trim();
+}
+
+function runFileQuiet(file, args) {
+  return runFile(file, args, { silent: true });
 }
 
 function fail(code, message) {
@@ -117,7 +135,7 @@ if (!branch) {
 // ---- create the branch ------------------------------------------------------
 
 try {
-  run(`git checkout -b "${branch}"`);
+  runFile('git', ['checkout', '-b', branch]);
 } catch {
   fail(1, `branch \`${branch}\` could not be created (does it already exist?) — nothing was committed`);
 }
@@ -132,9 +150,10 @@ console.log('');
 try {
   if (HAS_STAGED) {
     // Only the staged hunks land — unstaged/untracked work stays in the tree.
-    run(`git commit -m "${MESSAGE.replace(/"/g, '\\"')}"`);
+    runFile('git', ['commit', '-m', MESSAGE]);
   } else {
-    run(`git add -A && git commit -m "${MESSAGE.replace(/"/g, '\\"')}"`);
+    runFile('git', ['add', '-A']);
+    runFile('git', ['commit', '-m', MESSAGE]);
   }
 } catch {
   fail(1, 'commit failed — nothing was committed');
@@ -143,16 +162,20 @@ try {
 // ---- push + PR + auto-merge -------------------------------------------------
 
 try {
-  run(`git push -u origin "${branch}"`);
+  runFile('git', ['push', '-u', 'origin', branch]);
 } catch {
   fail(1, `push failed — branch \`${branch}\` committed locally but not pushed`);
 }
 
-// runQuiet so the URL is CAPTURED (run() inherits stdio and returns nothing
-// — the PR number is needed to arm auto-merge).
+// runFileQuiet so the URL is CAPTURED (run() inherits stdio and returns
+// nothing — the PR number is needed to arm auto-merge). Arguments ride as an
+// argv array, so the title/body are never shell-interpreted.
 const prUrl = (() => {
   try {
-    return runQuiet(`gh pr create --base "${BASE}" --head "${branch}" --title "${MESSAGE.replace(/"/g, '\\"')}" --body "${MESSAGE.replace(/"/g, '\\"')}"`);
+    return runFileQuiet('gh', [
+      'pr', 'create', '--base', BASE, '--head', branch,
+      '--title', MESSAGE, '--body', MESSAGE,
+    ]);
   } catch {
     fail(1, 'PR creation failed — the branch is pushed, create the PR manually');
   }
