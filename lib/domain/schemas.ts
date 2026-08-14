@@ -134,9 +134,18 @@ export const sessionStateSchema = z.object({
   activeTimerIds: z.array(z.string()).default([]),
 });
 
-/** Durable idempotency marker (processed correlation ID). */
+/**
+ * Durable idempotency marker (processed correlation ID).
+ *
+ * `rawId` is the client-supplied id, recorded so the repo can disambiguate a
+ * raw-key document from ANOTHER id's encoded marker in the same collection
+ * (Codex P2, PR #62 review): without it, has('YQ') would treat the encoded
+ * marker for 'a' (key 'YQ') as a legacy hit. Legacy pre-encoding docs have
+ * only `markedAt` and are matched by key equality instead.
+ */
 export const correlationMarkerSchema = z.object({
   markedAt: z.number(),
+  rawId: z.string().optional(),
 });
 
 export type CorrelationMarker = z.infer<typeof correlationMarkerSchema>;

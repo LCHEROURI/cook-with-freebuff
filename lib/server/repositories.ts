@@ -137,40 +137,79 @@ export function markerKey(id: string): string {
 }
 
 /**
+ * A raw correlation ID can only be a legacy Firestore doc id when it contains
+ * no '/' — a separator would make the lookup throw instead of falling back
+ * (Codex P1, PR #62 review). Legacy markers only ever existed for ids without
+ * a separator (the pre-encoding code wrote the raw id directly), so skipping
+ * the fallback for those is both safe and correct.
+ */
+function legacyKeyable(id: string): boolean {
+  return !id.includes('/');
+}
+
+/**
  * True when the id was ever marked (a processed correlation ID).
  *
  * Reads the base64url key first, then falls back to the LEGACY raw key: PR #58
  * deployed markers under the raw correlation ID, so a retry arriving after the
  * encoding change (or during a rolling deploy mixing old and new instances)
  * must still see the old marker or it would re-execute the transition (Codex
- * P1, PR #59 review). A legacy hit is migrated in place so the fallback path
- * drains over time.
+ * P1, PR #59 review).
+ *
+ * Migration is dual-namespace, not move-and-delete: a legacy raw-key marker is
+ * COPIED to the encoded key and RETAINED under the raw key, because an old
+ * instance still serving only reads the raw key — deleting it during an
+ * opportunistic read would make that instance re-execute the transition
+ * (Codex P1, PR #62 review). The fallback drains as old readers go away.
+ *
+ * A raw-key document is only treated as a legacy marker for THIS id when it
+ * cannot be another id's encoded marker: it either predates rawId recording
+ * (no rawId field — the pre-encoding format) or records rawId === id. Without
+ * that check, has('YQ') would read the encoded marker for 'a' (key 'YQ') and
+ * misreport a processed duplicate (Codex P2, PR #62 review).
  */
 export async function hasCorrelationMarker(id: string): Promise<boolean> {
   if ((await readDoc(CORRELATION_MARKERS, markerKey(id))) !== null) return true;
-  // Legacy raw-key marker from before the encoding change (or a concurrent
-  // old instance). Migrate it to the encoded key, then report it as processed.
-  if ((await readDoc(CORRELATION_MARKERS, id)) !== null) {
-    await writeDoc(CORRELATION_MARKERS, markerKey(id), correlationMarkerSchema.parse({ markedAt: now() }));
-    await deleteDoc(CORRELATION_MARKERS, id);
-    return true;
-  }
-  return false;
+  if (!legacyKeyable(id)) return false;
+  const legacy = await readDoc(CORRELATION_MARKERS, id);
+  if (!legacy) return false;
+  const data = legacy.data as { markedAt?: number; rawId?: string } | null;
+  if (data?.rawId !== undefined && data.rawId !== id) return false;
+  // Copy to the encoded key, retain the raw key for still-serving old
+  // instances. Idempotent: later reads hit the encoded key directly.
+  await writeDoc(
+    CORRELATION_MARKERS,
+    markerKey(id),
+    correlationMarkerSchema.parse({ markedAt: now(), rawId: id }),
+  );
+  return true;
 }
 
-/** Persist the marker. Idempotent — re-marking the same id is a no-op write. */
+/**
+ * Persist the marker. Idempotent — re-marking the same id is a no-op write.
+ *
+ * Dual-writes: the encoded key (new readers) AND the raw key (old instances
+ * still serving read only the raw key). The raw copy carries rawId so a later
+ * has() can tell it apart from another id's encoded marker (Codex P2, PR #62).
+ */
 export async function markCorrelationMarker(id: string): Promise<void> {
-  const doc = correlationMarkerSchema.parse({ markedAt: now() });
+  const doc = correlationMarkerSchema.parse({ markedAt: now(), rawId: id });
   await writeDoc(CORRELATION_MARKERS, markerKey(id), doc);
-  // Clear any legacy raw-key marker so the has() fallback never double-reads.
-  await deleteDoc(CORRELATION_MARKERS, id);
+  if (legacyKeyable(id)) {
+    await writeDoc(CORRELATION_MARKERS, id, doc);
+  }
 }
 
-/** Forget the marker so its operation becomes retryable (rollback path). */
+/**
+ * Forget the marker so its operation becomes retryable (rollback path).
+ * Clears BOTH namespaces (encoded + legacy raw) so no reader of either kind
+ * sees a stale processed marker.
+ */
 export async function clearCorrelationMarker(id: string): Promise<void> {
   await deleteDoc(CORRELATION_MARKERS, markerKey(id));
-  // Legacy raw-key marker from a pre-encoding deploy.
-  await deleteDoc(CORRELATION_MARKERS, id);
+  if (legacyKeyable(id)) {
+    await deleteDoc(CORRELATION_MARKERS, id);
+  }
 }
 
 // ── Recipe repository ────────────────────────────────────────────────────────
@@ -269,15 +308,25 @@ export async function updateSession(
 
     const marks = marker?.mark ? (Array.isArray(marker.mark) ? marker.mark : [marker.mark]) : [];
     for (const id of marks) {
-      const doc = correlationMarkerSchema.parse({ markedAt: now() });
+      const doc = correlationMarkerSchema.parse({ markedAt: now(), rawId: id });
       tx.set(markers.doc(markerKey(id)), doc as unknown as Record<string, unknown>);
-      // Legacy raw-key marker from a pre-encoding deploy.
-      tx.delete(markers.doc(id));
+      // Dual-write the raw key for old instances still serving (PR #62 P1).
+      if (legacyKeyable(id)) {
+        tx.set(markers.doc(id), doc as unknown as Record<string, unknown>);
+      }
     }
     if (marker?.clear) {
-      tx.delete(markers.doc(markerKey(marker.clear)));
-      // Legacy raw-key marker from a pre-encoding deploy.
-      tx.delete(markers.doc(marker.clear));
+      const id = marker.clear;
+      tx.delete(markers.doc(markerKey(id)));
+      if (legacyKeyable(id)) {
+        // Conditional: only delete the raw doc when it is a legacy marker for
+        // THIS id — never another id's encoded marker living at that key.
+        const legacy = await tx.get(markers.doc(id));
+        const data = legacy.data() as { rawId?: string } | undefined;
+        if (data?.rawId === undefined || data.rawId === id) {
+          tx.delete(markers.doc(id));
+        }
+      }
     }
     return updated;
   });

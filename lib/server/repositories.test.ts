@@ -75,7 +75,7 @@ describe('correlation-marker legacy-key fallback (Codex P1 — PR #59 review)', 
     vi.mocked(getAdminDb).mockImplementation(() => null);
   });
 
-  it('a marker written under the legacy raw key is still seen and migrated', async () => {
+  it('a marker written under the legacy raw key is still seen and migrated (copy, retain)', async () => {
     const { db, store } = fakeDb({ 'correlation_markers/resume-op-99': { markedAt: 1 } });
     const { getAdminDb } = await import('./admin');
     vi.mocked(getAdminDb).mockReturnValue(db);
@@ -83,14 +83,40 @@ describe('correlation-marker legacy-key fallback (Codex P1 — PR #59 review)', 
     // Raw key present, encoded key absent → legacy fallback reports processed.
     expect(await repo.hasCorrelationMarker('resume-op-99')).toBe(true);
 
-    // Migrated: the raw key is gone, the encoded key now holds the marker.
-    expect(store.has('correlation_markers/resume-op-99')).toBe(false);
+    // Migrated by COPY: the encoded key now holds the marker, and the raw key
+    // is RETAINED because an old instance still serving reads only the raw key
+    // (deleting it would make that instance re-execute the transition — PR #62
+    // P1 "retain legacy markers").
     const encoded = repo.markerKey('resume-op-99');
     expect(store.has(`correlation_markers/${encoded}`)).toBe(true);
+    expect(store.has('correlation_markers/resume-op-99')).toBe(true);
 
-    // Second read hits the encoded key directly (legacy already migrated).
+    // Second read hits the encoded key directly (no legacy re-read needed).
     expect(await repo.hasCorrelationMarker('resume-op-99')).toBe(true);
-    expect(store.has('correlation_markers/resume-op-99')).toBe(false);
+  });
+
+  it('an id with a path separator skips the raw-key fallback entirely (PR #62 P1)', async () => {
+    const { db } = fakeDb();
+    const { getAdminDb } = await import('./admin');
+    vi.mocked(getAdminDb).mockReturnValue(db);
+
+    // The encoded lookup misses; the raw fallback must NOT be attempted for
+    // 'a/b' because Firestore's doc() would throw on the '/' path separator.
+    expect(await repo.hasCorrelationMarker('a/b')).toBe(false);
+  });
+
+  it('a raw-key doc that is ANOTHER id\'s encoded marker is not a legacy hit (PR #62 P2)', async () => {
+    // markerKey('a') is a real single-segment key; if a client sends that
+    // SAME string as its correlation id, the raw-key lookup would find 'a''s
+    // encoded marker and misreport a duplicate. The rawId field disambiguates.
+    const id = repo.markerKey('a');
+    const { db } = fakeDb({ [`correlation_markers/${id}`]: { markedAt: 1, rawId: 'a' } });
+    const { getAdminDb } = await import('./admin');
+    vi.mocked(getAdminDb).mockReturnValue(db);
+
+    expect(await repo.hasCorrelationMarker(id)).toBe(false);
+    // And the true owner still sees its marker.
+    expect(await repo.hasCorrelationMarker('a')).toBe(true);
   });
 
   it('clear removes BOTH the encoded and legacy keys', async () => {
@@ -106,14 +132,18 @@ describe('correlation-marker legacy-key fallback (Codex P1 — PR #59 review)', 
     expect(store.size).toBe(0);
   });
 
-  it('mark clears the legacy key so the fallback never double-reads', async () => {
-    const { db, store } = fakeDb({ 'correlation_markers/resume-op-101': { markedAt: 1 } });
+  it('mark dual-writes so old instances still see the raw key (PR #62 P1)', async () => {
+    const { db, store } = fakeDb();
     const { getAdminDb } = await import('./admin');
     vi.mocked(getAdminDb).mockReturnValue(db);
 
     await repo.markCorrelationMarker('resume-op-101');
-    expect(store.has('correlation_markers/resume-op-101')).toBe(false);
     expect(store.has(`correlation_markers/${repo.markerKey('resume-op-101')}`)).toBe(true);
+    // Old instances read only the raw key — it must exist and carry rawId so a
+    // later has() can disambiguate it from another id's encoded marker.
+    const raw = store.get('correlation_markers/resume-op-101');
+    expect(raw).toBeDefined();
+    expect(raw?.rawId).toBe('resume-op-101');
   });
 });
 
