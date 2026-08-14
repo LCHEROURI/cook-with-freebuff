@@ -45,14 +45,16 @@ let cachedAt = 0;
  * Fetch the published Remote Config template's parameter defaults, cached for
  * CACHE_TTL_MS. Returns null when Remote Config can't be read (emulator, no
  * admin app, or a first fetch that failed), and the last-good cache on a
- * transient re-fetch failure. Never throws.
+ * transient re-fetch failure. A failed refresh records its time so the next
+ * attempt is deferred a full TTL, instead of retrying on every call during an
+ * outage. Never throws.
  */
 async function readRemoteConfigParams(): Promise<Record<string, string> | null> {
   // Emulators have no real Remote Config — fall through to env/default.
   if (process.env.FIRESTORE_EMULATOR_HOST) return null;
 
   const now = Date.now();
-  if (cachedParams !== null && now - cachedAt < CACHE_TTL_MS) return cachedParams;
+  if (now - cachedAt < CACHE_TTL_MS) return cachedParams;
 
   const app = getAdminApp();
   if (!app) return cachedParams; // no credentials → keep last good, else null
@@ -68,7 +70,12 @@ async function readRemoteConfigParams(): Promise<Record<string, string> | null> 
     cachedAt = now;
     return params;
   } catch {
-    return cachedParams; // transient failure → last good cache (or null)
+    // Back off after a failed refresh: keep the last-good value (or null) but
+    // record the failure time, so the next fetch attempt waits out the TTL
+    // instead of retrying getTemplate() on every model operation and storming
+    // Remote Config during an outage.
+    cachedAt = now;
+    return cachedParams;
   }
 }
 

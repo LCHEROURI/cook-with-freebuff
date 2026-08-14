@@ -100,4 +100,29 @@ describe('resolveGeminiModel', () => {
 
     await expect(resolveGeminiModel('generation')).resolves.toBeUndefined();
   });
+
+  it('backs off after a failed refresh — serves stale and defers the next fetch', async () => {
+    let now = 1_700_000_000_000;
+    const nowSpy = vi.spyOn(Date, 'now').mockImplementation(() => now);
+    try {
+      getTemplate.mockResolvedValue(template({ recipe_generation_model: { defaultValue: { value: 'gemini-2.5-flash' } } }));
+      const { resolveGeminiModel } = await import('./model-config');
+
+      await resolveGeminiModel('generation'); // success, caches the template
+      expect(getTemplate).toHaveBeenCalledTimes(1);
+
+      // The cache expires and the refresh fails.
+      now += 6 * 60 * 1000;
+      getTemplate.mockRejectedValue(new Error('unavailable'));
+      await expect(resolveGeminiModel('generation')).resolves.toBe('gemini-2.5-flash'); // last-good value
+      expect(getTemplate).toHaveBeenCalledTimes(2);
+
+      // Within the TTL after the failure: the backoff holds, no re-fetch.
+      now += 1 * 60 * 1000;
+      await expect(resolveGeminiModel('generation')).resolves.toBe('gemini-2.5-flash');
+      expect(getTemplate).toHaveBeenCalledTimes(2);
+    } finally {
+      nowSpy.mockRestore();
+    }
+  });
 });
