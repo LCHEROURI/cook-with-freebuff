@@ -36,20 +36,34 @@ export interface SessionStore {
 
 // ── Idempotency tracker ──────────────────────────────────────────────────────
 
-const processedCorrelationIds = new Set<string>();
-
-function hasBeenProcessed(correlationId?: string): boolean {
-  if (!correlationId) return false;
-  return processedCorrelationIds.has(correlationId);
+/**
+ * Durable record of processed correlation IDs. The DEFAULT is in-memory (and
+ * process-local); production injects the Firestore-backed store so the
+ * resume-rollback uniqueness holds across server restarts, not just within one
+ * process (Codex P1 chain, PR #51/#53 reviews).
+ */
+export interface CorrelationMarkerStore {
+  has(id: string): Promise<boolean>;
+  mark(id: string): Promise<void>;
+  clear(id: string): Promise<void>;
 }
 
-function markProcessed(correlationId?: string): void {
-  if (correlationId) processedCorrelationIds.add(correlationId);
+/** Process-local marker store — the default; all existing tests rely on it. */
+export class InMemoryCorrelationMarkerStore implements CorrelationMarkerStore {
+  private readonly ids = new Set<string>();
+  async has(id: string): Promise<boolean> {
+    return this.ids.has(id);
+  }
+  async mark(id: string): Promise<void> {
+    this.ids.add(id);
+  }
+  async clear(id: string): Promise<void> {
+    this.ids.delete(id);
+  }
 }
 
-function clearProcessed(correlationId?: string): void {
-  if (correlationId) processedCorrelationIds.delete(correlationId);
-}
+/** Shared default so `new SessionService(store)` dedupes across instances. */
+export const sharedInMemoryCorrelationMarkers = new InMemoryCorrelationMarkerStore();
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -102,7 +116,10 @@ export class VersionConflictError extends SessionError {
 // ── Session service ──────────────────────────────────────────────────────────
 
 export class SessionService {
-  constructor(private readonly store: SessionStore) {}
+  constructor(
+    private readonly store: SessionStore,
+    private readonly markers: CorrelationMarkerStore = sharedInMemoryCorrelationMarkers,
+  ) {}
 
   /**
    * Forget a correlation ID so its operation becomes retryable again. Used
@@ -112,8 +129,16 @@ export class SessionService {
    * swallowed as a duplicate while the session sits PAUSED — and the handler
    * would still rebase its timers a second time (Codex P1, PR #51 review).
    */
-  clearProcessed(correlationId?: string): void {
-    clearProcessed(correlationId);
+  async clearProcessed(correlationId?: string): Promise<void> {
+    if (correlationId) await this.markers.clear(correlationId);
+  }
+
+  private async hasBeenProcessed(correlationId?: string): Promise<boolean> {
+    return correlationId ? this.markers.has(correlationId) : false;
+  }
+
+  private async markProcessed(correlationId?: string): Promise<void> {
+    if (correlationId) await this.markers.mark(correlationId);
   }
   /**
    * Create a new cooking session for a user.
@@ -123,7 +148,7 @@ export class SessionService {
     userId: string,
     options?: { recipeId?: string; correlationId?: string },
   ): Promise<CookingSession> {
-    if (hasBeenProcessed(options?.correlationId)) {
+    if (await this.hasBeenProcessed(options?.correlationId)) {
       const existing = await this.store.getActiveSession(userId);
       if (existing) return existing;
     }
@@ -163,7 +188,7 @@ export class SessionService {
       correlationId: options?.correlationId ? `idle->${options.correlationId}` : undefined,
     });
 
-    markProcessed(options?.correlationId);
+    await this.markProcessed(options?.correlationId);
     return updated;
   }
 
@@ -179,7 +204,7 @@ export class SessionService {
     reason: 'USER_INPUT' | 'AGENT_TOOL' | 'TIMER_COMPLETED' | 'RECOVERY' | 'SYSTEM',
     options?: { correlationId?: string; pausedAt?: number },
   ): Promise<CookingSession> {
-    if (hasBeenProcessed(options?.correlationId)) {
+    if (await this.hasBeenProcessed(options?.correlationId)) {
       const session = await this.store.getSession(sessionId);
       if (!session) throw new SessionError('Session not found', 'NOT_FOUND', false);
       return session;
@@ -262,7 +287,7 @@ export class SessionService {
       correlationId: options?.correlationId,
     });
 
-    markProcessed(options?.correlationId);
+    await this.markProcessed(options?.correlationId);
     return updated;
   }
 
@@ -277,7 +302,7 @@ export class SessionService {
     expectedVersion: number,
     options?: { correlationId?: string },
   ): Promise<CookingSession> {
-    if (hasBeenProcessed(options?.correlationId)) {
+    if (await this.hasBeenProcessed(options?.correlationId)) {
       const session = await this.store.getSession(sessionId);
       if (!session) throw new SessionError('Session not found', 'NOT_FOUND', false);
       return session;
@@ -333,7 +358,7 @@ export class SessionService {
       correlationId: options?.correlationId,
     });
 
-    markProcessed(options?.correlationId);
+    await this.markProcessed(options?.correlationId);
     return updated;
   }
 
@@ -345,7 +370,7 @@ export class SessionService {
     expectedVersion: number,
     options?: { correlationId?: string },
   ): Promise<CookingSession> {
-    if (hasBeenProcessed(options?.correlationId)) {
+    if (await this.hasBeenProcessed(options?.correlationId)) {
       const session = await this.store.getSession(sessionId);
       if (!session) throw new SessionError('Session not found', 'NOT_FOUND', false);
       return session;
@@ -373,7 +398,7 @@ export class SessionService {
       correlationId: options?.correlationId,
     });
 
-    markProcessed(options?.correlationId);
+    await this.markProcessed(options?.correlationId);
     return session;
   }
 
@@ -386,7 +411,7 @@ export class SessionService {
     expectedVersion: number,
     options?: { correlationId?: string },
   ): Promise<CookingSession> {
-    if (hasBeenProcessed(options?.correlationId)) {
+    if (await this.hasBeenProcessed(options?.correlationId)) {
       const session = await this.store.getSession(sessionId);
       if (!session) throw new SessionError('Session not found', 'NOT_FOUND', false);
       return session;
@@ -436,7 +461,7 @@ export class SessionService {
       correlationId: options?.correlationId,
     });
 
-    markProcessed(options?.correlationId);
+    await this.markProcessed(options?.correlationId);
     return updated;
   }
 
@@ -550,7 +575,7 @@ export class SessionService {
       correlationId: options?.correlationId,
     });
 
-    markProcessed(options?.correlationId);
+    await this.markProcessed(options?.correlationId);
     return updated;
   }
 
@@ -614,7 +639,7 @@ export class SessionService {
       correlationId: options?.correlationId,
     });
 
-    markProcessed(options?.correlationId);
+    await this.markProcessed(options?.correlationId);
     return updated;
   }
 
@@ -633,7 +658,7 @@ export class SessionService {
     },
     options?: { correlationId?: string },
   ): Promise<CookingSession> {
-    if (hasBeenProcessed(options?.correlationId)) {
+    if (await this.hasBeenProcessed(options?.correlationId)) {
       const session = await this.store.getSession(sessionId);
       if (!session) throw new SessionError('Session not found', 'NOT_FOUND', false);
       return session;
@@ -657,7 +682,7 @@ export class SessionService {
     }
 
     const updated = await this.store.updateSession(sessionId, partial, expectedVersion);
-    markProcessed(options?.correlationId);
+    await this.markProcessed(options?.correlationId);
     return updated;
   }
 
@@ -695,7 +720,7 @@ export class SessionService {
     }
 
     // Abandon — set status to ABANDONED
-    if (hasBeenProcessed(options?.correlationId)) {
+    if (await this.hasBeenProcessed(options?.correlationId)) {
       const session = await this.store.getSession(sessionId);
       if (!session) throw new SessionError('Session not found', 'NOT_FOUND', false);
       return session;
@@ -725,7 +750,7 @@ export class SessionService {
       correlationId: options?.correlationId,
     });
 
-    markProcessed(options?.correlationId);
+    await this.markProcessed(options?.correlationId);
     return updated;
   }
 
@@ -743,7 +768,7 @@ export class SessionService {
     mode: 'REPLACE' | 'UPSERT',
     options?: { correlationId?: string },
   ): Promise<CookingSession> {
-    if (hasBeenProcessed(options?.correlationId)) {
+    if (await this.hasBeenProcessed(options?.correlationId)) {
       const session = await this.store.getSession(sessionId);
       if (!session) throw new SessionError('Session not found', 'NOT_FOUND', false);
       return session;
@@ -827,7 +852,7 @@ export class SessionService {
       }
     }
 
-    markProcessed(options?.correlationId);
+    await this.markProcessed(options?.correlationId);
     return updated;
   }
 
@@ -840,7 +865,7 @@ export class SessionService {
     timerId: string,
     options?: { correlationId?: string },
   ): Promise<CookingSession> {
-    if (hasBeenProcessed(options?.correlationId)) {
+    if (await this.hasBeenProcessed(options?.correlationId)) {
       const session = await this.store.getSession(sessionId);
       if (!session) throw new SessionError('Session not found', 'NOT_FOUND', false);
       return session;
@@ -863,7 +888,7 @@ export class SessionService {
       data: { timerId }, at: now(), correlationId: options?.correlationId,
     });
 
-    markProcessed(options?.correlationId);
+    await this.markProcessed(options?.correlationId);
     return updated;
   }
 
@@ -901,7 +926,7 @@ export class SessionService {
       id: newId(), sessionId, userId: session.userId, type, data,
       at: now(), correlationId: options?.correlationId,
     });
-    markProcessed(options?.correlationId);
+    await this.markProcessed(options?.correlationId);
   }
 
   // ── Private helpers ──────────────────────────────────────────────────────────

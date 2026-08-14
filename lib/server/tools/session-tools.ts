@@ -212,12 +212,12 @@ export const resumeCookingSessionTool: ToolDefinition = {
                 : undefined,
               pausedAt,
             })
-            .then(() => {
+            .then(async () => {
               // The rollback restored the PAUSED state with the ORIGINAL
               // pausedAt — the original resume ID is valid again. Forget it so
               // a client retry with that same ID transitions once instead of
               // being swallowed as a processed duplicate (Codex P1, PR #51).
-              ctx.sessionService.clearProcessed(ctx.correlationId);
+              await ctx.sessionService.clearProcessed(ctx.correlationId);
             })
             .catch(() => undefined);
           return fail(

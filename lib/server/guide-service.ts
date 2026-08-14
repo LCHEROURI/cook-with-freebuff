@@ -448,14 +448,14 @@ export class GuidedCookingService {
               : undefined,
             pausedAt,
           })
-          .then(() => {
+          .then(async () => {
             // The rollback put the session back to PAUSED with the ORIGINAL
             // pausedAt — so the ORIGINAL resume ID is valid again. Forget it,
             // or the client's idempotent retry with that same ID would be
             // swallowed as a processed duplicate while the session sits
             // PAUSED, and the handler would still rebase timers a second
             // time (Codex P1, PR #51 review).
-            this.sessionService.clearProcessed(options?.correlationId);
+            await this.sessionService.clearProcessed(options?.correlationId);
           })
           .catch(() => undefined);
         throw new GuideError(

@@ -1,5 +1,11 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { SessionService, InMemorySessionStore, SessionError, VersionConflictError } from './session-service';
+import {
+  SessionService,
+  InMemorySessionStore,
+  InMemoryCorrelationMarkerStore,
+  SessionError,
+  VersionConflictError,
+} from './session-service';
 
 describe('SessionService', () => {
   let service: SessionService;
@@ -434,6 +440,48 @@ describe('SessionService', () => {
       // Duplicate with same correlationId — idempotent
       const result2 = await service.completeCurrentStep(result1.id, result1.version, { correlationId: 'rapid-next' });
       expect(result2.currentPrepStepIndex).toBe(1);
+    });
+
+    it('dedupes across service instances sharing a durable marker store (survives a restart)', async () => {
+      // A fresh marker store simulates the persisted (Firestore-backed) one:
+      // two SessionService instances built on it must see the SAME processed
+      // markers — a transition marked through instance 1 is still processed
+      // when instance 2 (a new server process) retries the identical request.
+      const markers = new InMemoryCorrelationMarkerStore();
+      const service1 = new SessionService(store, markers);
+      const service2 = new SessionService(store, markers);
+
+      const session = await service1.createSession('user-1');
+      const p = await advanceToPhase(session.id, session.version, 'PREP_GUIDANCE');
+
+      const result1 = await service1.completeCurrentStep(p.id, p.version, { correlationId: 'restart-safe' });
+      expect(result1.currentPrepStepIndex).toBe(1);
+
+      // "Restart": instance 2 sees the SAME marker store, so the duplicate
+      // request is idempotent — never a second advance.
+      const reloaded = await service2.getSession(p.id);
+      const result2 = await service2.completeCurrentStep(p.id, reloaded!.version, { correlationId: 'restart-safe' });
+      expect(result2.currentPrepStepIndex).toBe(1);
+    });
+
+    it('a cleared marker is retryable again across instances (rollback recovery)', async () => {
+      // Mirrors the resume-rollback contract: mark → clear → the SAME id
+      // must be processed again by a fresh instance (the client retry after a
+      // TIMER_REBASE_FAILED rollback) without being swallowed as a duplicate.
+      const markers = new InMemoryCorrelationMarkerStore();
+      const service1 = new SessionService(store, markers);
+      const service2 = new SessionService(store, markers);
+
+      const session = await service1.createSession('user-1');
+      const p = await advanceToPhase(session.id, session.version, 'PREP_GUIDANCE');
+
+      await service1.completeCurrentStep(p.id, p.version, { correlationId: 'rollback-safe' });
+      await service1.clearProcessed('rollback-safe');
+
+      // The id is gone from the durable store — instance 2 transitions once.
+      const reloaded = await service2.getSession(p.id);
+      const retried = await service2.completeCurrentStep(p.id, reloaded!.version, { correlationId: 'rollback-safe' });
+      expect(retried.currentPrepStepIndex).toBe(2);
     });
 
     it('handles stale "done" after previous step advanced', async () => {

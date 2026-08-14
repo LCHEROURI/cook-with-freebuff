@@ -111,6 +111,28 @@ async function deleteDoc(collectionPath: string, id: string): Promise<void> {
   await db.collection(collectionPath).doc(id).delete();
 }
 
+// ── Correlation-marker repository ────────────────────────────────────────────
+// Durable idempotency markers (processed correlation IDs). Production wires
+// this into SessionService so resume-rollback uniqueness survives server
+// restarts, unlike the in-memory default (Codex P1 chain).
+
+const CORRELATION_MARKERS = 'correlation_markers';
+
+/** True when the id was ever marked (a processed correlation ID). */
+export async function hasCorrelationMarker(id: string): Promise<boolean> {
+  return (await readDoc(CORRELATION_MARKERS, id)) !== null;
+}
+
+/** Persist the marker. Idempotent — re-marking the same id is a no-op write. */
+export async function markCorrelationMarker(id: string): Promise<void> {
+  await writeDoc(CORRELATION_MARKERS, id, { markedAt: now() });
+}
+
+/** Forget the marker so its operation becomes retryable (rollback path). */
+export async function clearCorrelationMarker(id: string): Promise<void> {
+  await deleteDoc(CORRELATION_MARKERS, id);
+}
+
 // ── Recipe repository ────────────────────────────────────────────────────────
 
 const RECIPES = 'recipes';
