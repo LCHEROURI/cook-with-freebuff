@@ -136,20 +136,41 @@ export function markerKey(id: string): string {
   return Buffer.from(id, 'utf8').toString('base64url');
 }
 
-/** True when the id was ever marked (a processed correlation ID). */
+/**
+ * True when the id was ever marked (a processed correlation ID).
+ *
+ * Reads the base64url key first, then falls back to the LEGACY raw key: PR #58
+ * deployed markers under the raw correlation ID, so a retry arriving after the
+ * encoding change (or during a rolling deploy mixing old and new instances)
+ * must still see the old marker or it would re-execute the transition (Codex
+ * P1, PR #59 review). A legacy hit is migrated in place so the fallback path
+ * drains over time.
+ */
 export async function hasCorrelationMarker(id: string): Promise<boolean> {
-  return (await readDoc(CORRELATION_MARKERS, markerKey(id))) !== null;
+  if ((await readDoc(CORRELATION_MARKERS, markerKey(id))) !== null) return true;
+  // Legacy raw-key marker from before the encoding change (or a concurrent
+  // old instance). Migrate it to the encoded key, then report it as processed.
+  if ((await readDoc(CORRELATION_MARKERS, id)) !== null) {
+    await writeDoc(CORRELATION_MARKERS, markerKey(id), correlationMarkerSchema.parse({ markedAt: now() }));
+    await deleteDoc(CORRELATION_MARKERS, id);
+    return true;
+  }
+  return false;
 }
 
 /** Persist the marker. Idempotent — re-marking the same id is a no-op write. */
 export async function markCorrelationMarker(id: string): Promise<void> {
   const doc = correlationMarkerSchema.parse({ markedAt: now() });
   await writeDoc(CORRELATION_MARKERS, markerKey(id), doc);
+  // Clear any legacy raw-key marker so the has() fallback never double-reads.
+  await deleteDoc(CORRELATION_MARKERS, id);
 }
 
 /** Forget the marker so its operation becomes retryable (rollback path). */
 export async function clearCorrelationMarker(id: string): Promise<void> {
   await deleteDoc(CORRELATION_MARKERS, markerKey(id));
+  // Legacy raw-key marker from a pre-encoding deploy.
+  await deleteDoc(CORRELATION_MARKERS, id);
 }
 
 // ── Recipe repository ────────────────────────────────────────────────────────
@@ -250,9 +271,13 @@ export async function updateSession(
     for (const id of marks) {
       const doc = correlationMarkerSchema.parse({ markedAt: now() });
       tx.set(markers.doc(markerKey(id)), doc as unknown as Record<string, unknown>);
+      // Legacy raw-key marker from a pre-encoding deploy.
+      tx.delete(markers.doc(id));
     }
     if (marker?.clear) {
       tx.delete(markers.doc(markerKey(marker.clear)));
+      // Legacy raw-key marker from a pre-encoding deploy.
+      tx.delete(markers.doc(marker.clear));
     }
     return updated;
   });
