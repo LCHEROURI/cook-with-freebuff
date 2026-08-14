@@ -26,6 +26,7 @@ import { describe, expect, it } from 'vitest';
 
 const CI = readFileSync('.github/workflows/ci.yml', 'utf8');
 const MIC_REGRESSION = readFileSync('.github/workflows/mic-regression.yml', 'utf8');
+const CODEX_MONITOR = readFileSync('.github/workflows/codex-review-monitor.yml', 'utf8');
 
 // The verify step's gating `if:` — the four secrets must ALL be present for
 // the deep gates to run (a missing one skips-not-fails, but only on forks;
@@ -391,5 +392,24 @@ describe('.github/workflows/mic-regression.yml · weekly two-burst pass-rate mon
     expect(MIC_REGRESSION).toContain('--body "The weekly phase-C two-burst check went red');
     expect(MIC_REGRESSION).toContain('$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/${{ github.run_id }}');
     expect(MIC_REGRESSION).toContain('skipping (dedupe)');
+  });
+});
+
+describe('.github/workflows/codex-review-monitor.yml · the daily Codex sweep', () => {
+  it('runs on a daily schedule and supports manual dispatch', () => {
+    expect(CODEX_MONITOR).toContain("cron: '0 7 * * *'");
+    expect(CODEX_MONITOR).toContain('workflow_dispatch');
+  });
+
+  it('runs the sweep script with the minimal permission set', () => {
+    expect(CODEX_MONITOR).toContain('node scripts/codex-review-monitor.mjs');
+    expect(CODEX_MONITOR).toContain('permissions:');
+    expect(CODEX_MONITOR).toContain('issues: write');
+    expect(CODEX_MONITOR).toContain('pull-requests: read');
+  });
+
+  it('keeps the concurrency guard so overlapping sweeps never double-report', () => {
+    expect(CODEX_MONITOR).toContain('group: codex-review-monitor');
+    expect(CODEX_MONITOR).toContain('cancel-in-progress: false');
   });
 });
