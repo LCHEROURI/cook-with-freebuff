@@ -121,8 +121,13 @@ describe('scripts/codex-review-pr-gate.mjs', () => {
     // and is gated on GH_TOKEN so local runs never comment on PRs.
     expect(GATE).toContain('codex-gate-red');
     expect(GATE).toContain('issues/${pr}/comments');
-    expect(GATE).toContain('if (!process.env.GH_TOKEN) return;');
+    // GH_TOKEN alone is not an Actions signal — local devs exporting it must
+    // not post comments; GITHUB_ACTIONS must also be true (Codex P2, PR #79).
+    expect(GATE).toContain("process.env.GITHUB_ACTIONS === 'true'");
     expect(GATE).toContain('block lifts when every thread above is answered');
+    // Same-head updates edit the existing comment; a green gate resolves it.
+    expect(GATE).toContain('--method PATCH');
+    expect(GATE).toContain('resolved');
   });
 
   it('behaves end to end against a stubbed gh', () => {
@@ -172,7 +177,7 @@ const postsLog = ${JSON.stringify(postsLog)};
 const url = process.argv.join(' ');
 if (url.includes('issues/42/comments?')) {
   process.stdout.write(JSON.stringify([gateComments]));
-} else if (url.includes('issues/42/comments') && url.includes('--input')) {
+} else if ((url.includes('issues/42/comments') || url.includes('issues/comments/')) && url.includes('--input')) {
   const i = process.argv.indexOf('--input');
   fs.appendFileSync(postsLog, fs.readFileSync(process.argv[i + 1], 'utf8') + '<<<POST>>>');
   process.stdout.write('{}');
@@ -274,28 +279,42 @@ if (url.includes('issues/42/comments?')) {
     expect(run([P(63, 'P3')], { extraEnv: { CODEX_GATE_INCLUDE_P2: 'true' } }).status).toBe(0);
 
     // ── Red-alert comment ────────────────────────────────────────────────
-    // In the workflow (GH_TOKEN set), a red gate posts a bot-style summary on
-    // the PR thread with the per-head marker and the finding thread URL.
-    const alerted = run([P(71, 'P1')], { extraEnv: { GH_TOKEN: 'stub-token' } });
+    // In the workflow (GITHUB_ACTIONS + GH_TOKEN), a red gate posts a
+    // bot-style summary on the PR thread with the per-head marker and the
+    // finding thread URL.
+    const actions = { GH_TOKEN: 'stub-token', GITHUB_ACTIONS: 'true' };
+    const alerted = run([P(71, 'P1')], { extraEnv: actions });
     expect(alerted.status).toBe(1);
     expect(alerted.posts.length).toBe(1);
     expect(alerted.posts[0]).toContain('codex-gate-red: abc123def456');
     expect(alerted.posts[0]).toContain('https://example.com/r71');
     expect(alerted.posts[0]).toContain('Codex review gate is blocking PR #42');
 
-    // Local runs (no GH_TOKEN) never comment, even when red.
+    // Local runs never comment, even when red — with or without GH_TOKEN
+    // exported (GITHUB_ACTIONS is the Actions signal, Codex P2, PR #79).
     expect(run([P(72, 'P1')]).posts.length).toBe(0);
+    expect(run([P(72, 'P1')], { extraEnv: { GH_TOKEN: 'stub-token' } }).posts.length).toBe(0);
 
-    // Deduped per head: a comment carrying this head's marker already exists,
-    // so re-running the same head posts nothing.
+    // Same head, new finding set: the existing comment is EDITED (PATCH) with
+    // the fresh summary instead of posting a second one.
     const alreadyAlerted = run([P(73, 'P1')], {
-      gateComments: [{ body: '<!-- codex-gate-red: abc123def456 -->\nAlready reported.' }],
-      extraEnv: { GH_TOKEN: 'stub-token' },
+      gateComments: [{ id: 9001, body: '<!-- codex-gate-red: abc123def456 -->\nOlder finding.' }],
+      extraEnv: actions,
     });
     expect(alreadyAlerted.status).toBe(1);
-    expect(alreadyAlerted.posts.length).toBe(0);
+    expect(alreadyAlerted.posts.length).toBe(1);
+    expect(alreadyAlerted.posts[0]).toContain('https://example.com/r73');
 
-    // A green gate never posts.
-    expect(run([], { extraEnv: { GH_TOKEN: 'stub-token' } }).posts.length).toBe(0);
+    // A green gate posts nothing when no alert exists…
+    expect(run([], { extraEnv: actions }).posts.length).toBe(0);
+    // …and RESOLVES a stale blocking comment when one exists for this head.
+    const resolved = run([], {
+      gateComments: [{ id: 9002, body: '<!-- codex-gate-red: abc123def456 -->\nOld block.' }],
+      extraEnv: actions,
+    });
+    expect(resolved.status).toBe(0);
+    expect(resolved.posts.length).toBe(1);
+    expect(resolved.posts[0]).toContain('Codex review gate is green');
+    expect(resolved.posts[0]).toContain('codex-gate-resolved');
   }, 20_000);
 });
