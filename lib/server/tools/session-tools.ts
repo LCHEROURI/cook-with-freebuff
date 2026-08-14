@@ -195,10 +195,19 @@ export const resumeCookingSessionTool: ToolDefinition = {
           // NOT reuse ctx.correlationId, which resumeSession already marked
           // processed, or transitionTo would return the ACTIVE session
           // without pausing and silently undo the rollback.
-          await ctx.sessionService.pauseSession(updated.id, updated.version, {
-            correlationId: ctx.correlationId ? `resume-rollback:${ctx.correlationId}` : undefined,
-            pausedAt,
-          }).catch(() => undefined);
+          await ctx.sessionService
+            .pauseSession(updated.id, updated.version, {
+              correlationId: ctx.correlationId ? `resume-rollback:${ctx.correlationId}` : undefined,
+              pausedAt,
+            })
+            .then(() => {
+              // The rollback restored the PAUSED state with the ORIGINAL
+              // pausedAt — the original resume ID is valid again. Forget it so
+              // a client retry with that same ID transitions once instead of
+              // being swallowed as a processed duplicate (Codex P1, PR #51).
+              ctx.sessionService.clearProcessed(ctx.correlationId);
+            })
+            .catch(() => undefined);
           return fail(
             'TIMER_REBASE_FAILED',
             'Resume could not finish syncing the paused timers — the session was paused again. Please resume once more.',

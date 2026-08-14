@@ -549,6 +549,51 @@ describe('pause freezes timers', () => {
       vi.useRealTimers();
     }
   });
+
+  it('a retry with the ORIGINAL resume ID transitions once after the rollback (Codex P1 — PR #51)', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(1_000_000_000_000);
+    try {
+      const { store, flaky, guide, sessionId } = await launchRecoverablePause();
+      vi.setSystemTime(1_000_000_000_000 + 120_000);
+
+      // The rollback re-pause succeeds, but the ORIGINAL resume ID stays in
+      // the processed set — so the client's intended idempotent retry with
+      // that same ID would be swallowed as a duplicate: transitionTo returns
+      // the still-PAUSED session without transitioning, and the handler would
+      // then rebase timers a SECOND time (Codex P1, PR #51 review).
+      // NOTE: distinct ID per test — the processed set is module-level, so a
+      // reused prefix would leak the previous test's rollback marker.
+      flaky.failing = true;
+      await expect(guide.resume('user-1', sessionId, { correlationId: 'resume-op-51' })).rejects.toMatchObject({
+        code: 'TIMER_REBASE_FAILED',
+        recoverable: true,
+      });
+
+      // Store healthy again; retry with the SAME correlation ID the client
+      // used before. It must actually transition PAUSED → ACTIVE once and
+      // rebase from the ORIGINAL endsAt exactly once — never a swallowed
+      // duplicate, never a second shift.
+      flaky.failing = false;
+      const retried = await guide.resume('user-1', sessionId, { correlationId: 'resume-op-51' });
+      expect(retried.phase).toBe('WAITING_FOR_TIMER');
+
+      const session = await store.getSession(sessionId);
+      expect(session?.currentPhase).toBe('WAITING_FOR_TIMER');
+      // The raw doc keeps the historical pausedAt (the resume guard is the
+      // phase, never the field — documented contract); the SNAPSHOT must not
+      // report it once resumed.
+      expect(retried.pausedAt).toBeUndefined();
+
+      const [rebased] = await flaky.listActiveTimers(sessionId);
+      // pausedAt was captured at t=0 with endsAt = t0 + 180s; 120s of pause
+      // elapsed, so a single rebase lands endsAt at now + 180s (any second
+      // shift would push it to now + 300s).
+      expect(rebased.endsAt).toBe(Date.now() + 180_000);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
 
 /**

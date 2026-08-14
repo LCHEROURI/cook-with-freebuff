@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { SessionService, InMemorySessionStore } from '../session-service';
 import {
   createDefaultToolRegistry,
@@ -271,6 +271,62 @@ describe('session tools', () => {
     const resumed = await executeTool(registry, ctx, 'resume_cooking_session', { sessionId: s.id });
     expect(resumed.success).toBe(true);
     expect((resumed.data as { phase: string }).phase).toBe('PREP_GUIDANCE');
+  });
+
+  it('a same-ID retry after a failed rebase transitions ONCE through the tool (Codex P1 — PR #51)', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(1_000_000_000_000);
+    try {
+      // The tool path (session-tools.ts) mirrors guide-service.resume: the
+      // rollback re-pause must forget the ORIGINAL resume ID, or the client's
+      // retry with that same ID gets swallowed as a processed duplicate while
+      // the session sits PAUSED and the timers get rebased a second time.
+      const store = new InMemorySessionStore();
+      const sessionService = new SessionService(store);
+      const flaky = new (class extends InMemoryTimerStore {
+        failing = false;
+        override async rebaseActiveTimers(sessionId: string, elapsedMs: number): Promise<void> {
+          if (this.failing) throw new Error('simulated rebase write failure');
+          return super.rebaseActiveTimers(sessionId, elapsedMs);
+        }
+      })();
+      const logs = new InMemoryLogStore();
+      const recipes = new InMemoryRecipeStore();
+      await recipes.createRecipe(makeRecipe());
+      const ctx: ToolContext = { userId: 'user-1', sessionService, timerStore: flaky, logStore: logs, recipeStore: recipes };
+
+      const started = (await executeTool(registry, ctx, 'start_cooking_session', { recipeId: 'recipe-1' }))
+        .data as { sessionId: string };
+      let s = await store.getSession(started.sessionId);
+      for (const phase of ['CONFIRMING_INGREDIENTS', 'COLLECTING_REQUIREMENTS', 'GENERATING_RECIPE', 'VALIDATING_RECIPE', 'RECIPE_READY', 'PREP_GUIDANCE'] as const) {
+        const reason = phase === 'GENERATING_RECIPE' || phase === 'VALIDATING_RECIPE' ? 'AGENT_TOOL' : 'USER_INPUT';
+        s = (await sessionService.transitionTo(s!.id, s!.version, phase, reason as 'AGENT_TOOL' | 'USER_INPUT'))!;
+      }
+      await executeTool(registry, ctx, 'complete_current_step', { sessionId: s!.id }); // → WAITING_FOR_TIMER
+      const [timer] = await flaky.listActiveTimers(s!.id);
+      await flaky.updateTimer(timer.id, { startedAt: 1_000_000_000_000, endsAt: 1_000_000_000_000 + 180_000 });
+      await executeTool(registry, ctx, 'pause_cooking_session', { sessionId: s!.id });
+      vi.setSystemTime(1_000_000_000_000 + 120_000);
+
+      // Rebase fails → rollback to PAUSED. Retry with the SAME correlation ID
+      // (distinct per test: the processed set is module-level).
+      flaky.failing = true;
+      ctx.correlationId = 'resume-op-51-tool';
+      const first = await executeTool(registry, ctx, 'resume_cooking_session', { sessionId: s!.id });
+      expect(first.success).toBe(false);
+      expect((first.error as { code?: string })?.code).toBe('TIMER_REBASE_FAILED');
+      expect((await store.getSession(s!.id))?.currentPhase).toBe('PAUSED');
+
+      flaky.failing = false;
+      const retried = await executeTool(registry, ctx, 'resume_cooking_session', { sessionId: s!.id });
+      expect(retried.success).toBe(true);
+      expect((retried.data as { phase: string }).phase).toBe('WAITING_FOR_TIMER');
+      const [rebased] = await flaky.listActiveTimers(s!.id);
+      // Single shift from the ORIGINAL endsAt: now + 180s, never + 300s.
+      expect(rebased.endsAt).toBe(Date.now() + 180_000);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('denies access to another user\'s session (FORBIDDEN)', async () => {

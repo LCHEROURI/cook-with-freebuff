@@ -32,6 +32,16 @@ describe('scripts/codex-review-monitor.mjs', () => {
     expect(MONITOR).toContain('state=all&sort=updated&direction=desc');
   });
 
+  it('paginates every monitored collection so a growing repo is not silently truncated', () => {
+    // Codex P2 (PR #51 review): gh api caps each request at per_page; without
+    // --paginate the sweep sees only the first page once the repo passes 50
+    // PRs / 100 comments / 100 issues — missing findings and forgetting dedupe
+    // markers.
+    expect(MONITOR).toContain('gh api --paginate "repos/${repo}/pulls?state=all');
+    expect(MONITOR).toContain('gh api --paginate "repos/${repo}/pulls/${pr.number}/comments');
+    expect(MONITOR).toContain('gh api --paginate "repos/${repo}/issues?state=all');
+  });
+
   it('dedupes durably by comment ID embedded in the issue body', () => {
     // The marker survives in the issue body, so the next run reads it back and
     // never re-opens the same finding — even after the issue is closed.
