@@ -141,6 +141,14 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      # Emulator-backed integration test: proves the rollback-resume marker
+      # atomicity through the REAL repositories (no fakes) against a live
+      # Firestore emulator. Boots and tears down its own emulator; the Java 21
+      # setup above is exactly what it needs. Independent of owner secrets, so
+      # it also runs on forks.
+      - name: Run the emulator integration test (marker atomicity)
+        run: npm run test:emulator
+
       - name: Fail loudly if owner credentials are missing
         if: ${{ github.repository == 'LCHEROURI/cook-with-freebuff' && (env.NEXT_PUBLIC_FIREBASE_API_KEY == '' || env.FIREBASE_SERVICE_ACCOUNT == '' || env.APP_OWNER_UID == '') }}
         run: |
