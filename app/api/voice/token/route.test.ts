@@ -10,6 +10,10 @@ vi.mock('@/lib/server/app-check', () => ({
   gateAppCheck: vi.fn(async () => null),
 }));
 
+vi.mock('@/lib/server/model-config', () => ({
+  resolveGeminiModel: vi.fn(async () => undefined),
+}));
+
 import { resolveUserId } from '@/lib/server/admin';
 
 const API_KEY = 'AIzaSy-fake-test-key-00000000000000000';

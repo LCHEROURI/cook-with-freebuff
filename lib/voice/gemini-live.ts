@@ -313,16 +313,19 @@ export class GeminiLiveClient {
           : 'Gemini Live could not open the voice connection — a firewall or network may be blocking it.',
       );
     }, timeoutMs);
-    const token = await this.mintToken();
+    const minted = await this.mintToken();
     // A failure (including the connect timeout firing while the token fetch
     // hung) has already emitted ERROR — do not keep building the session.
-    if (!token || this.status === 'ERROR') return;
+    if (!minted || this.status === 'ERROR') return;
 
     // The ephemeral token is server-issued (letters/digits/slash/dash) and is
     // consumed verbatim as the access_token query param — verified working
     // against the live endpoint without percent-encoding.
-    const model = this.opts.model ?? DEFAULT_LIVE_MODEL;
-    const url = `${LIVE_WS_URL}?access_token=${token}`;
+    // The model is server-authoritative: the token route resolves it (Remote
+    // Config → LIVE_MODEL → default) and the client connects with what it
+    // returned, so a model change needs no client redeploy.
+    const model = minted.model ?? this.opts.model ?? DEFAULT_LIVE_MODEL;
+    const url = `${LIVE_WS_URL}?access_token=${minted.token}`;
     let ws: WebSocketLike;
     try {
       ws = this.opts.deps?.createWebSocket
@@ -537,7 +540,7 @@ export class GeminiLiveClient {
 
   // ── Internals ──────────────────────────────────────────────────────────────
 
-  private async mintToken(): Promise<string | null> {
+  private async mintToken(): Promise<{ token: string; model?: string } | null> {
     const tokenUrl = this.opts.tokenUrl ?? DEFAULT_TOKEN_URL;
     const getToken = this.opts.getToken ?? (() => null);
     const getAppCheckHeaders = this.opts.getAppCheckHeaders ?? (async () => ({}));
@@ -550,7 +553,7 @@ export class GeminiLiveClient {
       this.diag.tokenHttpStatus = res.status;
       const body = (await res.json()) as {
         success?: boolean;
-        data?: { token?: unknown };
+        data?: { token?: unknown; model?: unknown };
       };
       if (!res.ok || !body.success || typeof body.data?.token !== 'string' || body.data.token.length === 0) {
         this.diag.tokenError = `token endpoint rejected (HTTP ${res.status})`;
@@ -558,7 +561,10 @@ export class GeminiLiveClient {
         this.fail('Could not start a voice session.');
         return null;
       }
-      return body.data.token;
+      return {
+        token: body.data.token,
+        model: typeof body.data.model === 'string' && body.data.model ? body.data.model : undefined,
+      };
     } catch (e) {
       this.diag.tokenError = e instanceof Error ? e.message : 'token fetch threw';
       console.error(`[voice] token endpoint unreachable: ${this.diag.tokenError}`);

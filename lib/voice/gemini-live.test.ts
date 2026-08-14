@@ -120,6 +120,27 @@ describe('GeminiLiveClient — connect + setup', () => {
     client.disconnect();
   });
 
+  it('uses the model the token endpoint returns (server-authoritative)', async () => {
+    // The token route resolves the live model (Remote Config → LIVE_MODEL →
+    // default) and the client must connect with what it returned, so a model
+    // change needs no client redeploy.
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: async () => ({ success: true, data: { token: TOKEN, model: 'gemini-9.0-flash-live-preview' } }),
+      }),
+    );
+    const { client, getWs } = setupClient();
+    await client.connect();
+    const ws = getWs();
+    ws.open();
+    const setupMsg = JSON.parse(ws.sent[0]) as { setup: { model: string } };
+    expect(setupMsg.setup.model).toBe('models/gemini-9.0-flash-live-preview');
+    client.disconnect();
+  });
+
   it('sends the Bearer token from getToken to the mint endpoint', async () => {
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
