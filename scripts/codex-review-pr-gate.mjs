@@ -23,6 +23,7 @@
 //
 // Usage:
 //   node scripts/codex-review-pr-gate.mjs --pr 42
+//   node scripts/codex-review-pr-gate.mjs --pr=42   (same)
 //   PR_NUMBER=42 node scripts/codex-review-pr-gate.mjs
 //   node scripts/codex-review-pr-gate.mjs --pr 42 --include-p2
 // ============================================================================
@@ -37,7 +38,10 @@ const DEFAULT_REPO = 'LCHEROURI/cook-with-freebuff';
 const args = process.argv.slice(2);
 const take = (flag) => {
   const i = args.indexOf(flag);
-  return i === -1 ? undefined : args[i + 1];
+  if (i !== -1) return args[i + 1];
+  // Also accept the --flag=value form.
+  const eq = args.find((a) => a.startsWith(`${flag}=`));
+  return eq ? eq.slice(flag.length + 1) : undefined;
 };
 const repo = take('--repo') ?? process.env.GITHUB_REPOSITORY ?? DEFAULT_REPO;
 const pr = take('--pr') ?? process.env.PR_NUMBER;
