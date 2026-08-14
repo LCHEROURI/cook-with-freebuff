@@ -519,12 +519,16 @@ export async function forceTimerStatus(
   id: string,
   status: CookingTimer['status'],
 ): Promise<void> {
+  // Validate at the write boundary (repo rule) before any I/O, exactly as
+  // updateTimer does — a runtime value outside the status enum must fail
+  // here instead of reaching Firestore.
+  const validated = cookingTimerSchema.partial().parse({ status });
   const db = getAdminDb();
   if (!db) throw new Error('Firestore not initialized');
   await db
     .collection(TIMERS)
     .doc(id)
-    .update({ status } as unknown as Record<string, unknown>);
+    .update(validated as unknown as Record<string, unknown>);
 }
 
 // ── Pantry repository ────────────────────────────────────────────────────────
