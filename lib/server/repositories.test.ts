@@ -161,7 +161,8 @@ describe('correlation-marker legacy-key fallback (Codex P1 — PR #59 review)', 
 
   it('the encoded read rejects a doc whose rawId names a different owner (PR #64 P2)', async () => {
     // A foreign doc planted at the encoded key (e.g. a historical raw write
-    // that collided) must not suppress this id's transition.
+    // that collided) must not suppress this id's transition — and with no
+    // legacy marker of its own, the id is genuinely unprocessed.
     const encoded = repo.markerKey('a');
     const { db } = fakeDb({ [`correlation_markers/${encoded}`]: { markedAt: 1, rawId: 'YQ' } });
     const { getAdminDb } = await import('./admin');
@@ -175,6 +176,26 @@ describe('correlation-marker legacy-key fallback (Codex P1 — PR #59 review)', 
     const preRawId = fakeDb({ [`correlation_markers/${encoded}`]: { markedAt: 1 } });
     vi.mocked(getAdminDb).mockReturnValue(preRawId.db);
     expect(await repo.hasCorrelationMarker('a')).toBe(true);
+  });
+
+  it('a foreign occupant of the encoded slot falls through to this id\'s legacy marker (PR #66 P1)', async () => {
+    // markerKey('a') === 'YQ'. 'a' was processed pre-encoding (legacy raw doc,
+    // no rawId) while 'YQ' owns the encoded slot. The foreign occupant must
+    // not hide 'a''s own legacy marker, and the migration must not clobber it.
+    const encoded = repo.markerKey('a');
+    expect(encoded).toBe('YQ');
+    const { db, store } = fakeDb({
+      [`correlation_markers/${encoded}`]: { markedAt: 2, rawId: 'YQ' },
+      'correlation_markers/a': { markedAt: 1 },
+    });
+    const { getAdminDb } = await import('./admin');
+    vi.mocked(getAdminDb).mockReturnValue(db);
+
+    expect(await repo.hasCorrelationMarker('a')).toBe(true);
+    // The foreign marker survives untouched — no clobbering copy.
+    expect(store.get(`correlation_markers/${encoded}`)).toEqual({ markedAt: 2, rawId: 'YQ' });
+    // And the legacy doc is retained for this id.
+    expect(store.has('correlation_markers/a')).toBe(true);
   });
 
   it('the rollback clear reads the legacy marker before any transaction write (PR #64 P1)', async () => {
