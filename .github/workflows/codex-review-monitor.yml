@@ -1,0 +1,52 @@
+name: Codex review monitor
+
+# Polls the chatgpt-codex-connector[bot] inline review comments across open +
+# recently merged PRs and opens a `codex-review` labeled issue the first time
+# each finding is seen (dedupe via comment-ID markers in the issue body, so
+# consecutive runs never spam and fixed findings are never re-opened). Catches
+# findings the merge-time flow misses: the bot posts shortly after a PR opens,
+# so a PR that auto-merges before a human reads the review would otherwise
+# leave its findings silently un-triaged. Runs on a schedule + dispatch; only
+# reads PRs and writes issues, so the minimal permission set is contents:read
+# + issues:write (pull-requests:read is granted for public repos by default,
+# but list explicitly so a future private move doesn't silently lose the
+# sweep).
+
+on:
+  schedule:
+    - cron: '0 7 * * *' # Daily 07:00 UTC
+  workflow_dispatch:
+
+concurrency:
+  group: codex-review-monitor
+  cancel-in-progress: false
+
+jobs:
+  sweep:
+    name: Sweep Codex review findings
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    permissions:
+      contents: read
+      pull-requests: read
+      issues: write
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v5
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      # gh is preinstalled on ubuntu runners; the sweep reads the bot's
+      # comments via the API (tokenless data for public repos, GITHUB_TOKEN
+      # for the issues write below). No secrets required.
+      - name: Sweep and open issues for new findings
+        run: node scripts/codex-review-monitor.mjs

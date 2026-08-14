@@ -264,6 +264,38 @@ export async function listActiveTimers(sessionId: string): Promise<CookingTimer[
   return snap.docs.map((d) => d.data() as CookingTimer);
 }
 
+/**
+ * Shift every RUNNING timer of a session by elapsedMs in ONE atomic batch
+ * (Codex P1 — PR #30 review): the resume rebase must be all-or-nothing. A
+ * per-timer update loop could leave some timers shifted and others not, and a
+ * compensating rollback of the already-written ones could itself fail during
+ * a continuing store outage — silently presenting the rebase as safely
+ * reverted when it was not. A Firestore batch commits every update or none,
+ * so the caller never needs to roll back.
+ */
+export async function rebaseActiveTimers(
+  sessionId: string,
+  elapsedMs: number,
+): Promise<void> {
+  const db = getAdminDb();
+  if (!db) throw new Error('Firestore not initialized');
+  const snap = await db
+    .collection(TIMERS)
+    .where('sessionId', '==', sessionId)
+    .where('status', '==', 'RUNNING')
+    .get();
+  if (snap.empty) return;
+  const batch = db.batch();
+  for (const doc of snap.docs) {
+    const current = doc.data() as CookingTimer;
+    // Validate the shifted value at the write boundary (repo rule) — a
+    // malformed legacy endsAt must fail the whole batch, not reach Firestore.
+    const shifted = cookingTimerSchema.partial().parse({ endsAt: current.endsAt + elapsedMs });
+    batch.update(doc.ref, shifted as unknown as Record<string, unknown>);
+  }
+  await batch.commit();
+}
+
 // ── Pantry repository ────────────────────────────────────────────────────────
 
 const PANTRY = 'pantry_items';

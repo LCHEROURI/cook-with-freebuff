@@ -180,6 +180,16 @@ export class InMemoryTimerStore implements TimerStore {
       (t) => t.sessionId === sessionId && t.status === 'RUNNING',
     );
   }
+
+  // Single in-memory pass, atomic by construction (no I/O to fail midway) —
+  // mirrors the Firestore batch contract on the TimerStore interface.
+  async rebaseActiveTimers(sessionId: string, elapsedMs: number): Promise<void> {
+    for (const [id, timer] of this.timers) {
+      if (timer.sessionId === sessionId && timer.status === 'RUNNING') {
+        this.timers.set(id, { ...timer, endsAt: timer.endsAt + elapsedMs });
+      }
+    }
+  }
 }
 
 export class InMemoryLogStore implements LogStore {

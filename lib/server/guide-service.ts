@@ -426,12 +426,17 @@ export class GuidedCookingService {
         // rebased — an expiry that elapsed during the pause would fire
         // immediately (Codex P1). Roll the session back to PAUSED with the
         // ORIGINAL pausedAt: the frozen remainder is intact, a retry of
-        // resume is legal, and the all-or-nothing rebase means a retry shifts
-        // from the original endsAt exactly once. The rollback re-pause is
+        // resume is legal, and the atomic rebase means a retry shifts from
+        // the original endsAt exactly once. The rollback re-pause is
         // best-effort (a version conflict there is a genuinely rare double
         // failure); either way the caller sees a recoverable error.
+        //
+        // The re-pause MUST NOT reuse the resume's correlation ID (Codex P1,
+        // PR #30 review): resumeSession already marked that ID as processed,
+        // so transitionTo would treat the re-pause as a duplicate and return
+        // the ACTIVE session without pausing — silently undoing the rollback.
         await this.sessionService.pauseSession(updated.id, updated.version, {
-          correlationId: options?.correlationId,
+          correlationId: options?.correlationId ? `resume-rollback:${options.correlationId}` : undefined,
           pausedAt,
         }).catch(() => undefined);
         throw new GuideError(

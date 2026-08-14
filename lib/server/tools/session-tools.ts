@@ -190,8 +190,13 @@ export const resumeCookingSessionTool: ToolDefinition = {
         try {
           await rebaseTimersAfterResume(ctx.timerStore, updated.id, pausedAt);
         } catch (e) {
+          // Same rollback contract as guide-service.resume — and the same
+          // correlation-ID trap (Codex P1, PR #30 review): the re-pause must
+          // NOT reuse ctx.correlationId, which resumeSession already marked
+          // processed, or transitionTo would return the ACTIVE session
+          // without pausing and silently undo the rollback.
           await ctx.sessionService.pauseSession(updated.id, updated.version, {
-            correlationId: ctx.correlationId,
+            correlationId: ctx.correlationId ? `resume-rollback:${ctx.correlationId}` : undefined,
             pausedAt,
           }).catch(() => undefined);
           return fail(
