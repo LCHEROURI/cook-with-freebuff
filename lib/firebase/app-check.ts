@@ -47,12 +47,16 @@ export function getClientAppCheck(): AppCheck | null {
   }
 }
 
-/** The current App Check token, or null when App Check isn't available. */
-export async function getAppCheckToken(): Promise<string | null> {
+/**
+ * The current App Check token, or null when App Check isn't available.
+ * Pass forceRefresh for the single-use (consumed) one-shot routes, where a
+ * cached token would already be marked consumed on the server.
+ */
+export async function getAppCheckToken(forceRefresh = false): Promise<string | null> {
   const appCheck = getClientAppCheck();
   if (!appCheck) return null;
   try {
-    const { token } = await getToken(appCheck);
+    const { token } = await getToken(appCheck, forceRefresh);
     return token;
   } catch {
     return null;
@@ -60,7 +64,7 @@ export async function getAppCheckToken(): Promise<string | null> {
 }
 
 /** Headers to attach to API requests: { 'x-firebase-appcheck': token } or {}. */
-export async function appCheckHeaders(): Promise<Record<string, string>> {
-  const token = await getAppCheckToken();
+export async function appCheckHeaders(forceRefresh = false): Promise<Record<string, string>> {
+  const token = await getAppCheckToken(forceRefresh);
   return token ? { 'x-firebase-appcheck': token } : {};
 }

@@ -75,6 +75,15 @@ describe('getAppCheckToken / appCheckHeaders', () => {
     await expect(appCheckHeaders()).resolves.toEqual({ 'x-firebase-appcheck': 'ac-token' });
   });
 
+  it('force-refreshes the token for the single-use (consumed) routes', async () => {
+    process.env.NEXT_PUBLIC_FIREBASE_APP_CHECK_SITE_KEY = 'site-key';
+    getToken.mockResolvedValue({ token: 'fresh-token' });
+    const { getAppCheckToken } = await import('./app-check');
+
+    await getAppCheckToken(true);
+    expect(getToken).toHaveBeenCalledWith(FAKE_APP_CHECK, true);
+  });
+
   it('returns null when the token fetch fails (graceful degradation)', async () => {
     process.env.NEXT_PUBLIC_FIREBASE_APP_CHECK_SITE_KEY = 'site-key';
     getToken.mockRejectedValue(new Error('app-check/fetch-status-error'));

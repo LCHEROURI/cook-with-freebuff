@@ -185,7 +185,7 @@ export default function CookPage() {
       const token = await auth.getToken();
       const res = await fetch('/api/vision/scan', {
         method: 'POST',
-        headers: { 'content-type': 'application/json', ...(token ? { authorization: `Bearer ${token}` } : {}), ...(await appCheckHeaders()) },
+        headers: { 'content-type': 'application/json', ...(token ? { authorization: `Bearer ${token}` } : {}), ...(await appCheckHeaders(true)) },
         body: JSON.stringify({ image: dataUri }),
       });
       const body = await res.json() as {

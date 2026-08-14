@@ -68,6 +68,18 @@ To turn it on:
 Local dev: set `NEXT_PUBLIC_APP_CHECK_DEBUG=1` to use the debug provider, then
 register the printed token under App Check → Manage debug tokens.
 
+The post-deploy verify:live driver is a server-side script, so it cannot use the
+browser's reCAPTCHA attestation. It mints its own App Check token via
+`admin.appCheck().createToken(NEXT_PUBLIC_FIREBASE_APP_ID)` and attaches it as
+`X-Firebase-AppCheck` on the `/api/cook` and `/api/agent` calls, so the gate
+keeps exercising those routes after enforcement. Before flipping
+`APP_CHECK_ENFORCED=1`, two things must be true or verify:live will redden:
+1. `NEXT_PUBLIC_FIREBASE_APP_ID` is set as a GitHub Actions secret (the public
+   web app id from `apphosting.yaml`, `1:…:web:…`).
+2. The `FIREBASE_SERVICE_ACCOUNT` service account has the Firebase App Check
+   Admin role (or the narrower App Check Token Exchange permission), so
+   `createToken` can exchange the minted token.
+
 ## Domain model
 
 All data is structured as typed objects (no prose-only storage). The core domains are:

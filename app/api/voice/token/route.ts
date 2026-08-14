@@ -19,7 +19,7 @@ const SESSION_TTL_MS = 30 * 60 * 1000; // messages allowed for 30 minutes
 const START_TTL_MS = 2 * 60 * 1000; // must open the session within 2 minutes
 
 export async function POST(req: Request) {
-  const appCheck = await gateAppCheck(req);
+  const appCheck = await gateAppCheck(req, { consume: true });
   if (appCheck) return appCheck;
 
   const auth = req.headers.get('authorization');

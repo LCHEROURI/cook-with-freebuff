@@ -18,7 +18,7 @@ import { logError } from '@/lib/server/logger';
 const scanner = createGeminiVisionScanner();
 
 export async function POST(req: Request) {
-  const appCheck = await gateAppCheck(req);
+  const appCheck = await gateAppCheck(req, { consume: true });
   if (appCheck) return appCheck;
 
   const auth = req.headers.get('authorization');

@@ -82,15 +82,39 @@ describe('verifyAppCheckToken', () => {
     const { verifyAppCheckToken } = await import('./app-check');
 
     await expect(verifyAppCheckToken('good-token')).resolves.toEqual({ ok: true, reason: 'verified' });
-    expect(verifyToken).toHaveBeenCalledWith('good-token');
+    expect(verifyToken).toHaveBeenCalledWith('good-token', {});
   });
 
-  it('rejects a token minted for a different app', async () => {
+  it('enables single-use consumption when the gate opts in', async () => {
+    process.env.APP_CHECK_ENFORCED = '1';
+    verifyToken.mockResolvedValue({ appId: 'test-app-id' });
+    const { verifyAppCheckToken } = await import('./app-check');
+
+    await verifyAppCheckToken('good-token', { consume: true });
+    expect(verifyToken).toHaveBeenCalledWith('good-token', { consume: true });
+  });
+
+  it('rejects a replayed (already consumed) token when enforced', async () => {
+    process.env.APP_CHECK_ENFORCED = '1';
+    verifyToken.mockResolvedValue({ appId: 'test-app-id', alreadyConsumed: true });
+    const { verifyAppCheckToken } = await import('./app-check');
+
+    await expect(verifyAppCheckToken('good-token')).resolves.toEqual({ ok: false, reason: 'replay' });
+  });
+
+  it('rejects a token minted for a different app when enforced', async () => {
     process.env.APP_CHECK_ENFORCED = '1';
     verifyToken.mockResolvedValue({ appId: 'other-app-id' });
     const { verifyAppCheckToken } = await import('./app-check');
 
     await expect(verifyAppCheckToken('good-token')).resolves.toEqual({ ok: false, reason: 'app-mismatch' });
+  });
+
+  it('passes an app-id mismatch in monitor mode (logs, never blocks)', async () => {
+    verifyToken.mockResolvedValue({ appId: 'other-app-id' });
+    const { verifyAppCheckToken } = await import('./app-check');
+
+    await expect(verifyAppCheckToken('good-token')).resolves.toEqual({ ok: true });
   });
 
   it('rejects an invalid token when enforced', async () => {

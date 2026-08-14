@@ -26,7 +26,19 @@ import { logWarn } from './logger';
 
 export type AppCheckVerdict =
   | { ok: true; reason?: 'emulator' | 'verified' }
-  | { ok: false; reason: 'missing-token' | 'invalid-token' | 'app-mismatch' | 'unconfigured' };
+  | { ok: false; reason: 'missing-token' | 'invalid-token' | 'app-mismatch' | 'unconfigured' | 'replay' };
+
+/** Options for a route gate. */
+export interface AppCheckGateOptions {
+  /**
+   * Enable single-use token consumption (replay protection). Marks the token
+   * consumed on first use so a captured token can't be replayed. Recommended
+   * by Firebase only for low-volume, expensive operations (a Gemini Live
+   * session mint, an image scan) — never for a polled route, because the
+   * client SDK caches tokens and every poll would need a fresh attestation.
+   */
+  consume?: boolean;
+}
 
 /** Whether App Check is enforced (403 on a missing/invalid token). */
 export function appCheckEnforced(): boolean {
@@ -44,7 +56,10 @@ function isEmulator(): boolean {
  * Never throws — a verification failure is a verdict, not an exception, so a
  * misconfigured App Check can't crash the route it guards.
  */
-export async function verifyAppCheckToken(token: string | null): Promise<AppCheckVerdict> {
+export async function verifyAppCheckToken(
+  token: string | null,
+  opts: AppCheckGateOptions = {},
+): Promise<AppCheckVerdict> {
   if (isEmulator()) return { ok: true, reason: 'emulator' };
 
   const enforced = appCheckEnforced();
@@ -58,11 +73,18 @@ export async function verifyAppCheckToken(token: string | null): Promise<AppChec
   }
 
   try {
-    const { appId } = await getAppCheck(app).verifyToken(token);
+    const { appId, alreadyConsumed } = await getAppCheck(app).verifyToken(
+      token,
+      opts.consume ? { consume: true } : {},
+    );
+    if (alreadyConsumed) {
+      logWarn('app-check.replay', { appId });
+      return enforced ? { ok: false, reason: 'replay' } : { ok: true };
+    }
     const expected = process.env.NEXT_PUBLIC_FIREBASE_APP_ID;
     if (expected && appId !== expected) {
-      logWarn('app-check.app-mismatch', { appId, expected });
-      return { ok: false, reason: 'app-mismatch' };
+      logWarn('app-check.app-mismatch', { appId, expected, enforced });
+      return enforced ? { ok: false, reason: 'app-mismatch' } : { ok: true };
     }
     return { ok: true, reason: 'verified' };
   } catch (e) {
@@ -80,9 +102,9 @@ export async function verifyAppCheckToken(token: string | null): Promise<AppChec
  * or null when the request may proceed. Call early in every quota-bearing
  * route, before any model work.
  */
-export async function gateAppCheck(req: Request): Promise<NextResponse | null> {
+export async function gateAppCheck(req: Request, opts: AppCheckGateOptions = {}): Promise<NextResponse | null> {
   const token = req.headers.get('x-firebase-appcheck');
-  const verdict = await verifyAppCheckToken(token);
+  const verdict = await verifyAppCheckToken(token, opts);
   if (verdict.ok) return null;
 
   const message =

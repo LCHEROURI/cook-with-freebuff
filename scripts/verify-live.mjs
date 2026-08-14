@@ -59,7 +59,8 @@
 //   npm run verify:live -- --guided-only       # deployed guided flow [1]–[3] only
 //
 // Exit code 0 = PASS, 1 = FAIL. Requires .env.local with the Firebase admin
-// credentials + web API key + APP_OWNER_UID (see .env.example) — except in
+// credentials + web API key + APP_OWNER_UID + NEXT_PUBLIC_FIREBASE_APP_ID
+// (see .env.example) — except in
 // `--emulator` mode (set by verify-live-emulator.mjs), which is self-contained:
 // it needs only FIRESTORE_EMULATOR_HOST + FIREBASE_AUTH_EMULATOR_HOST and runs
 // the deterministic guided flow ([1]–[3]) against the local emulators.
@@ -71,6 +72,7 @@ import { resolve } from 'node:path';
 import { initializeApp, cert, getApps } from 'firebase-admin/app';
 import { getAuth } from 'firebase-admin/auth';
 import { getFirestore } from 'firebase-admin/firestore';
+import { getAppCheck } from 'firebase-admin/app-check';
 
 // ── Env loading (process.env wins; .env.local fills the gaps) ───────────────
 function loadEnv() {
@@ -110,6 +112,10 @@ const AUTH_EMULATOR_HOST = process.env.FIREBASE_AUTH_EMULATOR_HOST || 'localhost
 let API_KEY = process.env.NEXT_PUBLIC_FIREBASE_API_KEY;
 let OWNER_UID = process.env.APP_OWNER_UID;
 const SA_JSON = process.env.FIREBASE_SERVICE_ACCOUNT;
+// The deployed web app id (same public value in apphosting.yaml). The driver
+// attests to App Check with it via admin.appCheck().createToken() so the
+// post-deploy gate keeps exercising the gated routes once enforcement is on.
+const APP_ID = process.env.NEXT_PUBLIC_FIREBASE_APP_ID;
 
 let failures = 0;
 const ok = (m) => console.log(`  ✓ ${m}`);
@@ -234,6 +240,7 @@ if (EMULATOR) {
   if (!API_KEY) { console.error('✗ FAIL: NEXT_PUBLIC_FIREBASE_API_KEY is required'); process.exit(1); }
   if (!OWNER_UID) { console.error('✗ FAIL: APP_OWNER_UID is required (the owner Firebase Auth uid)'); process.exit(1); }
   if (!SA_JSON) { console.error('✗ FAIL: FIREBASE_SERVICE_ACCOUNT (inline JSON) is required'); process.exit(1); }
+  if (!APP_ID) { console.error('✗ FAIL: NEXT_PUBLIC_FIREBASE_APP_ID is required (the web app id, to attest via App Check)'); process.exit(1); }
 }
 
 let app;
@@ -373,7 +380,30 @@ try {
     throw new Error('abort — token exchange failed');
   }
   ok('owner ID token minted');
-  const AUTH = { authorization: `Bearer ${idToken}`, 'content-type': 'application/json' };
+
+  // ── App Check attestation ────────────────────────────────────────────────
+  // The deployed /api/cook + /api/agent are gated by Firebase App Check
+  // (monitor mode today, enforced once APP_CHECK_ENFORCED=1). The driver
+  // attests with admin.appCheck().createToken() — Firebase's supported CI
+  // mechanism — so the post-deploy gate keeps reaching the tested flow after
+  // enforcement, instead of 403ing before it. A mint failure is recorded as
+  // a failure (and the gated routes then report their own 403s) but the run
+  // continues so every stage still reports.
+  let appCheckToken = null;
+  if (!EMULATOR) {
+    try {
+      const minted = await getAppCheck(app).createToken(APP_ID);
+      appCheckToken = minted.token;
+      ok('App Check token minted (admin.appCheck().createToken)');
+    } catch (e) {
+      fail(`could not mint App Check token — ${e instanceof Error ? e.message : String(e)} (the service account needs the Firebase App Check Admin role, and NEXT_PUBLIC_FIREBASE_APP_ID must be the deployed web app id)`);
+    }
+  }
+  const AUTH = {
+    authorization: `Bearer ${idToken}`,
+    'content-type': 'application/json',
+    ...(appCheckToken ? { 'X-Firebase-AppCheck': appCheckToken } : {}),
+  };
 
   // ── 3. Guided flow through the deployed /api/cook ───────────────────────
   console.log(`\n[3] Driving guided cooking via ${APP}/api/cook`);
