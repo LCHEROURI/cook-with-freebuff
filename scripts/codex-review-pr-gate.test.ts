@@ -1,4 +1,4 @@
-import { readFileSync, writeFileSync, chmodSync, mkdtempSync, rmSync } from 'node:fs';
+import { readFileSync, writeFileSync, chmodSync, mkdtempSync, rmSync, existsSync } from 'node:fs';
 import { execSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -106,13 +106,28 @@ describe('scripts/codex-review-pr-gate.mjs', () => {
     expect(WORKFLOW).toContain('workflow_dispatch:');
   });
 
-  it('the workflow passes PR_NUMBER + GH_TOKEN, the allow-no-review dispatch input, and read-only perms', () => {
+  it('the workflow passes PR_NUMBER + GH_TOKEN, the allow-no-review dispatch input, and comment write perms', () => {
     expect(WORKFLOW).toContain('GH_TOKEN: ${{ github.token }}');
     expect(WORKFLOW).toContain('PR_NUMBER: ${{ github.event.pull_request.number || github.event.issue.number || github.event.inputs.pr }}');
     expect(WORKFLOW).toContain('CODEX_GATE_ALLOW_NO_REVIEW: ${{ github.event.inputs.allow_no_review == \'true\' }}');
     expect(WORKFLOW).toContain('allow_no_review:');
-    expect(WORKFLOW).toContain('pull-requests: read');
+    // write so a red gate can post its bot-style summary on the PR thread.
+    expect(WORKFLOW).toContain('pull-requests: write');
     expect(WORKFLOW).toContain('node scripts/codex-review-pr-gate.mjs');
+  });
+
+  it('a red gate posts a bot-style PR-thread comment, workflow-only and deduped per head', () => {
+    // The alert rides the issues/{pr}/comments endpoint with a per-head marker,
+    // and is gated on GH_TOKEN so local runs never comment on PRs.
+    expect(GATE).toContain('codex-gate-red');
+    expect(GATE).toContain('issues/${pr}/comments');
+    // GH_TOKEN alone is not an Actions signal — local devs exporting it must
+    // not post comments; GITHUB_ACTIONS must also be true (Codex P2, PR #79).
+    expect(GATE).toContain("process.env.GITHUB_ACTIONS === 'true'");
+    expect(GATE).toContain('block lifts when every thread above is answered');
+    // Same-head updates edit the existing comment; a green gate resolves it.
+    expect(GATE).toContain('--method PATCH');
+    expect(GATE).toContain('resolved');
   });
 
   it('behaves end to end against a stubbed gh', () => {
@@ -139,19 +154,34 @@ describe('scripts/codex-review-pr-gate.mjs', () => {
 
     const run = (
       comments: unknown[],
-      opts: { reviews?: unknown[]; extraArgs?: string; extraEnv?: Record<string, string> } = {},
+      opts: {
+        reviews?: unknown[];
+        extraArgs?: string;
+        extraEnv?: Record<string, string>;
+        gateComments?: unknown[];
+      } = {},
     ) => {
-      const { reviews = [botReview], extraArgs = '', extraEnv = {} } = opts;
+      const { reviews = [botReview], extraArgs = '', extraEnv = {}, gateComments = [] } = opts;
       const stubDir = mkdtempSync(join(tmpdir(), 'codex-gate-stub-'));
       const stubPath = join(stubDir, 'gh');
+      const postsLog = join(stubDir, 'posts.log');
       writeFileSync(
         stubPath,
         `#!/usr/bin/env node
+const fs = require('node:fs');
 const HEAD = ${JSON.stringify(HEAD)};
 const comments = ${JSON.stringify(comments)};
 const reviews = ${JSON.stringify(reviews)};
+const gateComments = ${JSON.stringify(gateComments)};
+const postsLog = ${JSON.stringify(postsLog)};
 const url = process.argv.join(' ');
-if (url.includes('/42/comments?')) {
+if (url.includes('issues/42/comments?')) {
+  process.stdout.write(JSON.stringify([gateComments]));
+} else if ((url.includes('issues/42/comments') || url.includes('issues/comments/')) && url.includes('--input')) {
+  const i = process.argv.indexOf('--input');
+  fs.appendFileSync(postsLog, fs.readFileSync(process.argv[i + 1], 'utf8') + '<<<POST>>>');
+  process.stdout.write('{}');
+} else if (url.includes('/42/comments?')) {
   process.stdout.write(JSON.stringify([comments]));
 } else if (url.includes('/42/reviews?')) {
   process.stdout.write(JSON.stringify([reviews]));
@@ -163,19 +193,33 @@ if (url.includes('/42/comments?')) {
 `,
       );
       chmodSync(stubPath, 0o755);
+      const readPosts = () =>
+        existsSync(postsLog)
+          ? readFileSync(postsLog, 'utf8').split('<<<POST>>>').filter((s) => s.trim().length > 0)
+          : [];
       try {
         try {
+          const env: NodeJS.ProcessEnv = { ...process.env };
+          // Deterministic: local runs must not post comments — only a real
+          // Actions run (GITHUB_ACTIONS=true AND GH_TOKEN) does. CI runners
+          // carry GITHUB_ACTIONS=true in process.env, so it must be scrubbed
+          // here or the 'local run' case would leak into a posting run.
+          delete env.GH_TOKEN;
+          delete env.GITHUB_TOKEN;
+          delete env.GITHUB_ACTIONS;
+          Object.assign(env, { PATH: `${stubDir}:${process.env.PATH}` }, extraEnv);
           const out = execSync(
             `node scripts/codex-review-pr-gate.mjs --repo fake/repo --pr 42 ${extraArgs}`,
-            {
-              encoding: 'utf8',
-              env: { ...process.env, PATH: `${stubDir}:${process.env.PATH}`, ...extraEnv },
-            },
+            { encoding: 'utf8', env },
           );
-          return { status: 0, out };
+          return { status: 0, out, posts: readPosts() };
         } catch (e) {
           const err = e as { status?: number; stdout?: string; stderr?: string };
-          return { status: err.status ?? 1, out: `${err.stdout ?? ''}${err.stderr ?? ''}` };
+          return {
+            status: err.status ?? 1,
+            out: `${err.stdout ?? ''}${err.stderr ?? ''}`,
+            posts: readPosts(),
+          };
         }
       } finally {
         rmSync(stubDir, { recursive: true, force: true });
@@ -236,5 +280,44 @@ if (url.includes('/42/comments?')) {
     expect(run([P(61, 'P2')], { extraEnv: { CODEX_GATE_INCLUDE_P2: 'true' } }).status).toBe(1);
     // And P3 still never blocks, even under the stricter bar.
     expect(run([P(63, 'P3')], { extraEnv: { CODEX_GATE_INCLUDE_P2: 'true' } }).status).toBe(0);
+
+    // ── Red-alert comment ────────────────────────────────────────────────
+    // In the workflow (GITHUB_ACTIONS + GH_TOKEN), a red gate posts a
+    // bot-style summary on the PR thread with the per-head marker and the
+    // finding thread URL.
+    const actions = { GH_TOKEN: 'stub-token', GITHUB_ACTIONS: 'true' };
+    const alerted = run([P(71, 'P1')], { extraEnv: actions });
+    expect(alerted.status).toBe(1);
+    expect(alerted.posts.length).toBe(1);
+    expect(alerted.posts[0]).toContain('codex-gate-red: abc123def456');
+    expect(alerted.posts[0]).toContain('https://example.com/r71');
+    expect(alerted.posts[0]).toContain('Codex review gate is blocking PR #42');
+
+    // Local runs never comment, even when red — with or without GH_TOKEN
+    // exported (GITHUB_ACTIONS is the Actions signal, Codex P2, PR #79).
+    expect(run([P(72, 'P1')]).posts.length).toBe(0);
+    expect(run([P(72, 'P1')], { extraEnv: { GH_TOKEN: 'stub-token' } }).posts.length).toBe(0);
+
+    // Same head, new finding set: the existing comment is EDITED (PATCH) with
+    // the fresh summary instead of posting a second one.
+    const alreadyAlerted = run([P(73, 'P1')], {
+      gateComments: [{ id: 9001, body: '<!-- codex-gate-red: abc123def456 -->\nOlder finding.' }],
+      extraEnv: actions,
+    });
+    expect(alreadyAlerted.status).toBe(1);
+    expect(alreadyAlerted.posts.length).toBe(1);
+    expect(alreadyAlerted.posts[0]).toContain('https://example.com/r73');
+
+    // A green gate posts nothing when no alert exists…
+    expect(run([], { extraEnv: actions }).posts.length).toBe(0);
+    // …and RESOLVES a stale blocking comment when one exists for this head.
+    const resolved = run([], {
+      gateComments: [{ id: 9002, body: '<!-- codex-gate-red: abc123def456 -->\nOld block.' }],
+      extraEnv: actions,
+    });
+    expect(resolved.status).toBe(0);
+    expect(resolved.posts.length).toBe(1);
+    expect(resolved.posts[0]).toContain('Codex review gate is green');
+    expect(resolved.posts[0]).toContain('codex-gate-resolved');
   }, 20_000);
 });

@@ -12,9 +12,8 @@
 //   • scans the PR's inline review comments (pulls/{n}/comments, paginated),
 //   • classifies severity from the badge URL in the comment body (P0/P1/P2),
 //   • blocks on P0 and P1 by default; the stricter bar (also blocking P2)
-//     comes from --include-p2, the CODEX_GATE_INCLUDE_P2 repo variable, or
-//     the workflow_dispatch include_p2 input — other P severities never
-//     block,
+//     comes from --include-p2 or the CODEX_GATE_INCLUDE_P2 repo variable —
+//     other P severities never block,
 //   • only considers bot comments ON THE CURRENT HEAD — a finding left on an
 //     earlier commit that a push already addressed cannot block the new head,
 //   • treats a finding as OPEN until a human reply lands on its thread
@@ -29,8 +28,14 @@
 // CODEX_GATE_WAIT_SECONDS (default 360); if none appears it fails with a
 // WAITING message so the PR cannot merge before the bot has reviewed it. The
 // bot occasionally skips a PR entirely; after confirming that is the case,
-// re-run with --allow-no-review (or the workflow_dispatch input) to certify
-// the PR as reviewed-by-human. (Codex P1, PR #73 review.)
+// re-run with --allow-no-review to certify the PR as reviewed-by-human.
+// (Codex P1, PR #73 review.)
+//
+// A red gate running in Actions (GITHUB_ACTIONS=true and GH_TOKEN set) ALSO
+// keeps a bot-style comment on the PR thread summarizing the open findings —
+// one per head SHA, edited in place as the finding set changes and resolved
+// when the gate turns green — so the block is visible without opening the
+// check details. Local runs never comment.
 //
 // Exit codes: 0 = no open P0/P1 findings, 1 = waiting for the bot review or
 // open findings block the merge, 2 = usage error (no PR number).
@@ -47,6 +52,9 @@
 // ============================================================================
 
 import { execSync } from 'node:child_process';
+import { writeFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 const BOT_LOGIN = 'chatgpt-codex-connector[bot]';
 const DEFAULT_REPO = 'LCHEROURI/cook-with-freebuff';
@@ -213,6 +221,11 @@ for (const c of comments) {
 
 // ── Verdict ─────────────────────────────────────────────────────────────────
 
+// Only a real Actions run may touch the PR thread — GH_TOKEN alone is not an
+// Actions signal (a local dev exporting it would otherwise post comments),
+// so GITHUB_ACTIONS must also be true (Codex P2, PR #79 review).
+const inActions = process.env.GITHUB_ACTIONS === 'true' && !!process.env.GH_TOKEN;
+
 const botCommentCount = comments.filter((c) => c.user?.login === BOT_LOGIN).length;
 const label = includeP2 ? 'P0/P1/P2' : 'P0/P1';
 if (blocking.length === 0) {
@@ -220,9 +233,98 @@ if (blocking.length === 0) {
     `✓ Codex review gate: no open ${label} findings on PR #${pr}` +
       ` (${botCommentCount} bot comment(s))`,
   );
+  resolveAlertIfPosted(headSha);
   process.exit(0);
 }
 
+/** The red-alert comment already posted for this head, if any (per-head marker). */
+function alertCommentForHead(head) {
+  const marker = `<!-- codex-gate-red: ${head} -->`;
+  try {
+    return (
+      JSON.parse(
+        runQuiet(`gh api --paginate "repos/${repo}/issues/${pr}/comments?per_page=100" --slurp`),
+      ).flat().find((c) => typeof c.body === 'string' && c.body.includes(marker)) ?? null
+    );
+  } catch {
+    return null;
+  }
+}
+
+function writeCommentBody(body) {
+  const bodyFile = join(tmpdir(), `codex-gate-alert-${pr}-${Date.now()}.json`);
+  writeFileSync(bodyFile, JSON.stringify({ body }));
+  return bodyFile;
+}
+
+function sendComment(body, comment, verb) {
+  const bodyFile = writeCommentBody(body);
+  try {
+    if (comment) {
+      runQuiet(`gh api --method PATCH "repos/${repo}/issues/comments/${comment.id}" --input ${bodyFile}`);
+    } else {
+      runQuiet(`gh api --method POST "repos/${repo}/issues/${pr}/comments" --input ${bodyFile}`);
+    }
+    console.log(`  ✎ ${verb} alert comment on PR #${pr}`);
+  } catch (e) {
+    console.warn(`  - could not ${verb} alert comment (${e instanceof Error ? e.message : String(e)})`);
+  } finally {
+    try {
+      rmSync(bodyFile, { force: true });
+    } catch {
+      /* best effort */
+    }
+  }
+}
+
+/**
+ * Keep a bot-style summary of the open findings on the PR thread, so the
+ * block is visible without opening the check details. One comment per head:
+ * a fresh finding on the same head EDITS the existing comment rather than
+ * posting another, so the summary is always current (Codex P2, PR #79
+ * review).
+ */
+function postRedAlert(findings, head) {
+  if (!inActions) return;
+  const marker = `<!-- codex-gate-red: ${head} -->`;
+  const lines = [
+    marker,
+    `## 🚫 Codex review gate is blocking PR #${pr}`,
+    '',
+    `${findings.length} open Codex finding(s) — fix the code, then reply \`Resolved …\` on each thread to turn the gate green:`,
+    '',
+    ...findings.map((f) => {
+      const color = f.severity === 'P0' ? 'red' : 'orange';
+      return (
+        `- ![${f.severity} Badge](https://img.shields.io/badge/${f.severity}-${color}?style=flat) ` +
+        `**${f.path}${f.line ? ':' + f.line : ''}** — ${f.summary}\n` +
+        `  ${f.url}`
+      );
+    }),
+    '',
+    'This check is required to merge — the block lifts when every thread above is answered.',
+  ];
+  const existing = alertCommentForHead(head);
+  sendComment(lines.join('\n'), existing, existing ? 'updated' : 'posted');
+}
+
+/**
+ * When the gate turns green on a head that was blocked, resolve the stale
+ * "blocking" comment instead of leaving it as a permanent lie (Codex P2,
+ * PR #79 review). No-op when no red alert was posted for this head.
+ */
+function resolveAlertIfPosted(head) {
+  if (!inActions) return;
+  const existing = alertCommentForHead(head);
+  if (!existing) return;
+  const body =
+    `<!-- codex-gate-resolved: ${head} -->\n` +
+    `## ✅ Codex review gate is green on this head\n\n` +
+    'All findings that blocked this PR have been answered on their threads.';
+  sendComment(body, existing, 'resolved');
+}
+
+postRedAlert(blocking, headSha);
 console.error(`✗ FAIL: ${blocking.length} open Codex finding(s) on PR #${pr} — fix, then reply on each thread:`);
 for (const f of blocking) {
   console.error(`  • [${f.severity}] ${f.path}${f.line ? ':' + f.line : ''} — ${f.summary}`);

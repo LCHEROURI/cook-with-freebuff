@@ -58,7 +58,9 @@ jobs:
 
     permissions:
       contents: read
-      pull-requests: read
+      # write so a red gate can post its bot-style summary on the PR thread
+      # (scripts/codex-review-pr-gate.mjs postRedAlert).
+      pull-requests: write
 
     steps:
       - name: Check out repository
