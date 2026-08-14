@@ -12,7 +12,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:emulator": "RUN_EMULATOR_TESTS=1 vitest run --no-file-parallelism lib/server/rollback-resume.emulator.test.ts scripts/cleanup-correlation-markers.emulator.test.ts",
-    "cleanup:markers": "node scripts/cleanup-correlation-markers.mjs",
+    "cleanup:markers": "node --import ./scripts/stub-server-only.mjs --import tsx scripts/cleanup-correlation-markers.ts",
     "verify:live": "node scripts/verify-live.mjs",
     "verify:live:local": "node scripts/verify-live-local.mjs",
     "verify:live:emulator": "node scripts/verify-live-emulator.mjs",
@@ -52,6 +52,7 @@
     "eslint-config-next": "^15.5.23",
     "jsdom": "^25.0.1",
     "server-only": "^0.0.1",
+    "tsx": "^4.19.0",
     "typescript": "^5.7.0",
     "vitest": "^3.0.0"
   }

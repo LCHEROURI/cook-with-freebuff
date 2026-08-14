@@ -1,16 +1,19 @@
 name: Codex review gate
 
-# Fails a PR when the Codex review bot leaves an OPEN P1 finding, instead of
-# relying on the post-merge issue monitor to catch it after the fact. The bot
-# posts inline review comments shortly after a PR opens — often AFTER the
-# initial checks complete — so the gate re-runs on review-comment and review
-# events as well as the standard pull_request events: a P1 that lands after
-# the first check run still reddens this required check and blocks the merge.
+# Fails a PR when the Codex review bot leaves an OPEN P0/P1 finding, instead
+# of relying on the post-merge issue monitor to catch it after the fact. The
+# bot posts inline review comments shortly after a PR opens — often AFTER the
+# initial checks complete — so the gate re-runs on review-comment (created
+# and deleted) and review events as well as the standard pull_request events:
+# a P1 that lands after the first check run still reddens this required check
+# and blocks the merge.
 #
 # A finding is open until a human reply lands on its thread (in_reply_to_id) —
 # the resolution-note convention — so fixing the code and replying on the
-# thread turns the gate green. P2 findings never block (see
-# scripts/codex-review-pr-gate.mjs --include-p2).
+# thread turns the gate green. P2 findings never block by default (see
+# scripts/codex-review-pr-gate.mjs --include-p2). The gate also waits for a
+# real Codex review of the current head before passing — an empty comment
+# list is not a clean review (see the script header).
 #
 # Add "Codex P1 gate" to the branch's required status checks for the gate to
 # actually block merges (this workflow only reports the check result).
@@ -20,8 +23,11 @@ on:
     types: [opened, synchronize, reopened, ready_for_review]
   # The bot's inline comments and reviews arrive after the initial checks —
   # re-run the gate the moment one lands so the required check reflects it.
+  # `deleted` matters too: a resolution reply that gets deleted re-opens its
+  # finding, and the check must recompute rather than keep the stale green
+  # (Codex P2, PR #73 review).
   pull_request_review_comment:
-    types: [created]
+    types: [created, deleted]
   pull_request_review:
     types: [submitted]
   workflow_dispatch:
@@ -29,6 +35,11 @@ on:
       pr:
         description: PR number to gate
         required: true
+      allow_no_review:
+        description: Certify when the bot has not reviewed this PR (human-confirmed skip)
+        required: false
+        default: 'false'
+        type: boolean
 
 concurrency:
   group: codex-gate-${{ github.event.pull_request.number || github.event.issue.number || github.event.inputs.pr }}
@@ -64,4 +75,10 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ github.event.pull_request.number || github.event.issue.number || github.event.inputs.pr }}
+          CODEX_GATE_ALLOW_NO_REVIEW: ${{ github.event.inputs.allow_no_review == 'true' }}
+          # Bot-skipped-PR certification: a repo variable (comma-separated PR
+          # numbers) rides this pull_request-triggered run, so the certified
+          # pass satisfies the required merge gate (a workflow_dispatch check
+          # never enters the PR status rollup).
+          CODEX_GATE_BOT_SKIPPED_PRS: ${{ vars.CODEX_GATE_BOT_SKIPPED_PRS }}
         run: node scripts/codex-review-pr-gate.mjs

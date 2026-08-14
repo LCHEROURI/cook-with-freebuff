@@ -43,7 +43,14 @@ const DAY = 86_400_000;
 /** Spawn the real cleanup script with the given extra env; collect its output. */
 function runCleanup(extraEnv: Record<string, string> = {}) {
   return new Promise<{ code: number; stdout: string; stderr: string }>((res) => {
-    const child = spawn(process.execPath, ['scripts/cleanup-correlation-markers.mjs'], {
+    // The script is TypeScript that imports the TS repository layer; tsx is a
+    // devDependency, so --import tsx runs it directly (same in CI's npm ci).
+    // The stub-server-only preload makes the repository's `import 'server-only'`
+    // a no-op outside Next's bundler (see scripts/stub-server-only.mjs).
+    const child = spawn(
+      process.execPath,
+      ['--import', './scripts/stub-server-only.mjs', '--import', 'tsx', 'scripts/cleanup-correlation-markers.ts'],
+      {
       cwd: ROOT,
       env: { ...process.env, FIRESTORE_EMULATOR_HOST: EMULATOR_HOST, ...extraEnv },
     });
