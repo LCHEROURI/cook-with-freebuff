@@ -6,6 +6,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import 'server-only';
+import type { DocumentSnapshot } from 'firebase-admin/firestore';
 import { getAdminDb } from './admin';
 import type {
   UserId,
@@ -233,6 +234,60 @@ export async function clearCorrelationMarker(id: string): Promise<void> {
   if (legacyKeyable(id)) {
     await deleteDoc(CORRELATION_MARKERS, id);
   }
+}
+
+export interface StaleMarkerCleanupResult {
+  deleted: number;
+  pages: number;
+}
+
+/**
+ * Delete every correlation marker older than cutoffMs, page by page at the
+ * 500-write batch limit with startAfter pagination. The scheduled TTL cleanup
+ * (scripts/cleanup-correlation-markers.ts) delegates here so no Firestore
+ * write bypasses the repository boundary (Codex P1, PR #70 review) — the
+ * collection's invariants and any future schema/storage change stay
+ * centralized with the rest of the marker logic.
+ *
+ * With dryRun the pages are read and counted but nothing is written.
+ * batchSize is capped at Firestore's 500-write batch limit and must be a
+ * positive integer.
+ */
+export async function deleteStaleCorrelationMarkers(
+  cutoffMs: number,
+  options: { batchSize?: number; dryRun?: boolean } = {},
+): Promise<StaleMarkerCleanupResult> {
+  const db = getAdminDb();
+  if (!db) throw new Error('Firestore not initialized');
+  const batchSize = options.batchSize ?? 500;
+  if (!Number.isInteger(batchSize) || batchSize < 1 || batchSize > 500) {
+    throw new Error(`batchSize must be an integer in 1..500 (got ${batchSize})`);
+  }
+  let deleted = 0;
+  let pages = 0;
+  let lastDoc: DocumentSnapshot | null = null;
+  while (true) {
+    // Single-field range + orderBy on the same field needs no composite index.
+    // Pagination via startAfter keeps pages bounded and the sweep resumable.
+    let q = db
+      .collection(CORRELATION_MARKERS)
+      .where('markedAt', '<', cutoffMs)
+      .orderBy('markedAt')
+      .limit(batchSize);
+    if (lastDoc) q = q.startAfter(lastDoc);
+    const snap = await q.get();
+    if (snap.empty) break;
+    pages += 1;
+    lastDoc = snap.docs[snap.size - 1];
+    if (!options.dryRun) {
+      const batch = db.batch();
+      for (const d of snap.docs) batch.delete(d.ref);
+      await batch.commit();
+    }
+    deleted += snap.size;
+    if (snap.size < batchSize) break;
+  }
+  return { deleted, pages };
 }
 
 // ── Recipe repository ────────────────────────────────────────────────────────
