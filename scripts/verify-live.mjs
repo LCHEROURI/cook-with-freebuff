@@ -57,6 +57,8 @@
 //   VERIFY_BASE_URL=... node scripts/verify-live.mjs
 //   npm run verify:live:emulator              # guided flow vs the LOCAL emulators
 //   npm run verify:live -- --guided-only       # deployed guided flow [1]–[3] only
+//   npm run verify:live -- --require-app-check-enforced
+//                                             # FAIL unless the deployed server 403s an unattested request
 //
 // Exit code 0 = PASS, 1 = FAIL. Requires .env.local with the Firebase admin
 // credentials + web API key + APP_OWNER_UID + NEXT_PUBLIC_FIREBASE_APP_ID
@@ -107,6 +109,11 @@ const EMULATOR = process.argv.includes('--emulator') || process.env.VERIFY_EMULA
 // turns). Used by verify-live-compare-emulator.mjs so the deployed reference
 // leg is fast and only emits the shared guided-flow steps.
 const GUIDED_ONLY = process.argv.includes('--guided-only');
+// Strict App Check mode: the deployed server MUST be enforcing App Check — an
+// unattested request has to come back 403 APP_CHECK_FAILED. Set in CI once
+// APP_CHECK_ENFORCED=1 is live, so the post-deploy gate proves enforcement
+// instead of silently tolerating monitor mode.
+const REQUIRE_APP_CHECK_ENFORCED = process.argv.includes('--require-app-check-enforced') || process.env.REQUIRE_APP_CHECK_ENFORCED === '1';
 const EMULATOR_PROJECT_ID = 'demo-cook-with-freebuff';
 const AUTH_EMULATOR_HOST = process.env.FIREBASE_AUTH_EMULATOR_HOST || 'localhost:9099';
 let API_KEY = process.env.NEXT_PUBLIC_FIREBASE_API_KEY;
@@ -409,6 +416,32 @@ try {
     'content-type': 'application/json',
     ...(appCheckToken ? { 'X-Firebase-AppCheck': appCheckToken } : {}),
   };
+
+  // ── 2a. App Check enforcement probe ─────────────────────────────────────
+  // Prove the deployed server ENFORCES App Check, not just accepts it. A valid
+  // owner request with NO App Check token must be rejected 403 APP_CHECK_FAILED
+  // once enforcement is on (and pass in monitor mode). The happy-path flow
+  // below attaches a token, so it would stay green even if enforcement were
+  // silently disabled — this negative probe is what catches that regression.
+  // `list_recipes` is a read-only action, so the probe writes nothing.
+  if (!EMULATOR) {
+    const noAppCheck = await fetchJson(`${APP}/api/cook`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${idToken}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ action: 'list_recipes' }),
+    });
+    const enforced = noAppCheck.status === 403 && noAppCheck.body?.error?.code === 'APP_CHECK_FAILED';
+    if (enforced) {
+      ok(`App Check enforcement: unattested request rejected 403 (${noAppCheck.body.error.code})`);
+      if (!appCheckToken) {
+        fail('App Check is enforced but the driver minted no token — enable the App Check API, grant the service account the App Check Admin role, and set NEXT_PUBLIC_FIREBASE_APP_ID');
+      }
+    } else if (REQUIRE_APP_CHECK_ENFORCED) {
+      fail(`App Check enforcement required but the deployed server accepted an unattested request (HTTP ${noAppCheck.status}) — set APP_CHECK_ENFORCED=1`);
+    } else {
+      note(`App Check in monitor mode — unattested request returned HTTP ${noAppCheck.status} (not blocked)`);
+    }
+  }
 
   // ── 3. Guided flow through the deployed /api/cook ───────────────────────
   console.log(`\n[3] Driving guided cooking via ${APP}/api/cook`);

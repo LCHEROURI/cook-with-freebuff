@@ -85,6 +85,13 @@ flipping `APP_CHECK_ENFORCED=1`, three things must be true:
    Admin role (or the narrower App Check Token Exchange permission), so
    `createToken` can exchange the minted token.
 
+verify:live also exercises the enforced path itself: it probes a valid owner
+request with NO App Check token and expects a 403 `APP_CHECK_FAILED` once
+enforcement is on. Run `npm run verify:live -- --require-app-check-enforced`
+(or set `REQUIRE_APP_CHECK_ENFORCED=1`) to make a monitor-mode server a hard
+failure instead of a note, and set that in CI when you flip enforcement so the
+post-deploy gate proves enforcement rather than tolerating its absence.
+
 ## Domain model
 
 All data is structured as typed objects (no prose-only storage). The core domains are:
