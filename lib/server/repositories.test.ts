@@ -132,18 +132,125 @@ describe('correlation-marker legacy-key fallback (Codex P1 — PR #59 review)', 
     expect(store.size).toBe(0);
   });
 
-  it('mark dual-writes so old instances still see the raw key (PR #62 P1)', async () => {
+  it('mark writes the encoded key only, never the raw namespace (PR #64 P2)', async () => {
     const { db, store } = fakeDb();
     const { getAdminDb } = await import('./admin');
     vi.mocked(getAdminDb).mockReturnValue(db);
 
     await repo.markCorrelationMarker('resume-op-101');
     expect(store.has(`correlation_markers/${repo.markerKey('resume-op-101')}`)).toBe(true);
-    // Old instances read only the raw key — it must exist and carry rawId so a
-    // later has() can disambiguate it from another id's encoded marker.
-    const raw = store.get('correlation_markers/resume-op-101');
-    expect(raw).toBeDefined();
-    expect(raw?.rawId).toBe('resume-op-101');
+    // The raw dual-write was removed: a raw copy could occupy ANOTHER id's
+    // encoded key (markerKey('a') === 'YQ'), falsely suppressing its
+    // transition. New markers never touch the raw namespace.
+    expect(store.has('correlation_markers/resume-op-101')).toBe(false);
+  });
+
+  it('a raw-marked id never occupies another id\'s encoded key (PR #64 P2)', async () => {
+    // markerKey('a') === 'YQ'. If the code dual-wrote the raw key for id
+    // 'YQ', it would plant a doc at 'a''s encoded key and has('a') would
+    // report a processed duplicate by existence. The encoded-only write
+    // keeps the namespaces disjoint.
+    const { db, store } = fakeDb();
+    const { getAdminDb } = await import('./admin');
+    vi.mocked(getAdminDb).mockReturnValue(db);
+
+    await repo.markCorrelationMarker('YQ');
+    expect(store.has('correlation_markers/YQ')).toBe(false);
+    expect(await repo.hasCorrelationMarker('a')).toBe(false);
+  });
+
+  it('the encoded read rejects a doc whose rawId names a different owner (PR #64 P2)', async () => {
+    // A foreign doc planted at the encoded key (e.g. a historical raw write
+    // that collided) must not suppress this id's transition.
+    const encoded = repo.markerKey('a');
+    const { db } = fakeDb({ [`correlation_markers/${encoded}`]: { markedAt: 1, rawId: 'YQ' } });
+    const { getAdminDb } = await import('./admin');
+    vi.mocked(getAdminDb).mockReturnValue(db);
+
+    expect(await repo.hasCorrelationMarker('a')).toBe(false);
+    // A matching (or pre-rawId) doc at the encoded key still reports true.
+    const matching = fakeDb({ [`correlation_markers/${encoded}`]: { markedAt: 1, rawId: 'a' } });
+    vi.mocked(getAdminDb).mockReturnValue(matching.db);
+    expect(await repo.hasCorrelationMarker('a')).toBe(true);
+    const preRawId = fakeDb({ [`correlation_markers/${encoded}`]: { markedAt: 1 } });
+    vi.mocked(getAdminDb).mockReturnValue(preRawId.db);
+    expect(await repo.hasCorrelationMarker('a')).toBe(true);
+  });
+
+  it('the rollback clear reads the legacy marker before any transaction write (PR #64 P1)', async () => {
+    // Firestore transactions reject reads after writes. The old code queued
+    // tx.update/tx.set first and only then tx.get the legacy raw doc for the
+    // conditional delete — so every rollback clear on a separator-free id
+    // rejected. This fake enforces the ordering rule like Firestore does.
+    const session = {
+      id: 'sess-clear-1',
+      userId: 'u1',
+      recipeId: 'r1',
+      status: 'PAUSED',
+      currentPhase: 'PAUSED',
+      currentPrepStepIndex: 0,
+      currentCookingStepIndex: 0,
+      activeTimerIds: [],
+      availableIngredients: [],
+      startedAt: 1_700_000_000_000,
+      lastActivityAt: 1_700_000_000_000,
+      version: 1,
+    };
+    const store = new Map<string, Record<string, unknown>>([
+      ['cooking_sessions/sess-clear-1', session],
+      // A historical legacy raw marker for this id (pre-rawId format).
+      ['correlation_markers/resume-op-200', { markedAt: 1 }],
+    ]);
+    const db: any = {
+      __writes: false,
+      collection: (path: string) => ({
+        doc: (id: string) => ({
+          id,
+          _path: `${path}/${id}`,
+          _get: async () => ({
+            exists: store.has(`${path}/${id}`),
+            id,
+            data: () => store.get(`${path}/${id}`) ?? null,
+          }),
+        }),
+      }),
+      runTransaction: async (fn: (tx: any) => Promise<unknown>) => {
+        db.__writes = false;
+        const tx = {
+          get: async (ref: any) => {
+            if (db.__writes) throw new Error('Firestore: all reads must precede writes in a transaction');
+            return ref._get();
+          },
+          update: async (ref: any, data: unknown) => {
+            db.__writes = true;
+            store.set(ref._path, data as Record<string, unknown>);
+          },
+          set: async (ref: any, data: unknown) => {
+            db.__writes = true;
+            store.set(ref._path, data as Record<string, unknown>);
+          },
+          delete: async (ref: any) => {
+            db.__writes = true;
+            store.delete(ref._path);
+          },
+        };
+        return fn(tx);
+      },
+    };
+    const { getAdminDb } = await import('./admin');
+    vi.mocked(getAdminDb).mockReturnValue(db);
+
+    const updated = await repo.updateSession(
+      'sess-clear-1',
+      { currentPhase: 'WAITING_FOR_TIMER', status: 'ACTIVE' },
+      1,
+      { clear: 'resume-op-200' },
+    );
+    expect(updated.version).toBe(2);
+    // The session transition committed and the legacy raw marker drained.
+    expect(store.has('cooking_sessions/sess-clear-1')).toBe(true);
+    expect(store.has('correlation_markers/resume-op-200')).toBe(false);
+    expect(store.has(`correlation_markers/${repo.markerKey('resume-op-200')}`)).toBe(false);
   });
 });
 
