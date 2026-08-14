@@ -38,10 +38,10 @@ describe('scripts/land-pr.mjs · guards (nothing lands by accident)', () => {
 
 describe('scripts/land-pr.mjs · creates the feature branch first', () => {
   it('checks out a new branch before committing (the commit must never land on main)', () => {
-    expect(LAND).toContain('git checkout -b "${branch}"');
+    expect(LAND).toContain("runFile('git', ['checkout', '-b', branch]);");
     // The branch creation must come BEFORE the commit in the file.
-    expect(LAND.indexOf('git checkout -b')).toBeGreaterThan(-1);
-    expect(LAND.indexOf('git checkout -b')).toBeLessThan(LAND.indexOf('git commit'));
+    expect(LAND.indexOf("['checkout', '-b', branch]")).toBeGreaterThan(-1);
+    expect(LAND.indexOf("['checkout', '-b', branch]")).toBeLessThan(LAND.indexOf("['commit', '-m', MESSAGE]"));
   });
 
   it('derives the branch name from the commit message type + subject', () => {
@@ -64,17 +64,30 @@ describe('scripts/land-pr.mjs · commit discipline', () => {
   });
 
   it('otherwise stages and commits the whole tree with the exact message', () => {
-    expect(LAND).toContain('git add -A && git commit');
-    expect(LAND).toContain('git commit -m "${MESSAGE');
+    expect(LAND).toContain("runFile('git', ['add', '-A']);");
+    expect(LAND).toContain("runFile('git', ['commit', '-m', MESSAGE]);");
     // The file list is printed BEFORE committing — nothing is swept in
     // silently.
     expect(LAND).toContain('git status --short');
   });
 });
 
+describe('scripts/land-pr.mjs · no shell interpretation of user input (Codex P2 — PR #9)', () => {
+  it('passes the message, branch, and title/body as argv elements, never into a shell string', () => {
+    // A message containing backticks, $(...), or $HOME must survive verbatim:
+    // it rides as a single argv element through execFileSync, which spawns
+    // WITHOUT a shell, so nothing is reinterpreted. The old form escaped only
+    // double quotes and left the rest shell-interpreted.
+    expect(LAND).toContain('execFileSync');
+    expect(LAND).not.toContain('MESSAGE.replace(/\"/g');
+    expect(LAND).toContain("['commit', '-m', MESSAGE]");
+    expect(LAND).toContain("'--title', MESSAGE, '--body', MESSAGE");
+  });
+});
+
 describe('scripts/land-pr.mjs · never bypasses the protection', () => {
   it('pushes only the feature branch with -u', () => {
-    expect(LAND).toContain('git push -u origin "${branch}"');
+    expect(LAND).toContain("runFile('git', ['push', '-u', 'origin', branch]);");
   });
 
   it('never pushes (or otherwise writes) a main ref directly', () => {
@@ -89,16 +102,15 @@ describe('scripts/land-pr.mjs · never bypasses the protection', () => {
 
 describe('scripts/land-pr.mjs · the PR + merge path', () => {
   it('opens the PR against the base branch with the message as title/body', () => {
-    expect(LAND).toContain('gh pr create --base "${BASE}" --head "${branch}"');
-    expect(LAND).toContain('--title "${MESSAGE');
-    expect(LAND).toContain('--body "${MESSAGE');
+    expect(LAND).toContain("'pr', 'create', '--base', BASE, '--head', branch,");
+    expect(LAND).toContain("'--title', MESSAGE, '--body', MESSAGE,");
   });
 
   it('captures the PR URL via runQuiet (the number is needed to arm auto-merge)', () => {
     // A regression here would return an empty URL, so auto-merge arming
     // silently targets the wrong PR number — the exact bug caught live when
     // the helper's first run created PR #9 but armed nothing.
-    expect(LAND).toContain('return runQuiet(`gh pr create');
+    expect(LAND).toContain('return runFileQuiet(\'gh\'');
     expect(LAND).toContain('prUrl.match(/(\\d+)\\s*$/)');
   });
 
