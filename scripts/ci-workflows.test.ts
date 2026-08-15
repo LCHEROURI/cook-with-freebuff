@@ -150,7 +150,28 @@ describe('.github/workflows/ci.yml · deploy-apphosting job', () => {
     expect(deployBlock).toContain('node scripts/write-commit.mjs');
     expect(deployBlock).toContain('npx -y firebase-tools@latest deploy --only apphosting --non-interactive --project portfolio-app-freebuff2');
     expect(deployBlock).not.toContain('GOOGLE_APPLICATION_CREDENTIALS');
-    expect(deployBlock).not.toContain('FIREBASE_SERVICE_ACCOUNT');
+    // FIREBASE_SERVICE_ACCOUNT is present in the job env now (it drives the
+    // authorize-domain step), but it must never be what AUTHENTICATES the
+    // deploy — the deploy step onward stays FIREBASE_TOKEN only.
+    const deployStepStart = deployBlock.indexOf('name: Deploy to Firebase App Hosting');
+    const deployStepBlock = deployBlock.slice(deployStepStart);
+    expect(deployStepBlock).not.toContain('FIREBASE_SERVICE_ACCOUNT');
+  });
+
+  it('authorizes the canonical host for Firebase Auth (idempotent self-heal) on every deploy', () => {
+    // The App Hosting migration added scripts/authorize-domain.mjs but never
+    // ran it against production, so the canonical host fell out of the
+    // project's authorized domains and Google sign-in broke with
+    // auth/unauthorized-domain. The step runs the idempotent script (GET the
+    // config, PATCH only when missing) on every deploy so the host self-heals
+    // and a future domain drop cannot silently break sign-in again.
+    expect(deployBlock).toContain('name: Authorize the canonical host for Firebase Auth');
+    expect(deployBlock).toContain('run: npm run authorize:domain');
+    expect(deployBlock).toContain('FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}');
+    // Gated on the credential (skip-not-fail on forks / unconfigured repos);
+    // canonical main pushes cannot skip it silently because emulator-compare
+    // (a needs-edge) already fails loudly when the SA is missing there.
+    expect(deployBlock).toContain("if: ${{ env.FIREBASE_SERVICE_ACCOUNT != '' }}");
   });
 
   it('runs the emulator-compare smoke before the deploy with Java 21 + owner creds', () => {
