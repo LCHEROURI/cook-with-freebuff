@@ -179,6 +179,11 @@ jobs:
 
     env:
       FIREBASE_TOKEN: ${{ secrets.FIREBASE_TOKEN }}
+      # The restricted Admin SDK SA authorizes the canonical host for Firebase
+      # Auth (below). It is NOT the deploy credential — the deploy still runs
+      # as the owner FIREBASE_TOKEN above, and this SA must never be widened to
+      # the IAM writes the deploy needs.
+      FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
 
     steps:
       - name: Check out repository
@@ -192,6 +197,21 @@ jobs:
 
       - name: Install dependencies
         run: npm ci
+
+      # Authorize the canonical App Hosting host for Firebase Auth so Google
+      # sign-in can never silently break when the host falls out of the
+      # project's authorized domains. This is the regression the App Hosting
+      # migration shipped: scripts/authorize-domain.mjs was created but never
+      # run against production, so /login showed auth/unauthorized-domain.
+      # The script is idempotent (GETs the Identity Toolkit config, PATCHes
+      # only when the host is missing), so running it on every deploy is a
+      # cheap self-heal. Gated on the SA credential (skip-not-fail on forks /
+      # unconfigured repos where the secret is empty); on a real main push the
+      # emulator-compare needs-edge already fails loudly when the SA is
+      # missing, so a canonical deploy can never skip this silently.
+      - name: Authorize the canonical host for Firebase Auth
+        if: ${{ env.FIREBASE_SERVICE_ACCOUNT != '' }}
+        run: npm run authorize:domain
 
       - name: Fail loudly if FIREBASE_TOKEN is missing (main push)
         if: ${{ github.event_name == 'push' && github.repository == 'LCHEROURI/cook-with-freebuff' && env.FIREBASE_TOKEN == '' }}
