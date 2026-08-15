@@ -25,15 +25,16 @@ describe('verify-live · [2c] login popup proof', () => {
     expect(SRC).toContain('timeout: 120_000');
   });
 
-  it('requires RESULT: PASS and re-asserts the popup + no-banner markers (not a black box)', () => {
-    // Exit 0 alone must not pass — the log must show the popup actually opened
-    // and no domain banner appeared, otherwise a driver edit that drops the
-    // assertions would fail the gate instead of passing silently.
+  it('requires RESULT: PASS and re-asserts the consent + no-banner markers (not a black box)', () => {
+    // Exit 0 alone must not pass — the log must show the consent popup was
+    // actually reached and no blocked-domain message appeared, otherwise a
+    // driver edit that drops the assertions would fail the gate instead of
+    // passing silently.
     expect(SRC).toContain('loginDriver.status === 0 && /RESULT: PASS/.test(loginLog)');
     expect(SRC).toContain("ok('login popup driver → RESULT: PASS (OAuth popup opened, no domain error)')");
     expect(SRC).toContain("fail(`login popup driver → exit ${loginDriver.status ?? 'crash'}");
-    expect(SRC).toContain("'OAuth popup opened and navigated to a Google auth URL'");
-    expect(SRC).toContain("'no \"Sign-in is blocked\" banner after clicking'");
+    expect(SRC).toContain("'Google consent popup reached'");
+    expect(SRC).toContain("'no blocked-domain message after clicking'");
   });
 
   it('runs production-only (skips the emulator and guided-only legs)', () => {
@@ -58,10 +59,16 @@ describe('scripts/drive-login-popup.mjs · driver contract', () => {
     expect(DRIVER).not.toContain('element.click()');
   });
 
-  it('proves the popup via Target discovery and asserts no domain banner', () => {
+  it('proves the consent popup, not the transient handler hop, and asserts no blocked-domain message', () => {
+    // The firebaseapp.com auth-handler hop opens even for an unauthorized
+    // domain, so it can never be the proof. The driver must require the hop to
+    // accounts.google.com AND match both blocked-domain messages the retry fix
+    // surfaces, or the exact regression passes silently.
     expect(DRIVER).toContain('Target.setDiscoverTargets');
-    expect(DRIVER).toContain('OAuth popup opened and navigated to a Google auth URL');
-    expect(DRIVER).toContain('no "Sign-in is blocked" banner after clicking');
+    expect(DRIVER).toContain('Google consent popup reached');
+    expect(DRIVER).toContain('/accounts\\.google\\.com/');
+    expect(DRIVER).toContain('no blocked-domain message after clicking');
+    expect(DRIVER).toContain('Still blocked after a refresh');
   });
 
   it('uses a FRESH profile so a cached SDK origin rejection cannot hide a real config failure', () => {

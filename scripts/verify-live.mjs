@@ -447,14 +447,15 @@ try {
   }
 
   // ── 2c. Login popup proof ──────────────────────────────────────────────
-  // The deployed /login page must open the Google OAuth popup (not throw
+  // The deployed /login page must open the Google consent popup (not throw
   // auth/unauthorized-domain) when "Continue with Google" is clicked from a
   // fresh profile. This is the config regression that bit once before: the
   // App Hosting hostname fell out of Firebase Auth's authorized domains and
   // every sign-in dead-ended, invisible to the API-only stages above (they
   // mint tokens server-side and never touch the client popup). The driver
   // spawns its own headless Chrome, clicks the real button, and proves the
-  // popup target navigates to a Google auth URL. Production-only (headless
+  // popup reaches accounts.google.com (not just the transient firebaseapp.com
+  // handler hop) with no blocked-domain message. Production-only (headless
   // Chrome + the deployed host), like [3d]/[3e].
   if (!EMULATOR && !GUIDED_ONLY) {
     console.log(`\n[2c] Login popup proof: Continue with Google opens the OAuth popup (${APP})`);
@@ -472,12 +473,13 @@ try {
       const tail = loginLog.split('\n').filter(Boolean).slice(-6).join('\n');
       fail(`login popup driver → exit ${loginDriver.status ?? 'crash'}${loginDriver.error ? ` (${loginDriver.error.message})` : ''}. Tail: ${tail}`);
     }
-    // Not a black box — verify:live must SEE the popup actually opened and no
-    // domain banner appeared, not just a 0 exit. These markers are the
-    // driver's own ok() lines, deterministic because the assertion is fixed.
+    // Not a black box — verify:live must SEE the consent popup was reached
+    // and no blocked-domain message appeared, not just a 0 exit. These markers
+    // are the driver's own ok() lines, deterministic because the assertion is
+    // fixed.
     for (const marker of [
-      'OAuth popup opened and navigated to a Google auth URL',
-      'no "Sign-in is blocked" banner after clicking',
+      'Google consent popup reached',
+      'no blocked-domain message after clicking',
     ]) {
       loginLog.includes(marker)
         ? ok(`login popup: ${marker}`)

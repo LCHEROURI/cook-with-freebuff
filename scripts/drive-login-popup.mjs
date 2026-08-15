@@ -15,14 +15,16 @@
 //   2. Launches headless Chrome with a fresh user-data dir + CDP (so no cached
 //      SDK origin rejection can hide a real config failure).
 //   3. Loads /login, asserts the button renders with NO pre-existing
-//      "Sign-in is blocked" banner.
+//      blocked-domain message.
 //   4. Clicks "Continue with Google" with a GENUINE CDP mouse click (a real
 //      mousePressed/mouseReleased pair, never a synthetic programmatic click),
-//      then watches Target discovery for the popup target to navigate to a
-//      Google auth URL (the firebaseapp.com auth handler is the first hop
-//      before accounts.google.com).
-//   5. Asserts the main page still shows NO "Sign-in is blocked" banner, so a
-//      genuinely-authorized domain is proven end to end.
+//      then watches Target discovery for the popup target to reach
+//      accounts.google.com (the Google consent screen). The firebaseapp.com
+//      auth-handler hop is NOT proof: an unauthorized domain still opens and
+//      navigates it before the SDK's async origin check rejects and closes it.
+//   5. Asserts the main page still shows NO blocked-domain message ("Sign-in
+//      is blocked" or "Still blocked after a refresh"), so a genuinely
+//      authorized domain is proven end to end.
 //
 // Usage: node scripts/drive-login-popup.mjs [--app URL] [--out /tmp/login]
 // Exit 0 + "RESULT: PASS" = popup opened, no domain error; 1 = FAIL.
@@ -198,11 +200,12 @@ for (let i = 0; i < 40 && !hasButton; i++) {
   text = await pageText();
   hasButton = text.includes('Continue with Google');
 }
-const hasBanner = text.includes('Sign-in is blocked');
+const blockedRe = /Sign-in is blocked|Still blocked after a refresh/i;
+const hasBanner = blockedRe.test(text);
 if (hasButton) ok('login page rendered the "Continue with Google" button');
 else fail(`login page did not show the button. Page text: ${text.slice(0, 200)}`);
-if (!hasBanner) ok('no "Sign-in is blocked" banner before clicking (fresh profile)');
-else fail('banner already present before any click');
+if (!hasBanner) ok('no blocked-domain message before clicking (fresh profile)');
+else fail('blocked-domain message already present before any click');
 await screenshot('01-login-before-click');
 
 // ── Click the real button with a genuine CDP mouse click ─────────────────────
@@ -222,9 +225,14 @@ else {
   note(`dispatched click at (${btnInfo.x}, ${btnInfo.y})`);
 }
 
-// ── Watch for the popup (and for the error banner on the main page) ──────────
-console.log(`\n[3] Watching for the OAuth popup (up to 15s)`);
-let popupSawGoogle = false;
+// ── Watch for the Google CONSENT page (and any blocked-domain message) ─────
+// The firebaseapp.com auth-handler hop is NOT proof of success: for an
+// unauthorized domain the SDK still opens that popup and navigates it before
+// its async origin check rejects and closes it. Only the subsequent hop to
+// accounts.google.com (the Google consent screen) proves origin validation
+// actually passed, so that URL alone counts as success.
+console.log(`\n[3] Watching for the Google consent popup (up to 15s)`);
+let sawConsent = false;
 for (let i = 0; i < 30; i++) {
   await sleep(500);
   const targets = await send('Target.getTargets').catch(() => ({ targetInfos: [] }));
@@ -236,22 +244,26 @@ for (let i = 0; i < 30; i++) {
       note(`popup target discovered: ${t.url || '(about:blank)'}`);
     }
   }
-  popupSawGoogle = popupUrls.some((p) => /accounts\.google\.com|\.google\.com|firebaseapp\.com|googleapis\.com/i.test(p.url ?? ''));
-  if (popupSawGoogle) break;
+  sawConsent = popupUrls.some((p) => /accounts\.google\.com/.test(p.url ?? ''));
+  if (sawConsent) break;
 }
 
+// Give the page a beat to settle after the consent URL is seen, so a
+// late-arriving blocked-domain message can never be missed. The retry fix
+// surfaces BOTH messages across its two states, so match both.
+await sleep(1000);
 const textAfter = await pageText();
-const bannerAfter = textAfter.includes('Sign-in is blocked');
+const bannerAfter = blockedRe.test(textAfter);
 
 console.log(`\n[4] Verdict`);
-if (popupSawGoogle) {
-  const googleUrl = popupUrls.find((p) => /google|firebaseapp/i.test(p.url ?? ''))?.url;
-  ok(`OAuth popup opened and navigated to a Google auth URL (${googleUrl?.slice(0, 90)}…)`);
+if (sawConsent) {
+  const consentUrl = popupUrls.find((p) => /accounts\.google\.com/.test(p.url ?? ''))?.url;
+  ok(`Google consent popup reached (${consentUrl?.slice(0, 90)}…)`);
 } else {
-  fail(`no Google OAuth popup observed. Popups seen: ${popupUrls.map((p) => p.url || '(blank)').join(', ') || 'none'}`);
+  fail(`no Google consent popup observed. Popups seen: ${popupUrls.map((p) => p.url || '(blank)').join(', ') || 'none'}`);
 }
-if (!bannerAfter) ok('no "Sign-in is blocked" banner after clicking (domain check passed)');
-else fail(`banner appeared after click: "${textAfter.slice(0, 200)}"`);
+if (!bannerAfter) ok('no blocked-domain message after clicking (origin validation passed)');
+else fail(`blocked-domain message appeared after click: "${textAfter.slice(0, 200)}"`);
 await screenshot('02-login-after-click');
 
 killChrome();
