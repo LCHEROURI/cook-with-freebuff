@@ -75,6 +75,7 @@ import { initializeApp, cert, getApps } from 'firebase-admin/app';
 import { getAuth } from 'firebase-admin/auth';
 import { getFirestore } from 'firebase-admin/firestore';
 import { getAppCheck } from 'firebase-admin/app-check';
+import { getRemoteConfig } from 'firebase-admin/remote-config';
 
 // ── Env loading (process.env wins; .env.local fills the gaps) ───────────────
 function loadEnv() {
@@ -443,6 +444,63 @@ try {
       fail(`App Check enforcement required but the deployed server accepted an unattested request (HTTP ${noAppCheck.status}) — set APP_CHECK_ENFORCED=1`);
     } else {
       note(`App Check in monitor mode — unattested request returned HTTP ${noAppCheck.status} (not blocked)`);
+    }
+  }
+
+  // ── 2b. Model resolution proof ───────────────────────────────────────────
+  // The five Gemini model names resolve server-side from Remote Config → env →
+  // default (lib/ai/model-roles.ts + lib/server/model-config.ts). Read the
+  // SAME published template the server resolves from, mirror the five-role
+  // table (no TS import in this .mjs), log each role's resolution, and
+  // hard-assert the one externally observable role: /api/voice/token returns
+  // the live-voice model the server actually resolved. A resolver that
+  // silently ignores Remote Config and falls back to the default now fails
+  // the gate instead of passing unnoticed. Production-only: skip the emulator
+  // leg and the --guided-only compare reference leg, whose transcript lines
+  // would otherwise disturb the compare diff.
+  if (!EMULATOR && !GUIDED_ONLY) {
+    console.log(`\n[2b] Model resolution proof (Remote Config → /api/voice/token)`);
+    const MODEL_ROLE_TABLE = [
+      { role: 'generation', rcParam: 'recipe_generation_model', envVar: 'RECIPE_GENERATION_MODEL', defaultModel: 'gemini-2.5-flash' },
+      { role: 'validation', rcParam: 'recipe_validation_model', envVar: 'RECIPE_VALIDATION_MODEL', defaultModel: 'gemini-2.5-flash' },
+      { role: 'conversation', rcParam: 'conversation_model', envVar: 'CONVERSATION_MODEL', defaultModel: 'gemini-2.5-flash' },
+      { role: 'vision', rcParam: 'vision_model', envVar: 'VISION_MODEL', defaultModel: 'gemini-2.5-flash' },
+      { role: 'live-voice', rcParam: 'live_voice_model', envVar: 'LIVE_MODEL', defaultModel: 'gemini-3.1-flash-live-preview' },
+    ];
+    const rcParams = {};
+    let rcError = null;
+    try {
+      const template = await getRemoteConfig(app).getTemplate();
+      for (const [key, parameter] of Object.entries(template.parameters ?? {})) {
+        const value = parameter?.defaultValue?.value;
+        if (typeof value === 'string' && value) rcParams[key] = value;
+      }
+    } catch (e) {
+      rcError = e;
+    }
+    if (rcError) {
+      note(`Remote Config unreachable (${rcError instanceof Error ? rcError.message : String(rcError)}) — env/default fallback expected`);
+    }
+    for (const { role, rcParam, envVar, defaultModel } of MODEL_ROLE_TABLE) {
+      const remote = rcParams[rcParam];
+      const fromEnv = process.env[envVar];
+      const model = remote ?? fromEnv ?? defaultModel;
+      const source = remote ? 'remote-config' : fromEnv ? 'env' : 'default';
+      note(`${role}: ${model} (${source})`);
+    }
+    // Hard-assert the one observable role via the deployed token route: the
+    // model the route returned is the one the live-voice client connects with.
+    const tokenProbe = await fetchJson(`${APP}/api/voice/token`, { method: 'POST', headers: AUTH });
+    const returnedModel = tokenProbe.body?.data?.model;
+    const rcLive = rcParams['live_voice_model'];
+    if (typeof returnedModel !== 'string' || returnedModel.length === 0) {
+      fail(`/api/voice/token returned no model (${j(tokenProbe.body)}) — the live-voice resolver is broken`);
+    } else if (rcLive) {
+      returnedModel === rcLive
+        ? ok(`live-voice model matches Remote Config (${returnedModel})`)
+        : fail(`live-voice model is ${returnedModel}, Remote Config says ${rcLive} — the resolver ignored Remote Config`);
+    } else {
+      note(`live-voice model from env/default fallback: ${returnedModel}`);
     }
   }
 

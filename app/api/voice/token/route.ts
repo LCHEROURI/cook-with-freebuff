@@ -13,9 +13,9 @@ import { NextResponse } from 'next/server';
 import { resolveUserId } from '@/lib/server/admin';
 import { gateAppCheck } from '@/lib/server/app-check';
 import { resolveGeminiModel } from '@/lib/server/model-config';
+import { MODEL_ROLE_CONFIG } from '@/lib/ai/model-roles';
 
 const MINT_URL = 'https://generativelanguage.googleapis.com/v1alpha/auth_tokens';
-const DEFAULT_LIVE_MODEL = 'gemini-3.1-flash-live-preview';
 const SESSION_TTL_MS = 30 * 60 * 1000; // messages allowed for 30 minutes
 const START_TTL_MS = 2 * 60 * 1000; // must open the session within 2 minutes
 
@@ -74,8 +74,9 @@ export async function POST(req: Request) {
     data: {
       token: minted.name,
       // Live voice model resolves from Remote Config first, then LIVE_MODEL,
-      // then the hardcoded default — the client connects with what we return.
-      model: (await resolveGeminiModel('live-voice')) ?? process.env.LIVE_MODEL ?? DEFAULT_LIVE_MODEL,
+      // then the hardcoded default (all from the shared role table) — the
+      // client connects with what we return.
+      model: (await resolveGeminiModel('live-voice')) ?? process.env[MODEL_ROLE_CONFIG['live-voice'].envVar] ?? MODEL_ROLE_CONFIG['live-voice'].defaultModel,
       expiresAt: typeof minted.expireTime === 'string' ? minted.expireTime : null,
     },
   });

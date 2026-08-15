@@ -17,6 +17,7 @@ import type {
   MissingConfirmation,
 } from './types';
 import type { RecipeGenerator, RecipeValidator } from './provider';
+import { MODEL_ROLE_CONFIG } from './model-roles';
 
 export interface GeminiOptions {
   apiKey?: string;
@@ -48,9 +49,11 @@ export function getGeminiModel(opts: GeminiOptions, model?: string): GenerativeM
 }
 
 async function getModel(opts: GeminiOptions, role: 'generation' | 'validation'): Promise<GenerativeModel | null> {
+  // Env-var name and hardcoded default come from the shared role table so the
+  // providers and the startup self-check can never drift apart.
+  const cfg = MODEL_ROLE_CONFIG[role];
   const explicit = role === 'generation' ? opts.generationModel : opts.validationModel;
-  const envName = role === 'generation' ? process.env.RECIPE_GENERATION_MODEL : process.env.RECIPE_VALIDATION_MODEL;
-  const model = explicit ?? (await opts.resolveModel?.(role)) ?? envName ?? DEFAULT_MODEL;
+  const model = explicit ?? (await opts.resolveModel?.(role)) ?? process.env[cfg.envVar] ?? cfg.defaultModel;
   return getGeminiModel(opts, model);
 }
 
