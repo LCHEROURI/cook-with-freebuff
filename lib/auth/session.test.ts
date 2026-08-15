@@ -14,6 +14,7 @@ import {
   SIGN_IN_CANCELLED,
   SIGN_IN_FAILED,
   SIGN_IN_RETRY_HINT,
+  SIGN_IN_STILL_BLOCKED,
   SignInError,
   authErrorMessage,
   signInWithGoogle,
@@ -81,6 +82,14 @@ describe('signInWithGoogle · Google popup wrapper', () => {
   it('exposes the post-reload retry hint as an honest, non-error message', () => {
     expect(SIGN_IN_RETRY_HINT).toContain('Continue with Google');
     expect(SIGN_IN_RETRY_HINT).not.toBe(SIGN_IN_BLOCKED);
+  });
+
+  it('distinguishes the post-refresh still-blocked message from the first blocked message', () => {
+    // After the one reload the failure means the domain is genuinely missing,
+    // not a stale cache — the copy must say so and keep pointing at the fix.
+    expect(SIGN_IN_STILL_BLOCKED).toContain('Still blocked');
+    expect(SIGN_IN_STILL_BLOCKED).toContain('Authorized domains');
+    expect(SIGN_IN_STILL_BLOCKED).not.toBe(SIGN_IN_BLOCKED);
   });
 
   it('throws the generic message for unknown rejections', async () => {

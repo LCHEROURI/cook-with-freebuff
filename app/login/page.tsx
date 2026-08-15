@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import styles from './page.module.css';
@@ -11,6 +11,22 @@ export default function LoginPage() {
   const auth = useAuthSession();
   const [busy, setBusy] = useState(false);
   const [signInError, setSignInError] = useState<string | null>(null);
+  const autoRetryRef = useRef(false);
+  // signIn is stable (a useCallback([]) in the hook), so onSignIn is stable too.
+  const signIn = auth.signIn;
+
+  const onSignIn = useCallback(async () => {
+    setBusy(true);
+    setSignInError(null);
+    try {
+      await signIn();
+      // onAuthStateChanged flips the user — the redirect effect above runs.
+    } catch (e) {
+      setSignInError(e instanceof Error ? e.message : 'Could not sign in.');
+    } finally {
+      setBusy(false);
+    }
+  }, [signIn]);
 
   // Already signed in? Go cook.
   useEffect(() => {
@@ -19,18 +35,22 @@ export default function LoginPage() {
     }
   }, [auth.state, auth.user, router]);
 
-  const onSignIn = async () => {
-    setBusy(true);
-    setSignInError(null);
-    try {
-      await auth.signIn();
-      // onAuthStateChanged flips the user — the redirect effect above runs.
-    } catch (e) {
-      setSignInError(e instanceof Error ? e.message : 'Could not sign in.');
-    } finally {
-      setBusy(false);
-    }
-  };
+  // Auto-retry the popup after the unauthorized-domain reload. The reload was
+  // a user-initiated navigation, so the browser still allows the popup — no
+  // second tap needed. It fires once (ref-guarded), only when ?retry=1 is
+  // present and auth has settled, and it clears the flag from the URL so a
+  // later manual reload never re-triggers it.
+  useEffect(() => {
+    if (autoRetryRef.current) return;
+    if (typeof window === 'undefined') return;
+    if (auth.state !== 'ready') return;
+    if (new URLSearchParams(window.location.search).get('retry') !== '1') return;
+    autoRetryRef.current = true;
+    const url = new URL(window.location.href);
+    url.searchParams.delete('retry');
+    window.history.replaceState(null, '', url.toString());
+    void onSignIn();
+  }, [auth.state, onSignIn]);
 
   if (auth.state === 'loading') {
     return (

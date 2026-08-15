@@ -23,6 +23,7 @@ import {
   authErrorMessage,
   SignInError,
   SIGN_IN_RETRY_HINT,
+  SIGN_IN_STILL_BLOCKED,
   signInWithGoogle,
   signOutFirebase,
 } from './session';
@@ -51,6 +52,24 @@ function markReloadedForUnauthorizedDomain(): boolean {
     // the one-shot marker, so a reload would loop forever (the marker would
     // still read unset after navigation). Report the marker write failed so
     // the caller surfaces the blocked-domain error instead of reloading.
+    return false;
+  }
+}
+
+// URL flag the freshly loaded login page reads to auto-reopen the Google
+// popup. The navigation is user-initiated (it happens inside the click
+// handler), so the gesture carries over and the popup needs no second tap.
+const RETRY_PARAM = 'retry';
+
+/** Navigate to the current URL with ?retry=1. Returns whether it worked. */
+function navigateToRetry(): boolean {
+  try {
+    if (typeof window === 'undefined') return false;
+    const url = new URL(window.location.href);
+    url.searchParams.set(RETRY_PARAM, '1');
+    window.location.replace(url.toString());
+    return true;
+  } catch {
     return false;
   }
 }
@@ -159,27 +178,29 @@ export function useAuthSession(): UseAuthSessionResult {
     try {
       await signInWithGoogle(auth);
     } catch (e) {
-      if (
-        e instanceof SignInError &&
-        e.code === 'auth/unauthorized-domain' &&
-        !hasReloadedForUnauthorizedDomain() &&
-        // Only reload when the one-shot marker actually persisted. If storage
-        // is unavailable the marker would still read unset after the reload,
-        // so we'd loop forever — surface the blocked-domain error instead.
-        markReloadedForUnauthorizedDomain()
-      ) {
+      if (e instanceof SignInError && e.code === 'auth/unauthorized-domain') {
         // The SDK caches its origin check in memory: a tab that once failed
-        // with auth/unauthorized-domain keeps failing on every retry — even
-        // after the domain is authorized server-side — until the page reloads
-        // and a fresh SDK re-fetches the authorized-domains list. Reload once
-        // per tab session, then show the retry hint on the fresh page. (We
-        // cannot auto-open the popup after the reload: browsers block a popup
-        // that is not inside a user gesture.)
-        try {
-          window.location.reload();
-          return; // the reload re-runs the flow — never reject
-        } catch {
-          // reload unavailable — fall through to surface the mapped error
+        // with auth/unauthorized-domain keeps failing on every retry until the
+        // page reloads and a fresh SDK re-fetches the authorized-domains list.
+        if (hasReloadedForUnauthorizedDomain()) {
+          // We already refreshed once this tab session and it is STILL
+          // blocked: the domain is genuinely missing, not a stale cache. Say
+          // so distinctly (and drop the now-stale "tap to retry" hint) instead
+          // of re-showing the same generic message.
+          setSignInHint(null);
+          throw new SignInError(SIGN_IN_STILL_BLOCKED, e.code);
+        }
+        // First failure: navigate once, but only when the one-shot marker
+        // actually persisted. If storage is unavailable the marker would still
+        // read unset after the navigation, so we'd loop forever — fall through
+        // to the generic blocked-domain error instead.
+        if (markReloadedForUnauthorizedDomain() && navigateToRetry()) {
+          // The ?retry=1 navigation is user-initiated (we are still inside the
+          // click handler), so the freshly loaded page re-opens the popup
+          // without a second tap. Never reject: the navigation re-runs the
+          // flow, and the still-blocked message handles a genuinely-missing
+          // domain on the next attempt.
+          return;
         }
       }
       throw e;

@@ -142,8 +142,12 @@ describe('app/cook/page.tsx · protected route', () => {
 
 describe('app/login/page.tsx · login page', () => {
   it('renders the Google sign-in button wired to auth.signIn', () => {
+    // onSignIn is a stable useCallback over the hook's stable signIn, so the
+    // button (and the ?retry=1 auto-retry) both drive the same path.
     expect(LOGIN).toContain('const auth = useAuthSession();');
-    expect(LOGIN).toContain('auth.signIn()');
+    expect(LOGIN).toContain('const signIn = auth.signIn;');
+    expect(LOGIN).toContain('await signIn()');
+    expect(LOGIN).toContain('onClick={() => void onSignIn()}');
     expect(LOGIN).toContain('Continue with Google');
   });
 
@@ -164,6 +168,16 @@ describe('app/login/page.tsx · login page', () => {
     // never an alert (a still-blocked domain is not the user's fault).
     expect(LOGIN).toContain('auth.signInHint');
     expect(LOGIN).toContain('role="status"');
+  });
+
+  it('auto-reopens the Google popup after the unauthorized-domain reload via ?retry=1', () => {
+    // The hook navigates to ?retry=1, and the page re-opens the popup on mount
+    // (a user-initiated navigation, so no second tap), clears the flag so a
+    // manual reload never re-triggers it, and only fires once auth settles.
+    expect(LOGIN).toContain("get('retry') !== '1'");
+    expect(LOGIN).toContain('url.searchParams.delete(\'retry\')');
+    expect(LOGIN).toContain('window.history.replaceState(null, \'\', url.toString())');
+    expect(LOGIN).toContain('void onSignIn()');
   });
 });
 

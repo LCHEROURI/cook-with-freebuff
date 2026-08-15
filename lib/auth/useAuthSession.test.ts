@@ -2,7 +2,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, renderHook } from '@testing-library/react';
 import { useAuthSession } from './useAuthSession';
-import { SignInError, SIGN_IN_RETRY_HINT, signInWithGoogle } from './session';
+import { SignInError, SIGN_IN_RETRY_HINT, SIGN_IN_STILL_BLOCKED, signInWithGoogle } from './session';
 
 // ============================================================================
 // lib/auth/useAuthSession.test.ts — lock the pre-auth 401 race fix.
@@ -41,6 +41,7 @@ vi.mock('./session', () => {
     authErrorMessage: (code?: string) => (code ? `mapped: ${code}` : 'Could not sign in.'),
     SignInError: MockSignInError,
     SIGN_IN_RETRY_HINT: 'Refreshed your sign-in session — tap Continue with Google to retry.',
+    SIGN_IN_STILL_BLOCKED: 'Still blocked after a refresh.',
     signInWithGoogle: vi.fn(),
     signOutFirebase: vi.fn(async () => {}),
   };
@@ -138,15 +139,15 @@ describe('useAuthSession · getToken awaits the auth settle', () => {
 });
 
 describe('useAuthSession · unauthorized-domain reload retry', () => {
-  let reload: ReturnType<typeof vi.fn>;
+  let replace: ReturnType<typeof vi.fn>;
   const originalLocation = window.location;
 
   beforeEach(() => {
-    reload = vi.fn();
-    // jsdom's location.reload is non-configurable, so spyOn can't redefine
-    // it. Swap the whole location object for a spy-able one, then restore it.
+    replace = vi.fn();
+    // jsdom's location methods are non-configurable, so spyOn can't redefine
+    // them. Swap the whole location object for a spy-able one, then restore it.
     Object.defineProperty(window, 'location', {
-      value: { ...originalLocation, reload },
+      value: { ...originalLocation, replace },
       configurable: true,
       writable: true,
     });
@@ -161,7 +162,7 @@ describe('useAuthSession · unauthorized-domain reload retry', () => {
     vi.restoreAllMocks();
   });
 
-  it('reloads once instead of dead-ending on the first auth/unauthorized-domain', async () => {
+  it('navigates to ?retry=1 once instead of dead-ending on the first auth/unauthorized-domain', async () => {
     const { result } = renderHook(() => useAuthSession());
     mockSignInWithGoogle.mockRejectedValueOnce(new SignInError('blocked', 'auth/unauthorized-domain'));
 
@@ -169,20 +170,26 @@ describe('useAuthSession · unauthorized-domain reload retry', () => {
       await result.current.signIn();
     });
 
-    expect(reload).toHaveBeenCalledTimes(1);
+    expect(replace).toHaveBeenCalledTimes(1);
+    expect(String(replace.mock.calls[0][0])).toContain('retry=1');
     expect(window.sessionStorage.getItem('cook-freebuff:auth:unauthorized-domain-reloaded')).toBe('1');
   });
 
-  it('surfaces the error (never re-reloads) on a second unauthorized-domain in the same tab session', async () => {
+  it('surfaces the distinct still-blocked message (never re-reloads) on a second unauthorized-domain in the same tab session', async () => {
     window.sessionStorage.setItem('cook-freebuff:auth:unauthorized-domain-reloaded', '1');
     const { result } = renderHook(() => useAuthSession());
+    // Mounting with the marker already set shows the "tap to retry" hint.
+    expect(result.current.signInHint).toBe(SIGN_IN_RETRY_HINT);
     mockSignInWithGoogle.mockRejectedValueOnce(new SignInError('blocked', 'auth/unauthorized-domain'));
 
     await act(async () => {
-      await expect(result.current.signIn()).rejects.toThrow('blocked');
+      await expect(result.current.signIn()).rejects.toThrow(SIGN_IN_STILL_BLOCKED);
     });
 
-    expect(reload).not.toHaveBeenCalled();
+    expect(replace).not.toHaveBeenCalled();
+    // The retry hint is now stale (the retry already happened and failed) —
+    // the still-blocked message takes over so the page never shows both.
+    expect(result.current.signInHint).toBeNull();
   });
 
   it('surfaces the retry hint when the page mounts with the reload marker set', () => {
@@ -192,7 +199,7 @@ describe('useAuthSession · unauthorized-domain reload retry', () => {
     expect(result.current.signInHint).toBe(SIGN_IN_RETRY_HINT);
   });
 
-  it('does not reload when the marker cannot be persisted (surfaces the error instead of looping)', async () => {
+  it('does not navigate when the marker cannot be persisted (surfaces the error instead of looping)', async () => {
     // Storage can be full or blocked (private mode / privacy policy). If the
     // one-shot marker can't be written, a reload would come back with the
     // marker still unset and reload again forever — so the hook must surface
@@ -218,7 +225,7 @@ describe('useAuthSession · unauthorized-domain reload retry', () => {
         await expect(result.current.signIn()).rejects.toThrow('blocked');
       });
 
-      expect(reload).not.toHaveBeenCalled();
+      expect(replace).not.toHaveBeenCalled();
     } finally {
       Object.defineProperty(window, 'sessionStorage', {
         value: realStorage,
