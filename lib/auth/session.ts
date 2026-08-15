@@ -22,6 +22,8 @@ export const AUTH_CONFIG_MISSING =
 export const SIGN_IN_CANCELLED = 'Sign-in was cancelled.';
 export const SIGN_IN_BLOCKED =
   'Sign-in is blocked — this site is not in the project\u2019s authorized domains. Add it in Firebase → Authentication → Settings → Authorized domains.';
+export const SIGN_IN_STILL_BLOCKED =
+  'Still blocked after a refresh — this site is not in the project\u2019s authorized domains. Add it in Firebase → Authentication → Settings → Authorized domains, then reload the page.';
 export const PROVIDER_DISABLED =
   'Google sign-in is not enabled in this Firebase project — enable Authentication → Sign-in method → Google, then reload.';
 export const SIGN_IN_FAILED = 'Could not sign in. Please try again.';
