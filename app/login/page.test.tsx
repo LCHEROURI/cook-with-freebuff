@@ -2,6 +2,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, render, screen, waitFor } from '@testing-library/react';
 import { createElement } from 'react';
+import type { User } from 'firebase/auth';
 import LoginPage from './page';
 import { useAuthSession, type UseAuthSessionResult } from '@/lib/auth/useAuthSession';
 
@@ -59,6 +60,20 @@ describe('app/login/page.tsx · ?retry=1 auto-retry', () => {
 
   it('does not auto-retry while auth is still settling (waits for ready)', async () => {
     mockAuth.mockReturnValue({ ...base, state: 'loading' });
+    window.history.replaceState(null, '', '/login?retry=1');
+    render(createElement(LoginPage));
+
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 30));
+    });
+    expect(signIn).not.toHaveBeenCalled();
+  });
+
+  it('does not auto-retry when already signed in (the redirect handles it)', async () => {
+    // On a ?retry=1 reload after a fast session restore, the user is already
+    // signed in — the redirect effect sends them to /cook, and the auto-retry
+    // effect must NOT open a second popup behind it.
+    mockAuth.mockReturnValue({ ...base, user: { uid: 'u1' } as unknown as User });
     window.history.replaceState(null, '', '/login?retry=1');
     render(createElement(LoginPage));
 

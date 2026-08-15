@@ -53,13 +53,14 @@ export default function LoginPage() {
     if (autoRetryRef.current) return;
     if (typeof window === 'undefined') return;
     if (auth.state !== 'ready') return;
+    if (auth.user) return; // already signed in — the redirect handles it; never open a second popup
     if (new URLSearchParams(window.location.search).get('retry') !== '1') return;
     autoRetryRef.current = true;
     const url = new URL(window.location.href);
     url.searchParams.delete('retry');
     window.history.replaceState(null, '', url.toString());
     void onSignIn(true);
-  }, [auth.state, onSignIn]);
+  }, [auth.state, auth.user, onSignIn]);
 
   if (auth.state === 'loading') {
     return (
