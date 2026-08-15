@@ -446,6 +446,45 @@ try {
     }
   }
 
+  // ── 2c. Login popup proof ──────────────────────────────────────────────
+  // The deployed /login page must open the Google OAuth popup (not throw
+  // auth/unauthorized-domain) when "Continue with Google" is clicked from a
+  // fresh profile. This is the config regression that bit once before: the
+  // App Hosting hostname fell out of Firebase Auth's authorized domains and
+  // every sign-in dead-ended, invisible to the API-only stages above (they
+  // mint tokens server-side and never touch the client popup). The driver
+  // spawns its own headless Chrome, clicks the real button, and proves the
+  // popup target navigates to a Google auth URL. Production-only (headless
+  // Chrome + the deployed host), like [3d]/[3e].
+  if (!EMULATOR && !GUIDED_ONLY) {
+    console.log(`\n[2c] Login popup proof: Continue with Google opens the OAuth popup (${APP})`);
+    const loginDriver = spawnSync('node', ['scripts/drive-login-popup.mjs', '--app', APP, '--out', `/tmp/verify-live-login-${t}`], {
+      encoding: 'utf8',
+      timeout: 120_000,
+      env: process.env,
+    });
+    const loginLog = `${loginDriver.stdout ?? ''}\n${loginDriver.stderr ?? ''}`;
+    if (loginDriver.status === 0 && /RESULT: PASS/.test(loginLog)) {
+      ok('login popup driver → RESULT: PASS (OAuth popup opened, no domain error)');
+    } else if (loginDriver.error?.code === 'ETIMEDOUT') {
+      fail('login popup driver timed out after 120s');
+    } else {
+      const tail = loginLog.split('\n').filter(Boolean).slice(-6).join('\n');
+      fail(`login popup driver → exit ${loginDriver.status ?? 'crash'}${loginDriver.error ? ` (${loginDriver.error.message})` : ''}. Tail: ${tail}`);
+    }
+    // Not a black box — verify:live must SEE the popup actually opened and no
+    // domain banner appeared, not just a 0 exit. These markers are the
+    // driver's own ok() lines, deterministic because the assertion is fixed.
+    for (const marker of [
+      'OAuth popup opened and navigated to a Google auth URL',
+      'no "Sign-in is blocked" banner after clicking',
+    ]) {
+      loginLog.includes(marker)
+        ? ok(`login popup: ${marker}`)
+        : fail(`login popup: missing “${marker}” in the driver log`);
+    }
+  }
+
   // ── 3. Guided flow through the deployed /api/cook ───────────────────────
   console.log(`\n[3] Driving guided cooking via ${APP}/api/cook`);
   const cook = (action, extra = {}) =>
