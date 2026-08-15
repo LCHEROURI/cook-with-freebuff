@@ -181,7 +181,7 @@ describe('.github/workflows/ci.yml · deploy-apphosting job', () => {
     expect(smokeBlock).toContain('name: Emulator-compare smoke (guided flow vs live)');
     expect(smokeBlock).toContain("github.event_name == 'push' || github.event_name == 'workflow_dispatch'");
     expect(smokeBlock).not.toContain('pull_request');
-    expect(smokeBlock).toContain('actions/setup-java@v4');
+    expect(smokeBlock).toContain('actions/setup-java@v5');
     expect(smokeBlock).toContain("java-version: '21'");
     expect(smokeBlock).toContain('NEXT_PUBLIC_FIREBASE_API_KEY');
     expect(smokeBlock).toContain('FIREBASE_SERVICE_ACCOUNT');
