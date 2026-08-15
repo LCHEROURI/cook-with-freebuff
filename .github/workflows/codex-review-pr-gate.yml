@@ -82,6 +82,11 @@ jobs:
       - name: Fail on open Codex P1 findings
         env:
           GH_TOKEN: ${{ github.token }}
+          # A PAT (contents: write) for the nudge push on a bot-skipped PR.
+          # GITHUB_TOKEN cannot be used for that push: it would change the
+          # head without re-running the required validate check. Absent, the
+          # nudge is skipped and the WAITING fallback applies.
+          CODEX_NUDGE_TOKEN: ${{ secrets.CODEX_NUDGE_TOKEN }}
           PR_NUMBER: ${{ github.event.pull_request.number || github.event.issue.number || github.event.inputs.pr }}
           CODEX_GATE_ALLOW_NO_REVIEW: ${{ github.event.inputs.allow_no_review == 'true' }}
           # Bot-skipped-PR certification: a repo variable (comma-separated PR

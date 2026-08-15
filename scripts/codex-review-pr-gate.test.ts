@@ -89,15 +89,24 @@ describe('scripts/codex-review-pr-gate.mjs', () => {
     expect(GATE).toContain('CODEX_GATE_NUDGE_MAX');
     expect(GATE).toContain("const NUDGE_MARKER = 'codex-nudge:'");
     expect(GATE).toContain('pulls/${pr}/commits?per_page=100');
-    expect(GATE).toContain('git push origin');
+    expect(GATE).toContain('git push "${pushUrl}"');
     expect(GATE).toContain('git commit -q --allow-empty');
+    // The nudge push must ride a PAT (CODEX_NUDGE_TOKEN), never GITHUB_TOKEN:
+    // the latter changes the head without re-running the required validate
+    // check, leaving the PR unmergeable (Codex P1, PR #103 review).
+    expect(GATE).toContain('CODEX_NUDGE_TOKEN');
+    expect(GATE).toContain("!!process.env.CODEX_NUDGE_TOKEN");
+    expect(GATE).toContain('x-access-token');
+    expect(GATE).toContain('replaceAll(token');
     // Only a real pull_request Actions run on a same-repo head may nudge (a
     // fork head or a review/dispatch run must fall back to the WAITING message).
     expect(GATE).toContain("process.env.GITHUB_EVENT_NAME === 'pull_request'");
     expect(GATE).toContain('headRepoFullName === repo');
-    // The push needs contents:write on top of the existing comment write perm.
+    // The push needs contents:write on top of the existing comment write perm,
+    // and the workflow must thread the PAT secret into the gate env.
     expect(WORKFLOW).toContain('contents: write');
     expect(WORKFLOW).toContain('pull-requests: write');
+    expect(WORKFLOW).toContain('CODEX_NUDGE_TOKEN: ${{ secrets.CODEX_NUDGE_TOKEN }}');
   });
 
   it('exits 1 with the blocking findings listed when an open P0/P1 exists', () => {
@@ -327,6 +336,7 @@ fs.appendFileSync(${JSON.stringify(gitLog)}, process.argv.join(' ') + '<<<GIT>>>
       GITHUB_ACTIONS: 'true',
       GITHUB_EVENT_NAME: 'pull_request',
       CODEX_GATE_WAIT_SECONDS: '1',
+      CODEX_NUDGE_TOKEN: 'pat-stub',
     };
     const nudged = run([], { reviews: [], extraEnv: nudgeEnv });
     expect(nudged.status).toBe(1);
@@ -365,6 +375,22 @@ fs.appendFileSync(${JSON.stringify(gitLog)}, process.argv.join(' ') + '<<<GIT>>>
     expect(disabled.status).toBe(1);
     expect(disabled.out).not.toContain('pushed a nudge commit');
     expect(disabled.gitLog.length).toBe(0);
+
+    // Without the PAT the nudge is skipped entirely — the head must never be
+    // advanced via GITHUB_TOKEN, or validate never re-runs on it and the PR
+    // cannot merge even after the bot reviews (Codex P1, PR #103 review).
+    const noToken = run([], {
+      reviews: [],
+      extraEnv: {
+        GH_TOKEN: 'stub-token',
+        GITHUB_ACTIONS: 'true',
+        GITHUB_EVENT_NAME: 'pull_request',
+        CODEX_GATE_WAIT_SECONDS: '1',
+      },
+    });
+    expect(noToken.status).toBe(1);
+    expect(noToken.out).toContain('no Codex review observed on head');
+    expect(noToken.gitLog.length).toBe(0);
 
     // The stricter bar via env (repo variable / dispatch input) blocks a P2
     // the same way the --include-p2 flag does — no flag needed.

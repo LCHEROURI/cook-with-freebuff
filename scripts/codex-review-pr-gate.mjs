@@ -28,9 +28,11 @@
 // CODEX_GATE_WAIT_SECONDS (default 360); if none appears it first pushes up
 // to CODEX_GATE_NUDGE_MAX (default 2) empty "nudge" commits to re-trigger the
 // bot's synchronize event, and only then fails with a WAITING message so the
-// PR cannot merge before the bot has reviewed it. The bot occasionally skips
-// a PR entirely; after confirming that is the case, re-run with
-// --allow-no-review to certify the PR as reviewed-by-human.
+// PR cannot merge before the bot has reviewed it. The nudge push needs the
+// CODEX_NUDGE_TOKEN PAT (GITHUB_TOKEN would change the head without re-running
+// the required validate check); without that secret the nudge is skipped. The
+// bot occasionally skips a PR entirely; after confirming that is the case,
+// re-run with --allow-no-review to certify the PR as reviewed-by-human.
 // (Codex P1, PR #73 review.)
 //
 // A red gate running in Actions (GITHUB_ACTIONS=true and GH_TOKEN set) ALSO
@@ -53,6 +55,8 @@
 //     (repo variable: same stricter bar as --include-p2)
 //   CODEX_GATE_NUDGE_MAX=3 node scripts/codex-review-pr-gate.mjs --pr 42
 //     (or --nudge-max 3: cap the nudge commits before the WAITING fallback)
+//   CODEX_GATE_NUDGE_TOKEN=<pat> node scripts/codex-review-pr-gate.mjs --pr 42
+//     (a PAT with contents: write; the nudge is skipped without it)
 // ============================================================================
 
 import { execSync } from 'node:child_process';
@@ -173,15 +177,21 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 // The bot occasionally misses a PR entirely (no review after the wait window).
 // Rather than fall straight to the human --allow-no-review certification, the
 // gate pushes an empty commit on the PR head — the synchronize event is the
-// universal "please re-review" signal. The GITHUB_TOKEN push does NOT re-run
-// this workflow (Actions suppresses its own token's events), but it IS still
-// delivered to the bot App's webhook; when the bot then reviews, its review
-// event re-runs the gate and the loop closes. Nudges are capped and only ever
-// fire on real pull_request runs against same-repo heads.
+// universal "please re-review" signal. The push MUST use a dedicated PAT
+// (CODEX_NUDGE_TOKEN), never GITHUB_TOKEN: a GITHUB_TOKEN push changes the
+// head but Actions suppresses the synchronize event for its own token, so the
+// required `validate` check never runs on the nudge head and the PR becomes
+// unmergeable even after the bot reviews (Codex P1, PR #103 review). A PAT
+// push triggers the normal pull_request workflows AND re-fires the bot, so
+// every required check re-runs on the new head. Without the token the nudge is
+// skipped (the head is left untouched) and the WAITING fallback applies.
+// Nudges are capped and only ever fire on real pull_request runs against
+// same-repo heads.
 const NUDGE_MARKER = 'codex-nudge:';
 const canNudge =
   process.env.GITHUB_ACTIONS === 'true' &&
   !!process.env.GH_TOKEN &&
+  !!process.env.CODEX_NUDGE_TOKEN &&
   process.env.GITHUB_EVENT_NAME === 'pull_request' &&
   headRepoFullName === repo;
 
@@ -191,20 +201,27 @@ function countNudges() {
 }
 
 function pushNudge(attempt) {
+  const token = process.env.CODEX_NUDGE_TOKEN ?? '';
   const message = `${NUDGE_MARKER} retry Codex review (attempt ${attempt} of ${nudgeMax})`;
+  // The token rides the push URL (never the logged command): redact it from
+  // any failure message so a broken push cannot leak the secret.
+  const pushUrl = `https://x-access-token:${token}@github.com/${repo}.git`;
   const cmds = [
     'git config user.email "41898282+github-actions[bot]@users.noreply.github.com"',
     'git config user.name "github-actions[bot]"',
     `git fetch --no-tags origin "pull/${pr}/head"`,
     `git checkout -q -B "__codex-nudge-${pr}" FETCH_HEAD`,
     `git commit -q --allow-empty -m "${message}"`,
-    `git push origin "HEAD:refs/heads/${headRef}"`,
+    `git push "${pushUrl}" "HEAD:refs/heads/${headRef}"`,
   ];
+  const redact = (s) => (token ? s.replaceAll(token, '***') : s);
   for (const cmd of cmds) {
     try {
       runQuiet(cmd);
     } catch (e) {
-      console.warn(`  - nudge failed at \`${cmd}\` (${e instanceof Error ? e.message : String(e)})`);
+      console.warn(
+        `  - nudge failed at \`${redact(cmd)}\` (${redact(e instanceof Error ? e.message : String(e))})`,
+      );
       return false;
     }
   }
