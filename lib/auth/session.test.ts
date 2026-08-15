@@ -13,6 +13,8 @@ import {
   SIGN_IN_BLOCKED,
   SIGN_IN_CANCELLED,
   SIGN_IN_FAILED,
+  SIGN_IN_RETRY_HINT,
+  SignInError,
   authErrorMessage,
   signInWithGoogle,
   signOutFirebase,
@@ -66,6 +68,19 @@ describe('signInWithGoogle · Google popup wrapper', () => {
   it('throws the blocked-domain guidance on auth/unauthorized-domain', async () => {
     mockPopup.mockRejectedValue({ code: 'auth/unauthorized-domain' });
     await expect(signInWithGoogle({} as never)).rejects.toThrow(SIGN_IN_BLOCKED);
+  });
+
+  it('preserves the Firebase error code on the thrown SignInError (so the retry can branch)', async () => {
+    mockPopup.mockRejectedValue({ code: 'auth/unauthorized-domain' });
+    const err = await signInWithGoogle({} as never).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(SignInError);
+    expect((err as SignInError).code).toBe('auth/unauthorized-domain');
+    expect((err as SignInError).message).toBe(SIGN_IN_BLOCKED);
+  });
+
+  it('exposes the post-reload retry hint as an honest, non-error message', () => {
+    expect(SIGN_IN_RETRY_HINT).toContain('Continue with Google');
+    expect(SIGN_IN_RETRY_HINT).not.toBe(SIGN_IN_BLOCKED);
   });
 
   it('throws the generic message for unknown rejections', async () => {

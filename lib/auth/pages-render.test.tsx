@@ -17,6 +17,7 @@ const base: UseAuthSessionResult = {
   user: null,
   state: 'ready',
   error: null,
+  signInHint: null,
   getToken: async () => null,
   signIn: vi.fn(async () => {}),
   signOut: vi.fn(async () => {}),
@@ -49,6 +50,14 @@ describe('app/login/page.tsx · render', () => {
     const html = renderToStaticMarkup(createElement(LoginPage));
     expect(html).toContain('Firebase client configuration is missing');
     expect(html).toContain('role="alert"');
+  });
+
+  it('renders the post-reload retry hint as a status line (not an error)', () => {
+    mockAuth.mockReturnValue({ ...base, signInHint: 'Refreshed your sign-in session — tap Continue with Google to retry.' });
+    const html = renderToStaticMarkup(createElement(LoginPage));
+    expect(html).toContain('Refreshed your sign-in session');
+    expect(html).toContain('role="status"');
+    expect(html).not.toContain('role="alert"');
   });
 });
 
