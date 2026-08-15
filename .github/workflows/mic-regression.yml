@@ -24,8 +24,12 @@ on:
     - cron: '0 6 * * 1' # Mondays 06:00 UTC
   workflow_dispatch:
 
+# Shared with the post-deploy verify:live job (ci.yml): both drive the SAME
+# owner through the same /cook active session, so a Monday run overlapping a
+# deploy must QUEUE behind it (or ahead of it) instead of both attaching to
+# whichever probe is newest (Codex P2, PR #98 review).
 concurrency:
-  group: mic-regression
+  group: live-voice-probe
   cancel-in-progress: false
 
 jobs:

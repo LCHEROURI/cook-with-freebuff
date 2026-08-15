@@ -907,29 +907,47 @@ if (got2) {
   // The second transcription can arrive before its reply's audio has queued
   // and drained, so a blob captured then reads stuckQueueSince=0 even though
   // the queue could still stall right after (Codex P1, PR #12). Settle until
-  // the diagnostics report the queue drained (not playing, empty) before the
-  // final verdict. Absent fields default to "drained" so an older build can't
-  // wedge the settle; bounded so a healthy run is never delayed past budget.
+  // there is EVIDENCE the second reply's playback completed — either we
+  // observed it playing (playing=true) and then drain, or the queue stayed
+  // idle long enough that a reply would have queued (stable idle). A single
+  // clean pre-reply blob must never be accepted, and a bounded settle that
+  // never drains must FAIL the run, not fall through as clean.
+  let drained = true;
   if (!blob.startsWith('NO_COPY_BUTTON') && !blob.startsWith('BLob_CAPTURE_MISS')) {
-    for (let i = 0; i < 30; i++) {
+    drained = false;
+    let sawPlaying = false;
+    let stableIdle = 0;
+    for (let i = 0; i < 30 && !drained; i++) {
       let playing = false;
       let queued = 0;
+      let ok = true;
       try {
         const p = JSON.parse(blob);
         const c = p?.gemini?.client;
         if (typeof c?.playing === 'boolean') playing = c.playing;
         if (typeof c?.playbackQueueLength === 'number') queued = c.playbackQueueLength;
       } catch {
-        // non-JSON blob — fall through to the verdict rather than looping
-        break;
+        ok = false; // non-JSON blob — fall through to the verdict
       }
-      if (!playing && queued === 0) break;
-      await sleep(1000);
-      blob = await captureVoiceDetailsBlob(cdpC, evC);
+      if (!ok) break;
+      if (playing) {
+        sawPlaying = true;
+        stableIdle = 0;
+      } else if (queued > 0) {
+        stableIdle = 0;
+      } else if (sawPlaying || ++stableIdle >= 10) {
+        drained = true;
+      }
+      if (!drained) {
+        await sleep(1000);
+        blob = await captureVoiceDetailsBlob(cdpC, evC);
+      }
     }
   }
   if (blob.startsWith('NO_COPY_BUTTON') || blob.startsWith('BLob_CAPTURE_MISS')) {
     fail(`passing run but the diagnostics blob was not capturable (${blob}) — cannot prove the mic is not stuck`);
+  } else if (!drained) {
+    fail(`passing run but the second reply never drained within the settle window — the queue never returned to a stable idle state, so the mic cannot be proven unstuck`);
   } else {
     // The parse + stuck decision is shared (scripts/voice-blob-verdict.mjs),
     // where the unit tests INJECT a stuckQueueSince > 0 blob and prove the

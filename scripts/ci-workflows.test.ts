@@ -394,6 +394,15 @@ describe('.github/workflows/mic-regression.yml · weekly two-burst pass-rate mon
     expect(MIC_REGRESSION).toContain('timeout-minutes: 30');
   });
 
+  it('shares the live-voice-probe concurrency group with verify:live so overlapping runs queue, never collide', () => {
+    // Both drivers run as the same APP_OWNER_UID and the /cook active session
+    // picks the newest active/paused session for that user, so a distinct
+    // probe prefix alone is not enough — the runs must serialize (Codex P2,
+    // PR #98 review).
+    expect(MIC_REGRESSION).toContain('group: live-voice-probe');
+    expect(CI).toContain('group: live-voice-probe');
+  });
+
   it('installs Chrome and threads CHROME_PATH into the batch step (CDP driver)', () => {
     expect(MIC_REGRESSION).toContain('browser-actions/setup-chrome@v2');
     expect(MIC_REGRESSION).toContain('id: chrome');

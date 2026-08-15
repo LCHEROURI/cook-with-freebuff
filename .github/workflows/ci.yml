@@ -281,6 +281,14 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     needs: [deploy-apphosting]
+    # Serialize the live-voice probe with the weekly mic-regression monitor:
+    # both drive the SAME owner (APP_OWNER_UID) through the same /cook active
+    # session, so overlapping runs would attach to each other's probe and
+    # cross-exercise shared state (Codex P2, PR #98 review). One shared group
+    # makes them queue instead of collide.
+    concurrency:
+      group: live-voice-probe
+      cancel-in-progress: false
     # Skip when no rollout actually ran (fork / secretless dispatch): the
     # deploy job succeeds with its deploy step skipped, and polling the
     # canonical host for a sha that never arrives would fail after 15 minutes.
