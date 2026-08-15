@@ -111,15 +111,19 @@ describe('verify:live · App Check enforcement probe', () => {
 });
 
 describe('verify:live · [2b] model resolution proof', () => {
-  it('mirrors the five-role table (rcParam → envVar → default) without a TS import', () => {
+  it('mirrors lib/ai/model-roles.ts exactly (parses the real table, so drift fails here)', () => {
     // The .mjs cannot import lib/ai/model-roles.ts, so it mirrors the table.
-    // Every role's parameter, env var and default must be pinned so a drift
-    // between the mirror and the server table fails here.
-    expect(VERIFY_LIVE).toContain("rcParam: 'recipe_generation_model', envVar: 'RECIPE_GENERATION_MODEL', defaultModel: 'gemini-2.5-flash'");
-    expect(VERIFY_LIVE).toContain("rcParam: 'recipe_validation_model', envVar: 'RECIPE_VALIDATION_MODEL', defaultModel: 'gemini-2.5-flash'");
-    expect(VERIFY_LIVE).toContain("rcParam: 'conversation_model', envVar: 'CONVERSATION_MODEL', defaultModel: 'gemini-2.5-flash'");
-    expect(VERIFY_LIVE).toContain("rcParam: 'vision_model', envVar: 'VISION_MODEL', defaultModel: 'gemini-2.5-flash'");
-    expect(VERIFY_LIVE).toContain("rcParam: 'live_voice_model', envVar: 'LIVE_MODEL', defaultModel: 'gemini-3.1-flash-live-preview'");
+    // Hardcoding the five strings here would only prove the mirror contains
+    // SOME values, not that they match the shared table. Parse the real table
+    // and assert every role's full entry appears in the mirror, so an edit to
+    // MODEL_ROLES that misses the mirror fails this test instead of the
+    // deployed verifier querying a stale parameter.
+    const ROLES_SRC = readFileSync('lib/ai/model-roles.ts', 'utf8');
+    const entries = [...ROLES_SRC.matchAll(/\{\s*role:\s*'([^']+)',\s*rcParam:\s*'([^']+)',\s*envVar:\s*'([^']+)',\s*defaultModel:\s*'([^']+)'\s*\}/g)];
+    expect(entries.length).toBe(5);
+    for (const [, role, rcParam, envVar, defaultModel] of entries) {
+      expect(VERIFY_LIVE).toContain(`{ role: '${role}', rcParam: '${rcParam}', envVar: '${envVar}', defaultModel: '${defaultModel}' }`);
+    }
   });
 
   it('reads the same published Remote Config template the server resolves from', () => {
