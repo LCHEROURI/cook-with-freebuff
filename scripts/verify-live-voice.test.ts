@@ -131,7 +131,7 @@ describe('scripts/verify-live.mjs · live-voice gate [3e] (dictation + active-sc
     // namespace, so the pre-run sweep backstops a hard-killed run. The
     // sweep must archive stale ACTIVE/PAUSED probe sessions and delete
     // orphaned probe recipes.
-    expect(DRIVER).toContain("const PROBE_PREFIX = 'verify-live-voice-';");
+    expect(DRIVER).toContain("const PROBE_PREFIX = flag('--probe-prefix', 'verify-live-voice-');");
     expect(DRIVER).toContain('async function sweepStaleProbes()');
     expect(DRIVER).toContain("s.recipeId.startsWith(PROBE_PREFIX)");
     expect(DRIVER).toContain("(s.status === 'ACTIVE' || s.status === 'PAUSED')");

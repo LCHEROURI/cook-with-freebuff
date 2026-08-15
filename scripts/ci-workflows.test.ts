@@ -385,6 +385,10 @@ describe('.github/workflows/mic-regression.yml · weekly two-burst pass-rate mon
   it('runs the phase-C-only driver in a 6-run batch against the live App Hosting deploy', () => {
     expect(MIC_REGRESSION).toContain('name: Phase-C two-burst batch (6 runs)');
     expect(MIC_REGRESSION).toContain('node scripts/drive-live-voice.mjs --phase-c-only');
+    // The weekly monitor isolates its probe namespace from the post-deploy
+    // verify:live voice stage (same owner, same driver) so neither can sweep
+    // the other's in-flight probe (Codex P1, PR #6).
+    expect(MIC_REGRESSION).toContain('--phase-c-only --probe-prefix mic-regression- --out');
     expect(MIC_REGRESSION).toContain('for i in 1 2 3 4 5 6; do');
     expect(MIC_REGRESSION).toContain('VERIFY_BASE_URL: https://cook-with-freebuff--portfolio-app-freebuff2.us-central1.hosted.app');
     expect(MIC_REGRESSION).toContain('timeout-minutes: 30');
@@ -417,7 +421,9 @@ describe('.github/workflows/mic-regression.yml · weekly two-burst pass-rate mon
   it('opens a GitHub issue on a red week, deduped against an open issue', () => {
     expect(MIC_REGRESSION).toContain('issues: write');
     expect(MIC_REGRESSION).toContain('Open a GitHub issue on a red week');
-    expect(MIC_REGRESSION).toContain("steps.batch.outputs.result != ''");
+    // always(): the batch step exits 1 on a red week, so a status-less
+    // condition would be implicitly success() and never run (Codex P1, PR #11).
+    expect(MIC_REGRESSION).toContain("always() && steps.batch.outputs.result != ''");
     expect(MIC_REGRESSION).toContain('gh issue list');
     expect(MIC_REGRESSION).toContain('--label "mic-regression" --state open');
     expect(MIC_REGRESSION).toContain('gh label create "mic-regression" --force');

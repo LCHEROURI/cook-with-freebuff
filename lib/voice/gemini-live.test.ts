@@ -716,6 +716,14 @@ describe('GeminiLiveClient — mic capture + playback plumbing', () => {
     vi.setSystemTime(new Date('2026-01-01T00:00:10Z'));
     expect(client.getDiagnostics().stuckQueueMs).toBe(10000);
 
+    // A drain that restarts (playing=true) has resumed playback, so the
+    // leftover stuck timestamp must NOT be reported — a blob copied during a
+    // successful retry reads 0/0, never a false "stuck" (Codex P2, PR #3).
+    inner.playing = true;
+    expect(client.getDiagnostics().stuckQueueSince).toBe(0);
+    expect(client.getDiagnostics().stuckQueueMs).toBe(0);
+    inner.playing = false;
+
     // 16s later — past the 15s threshold — the stuck-queue branch fires.
     vi.setSystemTime(new Date('2026-01-01T00:00:16Z'));
     procHolder.fn?.({ inputBuffer: { getChannelData: () => new Float32Array(4096).fill(0.3) } });

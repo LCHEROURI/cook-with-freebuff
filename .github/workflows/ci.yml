@@ -156,7 +156,13 @@ jobs:
           echo "Add NEXT_PUBLIC_FIREBASE_API_KEY, FIREBASE_SERVICE_ACCOUNT and APP_OWNER_UID under GitHub -> Settings -> Secrets and variables -> Actions, then re-run."
           exit 1
 
+      # Credential-gated so a fork or unconfigured repo skips the deployed leg
+      # instead of failing it (the deployed leg needs the owner secrets). On
+      # the canonical repo the loud guard above already failed the job when the
+      # secrets are missing, so this gate never weakens that guard (Codex P2,
+      # PR #7 — the smoke was once unconditional and broke fork CI runs).
       - name: Run the emulator-compare smoke
+        if: ${{ env.NEXT_PUBLIC_FIREBASE_API_KEY != '' && env.FIREBASE_SERVICE_ACCOUNT != '' && env.APP_OWNER_UID != '' }}
         run: npm run verify:live:compare:emulator
 
   deploy-apphosting:

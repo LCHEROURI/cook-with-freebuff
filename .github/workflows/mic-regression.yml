@@ -96,7 +96,7 @@ jobs:
           failed=""
           for i in 1 2 3 4 5 6; do
             echo "--- run $i/6 ---"
-            if node scripts/drive-live-voice.mjs --phase-c-only --out "${RUNNER_TEMP}/phase-c/run-$i"; then
+            if node scripts/drive-live-voice.mjs --phase-c-only --probe-prefix mic-regression- --out "${RUNNER_TEMP}/phase-c/run-$i"; then
               passes=$((passes + 1))
             else
               failed="$failed $i"
@@ -128,7 +128,10 @@ jobs:
       # regression is known, so consecutive red weeks don't spam. Gated on the
       # batch step's `result` output (empty on green) and the canonical repo.
       - name: Open a GitHub issue on a red week
-        if: ${{ steps.batch.outputs.result != '' && github.repository == 'LCHEROURI/cook-with-freebuff' }}
+        # always(): the batch step exits 1 on a red week, and a status-less
+        # condition would be implicitly wrapped in success() and never run —
+        # the exact red-week scenario this alert exists for (Codex P1, PR #11).
+        if: ${{ always() && steps.batch.outputs.result != '' && github.repository == 'LCHEROURI/cook-with-freebuff' }}
         run: |
           existing=$(gh issue list --repo "$GITHUB_REPOSITORY" --label "mic-regression" --state open --json number --jq 'length')
           if [ "$existing" -gt 0 ]; then

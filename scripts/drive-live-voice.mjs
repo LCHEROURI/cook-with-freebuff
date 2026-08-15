@@ -70,7 +70,13 @@ const PHASE_C_ONLY = process.argv.includes('--phase-c-only');
 const CHROME = process.env.CHROME_PATH ?? '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
 const SPEECH_WAV = '/tmp/live-voice-speech.wav';
 const SILENCE_WAV = '/tmp/live-voice-silence.wav';
-const PROBE_PREFIX = 'verify-live-voice-';
+// Probe namespace. The post-deploy verify:live voice stage keeps the default
+// `verify-live-voice-`; the weekly mic-regression monitor passes
+// `--probe-prefix mic-regression-` so its pre-run sweep and cleanup never
+// archive or delete the OTHER workflow's in-flight probe (Codex P1, PR #6 —
+// both drivers run as the same owner, so a shared prefix lets either one
+// sweep the other's session).
+const PROBE_PREFIX = flag('--probe-prefix', 'verify-live-voice-');
 const SPOKEN_PROMPT = 'chicken, rice and onion, for four people';
 
 const API_KEY = process.env.NEXT_PUBLIC_FIREBASE_API_KEY;
@@ -897,6 +903,30 @@ if (got2) {
   for (let i = 0; i < 5 && (blob.startsWith('NO_COPY_BUTTON') || blob.startsWith('BLob_CAPTURE_MISS')); i++) {
     await sleep(1000);
     blob = await captureVoiceDetailsBlob(cdpC, evC);
+  }
+  // The second transcription can arrive before its reply's audio has queued
+  // and drained, so a blob captured then reads stuckQueueSince=0 even though
+  // the queue could still stall right after (Codex P1, PR #12). Settle until
+  // the diagnostics report the queue drained (not playing, empty) before the
+  // final verdict. Absent fields default to "drained" so an older build can't
+  // wedge the settle; bounded so a healthy run is never delayed past budget.
+  if (!blob.startsWith('NO_COPY_BUTTON') && !blob.startsWith('BLob_CAPTURE_MISS')) {
+    for (let i = 0; i < 30; i++) {
+      let playing = false;
+      let queued = 0;
+      try {
+        const p = JSON.parse(blob);
+        const c = p?.gemini?.client;
+        if (typeof c?.playing === 'boolean') playing = c.playing;
+        if (typeof c?.playbackQueueLength === 'number') queued = c.playbackQueueLength;
+      } catch {
+        // non-JSON blob — fall through to the verdict rather than looping
+        break;
+      }
+      if (!playing && queued === 0) break;
+      await sleep(1000);
+      blob = await captureVoiceDetailsBlob(cdpC, evC);
+    }
   }
   if (blob.startsWith('NO_COPY_BUTTON') || blob.startsWith('BLob_CAPTURE_MISS')) {
     fail(`passing run but the diagnostics blob was not capturable (${blob}) — cannot prove the mic is not stuck`);
