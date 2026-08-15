@@ -41,11 +41,17 @@ function hasReloadedForUnauthorizedDomain(): boolean {
   }
 }
 
-function markReloadedForUnauthorizedDomain(): void {
+function markReloadedForUnauthorizedDomain(): boolean {
   try {
-    if (typeof window !== 'undefined') window.sessionStorage?.setItem(UNAUTHORIZED_DOMAIN_RELOADED, '1');
+    if (typeof window === 'undefined') return false;
+    window.sessionStorage?.setItem(UNAUTHORIZED_DOMAIN_RELOADED, '1');
+    return true;
   } catch {
-    // Storage unavailable (private mode) — the worst case is a retry reload.
+    // Storage unavailable (private mode / quota / blocked): we can't persist
+    // the one-shot marker, so a reload would loop forever (the marker would
+    // still read unset after navigation). Report the marker write failed so
+    // the caller surfaces the blocked-domain error instead of reloading.
+    return false;
   }
 }
 
@@ -156,7 +162,11 @@ export function useAuthSession(): UseAuthSessionResult {
       if (
         e instanceof SignInError &&
         e.code === 'auth/unauthorized-domain' &&
-        !hasReloadedForUnauthorizedDomain()
+        !hasReloadedForUnauthorizedDomain() &&
+        // Only reload when the one-shot marker actually persisted. If storage
+        // is unavailable the marker would still read unset after the reload,
+        // so we'd loop forever — surface the blocked-domain error instead.
+        markReloadedForUnauthorizedDomain()
       ) {
         // The SDK caches its origin check in memory: a tab that once failed
         // with auth/unauthorized-domain keeps failing on every retry — even
@@ -165,7 +175,6 @@ export function useAuthSession(): UseAuthSessionResult {
         // per tab session, then show the retry hint on the fresh page. (We
         // cannot auto-open the popup after the reload: browsers block a popup
         // that is not inside a user gesture.)
-        markReloadedForUnauthorizedDomain();
         try {
           window.location.reload();
           return; // the reload re-runs the flow — never reject

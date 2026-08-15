@@ -192,6 +192,42 @@ describe('useAuthSession · unauthorized-domain reload retry', () => {
     expect(result.current.signInHint).toBe(SIGN_IN_RETRY_HINT);
   });
 
+  it('does not reload when the marker cannot be persisted (surfaces the error instead of looping)', async () => {
+    // Storage can be full or blocked (private mode / privacy policy). If the
+    // one-shot marker can't be written, a reload would come back with the
+    // marker still unset and reload again forever — so the hook must surface
+    // the blocked-domain error instead of reloading.
+    const realStorage = window.sessionStorage;
+    Object.defineProperty(window, 'sessionStorage', {
+      value: {
+        getItem: () => null,
+        setItem: () => {
+          throw new Error('QuotaExceededError');
+        },
+        removeItem: () => {},
+        clear: () => {},
+      },
+      configurable: true,
+      writable: true,
+    });
+    const { result } = renderHook(() => useAuthSession());
+    mockSignInWithGoogle.mockRejectedValueOnce(new SignInError('blocked', 'auth/unauthorized-domain'));
+
+    try {
+      await act(async () => {
+        await expect(result.current.signIn()).rejects.toThrow('blocked');
+      });
+
+      expect(reload).not.toHaveBeenCalled();
+    } finally {
+      Object.defineProperty(window, 'sessionStorage', {
+        value: realStorage,
+        configurable: true,
+        writable: true,
+      });
+    }
+  });
+
   it('clears the marker + hint once a user signs in (no stale hint on a later visit)', async () => {
     window.sessionStorage.setItem('cook-freebuff:auth:unauthorized-domain-reloaded', '1');
     const { result } = renderHook(() => useAuthSession());
