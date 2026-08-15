@@ -4,8 +4,8 @@ A voice first cooking companion that guides you step by step from "what do I hav
 
 ## Stack
 
-- **Language / Runtime**: TypeScript, Node 20
-- **Framework**: Next.js 14 (App Router)
+- **Language / Runtime**: TypeScript, Node 22
+- **Framework**: Next.js 15 (App Router)
 - **Key dependencies**: Firebase (auth + Firestore), Gemini (AI generation + live voice), Zod (schemas)
 - **Package manager**: npm
 - **Testing**: Vitest + Testing Library + jsdom
