@@ -44,6 +44,7 @@ const base: UseAuthSessionResult = {
   user: { uid: 'owner-uid' } as UseAuthSessionResult['user'],
   state: 'ready',
   error: null,
+  signInHint: null,
   getToken: async () => 'id-token',
   signIn: vi.fn(async () => {}),
   signOut: vi.fn(async () => {}),

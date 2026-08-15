@@ -156,6 +156,15 @@ describe('app/login/page.tsx · login page', () => {
     expect(LOGIN).toContain('signInError');
     expect(LOGIN).toContain('role="alert"');
   });
+
+  it('surfaces the post-reload retry hint (auth.signInHint) as a status line', () => {
+    // After the unauthorized-domain reload the page must render the one-shot
+    // retry hint the hook produces, so the user is prompted to tap the button
+    // again instead of staring at a cleared error. It must be a status line,
+    // never an alert (a still-blocked domain is not the user's fault).
+    expect(LOGIN).toContain('auth.signInHint');
+    expect(LOGIN).toContain('role="status"');
+  });
 });
 
 describe('app/page.tsx · landing page', () => {

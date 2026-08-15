@@ -25,6 +25,23 @@ export const SIGN_IN_BLOCKED =
 export const PROVIDER_DISABLED =
   'Google sign-in is not enabled in this Firebase project — enable Authentication → Sign-in method → Google, then reload.';
 export const SIGN_IN_FAILED = 'Could not sign in. Please try again.';
+export const SIGN_IN_RETRY_HINT =
+  'Refreshed your sign-in session — tap Continue with Google to retry.';
+
+/**
+ * An Error that keeps the Firebase auth error code alongside the mapped
+ * message, so callers can branch on the specific failure (the login page's
+ * unauthorized-domain retry does) instead of string-matching the copy.
+ */
+export class SignInError extends Error {
+  constructor(
+    message: string,
+    readonly code?: string,
+  ) {
+    super(message);
+    this.name = 'SignInError';
+  }
+}
 
 /** Map a Firebase auth error code (or our synthetic codes) to honest copy. */
 export function authErrorMessage(code?: string): string {
@@ -52,7 +69,7 @@ export async function signInWithGoogle(auth: Auth): Promise<void> {
     await signInWithPopup(auth, provider);
   } catch (e) {
     const code = (e as { code?: string })?.code;
-    throw new Error(authErrorMessage(code));
+    throw new SignInError(authErrorMessage(code), code);
   }
 }
 

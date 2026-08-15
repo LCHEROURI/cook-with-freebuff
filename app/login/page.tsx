@@ -48,6 +48,7 @@ export default function LoginPage() {
 
         {auth.error && <p className={styles.error} role="alert">{auth.error}</p>}
         {signInError && <p className={styles.error} role="alert">{signInError}</p>}
+        {auth.signInHint && <p className={styles.hint} role="status">{auth.signInHint}</p>}
 
         <button
           className={styles.googleBtn}
