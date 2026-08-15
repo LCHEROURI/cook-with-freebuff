@@ -12,6 +12,12 @@
 // runs never spam, and a finding already reported (open or later fixed) is
 // never re-opened.
 //
+// Replied-to detection (same convention as the PR gate): a finding whose
+// thread has a reply (a comment whose in_reply_to_id points at the bot
+// comment) is RESOLVED and never reported at all, even before an issue marker
+// exists. This matches how the repo actually closes findings: fix the code,
+// then reply "Resolved …" on the thread.
+//
 // Exit codes: 0 on success (whether or not new findings existed), 1 on a hard
 // failure (gh missing, API error, issue-create failure). New findings are
 // printed to stdout so the workflow log itself is the triage record.
@@ -39,7 +45,11 @@ const repo = take('--repo') ?? process.env.GITHUB_REPOSITORY ?? DEFAULT_REPO;
 const lookbackDays = Number(take('--lookback-days') ?? LOOKBACK_DAYS);
 
 function runQuiet(cmd) {
-  return execSync(cmd, { encoding: 'utf8', stdio: 'pipe' }).trim();
+  // Large cap: a --paginate sweep of every PR (plus per-PR comments) exceeds
+  // execSync's 1 MB default as the repo grows, which surfaces as ENOBUFS and
+  // kills the sweep before it reports anything. 64 MB is far beyond any real
+  // response while never becoming the failure mode.
+  return execSync(cmd, { encoding: 'utf8', stdio: 'pipe', maxBuffer: 64 * 1024 * 1024 }).trim();
 }
 
 function fetchJson(cmd) {
@@ -90,8 +100,16 @@ for (const pr of inWindow) {
   const comments = fetchPaginated(
     `gh api --paginate "repos/${repo}/pulls/${pr.number}/comments?per_page=100"`,
   );
+  // A finding is resolved when its thread has a reply (a comment whose
+  // in_reply_to_id points at it) — the same resolution-note convention the
+  // gate uses. An answered finding never opens an issue, even without a
+  // `codex-finding` marker.
+  const repliedTo = new Set(
+    comments.filter((c) => c.in_reply_to_id != null).map((c) => String(c.in_reply_to_id)),
+  );
   for (const c of comments) {
     if (c.user?.login !== BOT_LOGIN) continue;
+    if (repliedTo.has(String(c.id))) continue;
     const firstLine = c.body.split('\n').find((l) => l.trim().length > 0) ?? '';
     findings.push({
       commentId: String(c.id),

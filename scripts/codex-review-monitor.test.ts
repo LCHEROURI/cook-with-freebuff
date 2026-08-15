@@ -66,6 +66,21 @@ describe('scripts/codex-review-monitor.mjs', () => {
     expect(MONITOR).toContain('fresh.length === 0');
   });
 
+  it('caps execSync output so a large paginated sweep never overflows the default buffer', () => {
+    // The full pulls + comments sweep crossed execSync's 1 MB default and
+    // died with ENOBUFS once the repo grew; the cap must stay well above it.
+    expect(MONITOR).toContain('maxBuffer: 64 * 1024 * 1024');
+  });
+
+  it('skips a finding whose thread has a reply (same convention as the gate)', () => {
+    // An answered finding is resolved even before an issue marker exists: the
+    // monitor builds the replied-to set from comments whose in_reply_to_id
+    // points at a bot comment and never reports those findings.
+    expect(MONITOR).toContain('in_reply_to_id');
+    expect(MONITOR).toContain('comments.filter((c) => c.in_reply_to_id != null)');
+    expect(MONITOR).toContain('repliedTo.has(String(c.id))');
+  });
+
   it('opens one labeled issue per affected PR using a body file', () => {
     expect(MONITOR).toContain("const LABEL = 'codex-review';");
     expect(MONITOR).toContain('gh label create "${LABEL}" --force');
@@ -89,7 +104,9 @@ describe('scripts/codex-review-monitor.mjs', () => {
     // 2 (PR #101; comment 5002; the dedupe marker for 5001), so a truncation
     // or a slurp regression fails the assertions below. PR #100's comments
     // carry findings 5001 + 5002; 5001 is already reported (marker on issue
-    // page 2), 5002 and 6001 (PR #101) are fresh → exactly 2 new findings.
+    // page 2), 5002 and 6001 (PR #101) are fresh. 6002 (also PR #101) is
+    // ANSWERED — a human reply 7001 points at it with in_reply_to_id — so it
+    // must be skipped with no marker involved → exactly 2 new findings.
     const stubDir = mkdtempSync(join(tmpdir(), 'codex-monitor-stub-'));
     const stubPath = join(stubDir, 'gh');
     writeFileSync(
@@ -106,6 +123,7 @@ const emit = (pages) => {
 const bot = 'chatgpt-codex-connector[bot]';
 const mkPr = (number, title) => ({ number, title, state: 'open', updated_at: new Date().toISOString() });
 const mkComment = (id, pr) => ({ id, user: { login: bot }, body: '**P1 Badge**  Finding ' + id, path: 'lib/x.ts', line: 1, html_url: 'https://example.com/discussion_r' + id });
+const mkReply = (id, inReplyToId) => ({ id, user: { login: 'human' }, body: 'Resolved', in_reply_to_id: inReplyToId });
 const mkIssue = (number, marker) => ({ number, body: 'old\\n<!-- codex-finding: ' + marker + ' -->' });
 if (cmd === 'label') process.exit(0);
 if (cmd === 'issue') {
@@ -115,7 +133,7 @@ if (cmd === 'issue') {
 }
 if (url.includes('/pulls?')) emit([[mkPr(100, 'PR 100')], [mkPr(101, 'PR 101')]]);
 else if (url.includes('/100/comments?')) emit([[mkComment(5001, 100)], [mkComment(5002, 100)]]);
-else if (url.includes('/101/comments?')) emit([[mkComment(6001, 101)]]);
+else if (url.includes('/101/comments?')) emit([[mkComment(6001, 101), mkComment(6002, 101), mkReply(7001, 6002)]]);
 else if (url.includes('/issues?')) emit([[mkIssue(10, 9999)], [mkIssue(11, 5001)]]);
 else process.exit(1);
 `,
@@ -128,7 +146,8 @@ else process.exit(1);
         env: { ...process.env, PATH: `${stubDir}:${process.env.PATH}` },
       });
       // Both pages swept: PR #101 (page 2) reported; 5001 deduped via the
-      // marker on ISSUE page 2; exactly the two fresh findings create issues.
+      // marker on ISSUE page 2; 6002 skipped because it is answered (reply
+      // 7001) — so exactly the two fresh findings (5002, 6001) create issues.
       expect(out).toContain('Reported 2 new Codex finding(s) across 2 PR issue(s)');
       expect(out).toContain('https://github.com/fake/repo/issues/100');
       expect(out).toContain('https://github.com/fake/repo/issues/101');

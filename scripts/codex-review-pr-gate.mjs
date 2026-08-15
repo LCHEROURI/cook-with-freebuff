@@ -109,7 +109,9 @@ if (!pr) {
 }
 
 function runQuiet(cmd) {
-  return execSync(cmd, { encoding: 'utf8', stdio: 'pipe' }).trim();
+  // Same cap as the monitor: a paginated PR/comments sweep can exceed
+  // execSync's 1 MB default once the repo grows past a few dozen PRs.
+  return execSync(cmd, { encoding: 'utf8', stdio: 'pipe', maxBuffer: 64 * 1024 * 1024 }).trim();
 }
 
 /**
