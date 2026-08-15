@@ -57,9 +57,10 @@ jobs:
     timeout-minutes: 10
 
     permissions:
-      contents: read
-      # write so a red gate can post its bot-style summary on the PR thread
-      # (scripts/codex-review-pr-gate.mjs postRedAlert).
+      # write so the gate can push a nudge commit on a bot-skipped PR head
+      # (scripts/codex-review-pr-gate.mjs pushNudge) and post its bot-style
+      # summary on the PR thread (postRedAlert).
+      contents: write
       pull-requests: write
 
     steps:
@@ -81,6 +82,11 @@ jobs:
       - name: Fail on open Codex P1 findings
         env:
           GH_TOKEN: ${{ github.token }}
+          # A PAT (contents: write) for the nudge push on a bot-skipped PR.
+          # GITHUB_TOKEN cannot be used for that push: it would change the
+          # head without re-running the required validate check. Absent, the
+          # nudge is skipped and the WAITING fallback applies.
+          CODEX_NUDGE_TOKEN: ${{ secrets.CODEX_NUDGE_TOKEN }}
           PR_NUMBER: ${{ github.event.pull_request.number || github.event.issue.number || github.event.inputs.pr }}
           CODEX_GATE_ALLOW_NO_REVIEW: ${{ github.event.inputs.allow_no_review == 'true' }}
           # Bot-skipped-PR certification: a repo variable (comma-separated PR
