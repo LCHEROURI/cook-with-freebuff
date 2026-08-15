@@ -71,11 +71,12 @@ else must land through a pull request.
 
 ### Required checks
 
-One check is required before anything merges, plus a push-only smoke:
+Two checks are required before anything merges, plus a push-only smoke:
 
 | Check | Runs on | Gates |
 |---|---|---|
 | `Typecheck · Lint · Test · Build` | every PR + push | merge (includes the tokenless push + PR stale-head guards) |
+| `Codex P1 gate` | every PR + review events | merge (blocks open P0/P1; P2 too when `CODEX_GATE_INCLUDE_P2=true`) |
 | `Emulator-compare smoke (guided flow vs live)` | main pushes (push-only job) | the App Hosting deploy (`needs: [validate, emulator-compare]`) |
 
 There is **no PR preview deploy check** — App Hosting is the only host and
@@ -88,6 +89,50 @@ The smoke reports **skipped** on PRs by design — its deployed leg writes to th
 shared production backend, so per-PR runs would burn the owner-verify write
 budget. A skipped required check does not block an auto-merge (verified live:
 PRs #13 and #14 merged with the smoke skipped).
+
+### Codex review gate
+
+The `chatgpt-codex-connector[bot]` posts inline review comments shortly after a
+PR opens — often after the first checks complete. The gate re-runs on
+review-comment (created and deleted) and review events, so a late finding
+still reddens the required check. A finding is **open** until a human replies
+on its thread (the resolution-note convention: fix, then reply `Resolved …`);
+a red gate also keeps a bot-style summary on the PR thread — one per head,
+edited in place as the finding set changes, resolved when the gate goes
+green. Exit codes: `0` clean, `1` waiting-for-review or open findings block,
+`2` usage error.
+
+| Knob | Where | Effect |
+|---|---|---|
+| Wait timeout | `CODEX_GATE_WAIT_SECONDS` env (script-level, default `360`) | how long the gate polls for a Codex review of the current head before failing with a WAITING verdict — an empty comment list is *not* a clean review |
+| P2 strict bar | `CODEX_GATE_INCLUDE_P2` repo variable (`true`) | blocks on open P2 findings too (default: P0/P1 only) |
+| Bot-skipped certification | `CODEX_GATE_BOT_SKIPPED_PRS` repo variable (comma-separated PR numbers) | certifies a PR the bot is not going to review; only this path satisfies the required merge gate (a `workflow_dispatch` check never enters the PR status rollup) |
+
+Exact commands:
+
+```bash
+# Local dry-run of the gate against a PR (exit 0 = clean, 1 = blocked):
+node scripts/codex-review-pr-gate.mjs --pr 42
+
+# Shorter wait window for a local run:
+CODEX_GATE_WAIT_SECONDS=60 node scripts/codex-review-pr-gate.mjs --pr 42
+
+# Stricter bar (P2 blocks) — repo-wide, persistent:
+gh variable set CODEX_GATE_INCLUDE_P2 --body "true"
+gh variable delete CODEX_GATE_INCLUDE_P2          # revert to P0/P1 only
+
+# Certify a PR the bot skipped: set the variable, push any commit to re-run
+# the gate via a synchronize event, then remove it after the merge.
+gh variable set CODEX_GATE_BOT_SKIPPED_PRS --body "42"
+git commit --allow-empty -m "certify: bot skipped review" && git push
+gh variable delete CODEX_GATE_BOT_SKIPPED_PRS
+```
+
+`--include-p2` and `--allow-no-review` are the local/CLI forms of the two
+variables above (`CODEX_GATE_ALLOW_NO_REVIEW=true` is the env form). The
+`workflow_dispatch` run of the workflow also takes `pr` and `allow_no_review`
+inputs, but its check never enters the PR status rollup — use the repo
+variables for anything that must actually gate a merge.
 
 ### Merge-when-green (the one-command path)
 
