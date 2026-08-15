@@ -109,3 +109,44 @@ describe('verify:live · App Check enforcement probe', () => {
     expect(VERIFY_LIVE).toContain('App Check enforcement required but the deployed server accepted an unattested request');
   });
 });
+
+describe('verify:live · [2b] model resolution proof', () => {
+  it('mirrors lib/ai/model-roles.ts exactly (parses the real table, so drift fails here)', () => {
+    // The .mjs cannot import lib/ai/model-roles.ts, so it mirrors the table.
+    // Hardcoding the five strings here would only prove the mirror contains
+    // SOME values, not that they match the shared table. Parse the real table
+    // and assert every role's full entry appears in the mirror, so an edit to
+    // MODEL_ROLES that misses the mirror fails this test instead of the
+    // deployed verifier querying a stale parameter.
+    const ROLES_SRC = readFileSync('lib/ai/model-roles.ts', 'utf8');
+    const entries = [...ROLES_SRC.matchAll(/\{\s*role:\s*'([^']+)',\s*rcParam:\s*'([^']+)',\s*envVar:\s*'([^']+)',\s*defaultModel:\s*'([^']+)'\s*\}/g)];
+    expect(entries.length).toBe(5);
+    for (const [, role, rcParam, envVar, defaultModel] of entries) {
+      expect(VERIFY_LIVE).toContain(`{ role: '${role}', rcParam: '${rcParam}', envVar: '${envVar}', defaultModel: '${defaultModel}' }`);
+    }
+  });
+
+  it('reads the same published Remote Config template the server resolves from', () => {
+    // The exact template lib/server/model-config.ts reads, via the admin SDK.
+    expect(VERIFY_LIVE).toContain('getRemoteConfig(app).getTemplate()');
+    expect(VERIFY_LIVE).toContain('parameter?.defaultValue?.value');
+  });
+
+  it('hard-asserts the live-voice model returned by /api/voice/token against Remote Config', () => {
+    // A resolver that silently ignores Remote Config and returns the default
+    // must fail the gate, not pass unnoticed.
+    expect(VERIFY_LIVE).toContain("fetchJson(`${APP}/api/voice/token`, { method: 'POST', headers: AUTH })");
+    expect(VERIFY_LIVE).toContain('returnedModel === rcLive');
+    expect(VERIFY_LIVE).toContain('the resolver ignored Remote Config');
+  });
+
+  it('runs production-only, guarded by if (!EMULATOR && !GUIDED_ONLY)', () => {
+    // The stage must not run in the emulator leg or the --guided-only compare
+    // reference leg (its note lines would disturb the compare diff). The [2b]
+    // guard is a SECOND occurrence of the production-only gate (the [3b]
+    // starter block is the first).
+    expect(VERIFY_LIVE).toContain('[2b] Model resolution proof');
+    const guardCount = VERIFY_LIVE.match(/if \(!EMULATOR && !GUIDED_ONLY\) \{/g)?.length ?? 0;
+    expect(guardCount).toBeGreaterThanOrEqual(2);
+  });
+});

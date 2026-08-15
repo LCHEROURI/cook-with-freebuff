@@ -10,6 +10,7 @@ import type { FunctionDeclaration } from '@google/generative-ai';
 import { getGeminiModel, type GeminiOptions } from './gemini';
 import type { ConversationAgent, ConversationContext, ToolCall } from './provider';
 import { TOOL_DECLARATIONS, LIVE_SYSTEM_INSTRUCTION } from './tool-declarations';
+import { MODEL_ROLE_CONFIG } from './model-roles';
 
 // Single source of truth for the model-visible tool surface (SDK-free module,
 // shared with the Gemini Live client).
@@ -23,9 +24,10 @@ export function createGeminiConversationAgent(opts: GeminiOptions = {}): Convers
       utterance: string;
       context: ConversationContext;
     }): Promise<{ message: string; toolCalls?: ToolCall[]; shouldSpeak: boolean }> {
+      const cfg = MODEL_ROLE_CONFIG.conversation;
       const model = getGeminiModel(
         opts,
-        opts.generationModel ?? (await opts.resolveModel?.('conversation')) ?? process.env.CONVERSATION_MODEL,
+        opts.generationModel ?? (await opts.resolveModel?.('conversation')) ?? process.env[cfg.envVar] ?? cfg.defaultModel,
       );
       if (!model) {
         throw new Error('GOOGLE_AI_API_KEY is not configured for conversation');

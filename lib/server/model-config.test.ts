@@ -8,6 +8,7 @@
 // ============================================================================
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { MODEL_ROLE_CONFIG } from '../ai/model-roles';
 
 const getTemplate = vi.fn();
 
@@ -124,5 +125,63 @@ describe('resolveGeminiModel', () => {
     } finally {
       nowSpy.mockRestore();
     }
+  });
+});
+
+describe('logModelResolutionSources', () => {
+  // The startup self-check emits one structured `model_source` line per role
+  // (via lib/server/logger.ts → console.log as JSON). These tests read those
+  // lines back and assert the source each role resolved from.
+  const MODEL_ENV_VARS = Object.values(MODEL_ROLE_CONFIG).map((c) => c.envVar);
+
+  async function captureSources(setup: () => void): Promise<Record<string, { model: string; source: string }>> {
+    for (const name of MODEL_ENV_VARS) delete process.env[name];
+    setup();
+    const { logModelResolutionSources } = await import('./model-config');
+    const lines: string[] = [];
+    const spy = vi.spyOn(console, 'log').mockImplementation((line?: unknown) => {
+      if (typeof line === 'string') lines.push(line);
+    });
+    try {
+      await logModelResolutionSources();
+    } finally {
+      spy.mockRestore();
+    }
+    const byRole: Record<string, { model: string; source: string }> = {};
+    for (const line of lines) {
+      const e = JSON.parse(line) as { event?: string; role?: string; model?: string; source?: string };
+      if (e.event === 'model_source' && e.role && e.model && e.source) {
+        byRole[e.role] = { model: e.model, source: e.source };
+      }
+    }
+    return byRole;
+  }
+
+  it('logs every role as `default` when neither Remote Config nor env vars are set', async () => {
+    getTemplate.mockResolvedValue(template({})); // no published parameters
+    const byRole = await captureSources(() => {});
+
+    expect(Object.keys(byRole)).toHaveLength(5);
+    for (const { role, defaultModel } of Object.values(MODEL_ROLE_CONFIG)) {
+      expect(byRole[role]).toEqual({ model: defaultModel, source: 'default' });
+    }
+  });
+
+  it('resolves precedence: Remote Config > env > default', async () => {
+    getTemplate.mockResolvedValue(template({
+      live_voice_model: { defaultValue: { value: 'gemini-rc-live' } },
+    }));
+    const byRole = await captureSources(() => {
+      process.env.RECIPE_GENERATION_MODEL = 'gemini-env-gen';
+    });
+
+    // Remote Config wins where published.
+    expect(byRole['live-voice']).toEqual({ model: 'gemini-rc-live', source: 'remote-config' });
+    // The env var wins where Remote Config is unset.
+    expect(byRole.generation).toEqual({ model: 'gemini-env-gen', source: 'env' });
+    // Everything else falls back to the hardcoded default.
+    expect(byRole.validation).toEqual({ model: MODEL_ROLE_CONFIG.validation.defaultModel, source: 'default' });
+    expect(byRole.conversation).toEqual({ model: MODEL_ROLE_CONFIG.conversation.defaultModel, source: 'default' });
+    expect(byRole.vision).toEqual({ model: MODEL_ROLE_CONFIG.vision.defaultModel, source: 'default' });
   });
 });

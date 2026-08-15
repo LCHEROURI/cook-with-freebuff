@@ -9,8 +9,7 @@
 
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import type { RecognitionResult, VisualIngredientProvider } from '../vision/types';
-
-const DEFAULT_VISION_MODEL = 'gemini-2.5-flash';
+import { MODEL_ROLE_CONFIG } from './model-roles';
 
 function getKey(): string | undefined {
   return process.env.GOOGLE_AI_API_KEY;
@@ -117,7 +116,8 @@ export function createGeminiVisionScanner(opts: GeminiVisionScannerOptions = {})
         mimeType = dataUri[1];
         base64 = dataUri[2];
       }
-      const modelName = (await opts.resolveModel?.()) ?? process.env.VISION_MODEL ?? DEFAULT_VISION_MODEL;
+      const cfg = MODEL_ROLE_CONFIG.vision;
+      const modelName = (await opts.resolveModel?.()) ?? process.env[cfg.envVar] ?? cfg.defaultModel;
       return scanImage(base64, mimeType, modelName);
     },
   };
