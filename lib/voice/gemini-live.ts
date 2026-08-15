@@ -258,8 +258,13 @@ export class GeminiLiveClient {
       connected: this.connected,
       playing: this.playing,
       playbackQueueLength: this.playbackQueue.length,
-      stuckQueueSince: this.stuckQueueSince,
-      stuckQueueMs: this.stuckQueueSince > 0 ? Date.now() - this.stuckQueueSince : 0,
+      // stuckQueueSince tracks the idle-but-stuck queue (playing=false, chunks
+      // still queued). While a drain is actively running (playing=true) the
+      // queue has resumed, so a leftover timestamp from before the drain must
+      // NOT be reported as a current stall — a copied blob during a successful
+      // retry would otherwise claim the queue is stuck (Codex P2, PR #3).
+      stuckQueueSince: this.playing ? 0 : this.stuckQueueSince,
+      stuckQueueMs: this.playing || this.stuckQueueSince === 0 ? 0 : Date.now() - this.stuckQueueSince,
     };
   }
 

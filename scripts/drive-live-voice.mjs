@@ -70,7 +70,13 @@ const PHASE_C_ONLY = process.argv.includes('--phase-c-only');
 const CHROME = process.env.CHROME_PATH ?? '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
 const SPEECH_WAV = '/tmp/live-voice-speech.wav';
 const SILENCE_WAV = '/tmp/live-voice-silence.wav';
-const PROBE_PREFIX = 'verify-live-voice-';
+// Probe namespace. The post-deploy verify:live voice stage keeps the default
+// `verify-live-voice-`; the weekly mic-regression monitor passes
+// `--probe-prefix mic-regression-` so its pre-run sweep and cleanup never
+// archive or delete the OTHER workflow's in-flight probe (Codex P1, PR #6 —
+// both drivers run as the same owner, so a shared prefix lets either one
+// sweep the other's session).
+const PROBE_PREFIX = flag('--probe-prefix', 'verify-live-voice-');
 const SPOKEN_PROMPT = 'chicken, rice and onion, for four people';
 
 const API_KEY = process.env.NEXT_PUBLIC_FIREBASE_API_KEY;
@@ -898,8 +904,50 @@ if (got2) {
     await sleep(1000);
     blob = await captureVoiceDetailsBlob(cdpC, evC);
   }
+  // The second transcription can arrive before its reply's audio has queued
+  // and drained, so a blob captured then reads stuckQueueSince=0 even though
+  // the queue could still stall right after (Codex P1, PR #12). Settle until
+  // there is EVIDENCE the second reply's playback completed — either we
+  // observed it playing (playing=true) and then drain, or the queue stayed
+  // idle long enough that a reply would have queued (stable idle). A single
+  // clean pre-reply blob must never be accepted, and a bounded settle that
+  // never drains must FAIL the run, not fall through as clean.
+  let drained = true;
+  if (!blob.startsWith('NO_COPY_BUTTON') && !blob.startsWith('BLob_CAPTURE_MISS')) {
+    drained = false;
+    let sawPlaying = false;
+    let stableIdle = 0;
+    for (let i = 0; i < 30 && !drained; i++) {
+      let playing = false;
+      let queued = 0;
+      let ok = true;
+      try {
+        const p = JSON.parse(blob);
+        const c = p?.gemini?.client;
+        if (typeof c?.playing === 'boolean') playing = c.playing;
+        if (typeof c?.playbackQueueLength === 'number') queued = c.playbackQueueLength;
+      } catch {
+        ok = false; // non-JSON blob — fall through to the verdict
+      }
+      if (!ok) break;
+      if (playing) {
+        sawPlaying = true;
+        stableIdle = 0;
+      } else if (queued > 0) {
+        stableIdle = 0;
+      } else if (sawPlaying || ++stableIdle >= 10) {
+        drained = true;
+      }
+      if (!drained) {
+        await sleep(1000);
+        blob = await captureVoiceDetailsBlob(cdpC, evC);
+      }
+    }
+  }
   if (blob.startsWith('NO_COPY_BUTTON') || blob.startsWith('BLob_CAPTURE_MISS')) {
     fail(`passing run but the diagnostics blob was not capturable (${blob}) — cannot prove the mic is not stuck`);
+  } else if (!drained) {
+    fail(`passing run but the second reply never drained within the settle window — the queue never returned to a stable idle state, so the mic cannot be proven unstuck`);
   } else {
     // The parse + stuck decision is shared (scripts/voice-blob-verdict.mjs),
     // where the unit tests INJECT a stuckQueueSince > 0 blob and prove the
