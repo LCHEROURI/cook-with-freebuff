@@ -60,7 +60,7 @@ const STATUS_RE = /^\s*(✓|✗|RESULT:)/;
 // server's own compiler chatter ("✓ Compiled / in Nms (587 modules)",
 // "✓ Ready in ..."), which leaks in because verify-live-local inherits its
 // stdio. Both must be dropped so only verify-live status lines compare.
-const DRIVER_NOISE = /dev server|API routes compiled|verify:live:local|teardown|===|Compiled|Ready in|Starting|modules\)/;
+const DRIVER_NOISE = /dev server|[Cc]ompiled|verify:live:local|teardown|===|Ready in|Starting|modules\)/;
 const NORMALIZE = [
   [/verify-live-\d+/g, 'verify-live-N'],
   [/in \d+ms/g, 'in Nms'],

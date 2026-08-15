@@ -10,8 +10,9 @@
 //
 //   1. Boots `npm run dev -- --port <port>` as its own process group.
 //   2. Waits for HTTP on the root route (cold compile can take a while).
-//   3. Warms the two API routes (/api/cook, /api/agent) so their on-demand
-//      compilation happens BEFORE verify:live's 30s request timeouts start.
+//   3. Warms the lazily-compiled routes (the /api/cook + /api/agent APIs, and
+//      the /login PAGE the [2c] popup proof drives) so their on-demand
+//      compilation happens BEFORE verify:live's request budgets start.
 //   4. Runs the real check: node scripts/verify-live.mjs --app http://localhost:<port>
 //      (same seed → guided flow → safety gate → timer → pantry confirm →
 //      Gemini turn → cleanup as the deployed check — same .env.local backend).
@@ -92,7 +93,19 @@ async function warmRoute(path, method = 'POST') {
 }
 await warmRoute('/api/cook');
 await warmRoute('/api/agent');
-ok('API routes compiled');
+// The [2c] stage spawns headless Chrome to click /login's real button, so the
+// page's on-demand compile must finish here — inside the driver's polling
+// window is a race, not a warm start.
+async function warmPage(path) {
+  try {
+    const res = await fetch(`${BASE}${path}`, { signal: AbortSignal.timeout(60_000) });
+    note(`warmed ${path} → HTTP ${res.status}`);
+  } catch (e) {
+    note(`warm ${path} failed (${e instanceof Error ? e.message : e}) — continuing`);
+  }
+}
+await warmPage('/login');
+ok('routes and /login page compiled');
 
 // ── 4. Run the real check against the local server ──────────────────────────
 console.log(`\n=== verify:live against ${BASE} ===`);

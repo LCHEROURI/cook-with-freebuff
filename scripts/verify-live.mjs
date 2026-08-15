@@ -505,7 +505,7 @@ try {
   }
 
   // ── 2c. Login popup proof ──────────────────────────────────────────────
-  // The deployed /login page must open the Google consent popup (not throw
+  // The /login page must open the Google consent popup (not throw
   // auth/unauthorized-domain) when "Continue with Google" is clicked from a
   // fresh profile. This is the config regression that bit once before: the
   // App Hosting hostname fell out of Firebase Auth's authorized domains and
@@ -513,8 +513,9 @@ try {
   // mint tokens server-side and never touch the client popup). The driver
   // spawns its own headless Chrome, clicks the real button, and proves the
   // popup reaches accounts.google.com (not just the transient firebaseapp.com
-  // handler hop) with no blocked-domain message. Production-only (headless
-  // Chrome + the deployed host), like [3d]/[3e].
+  // handler hop) with no blocked-domain message. Runs on the deployed AND
+  // local legs (any real origin, headless Chrome), never on the emulator or
+  // --guided-only compare reference, like [3d]/[3e].
   if (!EMULATOR && !GUIDED_ONLY) {
     console.log(`\n[2c] Login popup proof: Continue with Google opens the OAuth popup (${APP})`);
     const loginDriver = spawnSync('node', ['scripts/drive-login-popup.mjs', '--app', APP, '--out', `/tmp/verify-live-login-${t}`], {
