@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { act, render, waitFor } from '@testing-library/react';
+import { act, render, screen, waitFor } from '@testing-library/react';
 import { createElement } from 'react';
 import LoginPage from './page';
 import { useAuthSession, type UseAuthSessionResult } from '@/lib/auth/useAuthSession';
@@ -66,5 +66,23 @@ describe('app/login/page.tsx · ?retry=1 auto-retry', () => {
       await new Promise((r) => setTimeout(r, 30));
     });
     expect(signIn).not.toHaveBeenCalled();
+  });
+
+  it('keeps the tap-to-retry hint (no scary error) when the auto-retry popup is blocked', async () => {
+    // No transient user gesture survives the ?retry=1 navigation, so the
+    // browser can block the popup. The page must keep the hint and NOT show a
+    // "Sign-in was cancelled" alert — the user taps once instead.
+    const blocked = Object.assign(new Error('Sign-in was cancelled.'), { code: 'auth/popup-blocked' });
+    signIn.mockRejectedValueOnce(blocked);
+    mockAuth.mockReturnValue({
+      ...base,
+      signInHint: 'Refreshed your sign-in session — tap Continue with Google to retry.',
+    });
+    window.history.replaceState(null, '', '/login?retry=1');
+    render(createElement(LoginPage));
+
+    await waitFor(() => expect(signIn).toHaveBeenCalledTimes(1));
+    expect(screen.queryByRole('alert')).toBeNull();
+    expect(screen.getByRole('status').textContent).toContain('tap Continue with Google to retry');
   });
 });

@@ -61,11 +61,16 @@ function markReloadedForUnauthorizedDomain(): boolean {
 // handler), so the gesture carries over and the popup needs no second tap.
 const RETRY_PARAM = 'retry';
 
-/** Navigate to the current URL with ?retry=1. Returns whether it worked. */
+/**
+ * Navigate to /login?retry=1 (the page that consumes the flag) and return
+ * whether it worked. Always targets the login route, never the current path:
+ * this hook also drives sign-in from /status, and only /login auto-reopens the
+ * popup on the flag — a /status?retry=1 navigation would silently stall.
+ */
 function navigateToRetry(): boolean {
   try {
     if (typeof window === 'undefined') return false;
-    const url = new URL(window.location.href);
+    const url = new URL('/login', window.location.origin);
     url.searchParams.set(RETRY_PARAM, '1');
     window.location.replace(url.toString());
     return true;

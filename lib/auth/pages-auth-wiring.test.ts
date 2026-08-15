@@ -177,7 +177,7 @@ describe('app/login/page.tsx · login page', () => {
     expect(LOGIN).toContain("get('retry') !== '1'");
     expect(LOGIN).toContain('url.searchParams.delete(\'retry\')');
     expect(LOGIN).toContain('window.history.replaceState(null, \'\', url.toString())');
-    expect(LOGIN).toContain('void onSignIn()');
+    expect(LOGIN).toContain('void onSignIn(true)');
   });
 });
 

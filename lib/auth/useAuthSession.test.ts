@@ -171,7 +171,9 @@ describe('useAuthSession · unauthorized-domain reload retry', () => {
     });
 
     expect(replace).toHaveBeenCalledTimes(1);
-    expect(String(replace.mock.calls[0][0])).toContain('retry=1');
+    // The retry always routes to /login (the page that consumes the flag),
+    // never the current path — /status also signs in through this hook.
+    expect(String(replace.mock.calls[0][0])).toContain('/login?retry=1');
     expect(window.sessionStorage.getItem('cook-freebuff:auth:unauthorized-domain-reloaded')).toBe('1');
   });
 
