@@ -25,10 +25,12 @@
 // bot has not looked at this head yet (it posts minutes after open, and the
 // workflow re-runs on review events). The gate polls for a submitted Codex
 // review or inline comment on the current head for up to
-// CODEX_GATE_WAIT_SECONDS (default 360); if none appears it fails with a
-// WAITING message so the PR cannot merge before the bot has reviewed it. The
-// bot occasionally skips a PR entirely; after confirming that is the case,
-// re-run with --allow-no-review to certify the PR as reviewed-by-human.
+// CODEX_GATE_WAIT_SECONDS (default 360); if none appears it first pushes up
+// to CODEX_GATE_NUDGE_MAX (default 2) empty "nudge" commits to re-trigger the
+// bot's synchronize event, and only then fails with a WAITING message so the
+// PR cannot merge before the bot has reviewed it. The bot occasionally skips
+// a PR entirely; after confirming that is the case, re-run with
+// --allow-no-review to certify the PR as reviewed-by-human.
 // (Codex P1, PR #73 review.)
 //
 // A red gate running in Actions (GITHUB_ACTIONS=true and GH_TOKEN set) ALSO
@@ -49,6 +51,8 @@
 //   CODEX_GATE_WAIT_SECONDS=60 node scripts/codex-review-pr-gate.mjs --pr 42
 //   CODEX_GATE_INCLUDE_P2=true node scripts/codex-review-pr-gate.mjs --pr 42
 //     (repo variable: same stricter bar as --include-p2)
+//   CODEX_GATE_NUDGE_MAX=3 node scripts/codex-review-pr-gate.mjs --pr 42
+//     (or --nudge-max 3: cap the nudge commits before the WAITING fallback)
 // ============================================================================
 
 import { execSync } from 'node:child_process';
@@ -60,6 +64,9 @@ const BOT_LOGIN = 'chatgpt-codex-connector[bot]';
 const DEFAULT_REPO = 'LCHEROURI/cook-with-freebuff';
 const DEFAULT_WAIT_SECONDS = 360;
 const POLL_MS = 15_000;
+// How many empty "nudge" commits the gate may push to re-trigger a review
+// before giving up and asking the human to certify via --allow-no-review.
+const DEFAULT_NUDGE_MAX = 2;
 
 // Blocking severity set: P0 and P1 by default; --include-p2 adds P2 only, so
 // a hypothetical P3+ never blocks (Codex P1, PR #73 review).
@@ -101,6 +108,8 @@ const allowNoReview =
     .includes(String(pr));
 const waitMs =
   (Number(process.env.CODEX_GATE_WAIT_SECONDS ?? DEFAULT_WAIT_SECONDS) || DEFAULT_WAIT_SECONDS) * 1000;
+const nudgeMaxArg = take('--nudge-max') ?? process.env.CODEX_GATE_NUDGE_MAX;
+const nudgeMax = nudgeMaxArg == null ? DEFAULT_NUDGE_MAX : Math.max(0, Number(nudgeMaxArg) || 0);
 const blockingSet = includeP2 ? BLOCKING_INCLUDE_P2 : BLOCKING_DEFAULT;
 
 if (!pr) {
@@ -134,7 +143,12 @@ function fetchList(cmd) {
 
 // A finding/review only counts for the commit it was left on; a stale comment
 // from a previous head must never block the current one.
-const headSha = JSON.parse(runQuiet(`gh api "repos/${repo}/pulls/${pr}"`)).head.sha;
+const prMeta = JSON.parse(runQuiet(`gh api "repos/${repo}/pulls/${pr}"`));
+const headSha = prMeta.head.sha;
+const headRef = prMeta.head.ref;
+// Nudging only works for same-repo branches (a fork's head lives in the fork,
+// where this workflow's token cannot push).
+const headRepoFullName = prMeta.head.repo?.full_name ?? repo;
 
 function fetchComments() {
   return fetchList(`gh api --paginate "repos/${repo}/pulls/${pr}/comments?per_page=100"`);
@@ -155,6 +169,48 @@ let comments = fetchComments();
 let reviews = fetchReviews();
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+// ── Nudge (re-trigger a skipped review) ─────────────────────────────────────
+// The bot occasionally misses a PR entirely (no review after the wait window).
+// Rather than fall straight to the human --allow-no-review certification, the
+// gate pushes an empty commit on the PR head — the synchronize event is the
+// universal "please re-review" signal. The GITHUB_TOKEN push does NOT re-run
+// this workflow (Actions suppresses its own token's events), but it IS still
+// delivered to the bot App's webhook; when the bot then reviews, its review
+// event re-runs the gate and the loop closes. Nudges are capped and only ever
+// fire on real pull_request runs against same-repo heads.
+const NUDGE_MARKER = 'codex-nudge:';
+const canNudge =
+  process.env.GITHUB_ACTIONS === 'true' &&
+  !!process.env.GH_TOKEN &&
+  process.env.GITHUB_EVENT_NAME === 'pull_request' &&
+  headRepoFullName === repo;
+
+function countNudges() {
+  const commits = fetchList(`gh api --paginate "repos/${repo}/pulls/${pr}/commits?per_page=100"`);
+  return commits.filter((c) => (c.commit?.message ?? '').includes(NUDGE_MARKER)).length;
+}
+
+function pushNudge(attempt) {
+  const message = `${NUDGE_MARKER} retry Codex review (attempt ${attempt} of ${nudgeMax})`;
+  const cmds = [
+    'git config user.email "41898282+github-actions[bot]@users.noreply.github.com"',
+    'git config user.name "github-actions[bot]"',
+    `git fetch --no-tags origin "pull/${pr}/head"`,
+    `git checkout -q -B "__codex-nudge-${pr}" FETCH_HEAD`,
+    `git commit -q --allow-empty -m "${message}"`,
+    `git push origin "HEAD:refs/heads/${headRef}"`,
+  ];
+  for (const cmd of cmds) {
+    try {
+      runQuiet(cmd);
+    } catch (e) {
+      console.warn(`  - nudge failed at \`${cmd}\` (${e instanceof Error ? e.message : String(e)})`);
+      return false;
+    }
+  }
+  return true;
+}
+
 // ── Wait-for-review: empty is NOT clean (Codex P1, PR #73 review) ───────────
 if (allowNoReview) {
   // Human-confirmed certification: the bot is not going to review this PR, so
@@ -171,6 +227,22 @@ if (allowNoReview) {
     reviews = fetchReviews();
   }
   if (!botObservedOnHead(comments, reviews)) {
+    // Before asking for the human --allow-no-review certification, give the
+    // bot another chance: push an empty nudge commit (capped) so its
+    // synchronize event re-fires the review. Only in Actions, only on
+    // pull_request runs, only on same-repo heads.
+    if (canNudge && nudgeMax > 0) {
+      const nudgesSoFar = countNudges();
+      if (nudgesSoFar < nudgeMax && pushNudge(nudgesSoFar + 1)) {
+        console.error(
+          `✗ FAIL: no Codex review observed on head ${headSha} — pushed a nudge commit ` +
+            `(attempt ${nudgesSoFar + 1} of ${nudgeMax}) to re-trigger the bot; its review ` +
+            `will re-run this check. If the bot still does not review after the nudges, ` +
+            `re-run with --allow-no-review.`,
+        );
+        process.exit(1);
+      }
+    }
     console.error(
       `✗ FAIL: no Codex review observed on head ${headSha} — a clean review cannot be ` +
         `distinguished from no review yet, so the PR stays blocked until the bot reviews ` +

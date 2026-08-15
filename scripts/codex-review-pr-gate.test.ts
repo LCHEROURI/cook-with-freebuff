@@ -44,7 +44,8 @@ describe('scripts/codex-review-pr-gate.mjs', () => {
     expect(GATE).toContain(')).flat()');
     // Findings are scoped to the current head (stale comments from a previous
     // commit cannot block a head that already addressed them).
-    expect(GATE).toContain('pulls/${pr}"`)).head.sha');
+    expect(GATE).toContain('pulls/${pr}"`))');
+    expect(GATE).toContain('const headSha = prMeta.head.sha;');
     expect(GATE).toContain('c.commit_id != null && c.commit_id !== headSha');
   });
 
@@ -82,6 +83,21 @@ describe('scripts/codex-review-pr-gate.mjs', () => {
     // only the repo-variable path can satisfy the required merge gate).
     expect(GATE).toContain('CODEX_GATE_BOT_SKIPPED_PRS');
     expect(WORKFLOW).toContain('CODEX_GATE_BOT_SKIPPED_PRS: ${{ vars.CODEX_GATE_BOT_SKIPPED_PRS }}');
+  });
+
+  it('nudges a skipped PR with a capped empty commit before the WAITING fallback', () => {
+    expect(GATE).toContain('CODEX_GATE_NUDGE_MAX');
+    expect(GATE).toContain("const NUDGE_MARKER = 'codex-nudge:'");
+    expect(GATE).toContain('pulls/${pr}/commits?per_page=100');
+    expect(GATE).toContain('git push origin');
+    expect(GATE).toContain('git commit -q --allow-empty');
+    // Only a real pull_request Actions run on a same-repo head may nudge (a
+    // fork head or a review/dispatch run must fall back to the WAITING message).
+    expect(GATE).toContain("process.env.GITHUB_EVENT_NAME === 'pull_request'");
+    expect(GATE).toContain('headRepoFullName === repo');
+    // The push needs contents:write on top of the existing comment write perm.
+    expect(WORKFLOW).toContain('contents: write');
+    expect(WORKFLOW).toContain('pull-requests: write');
   });
 
   it('exits 1 with the blocking findings listed when an open P0/P1 exists', () => {
@@ -159,12 +175,20 @@ describe('scripts/codex-review-pr-gate.mjs', () => {
         extraArgs?: string;
         extraEnv?: Record<string, string>;
         gateComments?: unknown[];
+        nudgeCommits?: unknown[];
       } = {},
     ) => {
-      const { reviews = [botReview], extraArgs = '', extraEnv = {}, gateComments = [] } = opts;
+      const {
+        reviews = [botReview],
+        extraArgs = '',
+        extraEnv = {},
+        gateComments = [],
+        nudgeCommits = [],
+      } = opts;
       const stubDir = mkdtempSync(join(tmpdir(), 'codex-gate-stub-'));
       const stubPath = join(stubDir, 'gh');
       const postsLog = join(stubDir, 'posts.log');
+      const gitLog = join(stubDir, 'git.log');
       writeFileSync(
         stubPath,
         `#!/usr/bin/env node
@@ -173,6 +197,7 @@ const HEAD = ${JSON.stringify(HEAD)};
 const comments = ${JSON.stringify(comments)};
 const reviews = ${JSON.stringify(reviews)};
 const gateComments = ${JSON.stringify(gateComments)};
+const nudgeCommits = ${JSON.stringify(nudgeCommits)};
 const postsLog = ${JSON.stringify(postsLog)};
 const url = process.argv.join(' ');
 if (url.includes('issues/42/comments?')) {
@@ -185,17 +210,34 @@ if (url.includes('issues/42/comments?')) {
   process.stdout.write(JSON.stringify([comments]));
 } else if (url.includes('/42/reviews?')) {
   process.stdout.write(JSON.stringify([reviews]));
+} else if (url.includes('pulls/42/commits')) {
+  process.stdout.write(JSON.stringify(nudgeCommits));
 } else if (url.includes('pulls/42')) {
-  process.stdout.write(JSON.stringify({ head: { sha: HEAD } }));
+  process.stdout.write(JSON.stringify({ head: { sha: HEAD, ref: 'feature/branch', repo: { full_name: 'fake/repo' } } }));
 } else {
   process.exit(1);
 }
 `,
       );
       chmodSync(stubPath, 0o755);
+      // A stub git logs every invocation and exits 0, so the nudge path can be
+      // exercised without a real repository or token.
+      const gitPath = join(stubDir, 'git');
+      writeFileSync(
+        gitPath,
+        `#!/usr/bin/env node
+const fs = require('node:fs');
+fs.appendFileSync(${JSON.stringify(gitLog)}, process.argv.join(' ') + '<<<GIT>>>');
+`,
+      );
+      chmodSync(gitPath, 0o755);
       const readPosts = () =>
         existsSync(postsLog)
           ? readFileSync(postsLog, 'utf8').split('<<<POST>>>').filter((s) => s.trim().length > 0)
+          : [];
+      const readGitLog = () =>
+        existsSync(gitLog)
+          ? readFileSync(gitLog, 'utf8').split('<<<GIT>>>').filter((s) => s.trim().length > 0)
           : [];
       try {
         try {
@@ -212,13 +254,14 @@ if (url.includes('issues/42/comments?')) {
             `node scripts/codex-review-pr-gate.mjs --repo fake/repo --pr 42 ${extraArgs}`,
             { encoding: 'utf8', env },
           );
-          return { status: 0, out, posts: readPosts() };
+          return { status: 0, out, posts: readPosts(), gitLog: readGitLog() };
         } catch (e) {
           const err = e as { status?: number; stdout?: string; stderr?: string };
           return {
             status: err.status ?? 1,
             out: `${err.stdout ?? ''}${err.stderr ?? ''}`,
             posts: readPosts(),
+            gitLog: readGitLog(),
           };
         }
       } finally {
@@ -274,6 +317,54 @@ if (url.includes('issues/42/comments?')) {
         extraEnv: { CODEX_GATE_WAIT_SECONDS: '1', CODEX_GATE_BOT_SKIPPED_PRS: '41, 42' },
       }).status,
     ).toBe(0);
+
+    // ── Nudge (re-trigger a skipped review) ────────────────────────────────
+    // In a pull_request Actions run, a skipped review pushes a capped empty
+    // nudge commit (re-firing the bot's synchronize event) before the WAITING
+    // fallback.
+    const nudgeEnv = {
+      GH_TOKEN: 'stub-token',
+      GITHUB_ACTIONS: 'true',
+      GITHUB_EVENT_NAME: 'pull_request',
+      CODEX_GATE_WAIT_SECONDS: '1',
+    };
+    const nudged = run([], { reviews: [], extraEnv: nudgeEnv });
+    expect(nudged.status).toBe(1);
+    expect(nudged.out).toContain('pushed a nudge commit');
+    expect(nudged.out).toContain('attempt 1 of 2');
+    expect(nudged.gitLog.some((c) => c.includes('git push'))).toBe(true);
+    expect(nudged.gitLog.some((c) => c.includes('codex-nudge:'))).toBe(true);
+
+    // The nudge is capped: once the PR already carries nudge commits up to the
+    // max, the gate falls straight back to the WAITING message (no new push).
+    const capped = run([], {
+      reviews: [],
+      extraEnv: nudgeEnv,
+      nudgeCommits: [
+        { sha: 'n1', commit: { message: 'codex-nudge: retry Codex review (attempt 1 of 2)' } },
+        { sha: 'n2', commit: { message: 'codex-nudge: retry Codex review (attempt 2 of 2)' } },
+      ],
+    });
+    expect(capped.status).toBe(1);
+    expect(capped.out).toContain('no Codex review observed on head');
+    expect(capped.out).not.toContain('pushed a nudge commit');
+    expect(capped.gitLog.length).toBe(0);
+
+    // A review-event run (not pull_request) never nudges — the bot has just
+    // reviewed (or the event is unrelated), so only the WAITING path applies.
+    const noNudge = run([], {
+      reviews: [],
+      extraEnv: { GH_TOKEN: 'stub-token', GITHUB_ACTIONS: 'true', GITHUB_EVENT_NAME: 'pull_request_review', CODEX_GATE_WAIT_SECONDS: '1' },
+    });
+    expect(noNudge.status).toBe(1);
+    expect(noNudge.out).toContain('no Codex review observed on head');
+    expect(noNudge.gitLog.length).toBe(0);
+
+    // A nudge max of 0 disables the retry entirely.
+    const disabled = run([], { reviews: [], extraEnv: { ...nudgeEnv, CODEX_GATE_NUDGE_MAX: '0' } });
+    expect(disabled.status).toBe(1);
+    expect(disabled.out).not.toContain('pushed a nudge commit');
+    expect(disabled.gitLog.length).toBe(0);
 
     // The stricter bar via env (repo variable / dispatch input) blocks a P2
     // the same way the --include-p2 flag does — no flag needed.

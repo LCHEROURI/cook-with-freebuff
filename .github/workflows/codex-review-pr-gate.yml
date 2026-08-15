@@ -57,9 +57,10 @@ jobs:
     timeout-minutes: 10
 
     permissions:
-      contents: read
-      # write so a red gate can post its bot-style summary on the PR thread
-      # (scripts/codex-review-pr-gate.mjs postRedAlert).
+      # write so the gate can push a nudge commit on a bot-skipped PR head
+      # (scripts/codex-review-pr-gate.mjs pushNudge) and post its bot-style
+      # summary on the PR thread (postRedAlert).
+      contents: write
       pull-requests: write
 
     steps:
