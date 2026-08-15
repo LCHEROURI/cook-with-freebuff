@@ -87,16 +87,21 @@ describe('scripts/verify-live-local.mjs · verify-live spawn + exit mirroring', 
     expect(SRC).toContain('process.exit(process.exitCode ?? rc);');
   });
 
-  it('warms the API routes BEFORE the verify spawn (compile before 30s timeouts)', () => {
+  it('warms the API routes AND the /login page BEFORE the verify spawn (compile before budgets)', () => {
     // verify-live.mjs gives each request a 30s budget; the on-demand dev
     // compilation of /api/cook + /api/agent must happen before that budget
-    // starts, or a cold first hit eats it. Index ordering locks the sequence.
+    // starts, or a cold first hit eats it. The [2c] stage drives /login with
+    // headless Chrome, so the page must be warmed too. Index ordering locks
+    // the sequence.
     const warmCook = SRC.indexOf("warmRoute('/api/cook')");
     const warmAgent = SRC.indexOf("warmRoute('/api/agent')");
+    const warmLogin = SRC.indexOf("warmPage('/login')");
     const verify = SRC.indexOf("spawn(process.execPath, ['scripts/verify-live.mjs'");
     expect(warmCook).toBeGreaterThan(-1);
     expect(warmAgent).toBeGreaterThan(-1);
-    expect(verify).toBeGreaterThan(warmAgent);
+    expect(warmLogin).toBeGreaterThan(-1);
+    expect(warmLogin).toBeGreaterThan(warmAgent);
+    expect(verify).toBeGreaterThan(warmLogin);
     expect(SRC).toContain('AbortSignal.timeout(60_000)');
   });
 

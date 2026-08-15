@@ -37,12 +37,13 @@ describe('verify-live · [2c] login popup proof', () => {
     expect(SRC).toContain("'no blocked-domain message after clicking'");
   });
 
-  it('runs production-only (skips the emulator and guided-only legs)', () => {
-    // The stage needs headless Chrome + the deployed host, so it sits in a
-    // production-only guard like [3d]/[3e] and can never run against the
-    // local emulators or the --guided-only compare reference leg. The count is
-    // the [2c] guard plus the pre-existing driver stages, so it can never be
-    // the only production-only block in the file.
+  it('runs on the deployed and local legs (skips the emulator and guided-only legs)', () => {
+    // The stage needs headless Chrome + a real origin, so it sits in the
+    // !EMULATOR && !GUIDED_ONLY guard like [3d]/[3e]: it runs against the
+    // deployed host AND the local dev server (verify:live:local), but never
+    // against the local emulators or the --guided-only compare reference leg.
+    // The count is the [2c] guard plus the pre-existing driver stages, so it
+    // can never be the only guarded block in the file.
     expect(SRC).toContain('[2c] Login popup proof');
     const guardCount = SRC.match(/if \(!EMULATOR && !GUIDED_ONLY\) \{/g)?.length ?? 0;
     expect(guardCount).toBeGreaterThanOrEqual(2);
