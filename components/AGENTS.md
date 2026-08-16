@@ -8,7 +8,7 @@ Reusable and page-specific React components for the voice first cooking screens.
 
 | File | Owns |
 |---|---|
-| `CookScreen.tsx` | The cooking screen: one action at a time, phase chip, timers, safety gate, transcript, voice input. Pure presentational — every value comes in via `CookScreenProps` |
+| `CookScreen.tsx` | The cooking screen: one action at a time, phase chip, timers, safety gate, transcript, voice input. Domain data and callbacks arrive via `CookScreenProps`; ephemeral UI state (text input, start-over confirm, clipboard feedback, countdown) is local `useState` |
 | `VoiceIndicator.tsx` | Tiny status dot + label for the voice engine state (`LISTENING`/`THINKING`/`SPEAKING`/`OFFLINE`/`ERROR`) |
 | `StarterTour.tsx` | First-visit tour for the /cook starter; dismissal remembered in `localStorage` |
 | `FormField.tsx` | `FormInput` / `FormTextarea` wrappers with field-UI voice-separator annotations |
