@@ -40,6 +40,6 @@ The server side of the app: Firebase Admin wiring, Firestore repositories, the c
 
 ## Related specs
 
-- `docs/specs/0001` (App Hosting primary host) and `docs/specs/0002` (probe grace constants) govern the verify scripts, not this area; the session-state machine and event sourcing are documented in `STATE_MACHINE.md` and `AGENT_TOOLS.md` at the repo root.
+- `docs/specs/0001-app-hosting-primary-host.md` (App Hosting primary host) and `docs/specs/0002-probe-grace-constants-source-of-truth.md` (probe grace constants) govern the verify scripts, not this area; the session-state machine and event sourcing are documented in `STATE_MACHINE.md` and `AGENT_TOOLS.md` at the repo root.
 
 _Drafted by /audit from the repo, worth a quick human pass. Edit freely: once a line stops matching this draft, later runs treat it as curated and will flag rather than overwrite it._
