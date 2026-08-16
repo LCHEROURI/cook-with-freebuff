@@ -193,8 +193,8 @@ const RECIPE: Recipe = {
   cookingSteps: [
     { id: 'c1', stepNumber: 1, instruction: 'Sear the chicken 4 minutes', spokenInstruction: 'Sear the chicken four minutes', estimatedSeconds: 240, timerSeconds: 240, temperature: 180, temperatureUnit: 'C', heatLevel: 'medium-high', ingredientsUsed: ['chicken thighs'], equipmentUsed: ['pan'], safetyNote: 'Hot oil' },
   ],
-  dietaryTags: [],
-  allergens: [],
+  dietaryTags: ['gluten-free'],
+  allergens: ['peanuts'],
   safetyNotes: ['Hot oil \u2014 keep children away'],
   generatedAt: 1000,
   updatedAt: 1000,
@@ -263,8 +263,12 @@ describe('app/recipes/[id]/page.tsx · rendered behavior', () => {
     // equipment
     expect(screen.getByText('pan')).toBeTruthy();
     expect(screen.getByText('knife')).toBeTruthy();
-    // prep step
+    // prep step + its ingredient/equipment context
     expect(screen.getByText('Dice the onion')).toBeTruthy();
+    expect(screen.getByText('uses: onion, knife')).toBeTruthy();
+    // dietary tags and allergens chips
+    expect(screen.getByText('gluten-free')).toBeTruthy();
+    expect(screen.getByText('no peanuts')).toBeTruthy();
     // cooking step: instruction, estimated time, timer, temperature, heat
     expect(screen.getByText(/sear the chicken 4 minutes/i)).toBeTruthy();
     expect(screen.getByText('4m 0s')).toBeTruthy();
@@ -315,6 +319,13 @@ describe('app/recipes/[id]/page.tsx · rendered behavior', () => {
     mockAuth.mockReturnValue({ ...base, user: null });
     render(<RecipeDetailPage />);
     expect(replace).toHaveBeenCalledWith('/login');
+  });
+
+  it('shows the auth error instead of an infinite loading state', () => {
+    mockAuth.mockReturnValue({ ...base, state: 'error', error: 'Sign-in is unavailable' });
+    render(<RecipeDetailPage />);
+    expect(screen.getByText(/sign-in is unavailable/i)).toBeTruthy();
+    expect(screen.getByRole('link', { name: /back to start/i })).toBeTruthy();
   });
 });
 ```
@@ -454,6 +465,23 @@ export default function RecipeDetailPage() {
     );
   }
 
+  // Auth initialization failed (e.g. missing client config): neither effect
+  // fetches or redirects, so render the actionable error instead of the
+  // infinite loading state — the same branch /recipes and /kitchen render.
+  if (auth.error) {
+    return (
+      <main className={styles.main}>
+        <section className={styles.empty}>
+          <h1 className={styles.title}>Could not load this recipe</h1>
+          <p className={styles.emptyText}>{auth.error}</p>
+          <Link href="/" className={styles.primaryBtn}>
+            ← Back to start
+          </Link>
+        </section>
+      </main>
+    );
+  }
+
   if (state.status === 'loading') {
     return (
       <main className={styles.main}>
@@ -505,6 +533,20 @@ export default function RecipeDetailPage() {
         </div>
       </header>
 
+      {/* The recipe's own model-derived tags and allergens — separate from
+          preferences (what the user asked for), and present even on older
+          recipes that have no preferences (spec 0003 Q1). */}
+      {(recipe.dietaryTags.length > 0 || recipe.allergens.length > 0) && (
+        <div className={styles.tags} aria-label="Dietary tags and allergens">
+          {recipe.dietaryTags.map((tag) => (
+            <span key={tag} className={styles.badge}>{tag}</span>
+          ))}
+          {recipe.allergens.map((a) => (
+            <span key={a} className={styles.allergenBadge}>no {a}</span>
+          ))}
+        </div>
+      )}
+
       {startError && (
         <div className={styles.errorNote} role="alert">
           {startError}
@@ -552,6 +594,9 @@ export default function RecipeDetailPage() {
               <li key={step.id} className={styles.step}>
                 <p className={styles.stepText}>{step.instruction}</p>
                 <span className={styles.stepMeta}>{formatSeconds(step.estimatedSeconds)}</span>
+                {(step.ingredientsUsed.length > 0 || step.equipmentUsed.length > 0) && (
+                  <p className={styles.stepContext}>uses: {[...step.ingredientsUsed, ...step.equipmentUsed].join(', ')}</p>
+                )}
               </li>
             ))}
           </ol>
@@ -714,6 +759,28 @@ Create `app/recipes/[id]/page.module.css` (dark theme matching the other pages):
 .stepMeta {
   color: #aaa;
   font-size: 13px;
+}
+
+.stepContext {
+  color: #9ecbff;
+  font-size: 13px;
+  margin: 2px 0 0;
+}
+
+.tags {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-bottom: 16px;
+}
+
+.allergenBadge {
+  background: #3a1d1d;
+  color: #ffb4b4;
+  border: 1px solid #5a2a2a;
+  border-radius: 999px;
+  padding: 2px 8px;
+  font-size: 12px;
 }
 
 .badges {
