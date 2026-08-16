@@ -56,6 +56,8 @@ Stored in `docs/specs/NNNN-title.md`. Current: 0001 App Hosting primary host, 00
 - [AGENT_TOOLS.md](AGENT_TOOLS.md): tool registry and the model's structured tool calling surface
 - [lib/ai/AGENTS.md](lib/ai/AGENTS.md): AI provider boundary, model resolution, and structured JSON conventions
 - [scripts/AGENTS.md](scripts/AGENTS.md): deploy-verification drivers, the Codex review pipeline, and the landing path conventions
+- [components/AGENTS.md](components/AGENTS.md): presentational client components (CookScreen, voice indicator, starter tour) and their accessibility conventions
+- [lib/server/AGENTS.md](lib/server/AGENTS.md): Firestore repositories, the session-service state machine, the tool registry, and server-only wiring
 - [STATE_MACHINE.md](STATE_MACHINE.md): cooking session phase machine and state transitions
 - [VOICE_ARCHITECTURE.md](VOICE_ARCHITECTURE.md): realtime voice provider abstraction and Gemini Live integration
 - [TESTING.md](TESTING.md): test conventions, jsdom pragma, and the verify driver pattern
