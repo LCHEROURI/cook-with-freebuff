@@ -109,6 +109,36 @@ describe('scripts/codex-review-pr-gate.mjs', () => {
     expect(WORKFLOW).toContain('CODEX_NUDGE_TOKEN: ${{ secrets.CODEX_NUDGE_TOKEN }}');
   });
 
+  it('guards the nudge token scope: an Actions secret (repo or org) satisfies it, never an environment secret', () => {
+    // The nudge token reaches the gate ONLY through the workflow's env
+    // mapping `${{ secrets.CODEX_NUDGE_TOKEN }}`. That expression resolves
+    // from the Actions secret scope (repository or organization), never from
+    // an environment scope — an environment-scoped secret (Preview or
+    // Production) is never in scope for this job and can never satisfy the
+    // nudge, no matter what it is named. If a future edit adds an
+    // `environment:` block to the codex-gate job, this guard goes red with it,
+    // because that is the one edit that would let the expression start
+    // resolving to an environment secret instead.
+    expect(WORKFLOW).toContain('CODEX_NUDGE_TOKEN: ${{ secrets.CODEX_NUDGE_TOKEN }}');
+    // Scope the negative to the codex-gate JOB only: bound the slice at the
+    // next sibling job key (a two-space-indented name followed by a colon), so
+    // a future job appended after codex-gate with its own environment block
+    // cannot false-fail this guard. The gate's secret context must stay in the
+    // Actions scope, but a sibling job may legitimately target an environment.
+    const codexGateStart = WORKFLOW.indexOf('codex-gate:');
+    // Fail loudly if the job key was renamed, rather than letting slice(-1)
+    // check only the workflow's last character and pass vacuously.
+    expect(codexGateStart).toBeGreaterThanOrEqual(0);
+    const restOfFile = WORKFLOW.slice(codexGateStart);
+    const nextJobAt = restOfFile.search(/\n  [a-zA-Z_][a-zA-Z0-9_-]*:/);
+    const codexGateJob = nextJobAt === -1 ? restOfFile : restOfFile.slice(0, nextJobAt);
+    expect(codexGateJob).not.toContain('environment:');
+    // And the script's only token source is that env var: no file read, no gh
+    // secret lookup, nothing that could reach an environment secret directly.
+    expect(GATE).toContain("const token = process.env.CODEX_NUDGE_TOKEN ?? '';");
+    expect(GATE).toContain('!!process.env.CODEX_NUDGE_TOKEN');
+  });
+
   it('exits 1 with the blocking findings listed when an open P0/P1 exists', () => {
     expect(GATE).toContain('blocking.length === 0');
     expect(GATE).toContain('process.exit(0)');
