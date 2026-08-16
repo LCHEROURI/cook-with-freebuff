@@ -50,6 +50,23 @@ const expectProbeGraceLockstep = (verifySource: string, voiceSource: string) => 
   expect(verifyDecl).toBe(voiceDecl);
 };
 
+// The retry-allowlist declaration extraction the contract assertion runs.
+// Kept as one helper so the widening-mutation proof below exercises the SAME
+// code path as the live contract test.
+const staleSocketCodesDecl = (source: string): string | undefined =>
+  source.split('\n').find((line) => line.startsWith('const STALE_SOCKET_CODES'));
+
+// The retry-allowlist contract itself, factored out so the mutation test can
+// prove it FAILS on a widened (or shrunk) list by invoking this exact
+// assertion (same discipline as expectProbeGraceLockstep per Codex P2 on
+// PR #111: an independent `not.toContain` would keep passing if this
+// assertion were later weakened or removed).
+const expectStaleSocketAllowlist = (source: string) => {
+  const decl = staleSocketCodesDecl(source);
+  expect(decl).toBeDefined();
+  expect(decl).toBe("const STALE_SOCKET_CODES = ['ECONNRESET', 'ECONNREFUSED', 'EPIPE'];");
+};
+
 describe('scripts/verify-live.mjs · guaranteed cleanup', () => {
   it('wraps the whole flow in try/finally with cleanup in the finally block', () => {
     // The cleanup must be UNCONDITIONAL: a `finally` running `await cleanup()`
@@ -156,7 +173,8 @@ describe('scripts/verify-live.mjs · fetch resilience', () => {
     // Only the codes observed in the field are allowed: the retry must stay
     // limited to provably-undelivered requests, so speculative undici codes
     // (ECONNABORTED, UND_ERR_SOCKET, UND_ERR_CONNECT) stay out by contract.
-    expect(SRC).toContain("const STALE_SOCKET_CODES = ['ECONNRESET', 'ECONNREFUSED', 'EPIPE'];");
+    // The exact list is the contract — see expectStaleSocketAllowlist.
+    expectStaleSocketAllowlist(SRC);
     expect(fn).toContain('if (!retryOnConnectError || !STALE_SOCKET_CODES.includes(cause)) throw e;');
     expect(fn).toContain('retrying once on a fresh connection');
     // Two attempts total: the first, then exactly one opt-in retry.
@@ -164,6 +182,32 @@ describe('scripts/verify-live.mjs · fetch resilience', () => {
     // The timeoutMs and retryOnConnectError options must be stripped from the
     // init spread — never forwarded to fetch as headers/body.
     expect(fn).toContain('const { timeoutMs: _drop, retryOnConnectError: _drop2, ...rest } = init ?? {};');
+  });
+
+  it('proves the allowlist contract catches a widened retry list (mutation)', () => {
+    // Mutation proof: the allowlist assertion must have discriminating power,
+    // not pass vacuously. Mutate ONLY the allowlist in an in-memory copy of
+    // the REAL script source (never on disk) — first WIDEN it with a
+    // speculative undici code that was never observed in the field
+    // (ECONNABORTED), then SHRINK it by dropping one of the pinned codes — and
+    // invoke the actual contract assertion (expectStaleSocketAllowlist) on the
+    // mutated copy: it must throw, i.e. fail. If a future edit weakens or
+    // removes that assertion, the mutation test goes red with it instead of
+    // passing on an independent check.
+    const widened = SRC.replace(
+      "const STALE_SOCKET_CODES = ['ECONNRESET', 'ECONNREFUSED', 'EPIPE'];",
+      "const STALE_SOCKET_CODES = ['ECONNRESET', 'ECONNREFUSED', 'EPIPE', 'ECONNABORTED'];",
+    );
+    expect(widened).not.toBe(SRC); // the mutation actually landed
+    expect(() => expectStaleSocketAllowlist(widened)).toThrow();
+
+    // Mirror direction: a shrunk list (dropping EPIPE) must fail the same way.
+    const shrunk = SRC.replace(
+      "const STALE_SOCKET_CODES = ['ECONNRESET', 'ECONNREFUSED', 'EPIPE'];",
+      "const STALE_SOCKET_CODES = ['ECONNRESET', 'ECONNREFUSED'];",
+    );
+    expect(shrunk).not.toBe(SRC);
+    expect(() => expectStaleSocketAllowlist(shrunk)).toThrow();
   });
 
   it('opts the [4] relaunch into the retry with the probe-only safety rationale', () => {
