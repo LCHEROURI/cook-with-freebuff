@@ -1,7 +1,7 @@
 # Recipe Detail Page — Design
 
 **Date**: 2026-08-16
-**Status**: In Progress (approved by engineer; implementation plan at docs/superpowers/plans/2026-08-16-recipe-detail-page.md, landed in PR #113)
+**Status**: In Progress (approved by engineer; implementation plan at docs/plans/0003-recipe-detail-page.md, landed in PR #113)
 
 ## Overview
 
