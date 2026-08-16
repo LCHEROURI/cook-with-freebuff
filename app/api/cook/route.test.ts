@@ -411,6 +411,52 @@ describe('/api/cook', () => {
     });
   });
 
+  describe('get_recipe — reading one saved recipe', () => {
+    it('returns 400 without a recipeId', async () => {
+      const res = await post({ action: 'get_recipe' });
+      expect(res.status).toBe(400);
+      const body = await res.json();
+      expect(body.error.code).toBe('INVALID_BODY');
+    });
+
+    it('returns the owner’s full recipe', async () => {
+      const store = ctx.recipeStore as InMemoryRecipeStore;
+      await store.createRecipe(makeRecipe());
+
+      const res = await post({ action: 'get_recipe', recipeId: 'recipe-1' });
+      expect(res.status).toBe(200);
+      const body = await res.json();
+      expect(body.success).toBe(true);
+      expect(body.data.recipe.title).toBe('Chicken Rice');
+      // The FULL recipe comes back — every section the detail page renders.
+      expect(body.data.recipe.ingredients).toEqual(makeRecipe().ingredients);
+      expect(body.data.recipe.equipment).toEqual(['pan', 'knife']);
+      expect(body.data.recipe.prepSteps).toEqual(makeRecipe().prepSteps);
+      expect(body.data.recipe.cookingSteps).toEqual(makeRecipe().cookingSteps);
+      expect(body.data.recipe.safetyNotes).toEqual(['Hot oil']);
+    });
+
+    it('refuses to read another user’s recipe (ownership is enforced)', async () => {
+      const store = ctx.recipeStore as InMemoryRecipeStore;
+      await store.createRecipe({ ...makeRecipe(), id: 'recipe-other', userId: 'user-2' });
+
+      const res = await post({ action: 'get_recipe', recipeId: 'recipe-other' });
+      expect(res.status).toBe(404);
+      const body = await res.json();
+      expect(body.success).toBe(false);
+      expect(body.error.code).toBe('NOT_FOUND');
+      // The other user's recipe survives untouched — reading is side-effect free.
+      expect(await store.getRecipe('recipe-other')).not.toBeNull();
+    });
+
+    it('returns 404 when the recipe does not exist', async () => {
+      const res = await post({ action: 'get_recipe', recipeId: 'missing-recipe' });
+      expect(res.status).toBe(404);
+      const body = await res.json();
+      expect(body.error.code).toBe('NOT_FOUND');
+    });
+  });
+
   describe('create_recipe — the missing start-from-scratch stage', () => {
     it('returns NO_INGREDIENTS when the prompt has nothing parseable', async () => {
       // A craving with no ingredient list (and the question gate keeps the
