@@ -71,7 +71,7 @@ const NORMALIZE = [
   [/verify-(?:live|local)-starter-\d+/g, 'verify-live-starter-N'],
   [/in \d+ms/g, 'in Nms'],
   [/Gemini answered: “.+?…”/g, 'Gemini answered: “…”'],
-  [/(\S+\.vercel\.app|\S+\.hosted\.app|localhost:\d+)/g, '<host>'],
+  [/\S+\.hosted\.app|localhost:\d+/g, '<host>'],
   [/\(owner [A-Za-z0-9]+\)/g, '(owner <uid>)'],
 ];
 
