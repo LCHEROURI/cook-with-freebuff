@@ -120,10 +120,15 @@ describe('scripts/codex-review-pr-gate.mjs', () => {
     // one edit that would let `secrets.CODEX_NUDGE_TOKEN` start resolving to
     // an environment secret instead.
     expect(WORKFLOW).toContain('CODEX_NUDGE_TOKEN: ${{ secrets.CODEX_NUDGE_TOKEN }}');
-    // Scope the negative to the codex-gate JOB, not the whole file: a future
-    // sibling job may legitimately target a Preview or Production environment,
-    // but the gate's secret context must stay repo Actions only.
-    const codexGateJob = WORKFLOW.slice(WORKFLOW.indexOf('codex-gate:'));
+    // Scope the negative to the codex-gate JOB only: bound the slice at the
+    // next sibling job key (a two-space-indented name followed by a colon), so
+    // a future job appended after codex-gate with its own environment block
+    // cannot false-fail this guard. The gate's secret context must stay repo
+    // Actions only, but a sibling job may legitimately target an environment.
+    const codexGateStart = WORKFLOW.indexOf('codex-gate:');
+    const restOfFile = WORKFLOW.slice(codexGateStart);
+    const nextJobAt = restOfFile.search(/\n  [a-zA-Z_][a-zA-Z0-9_-]*:/);
+    const codexGateJob = nextJobAt === -1 ? restOfFile : restOfFile.slice(0, nextJobAt);
     expect(codexGateJob).not.toContain('environment:');
     // And the script's only token source is that env var: no file read, no gh
     // secret lookup, nothing that could reach an environment secret directly.
