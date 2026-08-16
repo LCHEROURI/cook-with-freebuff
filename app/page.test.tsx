@@ -344,7 +344,9 @@ describe('app/page.tsx · resume card', () => {
       expect(screen.getByText('Your Rice simmer is finished.')).toBeInTheDocument();
     });
     // Exactly one chime for the one alert — never a repeat for the same alert.
-    expect(mockPlayChime).toHaveBeenCalledTimes(1);
+    // The chime effect is keyed on alertTimerIds and can flush a tick after
+    // the alert text renders, so poll instead of asserting synchronously.
+    await waitFor(() => expect(mockPlayChime).toHaveBeenCalledTimes(1));
   });
 
   it('chimes for each distinct timerId even when labels repeat (Codex P2)', async () => {
