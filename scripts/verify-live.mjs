@@ -110,6 +110,14 @@ const EMULATOR = process.argv.includes('--emulator') || process.env.VERIFY_EMULA
 // turns). Used by verify-live-compare-emulator.mjs so the deployed reference
 // leg is fast and only emits the shared guided-flow steps.
 const GUIDED_ONLY = process.argv.includes('--guided-only');
+// Probe namespace. The post-deploy verify:live CI job keeps the default
+// `verify-live-`; the local dev run (verify-live-local.mjs) passes
+// `--probe-prefix verify-local-` so its seed and sweep live in a DISJOINT
+// namespace — a concurrent CI run's `verify-live-` sweep can never touch the
+// local run's in-flight seed, even transiently. Child drivers derive their
+// own prefix from this (e.g. `${PROBE_PREFIX}voice-`) so they stay isolated
+// too.
+const PROBE_PREFIX = flag('--probe-prefix', 'verify-live-');
 // Strict App Check mode: the deployed server MUST be enforcing App Check — an
 // unattested request has to come back 403 APP_CHECK_FAILED. Set in CI once
 // APP_CHECK_ENFORCED=1 is live, so the post-deploy gate proves enforcement
@@ -219,18 +227,21 @@ async function cleanup() {
 
 // ── Pre-run sweep: never let a killed run's leftovers hijack the owner ──────
 // Every session this script ever creates carries a recipeId seeded with the
-// `verify-live-` prefix (see step 2), so leftover ACTIVE/PAUSED sessions with
-// that prefix are unambiguous probe artifacts — archiving them can never touch
+// PROBE_PREFIX (see step 2), so leftover ACTIVE/PAUSED sessions with that
+// prefix are unambiguous probe artifacts — archiving them can never touch
 // a real cooking session. Orphaned probe recipes (no probe session left) are
 // deleted outright; they are pure throwaway seed data.
 //
-// CONCURRENCY GUARD: this run shares the owner uid, the production Firestore,
-// AND the `verify-live-` namespace with the deployed verify:live CI job. When
-// two runs overlap, one run's seeded recipe is TRANSIENTLY orphaned between
-// its [3c] settle (which deletes the probe session) and its [4] relaunch (which
-// re-creates one) — and a concurrent run's sweep here would delete that still-
-// in-flight seed, failing its [4] relaunch with RECIPE_NOT_FOUND. Two
-// windows are guarded:
+// CONCURRENCY GUARD: this run shares the owner uid and the production
+// Firestore with the deployed verify:live CI job; both runs agree on the same
+// prefix only when they use the SAME namespace (CI keeps `verify-live-`,
+// verify:live:local passes `verify-local-`, so the two are disjoint and a
+// concurrent CI sweep can never touch a local seed). Two same-namespace runs
+// can still overlap (e.g. two CI deploys), and a run's seeded recipe is
+// TRANSIENTLY orphaned between its [3c] settle (which deletes the probe
+// session) and its [4] relaunch (which re-creates one) — a concurrent run's
+// sweep would delete that still-in-flight seed, failing its [4] relaunch with
+// RECIPE_NOT_FOUND. Two windows are guarded:
 //   • seed → launch: the recipe exists but no session references it yet.
 //     PROBE_GRACE_MS covers this from `updatedAt`/`createdAt` (seed time).
 //   • [3c] → [4]: the session is deleted but the recipe is relaunched only
@@ -250,7 +261,7 @@ async function sweepStaleProbes() {
     const s = d.data();
     return (
       typeof s.recipeId === 'string' &&
-      s.recipeId.startsWith('verify-live-') &&
+      s.recipeId.startsWith(PROBE_PREFIX) &&
       (s.status === 'ACTIVE' || s.status === 'PAUSED')
     );
   });
@@ -270,7 +281,7 @@ async function sweepStaleProbes() {
   const orphanCutoff = Date.now() - ORPHAN_GRACE_MS;
   const deletes = recipeSnap.docs
     .filter((d) => {
-      if (typeof d.id !== 'string' || !d.id.startsWith('verify-live-')) return false;
+      if (typeof d.id !== 'string' || !d.id.startsWith(PROBE_PREFIX)) return false;
       if (liveProbeRecipeIds.has(d.id)) return false;
       const data = d.data();
       // A live run's [3c] settle stamps `orphanedAt` when it deletes the
@@ -362,7 +373,7 @@ try {
 
   // ── 1. Seed an owner recipe ─────────────────────────────────────────────
   const t = Date.now();
-  seededRecipeId = `verify-live-${t}`;
+  seededRecipeId = `${PROBE_PREFIX}${t}`;
   const recipe = {
     id: seededRecipeId,
     userId: OWNER_UID,
@@ -686,7 +697,7 @@ try {
         // Rename: copy under a `verify-live-starter-` id (inner id updated to
         // match) and drop the model-generated slug doc, so the pre-run sweep
         // and this script's cleanup both find the probe by the standard prefix.
-        starterRecipeId = `verify-live-starter-${t}`;
+        starterRecipeId = `${PROBE_PREFIX}starter-${t}`;
         const renamed = { ...createdSnap.data(), id: starterRecipeId, updatedAt: Date.now() };
         await db.collection('recipes').doc(starterRecipeId).set(renamed);
         await db.collection('recipes').doc(createdRecipeId).delete();
@@ -911,7 +922,7 @@ try {
   // retry-once-after-30s backoff as [3d] for cold-serverless transients.
   console.log(`\n[3e] Live voice driver: dictation + active-screen mics (${APP})`);
   const runVoiceDriver = (attempt) =>
-    spawnSync('node', ['scripts/drive-live-voice.mjs', '--app', APP, '--out', `/tmp/verify-live-voice-${t}-${attempt}`], {
+    spawnSync('node', ['scripts/drive-live-voice.mjs', '--app', APP, '--probe-prefix', `${PROBE_PREFIX}voice-`, '--out', `/tmp/verify-live-voice-${t}-${attempt}`], {
       encoding: 'utf8',
       timeout: 420_000, // two Chrome launches + two Gemini Live sessions
       env: process.env,

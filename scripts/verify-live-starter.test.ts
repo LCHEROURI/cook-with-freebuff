@@ -69,7 +69,7 @@ describe('scripts/verify-live.mjs · starter-flow gate (create → validate → 
     // could hijack /cook. Renaming the probe under `verify-live-starter-`
     // (inner id updated, slug doc deleted) keeps every starter artifact
     // first-class to the sweep AND to this script's cleanup.
-    expect(SRC).toContain('starterRecipeId = `verify-live-starter-${t}`');
+    expect(SRC).toContain('starterRecipeId = `${PROBE_PREFIX}starter-${t}`');
     expect(SRC).toContain("db.collection('recipes').doc(starterRecipeId).set(renamed)");
     expect(SRC).toContain("db.collection('recipes').doc(createdRecipeId).delete()");
     expect(SRC).toContain('ok(`probe recipe renamed to ${starterRecipeId} (sweep-compatible)`)');

@@ -62,7 +62,13 @@ const STATUS_RE = /^\s*(✓|✗|RESULT:)/;
 // stdio. Both must be dropped so only verify-live status lines compare.
 const DRIVER_NOISE = /dev server|[Cc]ompiled|verify:live:local|teardown|===|Ready in|Starting|modules\)/;
 const NORMALIZE = [
-  [/verify-live-\d+/g, 'verify-live-N'],
+  // The deployed leg seeds `verify-live-<ts>` and the local leg seeds
+  // `verify-local-<ts>` (its own namespace, see verify-live-local.mjs) — both
+  // normalize to the same token so the diff compares structure, not the
+  // run-specific probe namespace. The `-starter-` variants are the renamed
+  // create_recipe probes.
+  [/verify-(?:live|local)-\d+/g, 'verify-live-N'],
+  [/verify-(?:live|local)-starter-\d+/g, 'verify-live-starter-N'],
   [/in \d+ms/g, 'in Nms'],
   [/Gemini answered: “.+?…”/g, 'Gemini answered: “…”'],
   [/(\S+\.vercel\.app|\S+\.hosted\.app|localhost:\d+)/g, '<host>'],
