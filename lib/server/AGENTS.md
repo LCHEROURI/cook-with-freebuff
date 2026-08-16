@@ -2,7 +2,7 @@
 
 ## Overview
 
-The server side of the app: Firebase Admin wiring, Firestore repositories, the cooking-session state machine service, guided-cooking delivery, pantry/leftover/grocery services, and the tool registry the AI model calls to touch state. Routes that execute state tools — `/api/cook`, `/api/agent`, `/api/tools`, `/api/kitchen` — resolve the user server side and build a `ToolContext` from here via `buildProductionContext`; authentication-only routes like `/api/voice/token` never touch it.
+The server side of the app: Firebase Admin wiring, Firestore repositories, the cooking-session state machine service, guided-cooking delivery, pantry/leftover/grocery services, and the tool registry the AI model calls to touch state. Routes that execute state tools — `/api/cook`, `/api/agent`, and `/api/tools` — resolve the user server side and build a `ToolContext` from here via `buildProductionContext`. `/api/kitchen` also builds a `ToolContext`, but uses it as a store container while calling domain services directly rather than dispatching through the tool registry; authentication-only routes like `/api/voice/token` never touch it.
 
 ## Key files
 
@@ -11,7 +11,7 @@ The server side of the app: Firebase Admin wiring, Firestore repositories, the c
 | `admin.ts` | Firebase Admin app + auth + Firestore singletons (server-only) |
 | `app-check.ts` | Verifies the `X-Firebase-AppCheck` attestation before Gemini-quota work; monitor mode today, enforced via flag |
 | `repositories.ts` | Typed repository interfaces + Firestore implementations. NO raw Firestore calls from service modules (route-level admin reads like `/api/status`' deploy_status check are intentional) |
-| `stores.ts` | Binds repositories to the tool-store interfaces and builds `buildProductionContext(userId)` — the `ToolContext` for routes that execute state tools |
+| `stores.ts` | Binds repositories to the tool-store interfaces and builds `buildProductionContext(userId)` — the `ToolContext` for tool-executing routes and other routes, such as `/api/kitchen`, that need the same production stores |
 | `session-service.ts` | The K1 state machine as a persistent service; optimistic version checks on existing-session updates + caller-supplied correlation markers, with non-atomic audit events (see Conventions) |
 | `guide-service.ts` | Guided cooking (K6): one physical action at a time, timer auto-start, safety gates |
 | `tools/` | The tool registry: `registry.ts` (dispatch) + per-domain tool modules (`ingredient-tools.ts`, `recipe-tools.ts`, `timer-tools.ts`, `session-tools.ts`, `pantry-tools.ts`, `grocery-tools.ts`, `leftover-tools.ts`, `guide-tools.ts`) + `types.ts` (store interfaces) |
@@ -28,12 +28,12 @@ The server side of the app: Firebase Admin wiring, Firestore repositories, the c
 - Services depend on narrow store interfaces (e.g. `SessionStore`), not the repositories directly — each interface has an in-memory implementation beside it for tests (e.g. `InMemorySessionStore`).
 - Updates to an EXISTING session are optimistic-concurrency: they take `expectedVersion` and throw `VersionConflictError` on mismatch (creation and audit-only writes like `logSessionEvent`/`clearProcessed` take no version). Correlation ids dedupe client retries when the caller supplies one — the marker write rides the same transaction as the session update (never a separate write that can fail after commit); transitions without a `correlationId` write no marker.
 - Event-sourced transitions: the service writes a typed event (`SESSION_STARTED`, `STEP_COMPLETED`, `TIMER_STARTED`, ...) as a separate await after the state change — non-atomic audit records, so a failed `createEvent` leaves the state advanced without the event; only the correlation marker rides the update's transaction.
-- Errors follow the structured `{ code, recoverable }` shape with a `message`: `SessionError` in the session service, and `GuideError`/`PantryError`/`LeftoverError`/`GroceryError` in their services. `recoverable: true` means the client can retry.
+- Domain errors follow the structured `{ code, recoverable }` shape with a `message`: `SessionError` in the session service, and `GuideError`/`PantryError`/`LeftoverError`/`GroceryError` in their services. Dependency/store failures may propagate as ordinary `Error` objects and are not guaranteed to expose `code` or `recoverable`. For structured domain errors, `recoverable: true` means the client can retry.
 - The AI model touches state ONLY through tools in `tools/` — executed tools log latency and error codes to `agent_tool_logs`; pre-dispatch failures (`UNKNOWN_TOOL`, `INVALID_ARGUMENTS`) return before any log record is written.
 
 ## Gotchas
 
-- `buildProductionContext` is the only sanctioned way routes get a `ToolContext` in production; tests build their own with in-memory stores.
+- `buildProductionContext` is the sanctioned way production routes obtain the shared store-backed `ToolContext`; tool-executing routes dispatch through `tools/`, while `/api/kitchen` uses the context's stores through domain services directly. Tests build their own context with in-memory stores.
 - App Check: emulators pass the gate unconditionally (they cannot attest); enforcement is opt-in via `APP_CHECK_ENFORCED=1`. Do not make quota-bearing routes skip the check in production.
 - The `recoveryContext.retryCount` budget is deliberately NOT cleared on recover — repeated failures stay bounded (K7).
 - Timer rebasing (`rebaseActiveTimers`) is what makes pause/resume agree between the screen and the server — a broken rebase surfaces as timers that drift after resume.
