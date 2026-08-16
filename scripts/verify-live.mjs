@@ -135,27 +135,35 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 // Safe pretty-print for fail messages — a non-JSON body (e.g. a proxy error
 // page) must print as `null`, never crash the verifier.
 const j = (v) => JSON.stringify(v ?? null).slice(0, 160);
+// Socket-level errors that mean the request was never delivered: undici
+// reports these when it tries to REUSE a keep-alive socket the peer has
+// already closed (the Chrome driver stages block this process in spawnSync
+// for minutes, and `next dev` closes the idle socket meanwhile). A retry gets
+// a FRESH connection. Timeouts/aborts are deliberately ABSENT — by then the
+// server may have accepted the request, and repeating a mutating POST would
+// duplicate it — so they always rethrow.
+const STALE_SOCKET_CODES = ['ECONNRESET', 'ECONNREFUSED', 'EPIPE', 'ECONNABORTED', 'UND_ERR_SOCKET', 'UND_ERR_CONNECT'];
 const fetchJson = async (url, init) => {
   // The default 30s budget covers every ordinary call; callers that drive
   // Gemini generation (create_recipe) pass a longer timeoutMs — cold
   // serverless generation can exceed 30s and a fetch abort would fail the
   // gate on a transient, not a regression.
   const timeoutMs = typeof init?.timeoutMs === 'number' ? init.timeoutMs : 30_000;
-  const { timeoutMs: _drop, ...rest } = init ?? {};
+  const retryOnConnectError = init?.retryOnConnectError === true;
+  const { timeoutMs: _drop, retryOnConnectError: _drop2, ...rest } = init ?? {};
   const attempt = () => fetch(url, { ...rest, signal: AbortSignal.timeout(timeoutMs) });
   let res;
   try {
     res = await attempt();
   } catch (e) {
-    // One retry on a network-level failure (no HTTP response arrived): the
-    // Chrome driver stages block this process in spawnSync for minutes, and
-    // the first fetch after them can die on a stale connection with undici's
-    // generic "fetch failed" (cause ECONNRESET/ECONNREFUSED). A fresh attempt
-    // re-establishes the connection. HTTP errors never throw here, so the
-    // retry cannot mask a real status.
     const cause = e?.cause?.code ?? '';
+    // Retry is OPT-IN and only for a provably-undelivered request on a stale
+    // socket. A timeout/abort rethrows: the server may have processed it, and
+    // the caller (e.g. launch/done/create_recipe) is not idempotent. HTTP
+    // errors never throw here, so the retry cannot mask a real status.
+    if (!retryOnConnectError || !STALE_SOCKET_CODES.includes(cause)) throw e;
     console.warn(
-      `  - fetch ${url} failed (${e instanceof Error ? e.message : String(e)}${cause ? `, ${cause}` : ''}) — retrying once`,
+      `  - fetch ${url} failed (${e instanceof Error ? e.message : String(e)}${cause ? `, ${cause}` : ''}) — retrying once on a fresh connection`,
     );
     res = await attempt();
   }
@@ -221,12 +229,16 @@ async function cleanup() {
 // two runs overlap, one run's seeded recipe is TRANSIENTLY orphaned between
 // its [3c] settle (which deletes the probe session) and its [4] relaunch (which
 // re-creates one) — and a concurrent run's sweep here would delete that still-
-// in-flight seed, failing its [4] relaunch with RECIPE_NOT_FOUND. A recipe
-// seeded within PROBE_GRACE_MS (the longest a full run can take) is a LIVE
-// run's probe, never a killed run's leftover: leave it alone. Killed runs are
-// minutes-to-hours old by the time the next run sweeps, so real leftovers are
-// still cleaned.
+// in-flight seed, failing its [4] relaunch with RECIPE_NOT_FOUND. Two
+// windows are guarded:
+//   • seed → launch: the recipe exists but no session references it yet.
+//     PROBE_GRACE_MS covers this from `updatedAt`/`createdAt` (seed time).
+//   • [3c] → [4]: the session is deleted but the recipe is relaunched only
+//     after the [3d]/[3e] drivers (up to ~25min). ORPHAN_GRACE_MS covers this
+//     from `orphanedAt`, which the [3c] settle stamps at the orphaning
+//     instant — measuring from seed time would expire mid-run.
 const PROBE_GRACE_MS = 15 * 60 * 1000;
+const ORPHAN_GRACE_MS = 30 * 60 * 1000;
 async function sweepStaleProbes() {
   if (!db) return { archived: 0, deleted: 0 };
   const [sessionSnap, recipeSnap] = await Promise.all([
@@ -255,11 +267,20 @@ async function sweepStaleProbes() {
   // grace period (a recently-seeded one belongs to a run still in flight).
   const liveProbeRecipeIds = new Set(probeSessions.map((d) => d.data().recipeId));
   const cutoff = Date.now() - PROBE_GRACE_MS;
+  const orphanCutoff = Date.now() - ORPHAN_GRACE_MS;
   const deletes = recipeSnap.docs
     .filter((d) => {
       if (typeof d.id !== 'string' || !d.id.startsWith('verify-live-')) return false;
       if (liveProbeRecipeIds.has(d.id)) return false;
-      const seededAt = d.data().updatedAt ?? d.data().createdAt ?? 0;
+      const data = d.data();
+      // A live run's [3c] settle stamps `orphanedAt` when it deletes the
+      // session; a concurrent sweep must not delete that recipe before the
+      // [4] relaunch re-creates it. The grace is measured from the orphaning
+      // instant (not seed time), so the [3d]/[3e] driver duration can't push
+      // it past the window.
+      const orphanedAt = data.orphanedAt;
+      if (typeof orphanedAt === 'number' && orphanedAt > orphanCutoff) return false;
+      const seededAt = data.updatedAt ?? data.createdAt ?? 0;
       return typeof seededAt === 'number' && seededAt < cutoff;
     })
     .map((d) => d.ref.delete());
@@ -711,6 +732,19 @@ try {
       note(`settle best-effort: ${e.message} — the driver will fail loudly if the starter is not shown`);
     }
   }
+  // Stamp the orphaning instant on the seeded recipe: its session was just
+  // deleted above, and the [4] relaunch re-creates one only after the two
+  // Chrome drivers. A concurrent run's sweep reads `orphanedAt` to measure
+  // its grace from THIS point (not seed time), so it stays off-limits for the
+  // full driver duration. Once relaunched, the live-session check protects
+  // it anyway; the stale timestamp is irrelevant after that.
+  if (seededRecipeId) {
+    try {
+      await db.collection('recipes').doc(seededRecipeId).update({ orphanedAt: Date.now() });
+    } catch (e) {
+      note(`orphanedAt stamp best-effort: ${e.message} — the relaunch still re-creates the session`);
+    }
+  }
   // Also neutralize ANY leftover session that can hijack the starter:
   //   (a) its recipe doc no longer exists (the sweep's `verify-live-`
   //       discriminator only sees prefixed probe recipes; a session launched
@@ -921,7 +955,17 @@ try {
   // driver saw the clean starter; re-establish `sid` by launching the seeded
   // recipe (still in Firestore) fresh, so the pantry turns attach to a real,
   // current session.
-  const relaunch = await cook('launch', { recipeId: seededRecipeId });
+  // The relaunch is the FIRST fetch after the minutes-long [3d]/[3e] Chrome
+  // stages, so it is the one that hits the stale keep-alive socket. It opts
+  // into the connection-error retry: `launch` on a `verify-live-` probe
+  // recipe can only ever create a probe session, so a lost-response duplicate
+  // (if the first delivery DID reach the server) is itself a `verify-live-`
+  // probe session the next run's sweep archives — bounded, self-healing probe
+  // data, never user data.
+  const relaunch = await fetchJson(`${APP}/api/cook`, {
+    method: 'POST', headers: AUTH, body: JSON.stringify({ action: 'launch', recipeId: seededRecipeId }),
+    retryOnConnectError: true,
+  });
   if (relaunch.status === 200 && relaunch.body?.success && relaunch.body?.data?.sessionId) {
     sid = relaunch.body.data.sessionId;
     ok(`fresh session ${sid.slice(0, 8)}… re-established for the agent turns`);

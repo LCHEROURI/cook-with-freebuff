@@ -73,13 +73,27 @@ describe('scripts/verify-live.mjs · guaranteed cleanup', () => {
     // The deployed CI verify and a local verify:live:local share the owner,
     // Firestore, and `verify-live-` namespace. A concurrent run's seeded
     // recipe is transiently orphaned between [3c] and [4]; sweeping it there
-    // fails that run's relaunch with RECIPE_NOT_FOUND. The grace guard keeps
-    // a fresh seed alive while still deleting genuinely old leftovers.
+    // fails that run's relaunch with RECIPE_NOT_FOUND. Two windows are
+    // guarded: seed→launch (from updatedAt/createdAt) and [3c]→[4] (from
+    // orphanedAt, stamped at the orphaning instant so the drivers' duration
+    // can't expire it mid-run).
     const fnStart = SRC.indexOf('async function sweepStaleProbes');
     const fn = SRC.slice(fnStart, SRC.indexOf('\n}\n', fnStart));
     expect(SRC).toContain('const PROBE_GRACE_MS = 15 * 60 * 1000;');
-    expect(fn).toContain("const seededAt = d.data().updatedAt ?? d.data().createdAt ?? 0;");
+    expect(SRC).toContain('const ORPHAN_GRACE_MS = 30 * 60 * 1000;');
+    expect(fn).toContain("const data = d.data();");
+    expect(fn).toContain('const orphanedAt = data.orphanedAt;');
+    expect(fn).toContain('typeof orphanedAt === \'number\' && orphanedAt > orphanCutoff');
+    expect(fn).toContain("const seededAt = data.updatedAt ?? data.createdAt ?? 0;");
     expect(fn).toContain('typeof seededAt === \'number\' && seededAt < cutoff');
+  });
+
+  it('stamps orphanedAt at the [3c] settle so the sweep measures grace from the orphaning point', () => {
+    // The seeded recipe becomes orphaned only when [3c] deletes its probe
+    // session; measuring the grace from seed time (updatedAt) would let the
+    // [3d]/[3e] driver duration push an in-flight seed past the window. The
+    // settle must record the orphaning instant on the recipe itself.
+    expect(SRC).toContain("db.collection('recipes').doc(seededRecipeId).update({ orphanedAt: Date.now() })");
   });
 
   it('sweeps ONLY verify-live- prefixed sessions — a real session can never be archived', () => {
@@ -98,18 +112,35 @@ describe('scripts/verify-live.mjs · guaranteed cleanup', () => {
 });
 
 describe('scripts/verify-live.mjs · fetch resilience', () => {
-  it('retries a network-level fetch failure exactly once', () => {
+  it('retries only an opted-in stale-socket failure, exactly once, never a timeout', () => {
     // The [4] relaunch POST dies on the stale keep-alive socket left by the
     // minutes-long Chrome driver stages (undici "fetch failed", EPIPE), which
     // crashed verify:live:local at RESULT: FAIL before [4] could run. The
-    // retry must re-establish the connection once, and must NOT retry HTTP
-    // errors (fetch only throws on network failure, never on a response).
+    // retry must re-establish the connection once — but ONLY when the caller
+    // opts in (retryOnConnectError) AND the error is a socket-level code that
+    // proves the request was never delivered. A timeout/abort (the server may
+    // have accepted the request) must rethrow: launch/done/create_recipe are
+    // not idempotent, and a blind repeat would duplicate the mutation.
     const fnStart = SRC.indexOf('const fetchJson = async');
     const fn = SRC.slice(fnStart, SRC.indexOf('let body = null', fnStart));
-    expect(fn).toContain('const attempt = () => fetch(url, { ...rest, signal: AbortSignal.timeout(timeoutMs) });');
-    expect(fn).toContain('res = await attempt();');
-    expect(fn).toContain('retrying once');
-    // Both attempts share one URL + init; a fresh AbortSignal per attempt.
+    expect(fn).toContain("const retryOnConnectError = init?.retryOnConnectError === true;");
+    // STALE_SOCKET_CODES is a top-level const just above fetchJson.
+    expect(SRC).toContain("const STALE_SOCKET_CODES = ['ECONNRESET', 'ECONNREFUSED', 'EPIPE', 'ECONNABORTED', 'UND_ERR_SOCKET', 'UND_ERR_CONNECT'];");
+    expect(fn).toContain('if (!retryOnConnectError || !STALE_SOCKET_CODES.includes(cause)) throw e;');
+    expect(fn).toContain('retrying once on a fresh connection');
+    // Two attempts total: the first, then exactly one opt-in retry.
     expect(fn.match(/await attempt\(\)/g)).toHaveLength(2);
+    // The timeoutMs and retryOnConnectError options must be stripped from the
+    // init spread — never forwarded to fetch as headers/body.
+    expect(fn).toContain('const { timeoutMs: _drop, retryOnConnectError: _drop2, ...rest } = init ?? {};');
+  });
+
+  it('opts the [4] relaunch into the retry with the probe-only safety rationale', () => {
+    // Only the relaunch (the first fetch after the Chrome stages) opts in.
+    // It must go straight through fetchJson with retryOnConnectError, not
+    // through the shared cook() helper, which would swallow the flag into the
+    // JSON body instead of the init options.
+    expect(SRC).toContain("body: JSON.stringify({ action: 'launch', recipeId: seededRecipeId }),\n    retryOnConnectError: true,");
+    expect(SRC).toContain('never user data');
   });
 });
