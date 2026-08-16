@@ -18,18 +18,18 @@ The server side of the app: Firebase Admin wiring, Firestore repositories, the c
 | `pantry-service.ts` | Pantry memory with confidence (0..1), stale-after expiry, and honest consume-for-recipe |
 | `leftover-service.ts` / `grocery-service.ts` | K10 leftovers + grocery list intelligence |
 | `model-config.ts` | Gemini model names from the Remote Config layer only: unset → null (the caller's env-var → default chain applies), and a failed refresh serves the last-good cached params — the role → (parameter, env, default) table lives in `lib/ai/model-roles.ts`, the single source of truth |
-| `requestContext.ts` | `AsyncLocalStorage` carrying a correlation id through every request |
+| `requestContext.ts` | `AsyncLocalStorage` carrying a correlation id; `/api/cook`, `/api/agent`, and `/api/tools` wrap requests with `runWithContext` (other routes never enter it; `logger.ts` does not read it automatically) |
 | `logger.ts` | Structured logging: one JSON object per line, correlation id threaded through |
 
 ## Conventions
 
 - `import 'server-only'` guards the boundary modules: `admin.ts`, `stores.ts`, `repositories.ts` (pinned by `security.test.ts`; `app-check.ts` and `model-config.ts` carry it too). Services, tools, `logger.ts`, and `requestContext.ts` intentionally omit it so Vitest can import them — there is no universal mandate.
-- No raw Firestore in services: reads/writes go through the repository layer (`repositories.ts`), which validates every write with Zod before persisting.
+- No raw Firestore in services: reads/writes go through the repository layer (`repositories.ts`), which Zod-validates CREATES before persisting. The update partials (`updatePantryItem`, `updateLeftover`, `updateGroceryItem`) pass straight through without a schema check — validate those partials in the calling service.
 - Services depend on narrow store interfaces (e.g. `SessionStore`), not the repositories directly — each interface has an in-memory implementation beside it for tests (e.g. `InMemorySessionStore`).
 - Sessions are optimistic-concurrency: every mutating call takes `expectedVersion` and throws `VersionConflictError` on mismatch. Correlation ids dedupe client retries — the marker write rides the same transaction as the session update (never a separate write that can fail after commit).
 - Event-sourced transitions: the service writes a typed event (`SESSION_STARTED`, `STEP_COMPLETED`, `TIMER_STARTED`, ...) as a separate await after the state change — non-atomic audit records, so a failed `createEvent` leaves the state advanced without the event; only the correlation marker rides the update's transaction.
 - Errors follow the structured `{ code, recoverable }` shape with a `message`: `SessionError` in the session service, and `GuideError`/`PantryError`/`LeftoverError`/`GroceryError` in their services. `recoverable: true` means the client can retry.
-- The AI model touches state ONLY through tools in `tools/` — every tool logs latency and error codes to `agent_tool_logs`.
+- The AI model touches state ONLY through tools in `tools/` — executed tools log latency and error codes to `agent_tool_logs`; pre-dispatch failures (`UNKNOWN_TOOL`, `INVALID_ARGUMENTS`) return before any log record is written.
 
 ## Gotchas
 
