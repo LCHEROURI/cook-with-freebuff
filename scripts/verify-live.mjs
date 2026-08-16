@@ -149,8 +149,11 @@ const j = (v) => JSON.stringify(v ?? null).slice(0, 160);
 // for minutes, and `next dev` closes the idle socket meanwhile). A retry gets
 // a FRESH connection. Timeouts/aborts are deliberately ABSENT — by then the
 // server may have accepted the request, and repeating a mutating POST would
-// duplicate it — so they always rethrow.
-const STALE_SOCKET_CODES = ['ECONNRESET', 'ECONNREFUSED', 'EPIPE', 'ECONNABORTED', 'UND_ERR_SOCKET', 'UND_ERR_CONNECT'];
+// duplicate it — so they always rethrow. The allowlist holds only the codes
+// observed in the field (ECONNRESET, ECONNREFUSED, EPIPE); other undici codes
+// (ECONNABORTED, UND_ERR_SOCKET, UND_ERR_CONNECT) were never seen and stay
+// out until a real failure shows one.
+const STALE_SOCKET_CODES = ['ECONNRESET', 'ECONNREFUSED', 'EPIPE'];
 const fetchJson = async (url, init) => {
   // The default 30s budget covers every ordinary call; callers that drive
   // Gemini generation (create_recipe) pass a longer timeoutMs — cold
@@ -248,6 +251,12 @@ async function cleanup() {
 //     after the [3d]/[3e] drivers (up to ~25min). ORPHAN_GRACE_MS covers this
 //     from `orphanedAt`, which the [3c] settle stamps at the orphaning
 //     instant — measuring from seed time would expire mid-run.
+// WHY THESE NUMBERS: 15 vs 30 match the two windows' worst cases. PROBE_GRACE_MS
+// (15 min) only needs to outlast a seed→launch, which a live run does within
+// minutes; it matches drive-live-voice.mjs's seed grace by convention (these
+// are standalone scripts, no shared module for one constant). ORPHAN_GRACE_MS
+// (30 min) must outlast the [3c]→[4] gap INCLUDING the minutes-long [3d]/[3e]
+// Chrome driver stages (~25 min worst case), so it is deliberately longer.
 const PROBE_GRACE_MS = 15 * 60 * 1000;
 const ORPHAN_GRACE_MS = 30 * 60 * 1000;
 async function sweepStaleProbes() {

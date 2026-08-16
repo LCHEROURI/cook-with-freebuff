@@ -193,6 +193,13 @@ process.on('uncaughtException', (e) => {
 // past STALE_SESSION_MS (the same 10-minute idle rule verify-live's settle
 // uses) are archived; a live run touches its session far more often than
 // that.
+// WHY THESE NUMBERS: PROBE_GRACE_MS (15 min) matches verify-live.mjs's seed
+// grace by convention — the seed→launch hazard is identical in both drivers,
+// and a live run launches within minutes, so there's no need for a shared
+// module over one constant. STALE_SESSION_MS (10 min) is a different concept:
+// the idle threshold for "is this session still alive", matching verify-live's
+// settle idle rule. The 30-min orphan grace lives only in verify-live.mjs,
+// which alone has the long [3c]→[4] driver gap.
 const PROBE_GRACE_MS = 15 * 60 * 1000;
 const STALE_SESSION_MS = 10 * 60 * 1000;
 async function sweepStaleProbes() {
