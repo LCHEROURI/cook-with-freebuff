@@ -2,7 +2,7 @@
 
 ## Overview
 
-The server side of the app: Firebase Admin wiring, Firestore repositories, the cooking-session state machine service, guided-cooking delivery, pantry/leftover/grocery services, and the tool registry the AI model calls to touch state. Routes that execute state tools — `/api/cook`, `/api/agent`, and `/api/tools` — resolve the user server side and build a `ToolContext` from here via `buildProductionContext`. `/api/kitchen` also builds a `ToolContext`, but uses it as a store container while calling domain services directly rather than dispatching through the tool registry; authentication-only routes like `/api/voice/token` never touch it.
+The server side of the app: Firebase Admin wiring, Firestore repositories, the cooking-session state machine service, guided-cooking delivery, pantry/leftover/grocery services, and the tool registry the AI model calls to touch state. `/api/agent` and `/api/tools` execute state tools through the tool executor and build a `ToolContext` via `buildProductionContext`. `/api/cook` also builds a `ToolContext`, but consumes `GuidedCookingService` directly and, for `create_recipe`, calls `generateRecipeTool.handler` directly rather than dispatching through `executeTool`; `/api/kitchen` uses the context as a store container while calling domain services directly. Authentication-only routes like `/api/voice/token` never touch it.
 
 ## Key files
 
@@ -18,7 +18,7 @@ The server side of the app: Firebase Admin wiring, Firestore repositories, the c
 | `pantry-service.ts` | Pantry memory with confidence (0..1), stale-after expiry, and honest consume-for-recipe |
 | `leftover-service.ts` / `grocery-service.ts` | K10 leftovers + grocery list intelligence |
 | `model-config.ts` | Gemini model names from the Remote Config layer only: unset → `undefined` (`resolveGeminiModel` returns `string \| undefined`, so callers fall through to their env-var → default chain), and a failed refresh serves the last-good cached params — the role → (parameter, env, default) table lives in `lib/ai/model-roles.ts`, the single source of truth |
-| `requestContext.ts` | `AsyncLocalStorage` carrying a correlation id; `/api/cook`, `/api/agent`, and `/api/tools` wrap requests with `runWithContext` (other routes never enter it; `logger.ts` does not read it automatically) |
+| `requestContext.ts` | `AsyncLocalStorage` carrying a correlation id; `/api/cook` POST plus the `/api/agent` and `/api/tools` POST handlers wrap execution with `runWithContext`. `/api/cook` GET and other routes do not enter this context; `logger.ts` does not read it automatically. |
 | `logger.ts` | Structured logging: one JSON object per line, correlation id threaded through |
 
 ## Conventions
