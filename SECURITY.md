@@ -44,7 +44,7 @@ Gemini key) can appear in a frontend bundle — they live only in
 
 - **Structured logs** — `lib/server/logger.ts` emits one JSON line per event
   (`ts, level, event, correlationId, …`); info → stdout, warn/error → stderr
-  for Google Cloud Logging / Vercel.
+  for Google Cloud Logging.
 - **Failure events** — `api.cook.error`, `api.agent.error`,
   `agent.provider.error` (model failures are logged structurally with the
   correlation id; the user still gets a calm message).

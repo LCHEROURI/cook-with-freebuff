@@ -298,7 +298,7 @@ See [`DEPLOYMENT.md`](./DEPLOYMENT.md) for the full operational story.
 - [x] Server-only secrets (Gemini key, service account) never in client bundles
 
 ### Part C — Observability
-- [x] Structured JSON logging (`lib/server/logger.ts`) — one event per line, info/stdout vs warn-error/stderr split, GCP/Vercel native ingestion
+- [x] Structured JSON logging (`lib/server/logger.ts`) — one event per line, info/stdout vs warn-error/stderr split, Google Cloud native ingestion
 - [x] Correlation IDs (`lib/server/requestContext.ts`) — AsyncLocalStorage threads one id through voice → agent → tool → DB → response; auto-generated when the client omits it
 - [x] Request/response logging on `/api/cook`, `/api/agent`, `/api/tools` (latency + status + correlationId)
 - [x] `agent_tool_logs` capture sanitized args + latency + result per tool call, correlationId-keyed
