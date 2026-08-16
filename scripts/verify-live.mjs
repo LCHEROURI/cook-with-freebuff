@@ -871,7 +871,7 @@ try {
   // (The driver self-caps at ~150s via its own 120s create poll, so two
   // attempts + 30s backoff fit comfortably inside the job budget.)
   const runDriver = (attempt) =>
-    spawnSync('node', ['scripts/drive-starter-prefs.mjs', '--app', APP, '--out', `${driverOut}-${attempt}`], {
+    spawnSync('node', ['scripts/drive-starter-prefs.mjs', '--app', APP, '--probe-prefix', `${PROBE_PREFIX}starter-prefs-`, '--out', `${driverOut}-${attempt}`], {
       encoding: 'utf8',
       timeout: 300_000, // Gemini generation + Chrome launch on cold serverless
       env: process.env,

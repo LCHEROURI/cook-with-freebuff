@@ -52,6 +52,11 @@ const flag = (name, fallback) => {
 };
 const APP = (flag('--app', process.env.VERIFY_BASE_URL) ?? 'https://cook-with-freebuff--portfolio-app-freebuff2.us-central1.hosted.app').replace(/\/$/, '');
 const OUT = flag('--out', '/tmp/cook-prefs-proof');
+// Probe namespace: verify:live passes its own derived prefix so the local
+// run's starter probe never lands in the CI run's `verify-live-` namespace
+// (and vice versa). The sweep-compatible rename below carries this prefix, so
+// a KILLED run's leftover is still caught by the matching sweep.
+const PROBE_PREFIX = flag('--probe-prefix', 'verify-live-starter-prefs-');
 const CHROME = process.env.CHROME_PATH ?? '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
 const PORT = 9473;
 const USER_DATA_DIR = `/tmp/cook-prefs-chrome-${process.pid}-${Date.now()}`;
@@ -232,12 +237,14 @@ const readyState = () =>
   evaluate(`(() => {
     // The ready card is uniquely identified by its Start-cooking button's
     // aria-label — its closest('div') IS the starterReady card, whose text
-    // holds the title + parsed preferences (never a "Your recipes" row).
+    // holds the title + parsed preferences (never a "Your recipes" row). The
+    // button carries data-recipe-id so cleanup can delete EXACTLY the recipe
+    // this run created (never a newer concurrent run's recipe by heuristic).
     const btn = document.querySelector('button[aria-label="Start cooking the created recipe"]');
     if (!btn) return { ready: false, cardText: '', error: '' };
     const cardText = btn.closest('div')?.innerText?.replace(/\\s+/g, ' ').trim() ?? '';
     const error = document.querySelector('[role="alert"]')?.innerText?.replace(/\\s+/g, ' ').trim() || '';
-    return { ready: true, cardText, error };
+    return { ready: true, cardText, error, recipeId: btn.getAttribute('data-recipe-id') ?? '' };
   })()`);
 
 const typedStarter = await typeStarter(PROMPT);
@@ -356,25 +363,28 @@ console.log(`\n[5] Cleanup: sweep the created probe recipe`);
 const db = getAdminDb();
 if (st.ready) {
   try {
-    // The recipes list refetch shows the new recipe; find the newest owner row.
-    // (Unordered userId query — the composite index does not exist; pick the
-    // max-updatedAt doc client-side, same result without needing an index.)
-    const ownerRecipes = await db.collection('recipes').where('userId', '==', OWNER_UID).get();
-    const probe = ownerRecipes.docs
-      .filter((d) => (d.data().title ?? '').length > 0 && (d.data().prepSteps?.length ?? 0) > 0)
-      .sort((a, b) => (b.data().updatedAt ?? 0) - (a.data().updatedAt ?? 0))[0];
-    if (probe) {
-      // First copy under a verify-live-compatible id (so a KILLED run's probe
-      // is still caught by verify:live's pre-run sweep), then delete BOTH the
-      // original doc and the renamed copy — a normal run must leave the
-      // owner's list exactly as it found it.
-      const probeId = `verify-live-starter-prefs-${Date.now()}`;
-      await db.collection('recipes').doc(probeId).set({ ...probe.data(), id: probeId, updatedAt: Date.now() });
-      await db.collection('recipes').doc(probe.id).delete();
-      await db.collection('recipes').doc(probeId).delete();
-      ok(`probe recipe “${probe.data().title ?? probe.id}” swept (renamed → deleted → copy deleted, id ${probeId})`);
+    // Delete EXACTLY the recipe this run created, identified by the
+    // data-recipe-id the ready card exposes — never "the owner's newest
+    // updatedAt row", which could be a concurrent CI run's seed and would be
+    // deleted out from under it.
+    const createdId = st.recipeId;
+    if (!createdId) {
+      note('ready card did not expose the created recipe id — nothing to sweep (a killed run is backstopped by the pre-run sweep)');
     } else {
-      note('no owner recipe found to sweep (nothing persisted?)');
+      const createdSnap = await db.collection('recipes').doc(createdId).get();
+      if (!createdSnap.exists) {
+        note(`created recipe ${createdId} already gone — nothing to sweep`);
+      } else {
+        // First copy under a sweep-compatible id (so a KILLED run's probe is
+        // still caught by the matching pre-run sweep), then delete BOTH the
+        // original doc and the renamed copy — a normal run must leave the
+        // owner's list exactly as it found it.
+        const probeId = `${PROBE_PREFIX}${Date.now()}`;
+        await db.collection('recipes').doc(probeId).set({ ...createdSnap.data(), id: probeId, updatedAt: Date.now() });
+        await db.collection('recipes').doc(createdId).delete();
+        await db.collection('recipes').doc(probeId).delete();
+        ok(`probe recipe “${createdSnap.data().title ?? createdId}” swept (renamed → deleted → copy deleted, id ${probeId})`);
+      }
     }
   } catch (e) {
     note(`cleanup best-effort: ${e.message} — verify:live's pre-run sweep archives any leftover probe`);
