@@ -268,8 +268,8 @@ jobs:
 
   # Post-deploy verify:live — the deployed-app gate. Runs in the SAME run as
   # the deploy (needs: [deploy-apphosting]) instead of an event-driven
-  # workflow, so it can never race the host build the way the old push-time
-  # job did against Vercel. `firebase deploy --only apphosting` can return
+  # workflow, so it can never race the host build the way the old event
+  # driven workflow could. `firebase deploy --only apphosting` can return
   # while the rollout is still queued or building, so the first step polls
   # the host's /api/build-info (tokenless) until it serves the pushed commit
   # (wait-for-deploy-sha) — the gate PROVES the target serves your commit
