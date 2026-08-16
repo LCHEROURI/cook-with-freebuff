@@ -109,6 +109,24 @@ describe('scripts/codex-review-pr-gate.mjs', () => {
     expect(WORKFLOW).toContain('CODEX_NUDGE_TOKEN: ${{ secrets.CODEX_NUDGE_TOKEN }}');
   });
 
+  it('guards the nudge token scope: only a repo Actions secret can satisfy it, never an environment secret', () => {
+    // The nudge token reaches the gate ONLY through the workflow's env
+    // mapping `${{ secrets.CODEX_NUDGE_TOKEN }}`. With no `environment:`
+    // block on the codex-gate job, GitHub resolves that secret context to the
+    // REPO Actions secret scope — an environment-scoped secret (Preview or
+    // Production) is never in scope for this job and can never satisfy the
+    // nudge, no matter what it is named. If a future edit adds an
+    // `environment:` block, this guard goes red with it, because that is the
+    // one edit that would let `secrets.CODEX_NUDGE_TOKEN` start resolving to
+    // an environment secret instead.
+    expect(WORKFLOW).not.toContain('environment:');
+    expect(WORKFLOW).toContain('CODEX_NUDGE_TOKEN: ${{ secrets.CODEX_NUDGE_TOKEN }}');
+    // And the script's only token source is that env var: no file read, no gh
+    // secret lookup, nothing that could reach an environment secret directly.
+    expect(GATE).toContain("const token = process.env.CODEX_NUDGE_TOKEN ?? '';");
+    expect(GATE).toContain('!!process.env.CODEX_NUDGE_TOKEN');
+  });
+
   it('exits 1 with the blocking findings listed when an open P0/P1 exists', () => {
     expect(GATE).toContain('blocking.length === 0');
     expect(GATE).toContain('process.exit(0)');
