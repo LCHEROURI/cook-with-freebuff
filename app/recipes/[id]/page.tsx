@@ -18,6 +18,7 @@ import styles from './page.module.css';
 import { useAuthSession } from '@/lib/auth/useAuthSession';
 import { appCheckHeaders } from '@/lib/firebase/app-check';
 import RecipeRowMeta from '../../cook/RecipeRowMeta';
+import { scaleRecipe } from '../recipe-scaler';
 import type { Recipe } from '@/lib/domain/types';
 
 type RecipeState =
@@ -31,6 +32,18 @@ const formatSeconds = (s: number): string => {
   return m > 0 ? `${m}m ${r}s` : `${r}s`;
 };
 
+/**
+ * Format a scaled quantity for display: whole numbers stay whole, and the
+ * quarter steps render as ¼/½/¾ (spec 0003 D3). scaleRecipe already rounds to
+ * the nearest ¼, so this only ever sees {0, 0.25, 0.5, 0.75} fractions.
+ */
+const formatQuantity = (q: number): string => {
+  const whole = Math.floor(q);
+  const frac = Math.round((q - whole) * 4) / 4;
+  const fraction = frac === 0.25 ? '¼' : frac === 0.5 ? '½' : frac === 0.75 ? '¾' : '';
+  return whole === 0 ? (fraction || '0') : `${whole}${fraction}`;
+};
+
 export default function RecipeDetailPage() {
   const router = useRouter();
   const params = useParams<{ id: string }>();
@@ -41,6 +54,9 @@ export default function RecipeDetailPage() {
   const [state, setState] = useState<RecipeState>({ status: 'loading' });
   const [starting, setStarting] = useState(false);
   const [startError, setStartError] = useState<string | null>(null);
+  // null = render the stored recipe as-is (factor 1). Setting it to a
+  // different 1–24 count produces the scaled display copy below.
+  const [targetServings, setTargetServings] = useState<number | null>(null);
 
   const fetchRecipe = useCallback(async () => {
     setState({ status: 'loading' });
@@ -62,6 +78,7 @@ export default function RecipeDetailPage() {
         return;
       }
       setState({ status: 'ready', recipe: body.data.recipe });
+      setTargetServings(null);
     } catch {
       setState({ status: 'error', message: 'Could not load this recipe.' });
     }
@@ -172,6 +189,13 @@ export default function RecipeDetailPage() {
 
   const { recipe } = state;
   const preferences = recipe.preferences ?? { servings: recipe.servings, allergies: [], dietaryRestrictions: [] };
+  const servings = targetServings ?? recipe.servings;
+  const scaled = targetServings !== null && targetServings !== recipe.servings;
+  // Display copy: only ingredient quantities and the serving count change;
+  // the stored recipe (and the Start handoff) always stay the base.
+  const displayRecipe = scaled ? scaleRecipe(recipe, servings) : recipe;
+  const decrementServings = () => setTargetServings(Math.max(1, (targetServings ?? recipe.servings) - 1));
+  const incrementServings = () => setTargetServings(Math.min(24, (targetServings ?? recipe.servings) + 1));
 
   return (
     <main className={styles.main}>
@@ -187,19 +211,50 @@ export default function RecipeDetailPage() {
             ingredientCount={recipe.ingredients.length}
             preferences={preferences}
           />
+          <div className={styles.scaler}>
+            <button
+              type="button"
+              className={styles.scalerBtn}
+              onClick={decrementServings}
+              disabled={servings <= 1}
+              aria-label="Decrease servings"
+            >
+              −
+            </button>
+            <span className={styles.servingsLabel}>
+              {servings} {servings === 1 ? 'serving' : 'servings'}
+            </span>
+            <button
+              type="button"
+              className={styles.scalerBtn}
+              onClick={incrementServings}
+              disabled={servings >= 24}
+              aria-label="Increase servings"
+            >
+              +
+            </button>
+          </div>
+          {scaled && (
+            <p className={styles.scaleCaption}>
+              Scaled from {recipe.servings} to {servings} {servings === 1 ? 'serving' : 'servings'}
+            </p>
+          )}
         </div>
       </header>
 
       {/* The recipe's own model-derived tags and allergens — separate from
           preferences (what the user asked for), and present even on older
-          recipes that have no preferences (spec 0003 Q1). */}
+          recipes that have no preferences (spec 0003 Q1). `allergens` are what
+          the recipe CONTAINS, so they are labelled "contains X"; the "no X"
+          wording belongs to preferences.allergies (rendered by RecipeRowMeta),
+          which is what the user asked to avoid. */}
       {(recipe.dietaryTags.length > 0 || recipe.allergens.length > 0) && (
         <div className={styles.tags} aria-label="Dietary tags and allergens">
           {recipe.dietaryTags.map((tag) => (
             <span key={tag} className={styles.badge}>{tag}</span>
           ))}
           {recipe.allergens.map((a) => (
-            <span key={a} className={styles.allergenBadge}>no {a}</span>
+            <span key={a} className={styles.allergenBadge}>contains {a}</span>
           ))}
         </div>
       )}
@@ -217,10 +272,10 @@ export default function RecipeDetailPage() {
       <section className={styles.section} aria-label="Ingredients">
         <h2 className={styles.sectionTitle}>Ingredients</h2>
         <ul className={styles.list}>
-          {recipe.ingredients.map((ing) => (
+          {displayRecipe.ingredients.map((ing) => (
             <li key={ing.id} className={styles.ingredient}>
               <span className={styles.quantity}>
-                {ing.quantity != null && ing.unit ? `${ing.quantity} ${ing.unit}` : ing.quantity != null ? String(ing.quantity) : ''}
+                {ing.quantity != null && ing.unit ? `${formatQuantity(ing.quantity)} ${ing.unit}` : ing.quantity != null ? formatQuantity(ing.quantity) : ''}
               </span>
               <span className={styles.name}>
                 {ing.name}

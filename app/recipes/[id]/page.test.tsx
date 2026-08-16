@@ -71,7 +71,8 @@ const RECIPE: Recipe = {
   totalMinutes: 35,
   ingredients: [
     { id: 'i1', name: 'chicken thighs', quantity: 4, unit: 'pieces', preparation: 'diced', optional: false },
-    { id: 'i2', name: 'salt', quantity: null, unit: null, optional: true },
+    { id: 'i2', name: 'olive oil', quantity: 1, unit: 'cup', optional: false },
+    { id: 'i3', name: 'salt', quantity: null, unit: null, optional: true },
   ],
   equipment: ['pan', 'knife'],
   prepSteps: [
@@ -143,7 +144,9 @@ describe('app/recipes/[id]/page.tsx · rendered behavior', () => {
     render(<RecipeDetailPage />);
 
     expect(await screen.findByText('Chicken Rice')).toBeInTheDocument();
-    expect(screen.getByText(/2 servings/)).toBeInTheDocument();
+    // The meta line (servings · time · ingredients) — scoped with the time so
+    // it does not collide with the stepper's own "2 servings" label.
+    expect(screen.getByText(/2 servings · 35 min/)).toBeInTheDocument();
     // ingredients: quantity + unit, name + prep + optional marker
     expect(screen.getByText('4 pieces')).toBeInTheDocument();
     expect(screen.getByText(/chicken thighs, diced/)).toBeInTheDocument();
@@ -156,7 +159,7 @@ describe('app/recipes/[id]/page.tsx · rendered behavior', () => {
     expect(screen.getByText('uses: onion, knife')).toBeInTheDocument();
     // dietary tags and allergen chips
     expect(screen.getByText('gluten-free')).toBeInTheDocument();
-    expect(screen.getByText('no peanuts')).toBeInTheDocument();
+    expect(screen.getByText('contains peanuts')).toBeInTheDocument();
     // cooking step: instruction, estimated time, timer, temperature, heat
     expect(screen.getByText(/sear the chicken 4 minutes/i)).toBeInTheDocument();
     expect(screen.getByText('4m 0s')).toBeInTheDocument();
@@ -184,6 +187,41 @@ describe('app/recipes/[id]/page.tsx · rendered behavior', () => {
       '/api/cook',
       expect.objectContaining({ body: JSON.stringify({ action: 'launch', recipeId: 'recipe-1' }) }),
     );
+  });
+
+  it('scales ingredient quantities with the servings stepper and shows the caption', async () => {
+    mockFetch();
+    render(<RecipeDetailPage />);
+    await screen.findByText('Chicken Rice');
+
+    // Base: stored quantities, no scaling note.
+    expect(screen.getByText('4 pieces')).toBeInTheDocument();
+    expect(screen.getByText('1 cup')).toBeInTheDocument();
+    expect(screen.queryByText(/scaled from/i)).not.toBeInTheDocument();
+
+    // One increment: 2 → 3 servings (factor 1.5). 4 → 6; 1 → 1½.
+    fireEvent.click(screen.getByRole('button', { name: 'Increase servings' }));
+    expect(screen.getByText('6 pieces')).toBeInTheDocument();
+    expect(screen.getByText('1½ cup')).toBeInTheDocument();
+    expect(screen.getByText('Scaled from 2 to 3 servings')).toBeInTheDocument();
+
+    // Start still launches the stored base recipe, never the scaled copy.
+    fireEvent.click(screen.getByRole('button', { name: /start cooking/i }));
+    await waitFor(() => expect(push).toHaveBeenCalledWith('/cook'));
+  });
+
+  it('bounds the servings stepper to 1-24', async () => {
+    mockFetch();
+    render(<RecipeDetailPage />);
+    await screen.findByText('Chicken Rice');
+
+    // 2 → 1 (factor 0.5): 4 pieces → 2 pieces; 1 cup → ½ cup.
+    fireEvent.click(screen.getByRole('button', { name: 'Decrease servings' }));
+    expect(screen.getByText('1 serving')).toBeInTheDocument();
+    expect(screen.getByText('2 pieces')).toBeInTheDocument();
+    expect(screen.getByText('½ cup')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Decrease servings' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Increase servings' })).toBeEnabled();
   });
 
   it('shows Recipe not found with a back link when the server 404s', async () => {

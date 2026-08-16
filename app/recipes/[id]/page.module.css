@@ -178,3 +178,40 @@
   text-decoration: none;
   font-size: 14px;
 }
+
+.scaler {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.scalerBtn {
+  width: 32px;
+  height: 32px;
+  border: 1px solid #333;
+  border-radius: 8px;
+  background: #222;
+  color: #e8e8e8;
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.scalerBtn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.servingsLabel {
+  min-width: 72px;
+  text-align: center;
+  color: #e8e8e8;
+  font-size: 14px;
+}
+
+.scaleCaption {
+  color: #9ecbff;
+  font-size: 13px;
+  margin: 6px 0 0;
+}
