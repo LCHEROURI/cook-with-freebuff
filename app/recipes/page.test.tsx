@@ -284,4 +284,15 @@ describe('app/recipes/page.tsx · rendered behavior', () => {
     // The confirm UI resets so the user can retry.
     expect(screen.getByRole('button', { name: 'Delete Simple Chicken and Rice' })).toBeInTheDocument();
   });
+
+  it('links each row title to its detail page and keeps Start working', async () => {
+    render(<RecipesPage />);
+    expect(await screen.findByRole('link', { name: /open recipe simple chicken and rice/i })).toHaveAttribute('href', '/recipes/chicken-rice');
+    expect(screen.getByRole('link', { name: /open recipe beef stew/i })).toHaveAttribute('href', '/recipes/beef-stew');
+
+    // Start still posts launch and hands off to /cook (the title link must
+    // not swallow the row's own actions).
+    fireEvent.click(screen.getAllByRole('button', { name: /start cooking/i })[0]);
+    await waitFor(() => expect(push).toHaveBeenCalledWith('/cook'));
+  });
 });

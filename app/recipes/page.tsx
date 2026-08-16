@@ -304,8 +304,10 @@ export default function RecipesPage() {
           {visible.map((r) => (
             <li key={r.recipeId} className={styles.card}>
               <div className={styles.cardInfo}>
-                <p className={styles.cardName}>
-                  {r.title}
+                <div className={styles.cardName}>
+                  <Link href={`/recipes/${r.recipeId}`} aria-label={`Open recipe ${r.title}`}>
+                    {r.title}
+                  </Link>
                   {r.proteinCategories.length > 0 && (
                     <span className={styles.badges}>
                       {r.proteinCategories.map((cat) => (
@@ -315,7 +317,7 @@ export default function RecipesPage() {
                       ))}
                     </span>
                   )}
-                </p>
+                </div>
                 <RecipeRowMeta
                   servings={r.servings}
                   totalMinutes={r.totalMinutes}
