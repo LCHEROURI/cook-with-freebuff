@@ -178,6 +178,16 @@ process.on('uncaughtException', (e) => {
 });
 
 // ── Pre-run sweep: never let a killed run's leftovers hijack the owner ──────
+// CONCURRENCY GUARD: two runs with the SAME probe prefix can overlap (the
+// weekly mic-regression monitor plus a manual re-run, both `mic-regression-`,
+// run as the same owner). Between a run's seed (`.set()` below) and its launch
+// POST, the recipe exists but no session references it yet — a concurrent
+// run's sweep would delete that still-in-flight seed and fail its launch with
+// RECIPE_NOT_FOUND. A recipe seeded within PROBE_GRACE_MS is a LIVE run's
+// probe, never a killed run's leftover: leave it alone. Killed runs are
+// minutes old by the time the next run sweeps, so real leftovers are still
+// cleaned.
+const PROBE_GRACE_MS = 15 * 60 * 1000;
 async function sweepStaleProbes() {
   const db = getAdminDb();
   const [sessionSnap, recipeSnap] = await Promise.all([
@@ -198,8 +208,14 @@ async function sweepStaleProbes() {
     archived += 1;
   }
   const liveProbeRecipeIds = new Set(probeSessions.map((d) => d.data().recipeId));
+  const cutoff = Date.now() - PROBE_GRACE_MS;
   const deletes = recipeSnap.docs
-    .filter((d) => typeof d.id === 'string' && d.id.startsWith(PROBE_PREFIX) && !liveProbeRecipeIds.has(d.id))
+    .filter((d) => {
+      if (typeof d.id !== 'string' || !d.id.startsWith(PROBE_PREFIX)) return false;
+      if (liveProbeRecipeIds.has(d.id)) return false;
+      const seededAt = d.data().updatedAt ?? d.data().createdAt ?? 0;
+      return typeof seededAt === 'number' && seededAt < cutoff;
+    })
     .map((d) => d.ref.delete());
   await Promise.allSettled(deletes);
   if (archived > 0 || deletes.length > 0) {
