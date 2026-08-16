@@ -126,6 +126,9 @@ describe('scripts/codex-review-pr-gate.mjs', () => {
     // cannot false-fail this guard. The gate's secret context must stay in the
     // Actions scope, but a sibling job may legitimately target an environment.
     const codexGateStart = WORKFLOW.indexOf('codex-gate:');
+    // Fail loudly if the job key was renamed, rather than letting slice(-1)
+    // check only the workflow's last character and pass vacuously.
+    expect(codexGateStart).toBeGreaterThanOrEqual(0);
     const restOfFile = WORKFLOW.slice(codexGateStart);
     const nextJobAt = restOfFile.search(/\n  [a-zA-Z_][a-zA-Z0-9_-]*:/);
     const codexGateJob = nextJobAt === -1 ? restOfFile : restOfFile.slice(0, nextJobAt);
