@@ -109,22 +109,22 @@ describe('scripts/codex-review-pr-gate.mjs', () => {
     expect(WORKFLOW).toContain('CODEX_NUDGE_TOKEN: ${{ secrets.CODEX_NUDGE_TOKEN }}');
   });
 
-  it('guards the nudge token scope: only a repo Actions secret can satisfy it, never an environment secret', () => {
+  it('guards the nudge token scope: an Actions secret (repo or org) satisfies it, never an environment secret', () => {
     // The nudge token reaches the gate ONLY through the workflow's env
-    // mapping `${{ secrets.CODEX_NUDGE_TOKEN }}`. With no `environment:`
-    // block on the codex-gate job, GitHub resolves that secret context to the
-    // REPO Actions secret scope — an environment-scoped secret (Preview or
+    // mapping `${{ secrets.CODEX_NUDGE_TOKEN }}`. That expression resolves
+    // from the Actions secret scope (repository or organization), never from
+    // an environment scope — an environment-scoped secret (Preview or
     // Production) is never in scope for this job and can never satisfy the
     // nudge, no matter what it is named. If a future edit adds an
-    // `environment:` block, this guard goes red with it, because that is the
-    // one edit that would let `secrets.CODEX_NUDGE_TOKEN` start resolving to
-    // an environment secret instead.
+    // `environment:` block to the codex-gate job, this guard goes red with it,
+    // because that is the one edit that would let the expression start
+    // resolving to an environment secret instead.
     expect(WORKFLOW).toContain('CODEX_NUDGE_TOKEN: ${{ secrets.CODEX_NUDGE_TOKEN }}');
     // Scope the negative to the codex-gate JOB only: bound the slice at the
     // next sibling job key (a two-space-indented name followed by a colon), so
     // a future job appended after codex-gate with its own environment block
-    // cannot false-fail this guard. The gate's secret context must stay repo
-    // Actions only, but a sibling job may legitimately target an environment.
+    // cannot false-fail this guard. The gate's secret context must stay in the
+    // Actions scope, but a sibling job may legitimately target an environment.
     const codexGateStart = WORKFLOW.indexOf('codex-gate:');
     const restOfFile = WORKFLOW.slice(codexGateStart);
     const nextJobAt = restOfFile.search(/\n  [a-zA-Z_][a-zA-Z0-9_-]*:/);
