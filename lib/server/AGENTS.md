@@ -17,13 +17,13 @@ The server side of the app: Firebase Admin wiring, Firestore repositories, the c
 | `tools/` | The tool registry: `registry.ts` (dispatch) + per-domain tool modules (`ingredient-tools.ts`, `recipe-tools.ts`, `timer-tools.ts`, `session-tools.ts`, `pantry-tools.ts`, `grocery-tools.ts`, `leftover-tools.ts`, `guide-tools.ts`) + `types.ts` (store interfaces) |
 | `pantry-service.ts` | Pantry memory with confidence (0..1), stale-after expiry, and honest consume-for-recipe |
 | `leftover-service.ts` / `grocery-service.ts` | K10 leftovers + grocery list intelligence |
-| `model-config.ts` | Gemini model names from Remote Config, then env, then hardcoded default |
+| `model-config.ts` | Gemini model names from the Remote Config layer ONLY (unset or unreachable → undefined) — the role → (parameter, env, default) table lives in `lib/ai/model-roles.ts`, the single source of truth |
 | `requestContext.ts` | `AsyncLocalStorage` carrying a correlation id through every request |
 | `logger.ts` | Structured logging: one JSON object per line, correlation id threaded through |
 
 ## Conventions
 
-- `import 'server-only'` at the top of every module here — client code importing these fails the build by contract.
+- `import 'server-only'` guards the boundary modules: `admin.ts`, `stores.ts`, `repositories.ts` (pinned by `security.test.ts`; `app-check.ts` and `model-config.ts` carry it too). Services, tools, `logger.ts`, and `requestContext.ts` intentionally omit it so Vitest can import them — there is no universal mandate.
 - No raw Firestore in services: reads/writes go through the repository layer (`repositories.ts`), which validates every write with Zod before persisting.
 - Services depend on narrow store interfaces (e.g. `SessionStore`), not the repositories directly — each interface has an in-memory implementation beside it for tests (e.g. `InMemorySessionStore`).
 - Sessions are optimistic-concurrency: every mutating call takes `expectedVersion` and throws `VersionConflictError` on mismatch. Correlation ids dedupe client retries — the marker write rides the same transaction as the session update (never a separate write that can fail after commit).
