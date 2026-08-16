@@ -74,10 +74,20 @@ describe('scripts/verify-live-local.mjs · verify-live spawn + exit mirroring', 
   it('runs the real check against the local BASE with inherited stdio', () => {
     // The check must be the SHARED driver (scripts/verify-live.mjs) pointed
     // at the local server via --app — not a reimplementation that could drift.
-    expect(SRC).toContain("spawn(process.execPath, ['scripts/verify-live.mjs', '--app', BASE]");
+    expect(SRC).toContain("spawn(process.execPath, ['scripts/verify-live.mjs', '--app', BASE, '--probe-prefix', 'verify-local-']");
     // Both spawns (dev + verify) must inherit stdio so the operator sees the
     // full transcript; a drop on either would hide boot errors or check output.
     expect(SRC.match(/stdio: 'inherit'/g)).toHaveLength(2);
+  });
+
+  it('gives the local run its own probe namespace so a concurrent CI run can never touch its seed', () => {
+    // The local run shares the production Firestore + owner uid with the
+    // deployed CI verify, but passes `--probe-prefix verify-local-` — a
+    // DISJOINT namespace from CI's `verify-live-`. A concurrent CI sweep
+    // (which only matches `verify-live-`) can therefore never delete the
+    // local run's in-flight seed, even transiently.
+    expect(SRC).toContain("'--probe-prefix', 'verify-local-'");
+    expect(SRC).toContain('never touch the local seed even transiently');
   });
 
   it('mirrors the verify child exit code (0 = PASS, 1 = FAIL)', () => {

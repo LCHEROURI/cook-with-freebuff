@@ -40,3 +40,22 @@ describe('verify:live:compare · noise filter vs the local warm-up message', () 
     expect(noise.test('  ✓ Ready in 1.2s')).toBe(true);
   });
 });
+
+describe('verify:live:compare · probe-namespace normalization', () => {
+  it('maps both the deployed and local probe prefixes to the same token', () => {
+    // The deployed leg seeds `verify-live-<ts>` and the local leg seeds
+    // `verify-local-<ts>` (its own disjoint namespace, see
+    // verify-live-local.mjs). The diff must normalize BOTH to `verify-live-N`
+    // and their `-starter-` variants to the same token, otherwise a healthy
+    // run diverges purely on the namespace name.
+    const seedRe = /verify-(?:live|local)-\d+/g;
+    const starterRe = /verify-(?:live|local)-starter-\d+/g;
+    expect('verify-live-123'.replace(seedRe, 'verify-live-N')).toBe('verify-live-N');
+    expect('verify-local-123'.replace(seedRe, 'verify-live-N')).toBe('verify-live-N');
+    expect('verify-live-starter-123'.replace(starterRe, 'verify-live-starter-N')).toBe('verify-live-starter-N');
+    expect('verify-local-starter-123'.replace(starterRe, 'verify-live-starter-N')).toBe('verify-live-starter-N');
+    // The COMPARE source must actually carry those two rules.
+    expect(COMPARE).toContain('verify-(?:live|local)-\\d+');
+    expect(COMPARE).toContain('verify-(?:live|local)-starter-\\d+');
+  });
+});

@@ -633,6 +633,7 @@ export default function CookPage() {
                 onClick={() => void handleStartCooking()}
                 disabled={starter.starting}
                 aria-label="Start cooking the created recipe"
+                data-recipe-id={starter.ready.recipeId}
               >
                 {starter.starting ? 'Starting…' : '▶ Start cooking'}
               </button>

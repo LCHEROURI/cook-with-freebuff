@@ -41,7 +41,7 @@ const DRIVER = readFileSync('scripts/drive-live-voice.mjs', 'utf8');
 
 describe('scripts/verify-live.mjs · live-voice gate [3e] (dictation + active-screen mics)', () => {
   it('spawns the committed voice driver against the same deployed APP and requires RESULT: PASS', () => {
-    expect(LIVE).toContain("spawnSync('node', ['scripts/drive-live-voice.mjs', '--app', APP, '--out', `/tmp/verify-live-voice-${t}-${attempt}`], {");
+    expect(LIVE).toContain("spawnSync('node', ['scripts/drive-live-voice.mjs', '--app', APP, '--probe-prefix', `${PROBE_PREFIX}voice-`, '--out', `/tmp/verify-live-voice-${t}-${attempt}`], {");
     // Two Chrome launches + two Gemini Live sessions need a generous budget.
     expect(LIVE).toContain('timeout: 420_000');
     expect(LIVE).toContain('voiceDriver.status === 0 && /RESULT: PASS/.test(voiceLog)');

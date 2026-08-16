@@ -30,6 +30,8 @@ import { describe, expect, it } from 'vitest';
 // ============================================================================
 
 const SRC = readFileSync('scripts/verify-live.mjs', 'utf8');
+const DRIVER = readFileSync('scripts/drive-starter-prefs.mjs', 'utf8');
+const COOK_PAGE = readFileSync('app/cook/page.tsx', 'utf8');
 
 describe('scripts/verify-live.mjs · starter-flow gate (create → validate → start cooking)', () => {
   it('drives create_recipe on the deployed route with a parseable prompt', () => {
@@ -69,7 +71,7 @@ describe('scripts/verify-live.mjs · starter-flow gate (create → validate → 
     // could hijack /cook. Renaming the probe under `verify-live-starter-`
     // (inner id updated, slug doc deleted) keeps every starter artifact
     // first-class to the sweep AND to this script's cleanup.
-    expect(SRC).toContain('starterRecipeId = `verify-live-starter-${t}`');
+    expect(SRC).toContain('starterRecipeId = `${PROBE_PREFIX}starter-${t}`');
     expect(SRC).toContain("db.collection('recipes').doc(starterRecipeId).set(renamed)");
     expect(SRC).toContain("db.collection('recipes').doc(createdRecipeId).delete()");
     expect(SRC).toContain('ok(`probe recipe renamed to ${starterRecipeId} (sweep-compatible)`)');
@@ -105,7 +107,7 @@ describe('scripts/verify-live.mjs · starter-flow gate (create → validate → 
     // generation + Chrome launch on cold serverless), and a driver exit
     // WITHOUT `RESULT: PASS` must fail the gate — a UI regression in the
     // ready-card/constraints flow can never silently pass.
-    expect(SRC).toContain("spawnSync('node', ['scripts/drive-starter-prefs.mjs', '--app', APP, '--out', `${driverOut}-${attempt}`], {");
+    expect(SRC).toContain("spawnSync('node', ['scripts/drive-starter-prefs.mjs', '--app', APP, '--probe-prefix', `${PROBE_PREFIX}starter-prefs-`, '--out', `${driverOut}-${attempt}`], {");
     expect(SRC).toContain('timeout: 300_000');
     expect(SRC).toContain('driver.status === 0 && /RESULT: PASS/.test(driverLog)');
     expect(SRC).toContain("ok('UI starter driver → RESULT: PASS (ready card prefs + constraints view)')");
@@ -113,6 +115,27 @@ describe('scripts/verify-live.mjs · starter-flow gate (create → validate → 
     // The driver must be swept-account-safe: verify-live's pre-run sweep and
     // this script's own cleanup must NOT be the driver's only safety net.
     expect(SRC).toContain('sweeps its own probe recipe');
+  });
+
+  it('isolates the [3d] starter driver in its own namespace and deletes exactly its own recipe', () => {
+    // A local run and the deployed CI run share the owner and Firestore. The
+    // [3d] driver must NOT pick "the owner's newest updatedAt recipe" — a
+    // concurrent CI seed created after the local recipe would be deleted out
+    // from under it. It must read the created recipe id off the ready card
+    // (data-recipe-id) and delete exactly that doc, renamed under its own
+    // probe prefix so a killed run's leftover is swept by the matching sweep.
+    expect(DRIVER).toContain("const PROBE_PREFIX = flag('--probe-prefix', 'verify-live-starter-prefs-');");
+    expect(DRIVER).toContain("recipeId: btn.getAttribute('data-recipe-id') ?? ''");
+    expect(DRIVER).toContain('const createdId = st.recipeId;');
+    expect(DRIVER).toContain("db.collection('recipes').doc(createdId).delete()");
+    // Never the updatedAt heuristic that could delete a concurrent run's seed.
+    expect(DRIVER).not.toContain('.sort((a, b) => (b.data().updatedAt');
+  });
+
+  it('exposes the created recipe id on the ready-card Start-cooking button', () => {
+    // The driver identifies its probe by data-recipe-id; the page must render
+    // it or the driver cannot clean up deterministically.
+    expect(COOK_PAGE).toContain('data-recipe-id={starter.ready.recipeId}');
   });
 
   it('retries the driver ONCE after a 30s backoff on a failed first attempt (transient stalls)', () => {

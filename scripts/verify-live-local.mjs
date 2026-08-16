@@ -108,9 +108,13 @@ await warmPage('/login');
 ok('routes and /login page compiled');
 
 // ── 4. Run the real check against the local server ──────────────────────────
+// The local run gets its OWN probe namespace (`verify-local-`, disjoint from
+// the deployed CI run's `verify-live-`) so a concurrent CI run's sweep can
+// never touch the local seed even transiently — the two share the production
+// Firestore and owner uid, but never the same prefix.
 console.log(`\n=== verify:live against ${BASE} ===`);
 const rc = await new Promise((resolveChild) => {
-  const child = spawn(process.execPath, ['scripts/verify-live.mjs', '--app', BASE], {
+  const child = spawn(process.execPath, ['scripts/verify-live.mjs', '--app', BASE, '--probe-prefix', 'verify-local-'], {
     cwd: resolve(import.meta.dirname, '..'),
     stdio: 'inherit',
   });

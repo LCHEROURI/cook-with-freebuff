@@ -56,16 +56,24 @@ describe('scripts/verify-live.mjs · guaranteed cleanup', () => {
 
   it('runs a pre-run sweep BEFORE seeding anything of its own', () => {
     const sweepCall = SRC.indexOf('await sweepStaleProbes()');
-    const seedLine = SRC.indexOf('seededRecipeId = `verify-live-${t}`');
+    const seedLine = SRC.indexOf('seededRecipeId = `${PROBE_PREFIX}${t}`');
     expect(sweepCall).toBeGreaterThan(-1);
     expect(seedLine).toBeGreaterThan(sweepCall);
+  });
+
+  it('seeds and sweeps under a configurable probe prefix (default verify-live-)', () => {
+    // The prefix must be a FLAG (not a hardcoded string) so the local dev run
+    // can pass its own disjoint namespace and a concurrent CI run's sweep can
+    // never touch it.
+    expect(SRC).toContain("const PROBE_PREFIX = flag('--probe-prefix', 'verify-live-');");
+    expect(SRC).toContain('seededRecipeId = `${PROBE_PREFIX}${t}`');
   });
 
   it('archives stale probe sessions as ABANDONED and deletes orphaned probe recipes', () => {
     const fnStart = SRC.indexOf('async function sweepStaleProbes');
     const fn = SRC.slice(fnStart, SRC.indexOf('\n}\n', fnStart));
     expect(fn).toContain("d.ref.update({ status: 'ABANDONED', lastActivityAt: Date.now() })");
-    expect(fn).toContain("d.id.startsWith('verify-live-')");
+    expect(fn).toContain('!d.id.startsWith(PROBE_PREFIX)');
     expect(fn).toContain('Promise.allSettled(deletes)');
   });
 
@@ -101,7 +109,7 @@ describe('scripts/verify-live.mjs · guaranteed cleanup', () => {
     const fn = SRC.slice(fnStart, SRC.indexOf('\n}\n', fnStart));
     // The ACTIVE/PAUSED filter must be AND-ed with the prefix check — never
     // OR-ed — so every owner session is NOT a sweep target by default.
-    expect(fn).toMatch(/s\.recipeId\.startsWith\('verify-live-'\)\s*&&\s*\(s\.status === 'ACTIVE' \|\| s\.status === 'PAUSED'\)/);
+    expect(fn).toMatch(/s\.recipeId\.startsWith\(PROBE_PREFIX\)\s*&&\s*\(s\.status === 'ACTIVE' \|\| s\.status === 'PAUSED'\)/);
     // And no blanket "archive all ACTIVE sessions" escape hatch anywhere.
     expect(fn).not.toContain('status: \'ACTIVE\'');
   });
