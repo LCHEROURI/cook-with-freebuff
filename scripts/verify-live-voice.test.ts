@@ -138,6 +138,37 @@ describe('scripts/verify-live.mjs · live-voice gate [3e] (dictation + active-sc
     expect(DRIVER).toContain("d.ref.update({ status: 'ABANDONED', lastActivityAt: Date.now() })");
   });
 
+  it('never sweeps a recipe seeded within the grace period (a concurrent same-prefix run\'s in-flight probe)', () => {
+    // The weekly mic-regression monitor and a manual re-run both use
+    // `mic-regression-` and run as the same owner. Between a run's seed and
+    // its launch POST the recipe has no session yet; a concurrent run's sweep
+    // would delete it and fail the launch with RECIPE_NOT_FOUND. The grace
+    // guard keeps a fresh seed alive while still deleting genuinely old
+    // leftovers from a killed run.
+    const fnStart = DRIVER.indexOf('async function sweepStaleProbes');
+    const fn = DRIVER.slice(fnStart, DRIVER.indexOf('\n}\n', fnStart));
+    expect(DRIVER).toContain('const PROBE_GRACE_MS = 15 * 60 * 1000;');
+    expect(fn).toContain('const cutoff = Date.now() - PROBE_GRACE_MS;');
+    expect(fn).toContain('const seededAt = d.data().updatedAt ?? d.data().createdAt ?? 0;');
+    expect(fn).toContain('typeof seededAt === \'number\' && seededAt < cutoff');
+  });
+
+  it('archives only STALE probe sessions — a fresh session from a concurrent run is never archived', () => {
+    // Two same-prefix runs overlap after the first launched its session: the
+    // second sweep must NOT mark that fresh ACTIVE session ABANDONED (it would
+    // yank the first run's /cook session on its next reload). Only sessions
+    // idle past the 10-minute cutoff are archived.
+    const fnStart = DRIVER.indexOf('async function sweepStaleProbes');
+    const fn = DRIVER.slice(fnStart, DRIVER.indexOf('\n}\n', fnStart));
+    expect(DRIVER).toContain('const STALE_SESSION_MS = 10 * 60 * 1000;');
+    expect(fn).toContain('const sessionCutoff = Date.now() - STALE_SESSION_MS;');
+    expect(fn).toContain('const staleProbeSessions = probeSessions.filter((d) => {');
+    expect(fn).toContain('const last = d.data().lastActivityAt;');
+    expect(fn).toContain('typeof last === \'number\' && last > 0 && last < sessionCutoff');
+    // The archive loop must iterate the STALE subset, never the full set.
+    expect(fn).toContain('for (const d of staleProbeSessions)');
+  });
+
   it('guarantees cleanup on EVERY exit path (signals, crashes, success)', () => {
     // The owner's data must end exactly as it started even when the run is
     // killed mid-flight — SIGINT/SIGTERM/SIGHUP plus unhandled rejection and

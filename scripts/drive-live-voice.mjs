@@ -178,6 +178,23 @@ process.on('uncaughtException', (e) => {
 });
 
 // ── Pre-run sweep: never let a killed run's leftovers hijack the owner ──────
+// CONCURRENCY GUARD: two runs with the SAME probe prefix can overlap (the
+// weekly mic-regression monitor plus a manual re-run, both `mic-regression-`,
+// run as the same owner). Between a run's seed (`.set()` below) and its launch
+// POST, the recipe exists but no session references it yet — a concurrent
+// run's sweep would delete that still-in-flight seed and fail its launch with
+// RECIPE_NOT_FOUND. A recipe seeded within PROBE_GRACE_MS is a LIVE run's
+// probe, never a killed run's leftover: leave it alone. Killed runs are
+// minutes old by the time the next run sweeps, so real leftovers are still
+// cleaned.
+//
+// The same hazard applies to sessions: archiving a FRESH ACTIVE session would
+// yank a concurrent run's /cook session out from under it. Only sessions idle
+// past STALE_SESSION_MS (the same 10-minute idle rule verify-live's settle
+// uses) are archived; a live run touches its session far more often than
+// that.
+const PROBE_GRACE_MS = 15 * 60 * 1000;
+const STALE_SESSION_MS = 10 * 60 * 1000;
 async function sweepStaleProbes() {
   const db = getAdminDb();
   const [sessionSnap, recipeSnap] = await Promise.all([
@@ -192,14 +209,30 @@ async function sweepStaleProbes() {
       (s.status === 'ACTIVE' || s.status === 'PAUSED')
     );
   });
+  // Archive ONLY stale sessions (idle past the cutoff) — never a fresh one
+  // that a concurrent same-prefix run just launched.
+  const sessionCutoff = Date.now() - STALE_SESSION_MS;
+  const staleProbeSessions = probeSessions.filter((d) => {
+    const last = d.data().lastActivityAt;
+    return typeof last === 'number' && last > 0 && last < sessionCutoff;
+  });
   let archived = 0;
-  for (const d of probeSessions) {
+  for (const d of staleProbeSessions) {
     await d.ref.update({ status: 'ABANDONED', lastActivityAt: Date.now() });
     archived += 1;
   }
+  // Recipe protection uses ALL live probe sessions (fresh AND stale): a fresh
+  // session's recipe must never be deleted, and a stale session's recipe is
+  // left for the NEXT sweep once it is ABANDONED and truly orphaned.
   const liveProbeRecipeIds = new Set(probeSessions.map((d) => d.data().recipeId));
+  const cutoff = Date.now() - PROBE_GRACE_MS;
   const deletes = recipeSnap.docs
-    .filter((d) => typeof d.id === 'string' && d.id.startsWith(PROBE_PREFIX) && !liveProbeRecipeIds.has(d.id))
+    .filter((d) => {
+      if (typeof d.id !== 'string' || !d.id.startsWith(PROBE_PREFIX)) return false;
+      if (liveProbeRecipeIds.has(d.id)) return false;
+      const seededAt = d.data().updatedAt ?? d.data().createdAt ?? 0;
+      return typeof seededAt === 'number' && seededAt < cutoff;
+    })
     .map((d) => d.ref.delete());
   await Promise.allSettled(deletes);
   if (archived > 0 || deletes.length > 0) {
