@@ -31,6 +31,25 @@ import { describe, expect, it } from 'vitest';
 const SRC = readFileSync('scripts/verify-live.mjs', 'utf8');
 const VOICE = readFileSync('scripts/drive-live-voice.mjs', 'utf8');
 
+// The declaration extraction the lockstep assertion runs. Kept as one helper
+// so the drift-mutation proof below exercises the SAME code path — a future
+// edit to the extraction (or the assertion) is immediately visible to both
+// tests instead of silently weakening one.
+const probeGraceDecl = (source: string): string | undefined =>
+  source.split('\n').find((line) => line.startsWith('const PROBE_GRACE_MS'));
+
+// The lockstep assertion itself, factored out so the mutation test can prove
+// it FAILS on drift by invoking this exact assertion (per Codex P2 on
+// PR #111: an independent `not.toBe` would keep passing if this assertion
+// were later weakened or removed).
+const expectProbeGraceLockstep = (verifySource: string, voiceSource: string) => {
+  const verifyDecl = probeGraceDecl(verifySource);
+  const voiceDecl = probeGraceDecl(voiceSource);
+  expect(verifyDecl).toBeDefined();
+  expect(voiceDecl).toBeDefined();
+  expect(verifyDecl).toBe(voiceDecl);
+};
+
 describe('scripts/verify-live.mjs · guaranteed cleanup', () => {
   it('wraps the whole flow in try/finally with cleanup in the finally block', () => {
     // The cleanup must be UNCONDITIONAL: a `finally` running `await cleanup()`
@@ -165,10 +184,24 @@ describe('scripts/verify-live.mjs × drive-live-voice.mjs · shared seed grace (
     // so drift between the two files fails CI (spec 0002, AC-2). Assert the
     // FULL declaration line, not just the numeric value: a value change OR a
     // rename in one file fails loudly instead of silently weakening the guard.
-    const verifyDecl = SRC.split('\n').find((line) => line.startsWith('const PROBE_GRACE_MS'));
-    const voiceDecl = VOICE.split('\n').find((line) => line.startsWith('const PROBE_GRACE_MS'));
-    expect(verifyDecl).toBeDefined();
-    expect(voiceDecl).toBeDefined();
-    expect(verifyDecl).toBe(voiceDecl);
+    expectProbeGraceLockstep(SRC, VOICE);
+  });
+
+  it('proves the lockstep assertion catches drift in either driver (mutation)', () => {
+    // Mutation proof: the shared assertion must have discriminating power, not
+    // pass vacuously. Mutate ONLY the value expression in an in-memory copy
+    // of each REAL driver source (never on disk) and invoke the actual
+    // lockstep assertion (expectProbeGraceLockstep) on the drifted pair: it
+    // must throw, i.e. fail. If a future edit weakens or removes that
+    // assertion, the mutation test goes red with it instead of passing on an
+    // independent check.
+    const mutatedVoice = VOICE.replace('15 * 60 * 1000', '20 * 60 * 1000');
+    expect(mutatedVoice).not.toBe(VOICE); // the mutation actually landed
+    expect(() => expectProbeGraceLockstep(SRC, mutatedVoice)).toThrow();
+
+    // Mirror direction: drift the verify-live source the same way.
+    const mutatedVerify = SRC.replace('15 * 60 * 1000', '20 * 60 * 1000');
+    expect(mutatedVerify).not.toBe(SRC);
+    expect(() => expectProbeGraceLockstep(mutatedVerify, VOICE)).toThrow();
   });
 });
