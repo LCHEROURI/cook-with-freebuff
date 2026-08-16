@@ -133,7 +133,10 @@ describe('scripts/verify-live.mjs · fetch resilience', () => {
     const fn = SRC.slice(fnStart, SRC.indexOf('let body = null', fnStart));
     expect(fn).toContain("const retryOnConnectError = init?.retryOnConnectError === true;");
     // STALE_SOCKET_CODES is a top-level const just above fetchJson.
-    expect(SRC).toContain("const STALE_SOCKET_CODES = ['ECONNRESET', 'ECONNREFUSED', 'EPIPE', 'ECONNABORTED', 'UND_ERR_SOCKET', 'UND_ERR_CONNECT'];");
+    // Only the codes observed in the field are allowed: the retry must stay
+    // limited to provably-undelivered requests, so speculative undici codes
+    // (ECONNABORTED, UND_ERR_SOCKET, UND_ERR_CONNECT) stay out by contract.
+    expect(SRC).toContain("const STALE_SOCKET_CODES = ['ECONNRESET', 'ECONNREFUSED', 'EPIPE'];");
     expect(fn).toContain('if (!retryOnConnectError || !STALE_SOCKET_CODES.includes(cause)) throw e;');
     expect(fn).toContain('retrying once on a fresh connection');
     // Two attempts total: the first, then exactly one opt-in retry.
