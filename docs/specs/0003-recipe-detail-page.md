@@ -1,7 +1,7 @@
 # Recipe Detail Page — Design
 
 **Date**: 2026-08-16
-**Status**: Proposed (awaiting review)
+**Status**: In Progress (approved by engineer; implementation plan at docs/plans/0003-recipe-detail-page.md, landed in PR #113)
 
 ## Overview
 
@@ -76,9 +76,28 @@ In `app/recipes/page.tsx`, the row title (currently a `<p className={styles.card
 
 ## Follow-ups (recorded, not in scope)
 
-- Servings scaler: multiply ingredient quantities and step timers for more/fewer people (pure client-side function over the recipe data; edge cases: null quantities, "to taste" lines, "1 pinch" units).
+- Servings scaler: designed below (D1–D5). Ingredients scale; timers stay fixed.
 - Print view for the detail page.
 - Share a recipe (read-only, non-owner visibility) — would require rethinking the ownership model, so it is deliberately out of scope here.
+
+## Follow-up design: Servings scaler (D1–D5)
+
+**Core mechanic.** A pure client-side function `scaleRecipe(recipe, targetServings)` returns a display copy of the recipe with scaled ingredient quantities. The factor is `targetServings / recipe.servings`. No API change, no persistence — the scale is a reading aid on the detail page and resets when you leave. Start always launches the stored base recipe; the server-side session keeps its own quantities.
+
+**D1 — What scales: ingredients only, timers fixed.** Ingredient quantities scale linearly with servings. But `estimatedSeconds` and `timerSeconds` stay unchanged: cooking duration does not scale with batch size (a soup for 8 does not simmer twice as long as for 4), so `totalMinutes` on the meta line keeps the stored value. Scaling timers linearly would mislead a cook — a 15 minute timer fired at 30 minutes because you doubled a recipe is a bug, not a feature.
+
+**D2 — Which lines never scale.**
+- `quantity === null` ("to taste", "a handful") → passthrough, no multiplier.
+- Unit-level exemptions: `pinch`, `dash`, `to taste`, `as needed`, `handful` → passthrough regardless of quantity.
+- Optional ingredients DO scale (the quantity is real when used; "optional" only means skippable).
+- `temperature`, `temperatureUnit`, `heatLevel`, `safetyNote`, `spokenInstruction`, `condition`, `preparation` are never touched.
+- `servings` missing or 0 on an old recipe → factor falls back to 1 (no scaling, no divide-by-zero).
+
+**D3 — Rounding.** Scale, then round to the nearest 1/4 of the unit (½ cup × 1.5 → ¾ cup; 2 eggs × 1.5 → 3 eggs). Whole numbers stay whole; values ≥ 10 round to whole numbers. Rounding affects only the display copy — the stored value is never mutated. Fractions render as ¼/½/¾ via a small formatting helper.
+
+**D4 — UI.** In the detail page's header card, next to the meta line: a stepper (`−` / `6 servings` / `+`), bounded 1–24, defaulting to the recipe's own servings. At the default the page renders exactly as stored (factor 1, no note). Off-default it shows the scaled quantities and one caption: "Scaled from 4 to 6 servings", with a note when any line was left unscaled ("Pinch/to-taste amounts shown as-is").
+
+**D5 — Shape and testing.** A pure module `app/recipes/recipe-scaler.ts` (no React, node-testable), mirroring how `recipe-filter.ts` lives beside the page. Unit tests: linear multiplication, null-quantity passthrough, unit exemptions, rounding boundaries (0.25 steps, ≥10 whole), optional ingredients scale, factor fallback on missing servings, zero/negative target guard, timers untouched, idempotence at factor 1. Page test: the stepper renders, changing it rescales the ingredient lines, the caption appears, and Start still launches the base recipe. Lands with the detail page or as its own branch + PR.
 
 ## Files touched
 

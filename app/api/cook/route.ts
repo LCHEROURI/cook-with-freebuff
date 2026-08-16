@@ -2,7 +2,8 @@
 // /api/cook — guided cooking ("Cook With Me")
 //
 // POST { action: 'launch'|'status'|'done'|'repeat'|'back'|'pause'|'resume'|'timers'|
-//                 'start_over'|'create_recipe', sessionId?, recipeId?, prompt?, correlationId? }
+//                 'start_over'|'create_recipe'|'list_recipes'|'get_recipe'|'delete_recipe',
+//                 sessionId?, recipeId?, prompt?, correlationId? }
 // GET  → status of the active session
 // Auth: Bearer <Firebase ID token>
 //
@@ -31,7 +32,7 @@ import {
 const ACTIONS = [
   'launch', 'status', 'done', 'repeat', 'back', 'pause', 'resume', 'timers',
   'start_over', 'substitute', 'apply_substitution', 'correct', 'recover', 'clear_recovery',
-  'create_recipe', 'list_recipes', 'delete_recipe',
+  'create_recipe', 'list_recipes', 'get_recipe', 'delete_recipe',
 ] as const;
 type CookAction = (typeof ACTIONS)[number];
 
@@ -182,6 +183,33 @@ async function handle(userId: string, body: unknown): Promise<NextResponse> {
     case 'clear_recovery': {
       const snapshot = await guide.clearRecovery(userId, sessionId, { correlationId });
       return NextResponse.json({ success: true, data: snapshot });
+    }
+    case 'get_recipe': {
+      // Read one saved recipe in full — the detail page's read. Ownership is
+      // verified HERE (never trust the id alone): a user must only ever read
+      // their own recipe, the same rule delete_recipe and launchCookWithMe
+      // enforce (spec 0003).
+      if (!recipeId) {
+        return NextResponse.json(
+          { success: false, error: { code: 'INVALID_BODY', message: 'get_recipe requires a recipeId', recoverable: false } },
+          { status: 400 },
+        );
+      }
+      const recipeStore = ctx.recipeStore;
+      if (!recipeStore) {
+        return NextResponse.json(
+          { success: false, error: { code: 'UNAVAILABLE', message: 'Recipe store not available', recoverable: false } },
+          { status: 500 },
+        );
+      }
+      const recipe = await recipeStore.getRecipe(recipeId);
+      if (!recipe || recipe.userId !== userId) {
+        return NextResponse.json(
+          { success: false, error: { code: 'NOT_FOUND', message: 'Recipe not found', recoverable: false } },
+          { status: 404 },
+        );
+      }
+      return NextResponse.json({ success: true, data: { recipe } });
     }
     case 'delete_recipe': {
       // Remove a saved recipe from the browser — the UI's delete action, so

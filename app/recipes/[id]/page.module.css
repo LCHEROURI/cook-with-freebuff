@@ -1,0 +1,217 @@
+.main {
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 24px 16px 64px;
+  min-height: 100vh;
+  background: #121212;
+  color: #e8e8e8;
+}
+
+.centered {
+  text-align: center;
+  color: #aaa;
+  padding: 48px 0;
+}
+
+.header {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.backLink {
+  color: #7aa2f7;
+  text-decoration: none;
+  font-size: 18px;
+  line-height: 1.4;
+}
+
+.headerText {
+  flex: 1;
+}
+
+.title {
+  font-size: 26px;
+  margin: 0 0 6px;
+}
+
+.errorNote {
+  background: #3a1d1d;
+  color: #ffb4b4;
+  padding: 10px 12px;
+  border-radius: 8px;
+  margin-bottom: 16px;
+}
+
+.startBtn {
+  display: block;
+  width: 100%;
+  padding: 12px;
+  font-size: 16px;
+  font-weight: 600;
+  border: none;
+  border-radius: 10px;
+  background: #2f6f4f;
+  color: #fff;
+  cursor: pointer;
+  margin-bottom: 24px;
+}
+
+.startBtn:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.section {
+  margin-bottom: 24px;
+}
+
+.sectionTitle {
+  font-size: 18px;
+  margin: 0 0 10px;
+  color: #cfd8ff;
+}
+
+.list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.ingredient,
+.equipment {
+  display: flex;
+  gap: 8px;
+  padding: 6px 0;
+  border-bottom: 1px solid #2a2a2a;
+}
+
+.quantity {
+  color: #9ecbff;
+  min-width: 90px;
+}
+
+.name {
+  color: #e8e8e8;
+}
+
+.steps {
+  padding-left: 20px;
+  margin: 0;
+}
+
+.step {
+  margin-bottom: 14px;
+}
+
+.stepText {
+  margin: 0 0 4px;
+}
+
+.stepMeta {
+  color: #aaa;
+  font-size: 13px;
+}
+
+.stepContext {
+  color: #9ecbff;
+  font-size: 13px;
+  margin: 2px 0 0;
+}
+
+.tags {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-bottom: 16px;
+}
+
+.allergenBadge {
+  background: #3a1d1d;
+  color: #ffb4b4;
+  border: 1px solid #5a2a2a;
+  border-radius: 999px;
+  padding: 2px 8px;
+  font-size: 12px;
+}
+
+.badges {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.badge {
+  background: #222;
+  color: #9ecbff;
+  border: 1px solid #333;
+  border-radius: 999px;
+  padding: 2px 8px;
+  font-size: 12px;
+}
+
+.safetyNote {
+  color: #ffcf7d;
+  font-size: 13px;
+  margin: 4px 0 0;
+}
+
+.empty {
+  text-align: center;
+  padding: 48px 0;
+}
+
+.emptyText {
+  color: #aaa;
+}
+
+.primaryBtn {
+  display: inline-block;
+  margin-top: 12px;
+  padding: 10px 18px;
+  border: none;
+  border-radius: 8px;
+  background: #2f6f4f;
+  color: #fff;
+  cursor: pointer;
+  text-decoration: none;
+  font-size: 14px;
+}
+
+.scaler {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.scalerBtn {
+  width: 32px;
+  height: 32px;
+  border: 1px solid #333;
+  border-radius: 8px;
+  background: #222;
+  color: #e8e8e8;
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.scalerBtn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.servingsLabel {
+  min-width: 72px;
+  text-align: center;
+  color: #e8e8e8;
+  font-size: 14px;
+}
+
+.scaleCaption {
+  color: #9ecbff;
+  font-size: 13px;
+  margin: 6px 0 0;
+}

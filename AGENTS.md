@@ -35,7 +35,7 @@ npm test
 
 ## Specs
 
-Stored in `docs/specs/NNNN-title.md`. Current: 0001 App Hosting primary host, 0002 probe grace constants, 0003 recipe detail page.
+Stored in `docs/specs/NNNN-title.md`. Current: 0001 App Hosting primary host, 0002 probe grace constants, 0003 recipe detail page. Implementation plans live in `docs/plans/NNNN-title.md`, numbered to match their spec.
 
 ## Rules
 
