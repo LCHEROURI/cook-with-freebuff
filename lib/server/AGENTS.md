@@ -17,7 +17,7 @@ The server side of the app: Firebase Admin wiring, Firestore repositories, the c
 | `tools/` | The tool registry: `registry.ts` (dispatch) + per-domain tool modules (`ingredient-tools.ts`, `recipe-tools.ts`, `timer-tools.ts`, `session-tools.ts`, `pantry-tools.ts`, `grocery-tools.ts`, `leftover-tools.ts`, `guide-tools.ts`) + `types.ts` (store interfaces) |
 | `pantry-service.ts` | Pantry memory with confidence (0..1), stale-after expiry, and honest consume-for-recipe |
 | `leftover-service.ts` / `grocery-service.ts` | K10 leftovers + grocery list intelligence |
-| `model-config.ts` | Gemini model names from the Remote Config layer ONLY (unset or unreachable → undefined) — the role → (parameter, env, default) table lives in `lib/ai/model-roles.ts`, the single source of truth |
+| `model-config.ts` | Gemini model names from the Remote Config layer only: unset → null (the caller's env-var → default chain applies), and a failed refresh serves the last-good cached params — the role → (parameter, env, default) table lives in `lib/ai/model-roles.ts`, the single source of truth |
 | `requestContext.ts` | `AsyncLocalStorage` carrying a correlation id through every request |
 | `logger.ts` | Structured logging: one JSON object per line, correlation id threaded through |
 

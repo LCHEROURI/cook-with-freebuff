@@ -20,7 +20,7 @@ Reusable and page-specific React components for the voice first cooking screens.
 - Pure presentational: no fetch, no server calls, no side effects in the render path. All data and callbacks arrive via props (`onDone`, `onSend`, `onStartOver`, ...). This is what makes the tests deterministic.
 - Styling comes from page CSS modules imported from `@/app/*/page.module.css`, not local stylesheets in this folder. `VoiceIndicator` uses the global classes `voice-indicator` / `voice-dot` / `voice-label`.
 - Accessibility is load bearing: icon-only and otherwise unnamed controls carry an `aria-label` (text buttons rely on their visible name), timers use `role="timer"` with a spoken label, alerts use `role="alert"` / `aria-live`, and the safety gate is a `role="alertdialog"` with an explicit confirm button.
-- Test files use the `// @vitest-environment jsdom` pragma and render the component with mocked props; voice flows are covered in the `*.voice.test.tsx` files.
+- Browser-dependent test files use the `// @vitest-environment jsdom` pragma and render the component with mocked props; `CookScreen.test.tsx` intentionally skips the pragma and uses `renderToStaticMarkup` under the default Node environment; voice flows are covered in the `*.voice.test.tsx` files.
 
 ## Gotchas
 
