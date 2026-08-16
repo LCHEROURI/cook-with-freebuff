@@ -12,7 +12,7 @@ Reusable and page-specific React components for the voice first cooking screens.
 | `VoiceIndicator.tsx` | Tiny status dot + label for the voice engine state (`LISTENING`/`THINKING`/`SPEAKING`/`OFFLINE`/`ERROR`) |
 | `StarterTour.tsx` | First-visit tour for the /cook starter; dismissal remembered in `localStorage` |
 | `FormField.tsx` | `FormInput` / `FormTextarea` wrappers with field-UI voice-separator annotations |
-| `*.test.tsx` | jsdom component tests (see `TESTING.md`) |
+| `*.test.tsx` | Browser-dependent component tests run under jsdom; `CookScreen.test.tsx` uses `renderToStaticMarkup` under Node (see `TESTING.md`) |
 
 ## Conventions
 

@@ -10,8 +10,8 @@ The server side of the app: Firebase Admin wiring, Firestore repositories, the c
 |---|---|
 | `admin.ts` | Firebase Admin app + auth + Firestore singletons (server-only) |
 | `app-check.ts` | Verifies the `X-Firebase-AppCheck` attestation before Gemini-quota work; monitor mode today, enforced via flag |
-| `repositories.ts` | Typed repository interfaces + Firestore implementations. NO raw Firestore calls outside this module |
-| `stores.ts` | Binds repositories to the tool-store interfaces and builds `buildProductionContext(userId)` — the `ToolContext` every route uses |
+| `repositories.ts` | Typed repository interfaces + Firestore implementations. NO raw Firestore calls from service modules (route-level admin reads like `/api/status`' deploy_status check are intentional) |
+| `stores.ts` | Binds repositories to the tool-store interfaces and builds `buildProductionContext(userId)` — the `ToolContext` for routes that execute state tools |
 | `session-service.ts` | The K1 state machine as a persistent, event-sourced service; optimistic version checks + correlation markers on every transition |
 | `guide-service.ts` | Guided cooking (K6): one physical action at a time, timer auto-start, safety gates |
 | `tools/` | The tool registry: `registry.ts` (dispatch) + per-domain tool modules (`ingredient-tools.ts`, `recipe-tools.ts`, `timer-tools.ts`, `session-tools.ts`, `pantry-tools.ts`, `grocery-tools.ts`, `leftover-tools.ts`, `guide-tools.ts`) + `types.ts` (store interfaces) |
@@ -27,8 +27,8 @@ The server side of the app: Firebase Admin wiring, Firestore repositories, the c
 - No raw Firestore in services: reads/writes go through the repository layer (`repositories.ts`), which validates every write with Zod before persisting.
 - Services depend on narrow store interfaces (e.g. `SessionStore`), not the repositories directly — each interface has an in-memory implementation beside it for tests (e.g. `InMemorySessionStore`).
 - Sessions are optimistic-concurrency: every mutating call takes `expectedVersion` and throws `VersionConflictError` on mismatch. Correlation ids dedupe client retries — the marker write rides the same transaction as the session update (never a separate write that can fail after commit).
-- Every session transition is event-sourced: the service writes a typed event (`SESSION_STARTED`, `STEP_COMPLETED`, `TIMER_STARTED`, ...) alongside the state change.
-- Errors are typed `SessionError` (message, code, recoverable). `recoverable: true` means the client can retry.
+- Event-sourced transitions: the service writes a typed event (`SESSION_STARTED`, `STEP_COMPLETED`, `TIMER_STARTED`, ...) as a separate await after the state change — non-atomic audit records, so a failed `createEvent` leaves the state advanced without the event; only the correlation marker rides the update's transaction.
+- Errors follow the structured `{ code, recoverable }` shape with a `message`: `SessionError` in the session service, and `GuideError`/`PantryError`/`LeftoverError`/`GroceryError` in their services. `recoverable: true` means the client can retry.
 - The AI model touches state ONLY through tools in `tools/` — every tool logs latency and error codes to `agent_tool_logs`.
 
 ## Gotchas
