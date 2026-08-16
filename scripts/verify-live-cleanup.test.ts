@@ -29,6 +29,7 @@ import { describe, expect, it } from 'vitest';
 // ============================================================================
 
 const SRC = readFileSync('scripts/verify-live.mjs', 'utf8');
+const VOICE = readFileSync('scripts/drive-live-voice.mjs', 'utf8');
 
 describe('scripts/verify-live.mjs · guaranteed cleanup', () => {
   it('wraps the whole flow in try/finally with cleanup in the finally block', () => {
@@ -153,5 +154,21 @@ describe('scripts/verify-live.mjs · fetch resilience', () => {
     // JSON body instead of the init options.
     expect(SRC).toContain("body: JSON.stringify({ action: 'launch', recipeId: seededRecipeId }),\n    retryOnConnectError: true,");
     expect(SRC).toContain('never user data');
+  });
+});
+
+describe('scripts/verify-live.mjs × drive-live-voice.mjs · shared seed grace (spec 0002)', () => {
+  it('keeps the PROBE_GRACE_MS declaration lockstep across both drivers', () => {
+    // The 15-minute seed grace protects the seed→launch window in BOTH
+    // drivers, which share the owner, Firestore, and the probe namespace. A
+    // concurrent run's sweep must never delete a live run's in-flight seed,
+    // so drift between the two files fails CI (spec 0002, AC-2). Assert the
+    // FULL declaration line, not just the numeric value: a value change OR a
+    // rename in one file fails loudly instead of silently weakening the guard.
+    const verifyDecl = SRC.split('\n').find((line) => line.startsWith('const PROBE_GRACE_MS'));
+    const voiceDecl = VOICE.split('\n').find((line) => line.startsWith('const PROBE_GRACE_MS'));
+    expect(verifyDecl).toBeDefined();
+    expect(voiceDecl).toBeDefined();
+    expect(verifyDecl).toBe(voiceDecl);
   });
 });
