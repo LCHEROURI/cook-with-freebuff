@@ -142,7 +142,23 @@ const fetchJson = async (url, init) => {
   // gate on a transient, not a regression.
   const timeoutMs = typeof init?.timeoutMs === 'number' ? init.timeoutMs : 30_000;
   const { timeoutMs: _drop, ...rest } = init ?? {};
-  const res = await fetch(url, { ...rest, signal: AbortSignal.timeout(timeoutMs) });
+  const attempt = () => fetch(url, { ...rest, signal: AbortSignal.timeout(timeoutMs) });
+  let res;
+  try {
+    res = await attempt();
+  } catch (e) {
+    // One retry on a network-level failure (no HTTP response arrived): the
+    // Chrome driver stages block this process in spawnSync for minutes, and
+    // the first fetch after them can die on a stale connection with undici's
+    // generic "fetch failed" (cause ECONNRESET/ECONNREFUSED). A fresh attempt
+    // re-establishes the connection. HTTP errors never throw here, so the
+    // retry cannot mask a real status.
+    const cause = e?.cause?.code ?? '';
+    console.warn(
+      `  - fetch ${url} failed (${e instanceof Error ? e.message : String(e)}${cause ? `, ${cause}` : ''}) — retrying once`,
+    );
+    res = await attempt();
+  }
   let body = null;
   try { body = await res.json(); } catch { /* non-JSON */ }
   return { status: res.status, body };
@@ -199,6 +215,18 @@ async function cleanup() {
 // that prefix are unambiguous probe artifacts — archiving them can never touch
 // a real cooking session. Orphaned probe recipes (no probe session left) are
 // deleted outright; they are pure throwaway seed data.
+//
+// CONCURRENCY GUARD: this run shares the owner uid, the production Firestore,
+// AND the `verify-live-` namespace with the deployed verify:live CI job. When
+// two runs overlap, one run's seeded recipe is TRANSIENTLY orphaned between
+// its [3c] settle (which deletes the probe session) and its [4] relaunch (which
+// re-creates one) — and a concurrent run's sweep here would delete that still-
+// in-flight seed, failing its [4] relaunch with RECIPE_NOT_FOUND. A recipe
+// seeded within PROBE_GRACE_MS (the longest a full run can take) is a LIVE
+// run's probe, never a killed run's leftover: leave it alone. Killed runs are
+// minutes-to-hours old by the time the next run sweeps, so real leftovers are
+// still cleaned.
+const PROBE_GRACE_MS = 15 * 60 * 1000;
 async function sweepStaleProbes() {
   if (!db) return { archived: 0, deleted: 0 };
   const [sessionSnap, recipeSnap] = await Promise.all([
@@ -223,10 +251,17 @@ async function sweepStaleProbes() {
 
   // Delete orphaned probe recipes: `verify-live-*` recipes that no probe
   // session references anymore (the current run seeds its own AFTER this
-  // sweep, so nothing live is ever touched here).
+  // sweep, so nothing live is ever touched here) AND that are older than the
+  // grace period (a recently-seeded one belongs to a run still in flight).
   const liveProbeRecipeIds = new Set(probeSessions.map((d) => d.data().recipeId));
+  const cutoff = Date.now() - PROBE_GRACE_MS;
   const deletes = recipeSnap.docs
-    .filter((d) => typeof d.id === 'string' && d.id.startsWith('verify-live-') && !liveProbeRecipeIds.has(d.id))
+    .filter((d) => {
+      if (typeof d.id !== 'string' || !d.id.startsWith('verify-live-')) return false;
+      if (liveProbeRecipeIds.has(d.id)) return false;
+      const seededAt = d.data().updatedAt ?? d.data().createdAt ?? 0;
+      return typeof seededAt === 'number' && seededAt < cutoff;
+    })
     .map((d) => d.ref.delete());
   await Promise.allSettled(deletes);
 

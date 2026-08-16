@@ -69,6 +69,19 @@ describe('scripts/verify-live.mjs · guaranteed cleanup', () => {
     expect(fn).toContain('Promise.allSettled(deletes)');
   });
 
+  it('never sweeps a recipe seeded within the grace period (a concurrent run\'s in-flight probe)', () => {
+    // The deployed CI verify and a local verify:live:local share the owner,
+    // Firestore, and `verify-live-` namespace. A concurrent run's seeded
+    // recipe is transiently orphaned between [3c] and [4]; sweeping it there
+    // fails that run's relaunch with RECIPE_NOT_FOUND. The grace guard keeps
+    // a fresh seed alive while still deleting genuinely old leftovers.
+    const fnStart = SRC.indexOf('async function sweepStaleProbes');
+    const fn = SRC.slice(fnStart, SRC.indexOf('\n}\n', fnStart));
+    expect(SRC).toContain('const PROBE_GRACE_MS = 15 * 60 * 1000;');
+    expect(fn).toContain("const seededAt = d.data().updatedAt ?? d.data().createdAt ?? 0;");
+    expect(fn).toContain('typeof seededAt === \'number\' && seededAt < cutoff');
+  });
+
   it('sweeps ONLY verify-live- prefixed sessions — a real session can never be archived', () => {
     const fnStart = SRC.indexOf('async function sweepStaleProbes');
     const fn = SRC.slice(fnStart, SRC.indexOf('\n}\n', fnStart));
@@ -81,5 +94,22 @@ describe('scripts/verify-live.mjs · guaranteed cleanup', () => {
 
   it('still exits 0 on PASS and 1 on FAIL after the rewrite', () => {
     expect(SRC).toContain("process.exit(runExit === 0 && failures === 0 ? 0 : 1);");
+  });
+});
+
+describe('scripts/verify-live.mjs · fetch resilience', () => {
+  it('retries a network-level fetch failure exactly once', () => {
+    // The [4] relaunch POST dies on the stale keep-alive socket left by the
+    // minutes-long Chrome driver stages (undici "fetch failed", EPIPE), which
+    // crashed verify:live:local at RESULT: FAIL before [4] could run. The
+    // retry must re-establish the connection once, and must NOT retry HTTP
+    // errors (fetch only throws on network failure, never on a response).
+    const fnStart = SRC.indexOf('const fetchJson = async');
+    const fn = SRC.slice(fnStart, SRC.indexOf('let body = null', fnStart));
+    expect(fn).toContain('const attempt = () => fetch(url, { ...rest, signal: AbortSignal.timeout(timeoutMs) });');
+    expect(fn).toContain('res = await attempt();');
+    expect(fn).toContain('retrying once');
+    // Both attempts share one URL + init; a fresh AbortSignal per attempt.
+    expect(fn.match(/await attempt\(\)/g)).toHaveLength(2);
   });
 });
