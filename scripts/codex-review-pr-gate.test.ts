@@ -119,8 +119,12 @@ describe('scripts/codex-review-pr-gate.mjs', () => {
     // `environment:` block, this guard goes red with it, because that is the
     // one edit that would let `secrets.CODEX_NUDGE_TOKEN` start resolving to
     // an environment secret instead.
-    expect(WORKFLOW).not.toContain('environment:');
     expect(WORKFLOW).toContain('CODEX_NUDGE_TOKEN: ${{ secrets.CODEX_NUDGE_TOKEN }}');
+    // Scope the negative to the codex-gate JOB, not the whole file: a future
+    // sibling job may legitimately target a Preview or Production environment,
+    // but the gate's secret context must stay repo Actions only.
+    const codexGateJob = WORKFLOW.slice(WORKFLOW.indexOf('codex-gate:'));
+    expect(codexGateJob).not.toContain('environment:');
     // And the script's only token source is that env var: no file read, no gh
     // secret lookup, nothing that could reach an environment secret directly.
     expect(GATE).toContain("const token = process.env.CODEX_NUDGE_TOKEN ?? '';");
