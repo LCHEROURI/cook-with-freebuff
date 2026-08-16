@@ -2,7 +2,7 @@
 
 ## Overview
 
-The server side of the app: Firebase Admin wiring, Firestore repositories, the cooking-session state machine service, guided-cooking delivery, pantry/leftover/grocery services, and the tool registry the AI model calls to touch state. Every API route (`/api/cook`, `/api/agent`, `/api/tools`, `/api/kitchen`, `/api/voice/token`) resolves the user server side and builds a `ToolContext` from here.
+The server side of the app: Firebase Admin wiring, Firestore repositories, the cooking-session state machine service, guided-cooking delivery, pantry/leftover/grocery services, and the tool registry the AI model calls to touch state. Routes that execute state tools — `/api/cook`, `/api/agent`, `/api/tools`, `/api/kitchen` — resolve the user server side and build a `ToolContext` from here via `buildProductionContext`; authentication-only routes like `/api/voice/token` never touch it.
 
 ## Key files
 

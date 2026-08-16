@@ -2,7 +2,7 @@
 
 ## Overview
 
-Reusable and page-specific React components for the voice first cooking screens. The centerpiece is `CookScreen`, the full "Cook With Me" screen; the rest are small focused pieces it or the pages render. Components stay pure and presentational so they render deterministically in tests: data arrives through props, never through fetch or effects.
+Reusable and page-specific React components for the voice first cooking screens. The centerpiece is `CookScreen`, the full "Cook With Me" screen; the rest are small focused pieces it or the pages render. Components stay pure and presentational so they render deterministically in tests: remote data arrives through props, never through fetch. Local effect-driven UI state is fine (StarterTour's localStorage gate, CookScreen's timer advance) — the render path itself stays free of side effects.
 
 ## Key files
 
