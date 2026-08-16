@@ -47,6 +47,7 @@ None yet. Store new specs in `docs/specs/NNNN-title.md`.
 - Voice flows through hooks (`useVoiceInput`, `useGeminiLive`, `useLiveDictation`), not form field level mic buttons
 - Components use controlled inputs with `useState`, not `react-hook-form`
 - Tests use `// @vitest-environment jsdom` pragma on component files; default environment is `node`
+- Probe cleanup grace durations are declared per driver (`scripts/verify-live.mjs`, `scripts/drive-live-voice.mjs`) with a rationale comment at each declaration, and the shared 15 minute seed grace is pinned identical across both files by the lockstep contract in `scripts/verify-live-cleanup.test.ts`; never introduce a shared constants module (spec 0002)
 
 ## Context files
 
