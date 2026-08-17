@@ -76,6 +76,7 @@ import { getAuth } from 'firebase-admin/auth';
 import { getFirestore } from 'firebase-admin/firestore';
 import { getAppCheck } from 'firebase-admin/app-check';
 import { getRemoteConfig } from 'firebase-admin/remote-config';
+import { classifyVerifyVerdict } from './verify-live-classify.mjs';
 
 // ── Env loading (process.env wins; .env.local fills the gaps) ───────────────
 function loadEnv() {
@@ -133,9 +134,9 @@ const SA_JSON = process.env.FIREBASE_SERVICE_ACCOUNT;
 // post-deploy gate keeps exercising the gated routes once enforcement is on.
 const APP_ID = process.env.NEXT_PUBLIC_FIREBASE_APP_ID;
 
-let failures = 0;
+let failures = [];
 const ok = (m) => console.log(`  ✓ ${m}`);
-const fail = (m) => { failures += 1; console.log(`  ✗ FAIL: ${m}`); };
+const fail = (m) => { failures.push(m); console.log(`  ✗ FAIL: ${m}`); };
 const skip = (m) => console.log(`  - SKIP: ${m}`);
 const note = (m) => console.log(`  - ${m}`);
 
@@ -143,6 +144,10 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 // Safe pretty-print for fail messages — a non-JSON body (e.g. a proxy error
 // page) must print as `null`, never crash the verifier.
 const j = (v) => JSON.stringify(v ?? null).slice(0, 160);
+// Long slice for the [3b] create_recipe failure: the Gemini credits signature
+// sits past j()'s 160-char cut (the SDK error is ~360 chars), so the root
+// failure must keep enough of the body for verify-live-classify to see it.
+const jLong = (v) => JSON.stringify(v ?? null).slice(0, 800);
 // Socket-level errors that mean the request was never delivered: undici
 // reports these when it tries to REUSE a keep-alive socket the peer has
 // already closed (the Chrome driver stages block this process in spawnSync
@@ -376,6 +381,8 @@ process.on('uncaughtException', (e) => {
 
 // ── Main flow (try/finally so cleanup ALWAYS runs) ──────────────────────────
 let runExit = 0;
+// The final verdict (computed in `finally`; read by the exit line below).
+let verdict = { kind: 'fail' };
 try {
   // Pre-run sweep FIRST — before seeding anything of our own.
   await sweepStaleProbes();
@@ -678,7 +685,7 @@ try {
   const starterCreated = await cookLong('create_recipe', { prompt: 'I have chicken thighs and rice' });
   let createdRecipeId = null;
   if (starterCreated.status !== 200 || !starterCreated.body?.success) {
-    fail(`create_recipe → ${starterCreated.status} ${j(starterCreated.body?.error ?? starterCreated.body)}`);
+    fail(`create_recipe → ${starterCreated.status} ${jLong(starterCreated.body?.error ?? starterCreated.body)}`);
   } else {
     const { recipeId, title, validation } = starterCreated.body.data;
     createdRecipeId = recipeId;
@@ -1162,7 +1169,23 @@ try {
   }
 } finally {
   // ── 5. Result + cleanup (GUARANTEED on every path) ──────────────────────
-  console.error(`\nRESULT: ${runExit === 0 && failures === 0 ? 'PASS' : `FAIL (${runExit !== 0 ? 'crash' : failures})`}`);
+  // A crash (runExit !== 0) is never external — only the ordinary failure
+  // set is classified. The Gemini prepayment-credits block is EXTERNAL: the
+  // deployed app is healthy, the billing is not, so the deploy check passes
+  // with a distinct report instead of a misleading red.
+  verdict = runExit === 0 ? classifyVerifyVerdict({ failures }) : { kind: 'fail' };
+  if (verdict.kind === 'pass') {
+    console.error(`\nRESULT: PASS`);
+  } else if (verdict.kind === 'external') {
+    console.error(
+      `\n⚠ EXTERNAL: Gemini API prepayment credits are depleted (429) — recipe generation and its ` +
+        `downstream stages cannot run. The deployed app itself is healthy; this is a billing issue, not a ` +
+        `regression. Top up credits at https://ai.studio/projects, then re-run verify:live.`,
+    );
+    console.error(`RESULT: EXTERNAL (Gemini credits — deploy check passes)`);
+  } else {
+    console.error(`\nRESULT: FAIL (${runExit !== 0 ? 'crash' : failures.length})`);
+  }
   await cleanup();
 }
-process.exit(runExit === 0 && failures === 0 ? 0 : 1);
+process.exit(verdict.kind === 'fail' ? 1 : 0);
