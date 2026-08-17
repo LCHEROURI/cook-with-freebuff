@@ -12,7 +12,7 @@ A voice first cooking companion that guides you step by step from "what do I hav
 
 ## Build approach
 
-<TBD, set by /scope>
+Contract-locked CI changes: every meaningful change lands through the branch + PR path under the required checks (validate, Codex P1 gate, emulator-compare smoke on pushes). Specs in `docs/specs/` record decisions; plans in `docs/plans/` track implementation; AGENTS.md files record conventions. No `docs/scope/` directory — status is advanced by the engineer/architect, not a scope reconciler.
 
 ## Commands
 
@@ -35,7 +35,7 @@ npm test
 
 ## Specs
 
-Stored in `docs/specs/NNNN-title.md`. Current: 0001 App Hosting primary host, 0002 probe grace constants, 0003 recipe detail page. Implementation plans live in `docs/plans/NNNN-title.md`, numbered to match their spec.
+Stored in `docs/specs/NNNN-title.md`. Current: 0001 App Hosting primary host, 0002 probe grace constants, 0003 recipe detail page, 0004 voice everywhere. Implementation plans live in `docs/plans/NNNN-title.md`, numbered to match their spec.
 
 ## Rules
 
