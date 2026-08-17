@@ -17,8 +17,11 @@ import { useParams, useRouter } from 'next/navigation';
 import styles from './page.module.css';
 import { useAuthSession } from '@/lib/auth/useAuthSession';
 import { appCheckHeaders } from '@/lib/firebase/app-check';
+import { VoiceInputButton } from '@/components/VoiceInputButton';
 import RecipeRowMeta from '../../cook/RecipeRowMeta';
 import { scaleRecipe } from '../recipe-scaler';
+import { parseServings } from '../servings-parser';
+import { RecipeReadAloudButton, RecipeReadAll } from './RecipeReadAloudButton';
 import type { Recipe } from '@/lib/domain/types';
 
 type RecipeState =
@@ -42,6 +45,31 @@ const formatQuantity = (q: number): string => {
   const frac = Math.round((q - whole) * 4) / 4;
   const fraction = frac === 0.25 ? '¼' : frac === 0.5 ? '½' : frac === 0.75 ? '¾' : '';
   return whole === 0 ? (fraction || '0') : `${whole}${fraction}`;
+};
+
+/**
+ * Compose the read-aloud text for a step: the model's spoken instruction
+ * (numbers already written as words) plus its time, temperature/heat, and
+ * safety note, so read-aloud mirrors what a helper would say.
+ */
+type ReadableStep = {
+  spokenInstruction: string;
+  estimatedSeconds?: number;
+  timerSeconds?: number;
+  temperature?: number;
+  temperatureUnit?: 'C' | 'F';
+  heatLevel?: string;
+  safetyNote?: string;
+};
+
+const stepReadText = (step: ReadableStep): string => {
+  const parts = [step.spokenInstruction];
+  if (step.estimatedSeconds != null) parts.push(`Time ${formatSeconds(step.estimatedSeconds)}.`);
+  if (step.timerSeconds != null) parts.push(`Timer ${formatSeconds(step.timerSeconds)}.`);
+  if (step.temperature != null) parts.push(`${step.temperature} degrees ${step.temperatureUnit ?? 'C'}.`);
+  if (step.heatLevel) parts.push(step.heatLevel);
+  if (step.safetyNote) parts.push(step.safetyNote);
+  return parts.join(' ');
 };
 
 export default function RecipeDetailPage() {
@@ -196,6 +224,14 @@ export default function RecipeDetailPage() {
   const displayRecipe = scaled ? scaleRecipe(recipe, servings) : recipe;
   const decrementServings = () => setTargetServings(Math.max(1, (targetServings ?? recipe.servings) - 1));
   const incrementServings = () => setTargetServings(Math.min(24, (targetServings ?? recipe.servings) + 1));
+  const readAllTexts = [
+    ...displayRecipe.prepSteps.map(stepReadText),
+    ...displayRecipe.cookingSteps.map(stepReadText),
+    // Recipe-level safety notes live outside the step lists but are still
+    // spoken safety output (spec 0004 §Safety warnings), so Read all speaks
+    // them too, not only per-step notes.
+    ...displayRecipe.safetyNotes.map((note) => `Safety note: ${note}`),
+  ];
 
   return (
     <main className={styles.main}>
@@ -233,6 +269,13 @@ export default function RecipeDetailPage() {
             >
               +
             </button>
+            <VoiceInputButton
+              aria-label="Speak servings"
+              onTranscript={(text) => {
+                const n = parseServings(text);
+                if (n !== null) setTargetServings(n);
+              }}
+            />
           </div>
           {scaled && (
             <p className={styles.scaleCaption}>
@@ -309,6 +352,11 @@ export default function RecipeDetailPage() {
                 {(step.ingredientsUsed.length > 0 || step.equipmentUsed.length > 0) && (
                   <p className={styles.stepContext}>uses: {[...step.ingredientsUsed, ...step.equipmentUsed].join(', ')}</p>
                 )}
+                <RecipeReadAloudButton
+                  phase="prep"
+                  stepNumber={step.stepNumber}
+                  text={stepReadText(step)}
+                />
               </li>
             ))}
           </ol>
@@ -335,11 +383,18 @@ export default function RecipeDetailPage() {
                   {step.heatLevel && <span className={styles.badge}>{step.heatLevel}</span>}
                 </span>
                 {step.safetyNote && <p className={styles.safetyNote}>⚠ {step.safetyNote}</p>}
+                <RecipeReadAloudButton
+                  phase="cooking"
+                  stepNumber={step.stepNumber}
+                  text={stepReadText(step)}
+                />
               </li>
             ))}
           </ol>
         </section>
       )}
+
+      {readAllTexts.length > 0 && <RecipeReadAll texts={readAllTexts} />}
 
       {recipe.safetyNotes.length > 0 && (
         <section className={styles.section} aria-label="Safety notes">

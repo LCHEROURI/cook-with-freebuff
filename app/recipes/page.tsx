@@ -18,6 +18,8 @@ import { useRouter } from 'next/navigation';
 import styles from './page.module.css';
 import { useAuthSession } from '@/lib/auth/useAuthSession';
 import { appCheckHeaders } from '@/lib/firebase/app-check';
+import { VoiceInputButton } from '@/components/VoiceInputButton';
+import { appendTranscript } from '@/lib/domain/fieldUI';
 import RecipeRowMeta from '../cook/RecipeRowMeta';
 import {
   availableCategories,
@@ -212,6 +214,10 @@ export default function RecipesPage() {
               onChange={(e) => setQuery(e.target.value)}
               placeholder="Search recipes, diets or allergens…"
               aria-label="Search recipes"
+            />
+            <VoiceInputButton
+              aria-label="Speak recipes search"
+              onTranscript={(text) => setQuery(appendTranscript(query, text, undefined))}
             />
             <select
               className={styles.sort}

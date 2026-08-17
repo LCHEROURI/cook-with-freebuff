@@ -1,19 +1,17 @@
 #!/usr/bin/env node
 // ============================================================================
-// Repeatable driver: prove the /recipes "My Recipes" page on the DEPLOYED app
-// with a REAL owner session (same scaffolding as drive-starter-prefs.mjs).
+// Repeatable driver: prove the /kitchen "My Kitchen" page on the DEPLOYED app
+// renders its Voice Everywhere transcription mics (spec 0004), with a REAL
+// owner session (same scaffolding as drive-recipes-page.mjs).
 //
 //   1. Loads .env.local, mints a real owner ID token, launches headless Chrome
 //      + CDP, and injects the owner session into Firebase auth persistence.
-//   2. Loads /recipes and confirms the saved-recipe cards render (owner has
-//      20+ recipes).
-//   3. Screenshots the unfiltered list (search box + protein chips visible).
-//   4. Clicks the first protein chip and screenshots the filtered list,
-//      asserting the live count line flips to "N of M recipes".
-//   5. Resets to "All", types a search term (a substring of a real recipe
-//      title), and screenshots the narrowed result.
+//   2. Loads /kitchen and confirms the page landed (not redirected).
+//   3. Asserts the pantry name mic and a dietary-profile field mic render,
+//      proving the full sweep reached the kitchen surface.
+//   4. Screenshots the result.
 //
-// Usage: node scripts/drive-recipes-page.mjs [--out /tmp/recipes-proof]
+// Usage: node scripts/drive-kitchen.mjs [--out /tmp/kitchen-proof] [--app URL]
 // ============================================================================
 
 import { spawn } from 'node:child_process';
@@ -21,8 +19,6 @@ import { createSign } from 'node:crypto';
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { resolve as resolvePath } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
-import { initializeApp, cert, getApps } from 'firebase-admin/app';
-import { getFirestore } from 'firebase-admin/firestore';
 
 // ── Env loading (process.env wins; .env.local fills gaps) ───────────────────
 function loadEnv() {
@@ -45,10 +41,10 @@ const flag = (name, fallback) => {
   return i >= 0 && args[i + 1] ? args[i + 1] : fallback;
 };
 const APP = (flag('--app', process.env.VERIFY_BASE_URL) ?? 'https://cook-with-freebuff--portfolio-app-freebuff2.us-central1.hosted.app').replace(/\/$/, '');
-const OUT = flag('--out', '/tmp/recipes-proof');
+const OUT = flag('--out', '/tmp/kitchen-proof');
 const CHROME = process.env.CHROME_PATH ?? '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
-const PORT = 9474;
-const USER_DATA_DIR = `/tmp/recipes-chrome-${process.pid}-${Date.now()}`;
+const PORT = 9475;
+const USER_DATA_DIR = `/tmp/kitchen-chrome-${process.pid}-${Date.now()}`;
 
 const API_KEY = process.env.NEXT_PUBLIC_FIREBASE_API_KEY;
 const OWNER_UID = process.env.APP_OWNER_UID;
@@ -138,12 +134,9 @@ const screenshot = async (name) => {
   note(`screenshot: ${name}.png`);
 };
 
-// ── 3. Inject the owner session, load /recipes ──────────────────────────────
-// NOTE: navigate to /recipes first to establish the origin (so indexedDB /
-// localStorage are writable), inject the session, then navigate AGAIN. A plain
-// reload would land on /login (the first load redirects there with no session).
-console.log(`\n[3] Injecting owner session → loading ${APP}/recipes`);
-await send('Page.navigate', { url: `${APP}/recipes` });
+// ── 3. Inject the owner session, load /kitchen ──────────────────────────────
+console.log(`\n[3] Injecting owner session → loading ${APP}/kitchen`);
+await send('Page.navigate', { url: `${APP}/kitchen` });
 await sleep(4000);
 
 const authUser = {
@@ -184,107 +177,29 @@ await evaluate(`(async () => {
   localStorage.setItem(key, JSON.stringify(record.value));
   return 'injected';
 })()`);
-await send('Page.navigate', { url: `${APP}/recipes` });
+await send('Page.navigate', { url: `${APP}/kitchen` });
 await sleep(4500);
 
-// Confirm we actually landed on /recipes (not redirected to /cook or /login).
+// Confirm we landed on /kitchen (not redirected to /login or /cook).
 const currentUrl = await evaluate(`location.pathname`);
-if (currentUrl === '/recipes') ok(`landed on ${currentUrl}`);
-else fail(`expected /recipes but landed on ${currentUrl} (session redirect?)`);
+if (currentUrl === '/kitchen') ok(`landed on ${currentUrl}`);
+else fail(`expected /kitchen but landed on ${currentUrl} (session redirect?)`);
 
-// Wait for the recipe cards to load (the live count line + at least one card).
-const countLine = () => evaluate(`document.querySelector('[aria-live="polite"]')?.innerText?.replace(/\\s+/g, ' ').trim() ?? ''`);
-const cardCount = () => evaluate(`document.querySelectorAll('button[aria-label^="Start cooking "]').length`);
-const chips = () => evaluate(`[...document.querySelectorAll('nav[aria-label="Filter by protein"] button')].map((b) => b.textContent.trim())`);
+// ── 4. Assert the Voice Everywhere mics render (spec 0004) ──────────────────
+console.log('\n[4] Verifying the kitchen transcription mics');
+const pantryMic = await evaluate(
+  `Boolean(document.querySelector('button[aria-label="Speak pantry item name"]'))`,
+);
+if (pantryMic) ok('pantry item name mic renders');
+else fail('pantry item name mic missing (spec 0004)');
 
-let count = await countLine();
-let cards = await cardCount();
-for (let i = 0; i < 20 && cards === 0; i++) {
-  await sleep(1000);
-  count = await countLine();
-  cards = await cardCount();
-}
-if (cards > 0) {
-  ok(`recipe cards rendered (${cards} cards, count line: “${count}”)`);
-} else {
-  fail(`/recipes did not show any recipe cards. Page text: ${(await pageText()).slice(0, 300)}`);
-}
+const profileMic = await evaluate(
+  `Boolean(document.querySelector('button[aria-label="Speak Allergies, comma separated"]'))`,
+);
+if (profileMic) ok('dietary profile allergies mic renders');
+else fail('dietary profile allergies mic missing (spec 0004)');
 
-// Voice Everywhere (spec 0004): the search box must carry its transcription
-// mic so /recipes stays speakable alongside typing.
-const searchMic = await evaluate(`Boolean(document.querySelector('button[aria-label="Speak recipes search"]'))`);
-if (searchMic) ok('recipes search mic renders');
-else fail('recipes search mic missing (spec 0004)');
-
-await screenshot('01-recipes-all');
-
-// ── 4. Click the first protein chip and assert the filter narrows ──────────
-console.log('\n[4] Filtering by the first protein chip');
-const chipLabels = await chips();
-const firstChip = chipLabels.find((c) => c !== 'All');
-if (!firstChip) {
-  fail('no protein chips rendered to filter by');
-} else {
-  const clicked = await evaluate(`(() => {
-    const nav = document.querySelector('nav[aria-label="Filter by protein"]');
-    const btn = [...nav.querySelectorAll('button')].find((b) => b.textContent.trim() === ${JSON.stringify(firstChip)});
-    if (!btn) return 'no-btn';
-    btn.click();
-    return 'clicked';
-  })()`);
-  if (clicked === 'clicked') ok(`clicked “${firstChip}” chip`);
-  else fail(`could not click “${firstChip}” chip (${clicked})`);
-
-  await sleep(700);
-  const filteredCount = await countLine();
-  const filteredCards = await cardCount();
-  const narrowed = /^\d+ of \d+ recipes$/.test(filteredCount) && filteredCards > 0 && filteredCards < cards;
-  if (narrowed) ok(`list narrowed: “${filteredCount}” (${filteredCards} cards, was ${cards})`);
-  else fail(`filter did not narrow the list. Count: “${filteredCount}”, cards ${filteredCards} (was ${cards})`);
-
-  await screenshot('02-recipes-filtered');
-
-  // ── 5. Reset, then search ────────────────────────────────────────────────
-  console.log('\n[5] Searching by title substring');
-  await evaluate(`(() => {
-    const nav = document.querySelector('nav[aria-label="Filter by protein"]');
-    const all = [...nav.querySelectorAll('button')].find((b) => b.textContent.trim() === 'All');
-    all?.click();
-    return 'reset';
-  })()`);
-  await sleep(500);
-
-  const searchTerm = await evaluate(`(() => {
-    const first = document.querySelector('button[aria-label^="Start cooking "]');
-    const name = first?.closest('li')?.querySelector('p')?.innerText ?? '';
-    const title = name.split('\\n')[0].trim();
-    return title.split(' ').slice(0, 2).join(' ');
-  })()`);
-  if (!searchTerm) {
-    fail('could not derive a search term from the first card title');
-  } else {
-    const typed = await evaluate(`(() => {
-      const input = document.querySelector('input[aria-label="Search recipes"]');
-      if (!input) return 'no-input';
-      const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
-      setter.call(input, ${JSON.stringify(searchTerm)});
-      input.dispatchEvent(new Event('input', { bubbles: true }));
-      return 'typed';
-    })()`);
-    if (typed === 'typed') ok(`typed “${searchTerm}” into the search box`);
-    else fail(`search input not found (${typed})`);
-
-    await sleep(700);
-    const searchCount = await countLine();
-    const searchCards = await cardCount();
-    if (searchCards > 0 && /^\d+( of \d+ recipes)?$/.test(searchCount)) {
-      ok(`search narrowed to: “${searchCount}” (${searchCards} cards)`);
-    } else {
-      fail(`search returned nothing unexpected. Count: “${searchCount}”, cards ${searchCards}`);
-    }
-    await screenshot('03-recipes-search');
-  }
-}
+await screenshot('01-kitchen-mics');
 
 ws.close(); chrome.kill(); dropProfile();
 console.error(`\nRESULT: ${failures === 0 ? 'PASS' : `FAIL (${failures})`}`);

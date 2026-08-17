@@ -44,6 +44,39 @@ vi.mock('@/lib/firebase/app-check', () => ({
   appCheckHeaders: vi.fn(async () => ({})),
 }));
 
+// Controllable speech seam for read-aloud assertions. `speaking` is mutable so
+// the read-all test can flip the control between speak and stop.
+const speech = vi.hoisted(() => ({
+  speak: vi.fn(),
+  stop: vi.fn(),
+  speaking: false,
+}));
+
+vi.mock('@/lib/hooks/useSpeech', () => ({
+  useSpeech: () => ({
+    speak: speech.speak,
+    stop: speech.stop,
+    speaking: speech.speaking,
+    supported: true,
+  }),
+}));
+
+// The page only cares that the mic transcript lands on the stepper, not the
+// real recognition lifecycle; emit a fixed spoken count on click.
+vi.mock('@/components/VoiceInputButton', () => ({
+  VoiceInputButton: ({
+    onTranscript,
+    'aria-label': ariaLabel,
+  }: {
+    onTranscript: (text: string) => void;
+    'aria-label'?: string;
+  }) => (
+    <button type="button" aria-label={ariaLabel} onClick={() => onTranscript('eight servings')}>
+      mic
+    </button>
+  ),
+}));
+
 import { useAuthSession, type UseAuthSessionResult } from '@/lib/auth/useAuthSession';
 import RecipeDetailPage from './page';
 import type { Recipe } from '@/lib/domain/types';
@@ -129,6 +162,9 @@ beforeEach(() => {
   replace.mockReset();
   mockAuth.mockReset();
   mockAuth.mockReturnValue(base);
+  speech.speak.mockReset();
+  speech.stop.mockReset();
+  speech.speaking = false;
 });
 
 describe('app/recipes/[id]/page.tsx · rendered behavior', () => {
@@ -254,5 +290,44 @@ describe('app/recipes/[id]/page.tsx · rendered behavior', () => {
     render(<RecipeDetailPage />);
     expect(screen.getByText(/sign-in is unavailable/i)).toBeInTheDocument();
     expect(screen.getByRole('link', { name: /back to start/i })).toHaveAttribute('href', '/');
+  });
+
+  it('sets servings from a spoken count via the stepper mic', async () => {
+    mockFetch();
+    render(<RecipeDetailPage />);
+    await screen.findByText('Chicken Rice');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Speak servings' }));
+
+    // "eight servings" → 8, factor 4 (base 2): stepper and caption update.
+    expect(screen.getByText('8 servings')).toBeInTheDocument();
+    expect(screen.getByText('Scaled from 2 to 8 servings')).toBeInTheDocument();
+    expect(screen.getByText('16 pieces')).toBeInTheDocument();
+  });
+
+  it('reads a single step aloud with the instruction text', async () => {
+    mockFetch();
+    render(<RecipeDetailPage />);
+    await screen.findByText('Chicken Rice');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Read prep step 1' }));
+    expect(speech.speak).toHaveBeenCalledTimes(1);
+    expect(speech.speak).toHaveBeenCalledWith(expect.stringContaining('Dice the onion'));
+  });
+
+  it('reads all steps in order and stops', async () => {
+    mockFetch();
+    render(<RecipeDetailPage />);
+    await screen.findByText('Chicken Rice');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Read all steps' }));
+    expect(speech.speak).toHaveBeenCalledTimes(1);
+
+    // Flip to speaking so the control becomes Stop and exercise it.
+    speech.speaking = true;
+    render(<RecipeDetailPage />);
+    await screen.findByText('Chicken Rice');
+    fireEvent.click(screen.getByRole('button', { name: 'Stop reading' }));
+    expect(speech.stop).toHaveBeenCalledTimes(1);
   });
 });

@@ -5,6 +5,7 @@ import {
   pantryFieldUI,
   leftoverFieldUI,
   profileFieldUI,
+  appendTranscript,
 } from './fieldUI';
 
 // ── Test schema ──────────────────────────────────────────────────────────────
@@ -89,5 +90,31 @@ describe('profileFieldUI', () => {
   it('does not annotate defaultServings or updatedAt', () => {
     expect(profileFieldUI.resolve('defaultServings')).toBeUndefined();
     expect(profileFieldUI.resolve('updatedAt')).toBeUndefined();
+  });
+});
+
+// ── appendTranscript ─────────────────────────────────────────────────────────
+
+describe('appendTranscript', () => {
+  it('replaces the current value when no separator is given', () => {
+    expect(appendTranscript('old', 'new')).toBe('new');
+  });
+
+  it('appends with a comma separator', () => {
+    expect(appendTranscript('peanuts', 'eggs', ', ')).toBe('peanuts, eggs');
+  });
+
+  it('appends with a newline separator', () => {
+    expect(appendTranscript('step one', 'step two', '\n')).toBe('step one\nstep two');
+  });
+
+  it('returns the transcript alone when the current value is empty', () => {
+    expect(appendTranscript('', 'eggs', ', ')).toBe('eggs');
+    expect(appendTranscript('   ', 'eggs', ', ')).toBe('eggs');
+  });
+
+  it('ignores blank incoming text', () => {
+    expect(appendTranscript('eggs', '   ')).toBe('eggs');
+    expect(appendTranscript('eggs', '', ', ')).toBe('eggs');
   });
 });

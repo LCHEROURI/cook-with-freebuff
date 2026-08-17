@@ -11,14 +11,15 @@ Reusable and page-specific React components for the voice first cooking screens.
 | `CookScreen.tsx` | The cooking screen: one action at a time, phase chip, timers, safety gate, transcript, voice input. Domain data and callbacks arrive via `CookScreenProps`; ephemeral UI state (text input, start-over confirm, clipboard feedback, countdown) is local `useState` |
 | `VoiceIndicator.tsx` | Tiny status dot + label for the voice engine state (`LISTENING`/`THINKING`/`SPEAKING`/`OFFLINE`/`ERROR`) |
 | `StarterTour.tsx` | First-visit tour for the /cook starter; dismissal remembered in `localStorage` |
-| `FormField.tsx` | `FormInput` / `FormTextarea` wrappers with field-UI voice-separator annotations |
+| `FormField.tsx` | `FormInput` / `FormTextarea` wrappers with field-UI voice-separator annotations; the `voice` + `onVoice` props render a `VoiceInputButton` beside the field |
+| `VoiceInputButton.tsx` | The reusable transcription mic (spec 0004): wraps `useVoiceInput`, exposes a state-aware `Speak …` / `Stop listening for …` label, and never auto-submits |
 | `*.test.tsx` | Browser-dependent component tests run under jsdom; `CookScreen.test.tsx` uses `renderToStaticMarkup` under Node (see `TESTING.md`) |
 
 ## Conventions
 
 - All components are client components (`'use client'` at the top) using controlled inputs with `useState`, never `react-hook-form`.
 - Pure presentational: no fetch, no server calls, no side effects in the render path. All data and callbacks arrive via props (`onDone`, `onSend`, `onStartOver`, ...). This is what makes the tests deterministic.
-- Styling comes from page CSS modules imported from `@/app/*/page.module.css`, not local stylesheets in this folder. `VoiceIndicator` uses the global classes `voice-indicator` / `voice-dot` / `voice-label`.
+- Styling comes from page CSS modules imported from `@/app/*/page.module.css`, not local stylesheets in this folder. `VoiceIndicator` uses the global classes `voice-indicator` / `voice-dot` / `voice-label`; `VoiceInputButton` uses the global classes `voice-input-wrap` / `voice-mic-btn` / `voice-interim` / `voice-error`.
 - Accessibility is load bearing: icon-only and otherwise unnamed controls carry an `aria-label` (text buttons rely on their visible name), timers use `role="timer"` with a spoken label, alerts use `role="alert"` / `aria-live`, and the safety gate is a `role="alertdialog"` with an explicit confirm button.
 - Browser-dependent test files use the `// @vitest-environment jsdom` pragma and render the component with mocked props; `CookScreen.test.tsx` intentionally skips the pragma and uses `renderToStaticMarkup` under the default Node environment; voice flows are covered in the `*.voice.test.tsx` files.
 

@@ -6,7 +6,9 @@ import { useRouter } from 'next/navigation';
 import styles from './kitchen.module.css';
 import { useAuthSession } from '@/lib/auth/useAuthSession';
 import { FormInput, FormTextarea } from '@/components/FormField';
-import { pantryFieldUI, leftoverFieldUI, profileFieldUI } from '@/lib/domain/fieldUI';
+import { VoiceInputButton } from '@/components/VoiceInputButton';
+import { useSpeech } from '@/lib/hooks/useSpeech';
+import { appendTranscript, pantryFieldUI, leftoverFieldUI, profileFieldUI } from '@/lib/domain/fieldUI';
 import type { PantryItemView } from '@/lib/server/pantry-service';
 import type { GroceryItemSource, DietaryProfile } from '@/lib/domain/types';
 
@@ -97,6 +99,14 @@ export default function KitchenPage() {
   const [profileDisliked, setProfileDisliked] = useState('');
   const [profileCuisines, setProfileCuisines] = useState('');
   const [profileServings, setProfileServings] = useState('');
+  // Latest-edit provenance per form: true only while the most recent edit to
+  // that form came from voice, so confirmations speak for voice actions only.
+  const [pantryVoiceInitiated, setPantryVoiceInitiated] = useState(false);
+  const [groceryVoiceInitiated, setGroceryVoiceInitiated] = useState(false);
+  const [leftoverVoiceInitiated, setLeftoverVoiceInitiated] = useState(false);
+  const [profileVoiceInitiated, setProfileVoiceInitiated] = useState(false);
+
+  const { speak } = useSpeech();
 
   const refresh = useCallback(async () => {
     try {
@@ -137,7 +147,7 @@ export default function KitchenPage() {
   }, []);
 
   const mutate = useCallback(
-    async (action: string, payload: Record<string, unknown> = {}) => {
+    async (action: string, payload: Record<string, unknown> = {}): Promise<boolean> => {
       setPending(action);
       try {
         const token = await auth.getToken();
@@ -149,11 +159,13 @@ export default function KitchenPage() {
         const body = (await res.json()) as { success: boolean; error?: { message?: string } };
         if (!res.ok || !body.success) {
           setError(body.error?.message ?? `That action failed (${res.status})`);
-          return;
+          return false;
         }
         await refresh();
+        return true;
       } catch (e) {
         setError(e instanceof Error ? e.message : 'That action failed.');
+        return false;
       } finally {
         setPending(null);
       }
@@ -304,49 +316,93 @@ export default function KitchenPage() {
           onSubmit={(e) => {
             e.preventDefault();
             if (!pantryName.trim() || pending) return;
+            const wasVoice = pantryVoiceInitiated;
+            const submittedName = pantryName.trim();
             void mutate('pantry_add', {
-              name: pantryName.trim(),
+              name: submittedName,
               quantity: qtyNum(pantryQty),
               unit: unitStr(pantryUnit),
               notes: pantryNotes.trim() || undefined,
-            }).then(() => {
-              setPantryName('');
-              setPantryQty('');
-              setPantryUnit('');
-              setPantryNotes('');
+            }).then((ok) => {
+              if (ok && wasVoice) speak(`Added ${submittedName} to your pantry`);
+              if (ok) {
+                setPantryName('');
+                setPantryQty('');
+                setPantryUnit('');
+                setPantryNotes('');
+                setPantryVoiceInitiated(false);
+              }
             });
           }}
         >
           <input
             className={styles.input}
             value={pantryName}
-            onChange={(e) => setPantryName(e.target.value)}
+            onChange={(e) => {
+              setPantryName(e.target.value);
+              setPantryVoiceInitiated(false);
+            }}
             placeholder="e.g. olive oil"
             aria-label="Pantry item name"
             disabled={pending !== null}
           />
+          <VoiceInputButton
+            aria-label="Speak pantry item name"
+            onTranscript={(text) => {
+              setPantryName((current) => appendTranscript(current, text));
+              setPantryVoiceInitiated(true);
+            }}
+          />
           <input
             className={`${styles.input} ${styles.inputSmall}`}
             value={pantryQty}
-            onChange={(e) => setPantryQty(e.target.value)}
+            onChange={(e) => {
+              setPantryQty(e.target.value);
+              setPantryVoiceInitiated(false);
+            }}
             placeholder="Qty"
             aria-label="Pantry item quantity"
             disabled={pending !== null}
           />
+          <VoiceInputButton
+            aria-label="Speak pantry item quantity"
+            onTranscript={(text) => {
+              setPantryQty((current) => appendTranscript(current, text));
+              setPantryVoiceInitiated(true);
+            }}
+          />
           <input
             className={`${styles.input} ${styles.inputSmall}`}
             value={pantryUnit}
-            onChange={(e) => setPantryUnit(e.target.value)}
+            onChange={(e) => {
+              setPantryUnit(e.target.value);
+              setPantryVoiceInitiated(false);
+            }}
             placeholder="Unit"
             aria-label="Pantry item unit"
             disabled={pending !== null}
+          />
+          <VoiceInputButton
+            aria-label="Speak pantry item unit"
+            onTranscript={(text) => {
+              setPantryUnit((current) => appendTranscript(current, text));
+              setPantryVoiceInitiated(true);
+            }}
           />
           <FormTextarea
             fieldUI={pantryFieldUI}
             field="notes"
             className={styles.input}
             value={pantryNotes}
-            onChange={(e) => setPantryNotes(e.target.value)}
+            onChange={(e) => {
+              setPantryNotes(e.target.value);
+              setPantryVoiceInitiated(false);
+            }}
+            voice
+            onVoice={(text) => {
+              setPantryNotes((current) => appendTranscript(current, text, pantryFieldUI.resolve('notes')));
+              setPantryVoiceInitiated(true);
+            }}
             placeholder="Notes e.g. bought at the farmers market"
             aria-label="Pantry item notes"
             disabled={pending !== null}
@@ -411,40 +467,76 @@ export default function KitchenPage() {
           onSubmit={(e) => {
             e.preventDefault();
             if (!groceryName.trim() || pending) return;
+            const wasVoice = groceryVoiceInitiated;
+            const submittedName = groceryName.trim();
             void mutate('grocery_add', {
-              name: groceryName.trim(),
+              name: submittedName,
               quantity: qtyNum(groceryQty),
               unit: unitStr(groceryUnit),
-            }).then(() => {
-              setGroceryName('');
-              setGroceryQty('');
-              setGroceryUnit('');
+            }).then((ok) => {
+              if (ok && wasVoice) speak(`Added ${submittedName} to your grocery list`);
+              if (ok) {
+                setGroceryName('');
+                setGroceryQty('');
+                setGroceryUnit('');
+                setGroceryVoiceInitiated(false);
+              }
             });
           }}
         >
           <input
             className={styles.input}
             value={groceryName}
-            onChange={(e) => setGroceryName(e.target.value)}
+            onChange={(e) => {
+              setGroceryName(e.target.value);
+              setGroceryVoiceInitiated(false);
+            }}
             placeholder="e.g. eggs"
             aria-label="Grocery item name"
             disabled={pending !== null}
           />
+          <VoiceInputButton
+            aria-label="Speak grocery item name"
+            onTranscript={(text) => {
+              setGroceryName((current) => appendTranscript(current, text));
+              setGroceryVoiceInitiated(true);
+            }}
+          />
           <input
             className={`${styles.input} ${styles.inputSmall}`}
             value={groceryQty}
-            onChange={(e) => setGroceryQty(e.target.value)}
+            onChange={(e) => {
+              setGroceryQty(e.target.value);
+              setGroceryVoiceInitiated(false);
+            }}
             placeholder="Qty"
             aria-label="Grocery item quantity"
             disabled={pending !== null}
           />
+          <VoiceInputButton
+            aria-label="Speak grocery item quantity"
+            onTranscript={(text) => {
+              setGroceryQty((current) => appendTranscript(current, text));
+              setGroceryVoiceInitiated(true);
+            }}
+          />
           <input
             className={`${styles.input} ${styles.inputSmall}`}
             value={groceryUnit}
-            onChange={(e) => setGroceryUnit(e.target.value)}
+            onChange={(e) => {
+              setGroceryUnit(e.target.value);
+              setGroceryVoiceInitiated(false);
+            }}
             placeholder="Unit"
             aria-label="Grocery item unit"
             disabled={pending !== null}
+          />
+          <VoiceInputButton
+            aria-label="Speak grocery item unit"
+            onTranscript={(text) => {
+              setGroceryUnit((current) => appendTranscript(current, text));
+              setGroceryVoiceInitiated(true);
+            }}
           />
           <button
             type="submit"
@@ -495,40 +587,74 @@ export default function KitchenPage() {
           onSubmit={(e) => {
             e.preventDefault();
             if (!leftoverTitle.trim() || pending) return;
+            const wasVoice = leftoverVoiceInitiated;
+            const submittedTitle = leftoverTitle.trim();
             const servings = Number(leftoverServings);
             void mutate('leftover_log', {
-              title: leftoverTitle.trim(),
+              title: submittedTitle,
               servings: Number.isFinite(servings) && servings > 0 ? Math.floor(servings) : 1,
               notes: leftoverNotes.trim() || undefined,
-            }).then(() => {
-              setLeftoverTitle('');
-              setLeftoverServings('');
-              setLeftoverNotes('');
+            }).then((ok) => {
+              if (ok && wasVoice) speak(`Logged ${submittedTitle}`);
+              if (ok) {
+                setLeftoverTitle('');
+                setLeftoverServings('');
+                setLeftoverNotes('');
+                setLeftoverVoiceInitiated(false);
+              }
             });
           }}
         >
           <input
             className={styles.input}
             value={leftoverTitle}
-            onChange={(e) => setLeftoverTitle(e.target.value)}
+            onChange={(e) => {
+              setLeftoverTitle(e.target.value);
+              setLeftoverVoiceInitiated(false);
+            }}
             placeholder="e.g. beef stew"
             aria-label="Leftover title"
             disabled={pending !== null}
           />
+          <VoiceInputButton
+            aria-label="Speak leftover title"
+            onTranscript={(text) => {
+              setLeftoverTitle((current) => appendTranscript(current, text));
+              setLeftoverVoiceInitiated(true);
+            }}
+          />
           <input
             className={`${styles.input} ${styles.inputSmall}`}
             value={leftoverServings}
-            onChange={(e) => setLeftoverServings(e.target.value)}
+            onChange={(e) => {
+              setLeftoverServings(e.target.value);
+              setLeftoverVoiceInitiated(false);
+            }}
             placeholder="Servings"
             aria-label="Leftover servings"
             disabled={pending !== null}
+          />
+          <VoiceInputButton
+            aria-label="Speak leftover servings"
+            onTranscript={(text) => {
+              setLeftoverServings((current) => appendTranscript(current, text));
+              setLeftoverVoiceInitiated(true);
+            }}
           />
           <FormTextarea
             fieldUI={leftoverFieldUI}
             field="notes"
             className={styles.input}
             value={leftoverNotes}
-            onChange={(e) => setLeftoverNotes(e.target.value)}
+            onChange={(e) => {
+              setLeftoverNotes(e.target.value);
+              setLeftoverVoiceInitiated(false);
+            }}
+            voice
+            onVoice={(text) => {
+              setLeftoverNotes((current) => appendTranscript(current, text, leftoverFieldUI.resolve('notes')));
+              setLeftoverVoiceInitiated(true);
+            }}
             placeholder="Notes e.g. batch cooked, freeze half"
             aria-label="Leftover notes"
             disabled={pending !== null}
@@ -558,7 +684,15 @@ export default function KitchenPage() {
               field="allergies"
               className={styles.input}
               value={profileAllergies}
-              onChange={(e) => setProfileAllergies(e.target.value)}
+              onChange={(e) => {
+                setProfileAllergies(e.target.value);
+                setProfileVoiceInitiated(false);
+              }}
+              voice
+              onVoice={(text) => {
+                setProfileAllergies((current) => appendTranscript(current, text, profileFieldUI.resolve('allergies')));
+                setProfileVoiceInitiated(true);
+              }}
               placeholder="peanuts, shellfish"
               aria-label="Allergies, comma separated"
             />
@@ -570,7 +704,15 @@ export default function KitchenPage() {
               field="dietaryRestrictions"
               className={styles.input}
               value={profileRestrictions}
-              onChange={(e) => setProfileRestrictions(e.target.value)}
+              onChange={(e) => {
+                setProfileRestrictions(e.target.value);
+                setProfileVoiceInitiated(false);
+              }}
+              voice
+              onVoice={(text) => {
+                setProfileRestrictions((current) => appendTranscript(current, text, profileFieldUI.resolve('dietaryRestrictions')));
+                setProfileVoiceInitiated(true);
+              }}
               placeholder="vegetarian, dairy-free"
               aria-label="Dietary restrictions, comma separated"
             />
@@ -582,7 +724,15 @@ export default function KitchenPage() {
               field="dislikedIngredients"
               className={styles.input}
               value={profileDisliked}
-              onChange={(e) => setProfileDisliked(e.target.value)}
+              onChange={(e) => {
+                setProfileDisliked(e.target.value);
+                setProfileVoiceInitiated(false);
+              }}
+              voice
+              onVoice={(text) => {
+                setProfileDisliked((current) => appendTranscript(current, text, profileFieldUI.resolve('dislikedIngredients')));
+                setProfileVoiceInitiated(true);
+              }}
               placeholder="cilantro"
               aria-label="Disliked ingredients, comma separated"
             />
@@ -594,7 +744,15 @@ export default function KitchenPage() {
               field="preferredCuisines"
               className={styles.input}
               value={profileCuisines}
-              onChange={(e) => setProfileCuisines(e.target.value)}
+              onChange={(e) => {
+                setProfileCuisines(e.target.value);
+                setProfileVoiceInitiated(false);
+              }}
+              voice
+              onVoice={(text) => {
+                setProfileCuisines((current) => appendTranscript(current, text, profileFieldUI.resolve('preferredCuisines')));
+                setProfileVoiceInitiated(true);
+              }}
               placeholder="italian, mexican"
               aria-label="Preferred cuisines, comma separated"
             />
@@ -604,9 +762,19 @@ export default function KitchenPage() {
             <input
               className={styles.input}
               value={profileServings}
-              onChange={(e) => setProfileServings(e.target.value)}
+              onChange={(e) => {
+                setProfileServings(e.target.value);
+                setProfileVoiceInitiated(false);
+              }}
               placeholder="2"
               aria-label="Default servings"
+            />
+            <VoiceInputButton
+              aria-label="Speak default servings"
+              onTranscript={(text) => {
+                setProfileServings((current) => appendTranscript(current, text));
+                setProfileVoiceInitiated(true);
+              }}
             />
           </label>
         </div>
@@ -615,6 +783,7 @@ export default function KitchenPage() {
           className={styles.saveBtn}
           disabled={pending !== null}
           onClick={() => {
+            const wasVoice = profileVoiceInitiated;
             const servings = Number(profileServings);
             void mutate('profile_update', {
               allergies: profileAllergies,
@@ -622,6 +791,9 @@ export default function KitchenPage() {
               dislikedIngredients: profileDisliked,
               preferredCuisines: profileCuisines,
               defaultServings: Number.isFinite(servings) && servings > 0 ? Math.floor(servings) : undefined,
+            }).then((ok) => {
+              if (ok && wasVoice) speak('Saved your dietary profile');
+              if (ok) setProfileVoiceInitiated(false);
             });
           }}
         >

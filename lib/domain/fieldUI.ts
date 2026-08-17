@@ -87,3 +87,24 @@ export const profileFieldUI = makeFieldUIAnnotations(
   ['allergies', 'dietaryRestrictions', 'dislikedIngredients', 'preferredCuisines'],
   [],
 );
+
+// ── Transcript appending ─────────────────────────────────────────────────────
+
+/**
+ * Append a voice transcript to an existing field value.
+ *
+ * `separator == null` means the field is single-value: the transcript replaces
+ * the current value (a repeated utterance corrects the previous one). With a
+ * separator, the transcript is appended after it, so list fields accumulate
+ * comma-separated items and paragraph fields start a new line. Blank incoming
+ * text is a no-op so a recognizer's empty final flush never wipes the field.
+ */
+export function appendTranscript(
+  current: string,
+  incoming: string,
+  separator?: string,
+): string {
+  if (!incoming.trim()) return current;
+  if (separator == null) return incoming;
+  return current.trim() === '' ? incoming : current + separator + incoming;
+}

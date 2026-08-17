@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import '@testing-library/jest-dom/vitest';
@@ -7,6 +7,22 @@ import { useState } from 'react';
 import { z } from 'zod';
 import { FormInput, FormTextarea } from './FormField';
 import { makeFieldUIAnnotations } from '@/lib/domain/fieldUI';
+
+// The voice paths only need to prove that the transcript lands on the right
+// callback; swap the real mic for a button that emits a fixed transcript.
+vi.mock('./VoiceInputButton', () => ({
+  VoiceInputButton: ({
+    onTranscript,
+    'aria-label': ariaLabel,
+  }: {
+    onTranscript: (text: string) => void;
+    'aria-label'?: string;
+  }) => (
+    <button type="button" aria-label={ariaLabel} onClick={() => onTranscript('spoken')}>
+      mic
+    </button>
+  ),
+}));
 
 // ── Test annotation surface ──────────────────────────────────────────────────
 
@@ -187,5 +203,52 @@ describe('FormTextarea', () => {
     const textarea = screen.getByLabelText('stateful textarea');
     await user.type(textarea, 'xyz');
     expect(textarea).toHaveValue('xyz');
+  });
+});
+
+// ── Voice mic wiring ────────────────────────────────────────────────────────
+
+describe('FormInput voice wiring', () => {
+  it('routes transcripts to onVoice and never touches typed onChange', async () => {
+    const onVoice = vi.fn();
+    const onChange = vi.fn();
+    const user = userEvent.setup();
+
+    render(
+      <FormInput
+        value=""
+        onChange={onChange}
+        onVoice={onVoice}
+        voice
+        aria-label="pantry name"
+      />,
+    );
+
+    await user.click(screen.getByRole('button', { name: 'Speak pantry name' }));
+
+    expect(onVoice).toHaveBeenCalledWith('spoken');
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it('appends the transcript through onChange when no onVoice is given', async () => {
+    const onChange = vi.fn();
+    const user = userEvent.setup();
+
+    render(
+      <FormInput
+        value="peanuts"
+        fieldUI={ui}
+        field="tags"
+        onChange={onChange}
+        voice
+        aria-label="allergies"
+      />,
+    );
+
+    await user.click(screen.getByRole('button', { name: 'Speak allergies' }));
+
+    expect(onChange).toHaveBeenCalledTimes(1);
+    const event = onChange.mock.calls[0][0] as { target: { value: string } };
+    expect(event.target.value).toBe('peanuts, spoken');
   });
 });
