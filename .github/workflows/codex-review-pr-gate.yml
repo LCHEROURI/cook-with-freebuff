@@ -62,6 +62,10 @@ jobs:
       # summary on the PR thread (postRedAlert).
       contents: write
       pull-requests: write
+      # actions: write so a green gate can re-run its own check after a
+      # cancelled run left the merge evaluation stale (Codex, PR #113) — the
+      # self-heal posts a fresh check run, which re-evaluates the merge.
+      actions: write
 
     steps:
       - name: Check out repository

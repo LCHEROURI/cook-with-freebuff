@@ -325,6 +325,7 @@ if (blocking.length === 0) {
       ` (${botCommentCount} bot comment(s))`,
   );
   resolveAlertIfPosted(headSha);
+  selfHealCancelledRun();
   process.exit(0);
 }
 
@@ -413,6 +414,53 @@ function resolveAlertIfPosted(head) {
     `## ✅ Codex review gate is green on this head\n\n` +
     'All findings that blocked this PR have been answered on their threads.';
   sendComment(body, existing, 'resolved');
+}
+
+/**
+ * Re-run the merge evaluation after a cancelled gate run left it stale
+ * (Codex, PR #113). Review events arrive in bursts, so GitHub cancels the
+ * queued gate runs in the concurrency group — and the merge can stay BLOCKED
+ * even though the check is green. The recovery a human did by hand was an
+ * empty `codex-nudge:` commit to force a fresh evaluation; a green gate in a
+ * canonical pull_request run instead re-runs its own check through the
+ * Actions API (GITHUB_TOKEN + actions: write), which posts a fresh success
+ * check run on the head and re-evaluates the merge — no PAT, no head churn.
+ * It runs only on run_attempt 1 so the re-run itself cannot re-trigger and
+ * loop, and only after a green verdict (a red gate correctly blocks).
+ */
+function selfHealCancelledRun() {
+  if (!inActions) return;
+  if (process.env.GITHUB_EVENT_NAME !== 'pull_request') return;
+  if ((process.env.GITHUB_RUN_ATTEMPT ?? '1') !== '1') return;
+
+  let runs;
+  try {
+    runs = JSON.parse(
+      runQuiet(`gh api --paginate "repos/${repo}/actions/runs?head_sha=${headSha}&per_page=100" --slurp`),
+    ).flatMap((page) => page.workflow_runs ?? []);
+  } catch {
+    return; // a read-only probe — never fail the gate because the probe did
+  }
+
+  const gateRuns = runs
+    .filter((r) => r.name === 'Codex review gate')
+    .sort((a, b) => (a.created_at > b.created_at ? -1 : 1));
+  if (!gateRuns.some((r) => r.conclusion === 'cancelled')) return;
+  const toRerun = gateRuns.find((r) => r.conclusion === 'success' || r.conclusion === 'failure');
+  if (!toRerun) return;
+
+  try {
+    runQuiet(`gh api --method POST "repos/${repo}/actions/runs/${toRerun.id}/rerun"`);
+    console.log(
+      `  ↻ re-ran the gate check (run ${toRerun.id}) to refresh a stale merge evaluation ` +
+        `after a cancelled run on head ${headSha}`,
+    );
+  } catch (e) {
+    console.warn(
+      `  - could not re-run the gate check to refresh the merge evaluation ` +
+        `(${e instanceof Error ? e.message : String(e)})`,
+    );
+  }
 }
 
 postRedAlert(blocking, headSha);

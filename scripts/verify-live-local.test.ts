@@ -52,9 +52,13 @@ describe('scripts/verify-live-local.mjs · process-group teardown', () => {
     expect(SRC).toContain("process.kill(group, 'SIGKILL')");
     // The teardown must be unconditional — documented as "always runs" and
     // placed AFTER the verify spawn, so a FAILING verify still tears down.
+    // Anchor the search at the teardown marker: the SIGINT/SIGTERM handlers
+    // (registered before the boot wait) also kill the group, so a first-
+    // occurrence match would be ambiguous.
     expect(SRC).toContain('Teardown (always runs)');
     const verify = SRC.indexOf("spawn(process.execPath, ['scripts/verify-live.mjs'");
-    const sigkill = SRC.indexOf("process.kill(group, 'SIGKILL')");
+    const teardown = SRC.indexOf('Teardown (always runs)');
+    const sigkill = SRC.indexOf("process.kill(group, 'SIGKILL')", teardown);
     expect(verify).toBeGreaterThan(-1);
     expect(sigkill).toBeGreaterThan(verify);
   });
@@ -62,8 +66,11 @@ describe('scripts/verify-live-local.mjs · process-group teardown', () => {
   it('also tears down on the boot-failure early exit', () => {
     // If the server never answers, the driver must still kill the group
     // before exiting — never leave a half-booted `next dev` behind.
-    const earlySigterm = SRC.indexOf("process.kill(group, 'SIGTERM')");
+    // Anchor the search at the boot-failure message: the SIGINT/SIGTERM
+    // handlers (registered before the boot wait) also send SIGTERM, so the
+    // first occurrence is no longer the early exit's kill.
     const bootFail = SRC.indexOf('dev server never answered on ${BASE} within 180s');
+    const earlySigterm = SRC.indexOf("process.kill(group, 'SIGTERM')", bootFail);
     expect(bootFail).toBeGreaterThan(-1);
     expect(earlySigterm).toBeGreaterThan(bootFail);
     expect(SRC).toContain('process.exit(process.exitCode ?? 1);');
@@ -119,7 +126,8 @@ describe('scripts/verify-live-local.mjs · verify-live spawn + exit mirroring', 
     const boot = SRC.indexOf("spawn('npm', ['run', 'dev'");
     const warm = SRC.indexOf("warmRoute('/api/cook')");
     const verify = SRC.indexOf("spawn(process.execPath, ['scripts/verify-live.mjs'");
-    const sigkill = SRC.indexOf("process.kill(group, 'SIGKILL')");
+    const teardown = SRC.indexOf('Teardown (always runs)');
+    const sigkill = SRC.indexOf("process.kill(group, 'SIGKILL')", teardown);
     const exit = SRC.indexOf('process.exit(process.exitCode ?? rc);');
     for (const [name, i] of [['boot', boot], ['warm', warm], ['verify', verify], ['sigkill', sigkill], ['exit', exit]]) {
       expect(i).toBeGreaterThan(-1); // each anchor must exist — a reorder fails legibly
