@@ -602,6 +602,11 @@ try {
     // silent skip, so RC provisioning drift can never hide behind a skipped
     // check. Bounded retry: Cloud Logging ingestion can lag a boot's lines
     // by tens of seconds, so re-query until every role's entry lands.
+    // The query is scoped to the deployed revision: each model_source line
+    // carries the app's stamped commit (NEXT_PUBLIC_APP_COMMIT_SHA), and the
+    // deploy job waited for THIS sha (GITHUB_SHA in CI), so the filter proves
+    // the revision under test resolved from RC — a previous healthy boot's
+    // lines in the 30-minute window can never stand in for a broken one.
     const LOG_SCOPE = 'https://www.googleapis.com/auth/logging.read';
     const saObj = JSON.parse(SA_JSON);
     const b64url = (buf) => Buffer.from(buf).toString('base64url');
@@ -626,7 +631,12 @@ try {
     }
     const LOG_WINDOW_MIN = 30;
     const windowStart = new Date(Date.now() - LOG_WINDOW_MIN * 60_000).toISOString();
-    const LOG_FILTER = `jsonPayload.event="model_source" AND timestamp>="${windowStart}"`;
+    // GITHUB_SHA is set by Actions (the same sha wait-for-deploy-sha asserted
+    // before this run); a manual local run has no sha, so the window-wide
+    // filter still bounds the search there.
+    const deployedSha = process.env.GITHUB_SHA ?? '';
+    const LOG_FILTER = `jsonPayload.event="model_source" AND timestamp>="${windowStart}"`
+      + (deployedSha ? ` AND jsonPayload.commit="${deployedSha}"` : '');
     let latestByRole = {};
     let logAttempts = 0;
     const MAX_LOG_ATTEMPTS = 6;
@@ -664,7 +674,12 @@ try {
     for (const { role, rcParam } of MODEL_ROLE_TABLE) {
       const entry = latestByRole[role];
       if (!entry) {
+        // fail() records and continues (it does not throw), so guard the
+        // deref below: a missing entry must report its own diagnostic, then
+        // keep checking the remaining roles — never crash the verifier and
+        // skip every stage after [2b].
         fail(`model_source smoke: no log entry for role ${role} in the last ${LOG_WINDOW_MIN} min — the deployed server never logged its model source`);
+        continue;
       }
       if (entry.source !== 'remote-config') {
         fail(`model_source smoke: role ${role} resolved from ${entry.source} (${entry.model}) at runtime — Remote Config is NOT authoritative (the resolver fell back)`);

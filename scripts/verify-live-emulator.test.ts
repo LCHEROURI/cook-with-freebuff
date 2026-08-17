@@ -169,6 +169,28 @@ describe('verify:live · [2b.2] model_source log smoke', () => {
     expect(VERIFY_LIVE).toContain('orderBy: \'timestamp desc\'');
   });
 
+  it('scopes the query to the deployed revision so a previous boot can never stand in', () => {
+    // The deploy job waited for GITHUB_SHA; each model_source line carries the
+    // app's stamped commit, so the filter correlates records to the revision
+    // under test. Without this, a healthy previous boot's lines in the window
+    // could satisfy every role while the fresh (broken) revision passes.
+    expect(VERIFY_LIVE).toContain("const deployedSha = process.env.GITHUB_SHA ?? '';");
+    expect(VERIFY_LIVE).toContain('jsonPayload.commit="');
+  });
+
+  it('keeps checking the remaining roles after a missing entry instead of crashing the verifier', () => {
+    // fail() records and continues (it never throws), so the missing-entry
+    // branch must guard the deref that follows: a TypeError would skip every
+    // stage after [2b] and hide the real diagnostics. The guard is the
+    // continue directly after the no-entry fail, not a stray continue
+    // elsewhere in the file.
+    const noEntryIdx = VERIFY_LIVE.indexOf('no log entry for role');
+    const guardIdx = VERIFY_LIVE.indexOf('continue;', noEntryIdx);
+    expect(noEntryIdx).toBeGreaterThan(-1);
+    expect(guardIdx).toBeGreaterThan(noEntryIdx);
+    expect(guardIdx - noEntryIdx).toBeLessThan(400);
+  });
+
   it('hard-asserts every role resolved from remote-config with the template model', () => {
     // All five roles, not just live-voice: a resolver drift on any role must
     // fail the gate, and a model that disagrees with the template must too.
