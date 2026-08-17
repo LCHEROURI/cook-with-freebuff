@@ -334,7 +334,7 @@ Run: `npx vitest run components/VoiceInputButton.test.tsx`
 - Modify: `components/FormField.tsx`
 - Test: `components/FormField.test.tsx`
 
-Add `voice?: boolean`. Render `VoiceInputButton` beside the input and pass the transcript through `appendTranscript` with the field's existing separator annotation.
+Add `voice?: boolean` and `onVoice?: (text: string) => void`. Render `VoiceInputButton` beside the input. Voice transcripts must not ride the typed `onChange` callback: Task 7 needs typed `onChange` to clear voice provenance, so routing the transcript through it would erase the "spoken" flag before submit. When `onVoice` is supplied, call it and let the parent own the append plus provenance; otherwise fall back to appending through `onChange` for fields that do not track provenance.
 
 The recognition fake in these tests must emit a final result exactly as in Task 4. Do not use a non-emitting fake and then expect `onChange` to fire.
 
@@ -344,16 +344,20 @@ Example:
 const voiceButton = voice ? (
   <VoiceInputButton
     aria-label={ariaLabel ? `Speak ${ariaLabel}` : undefined}
-    onTranscript={(text) =>
+    onTranscript={(text) => {
+      if (onVoice) {
+        onVoice(text);
+        return;
+      }
       onChange({
         target: { value: appendTranscript(value, text, sep) },
-      } as ChangeEvent<HTMLInputElement>)
-    }
+      } as ChangeEvent<HTMLInputElement>);
+    }}
   />
 ) : null;
 ```
 
-For textarea use `ChangeEvent<HTMLTextAreaElement>`.
+For textarea use `ChangeEvent<HTMLTextAreaElement>`. Tests cover both paths: with `onVoice` the transcript goes to that callback and never touches `onChange`; without it, the value is appended through `onChange`.
 
 Run: `npx vitest run components/FormField.test.tsx`
 
@@ -383,7 +387,7 @@ The recipe-detail speech fake emits `eight servings` before ending. The test cli
 
 ### Read-aloud button
 
-Do not render a detached block of identical `Read this step` buttons. Place one read control inside each corresponding prep/cooking step row so the visual association is direct, and include the step number in its accessible name.
+Do not render a detached block of identical `Read this step` buttons. Place one read control inside each corresponding prep/cooking step row so the visual association is direct, and include the phase plus step number in its accessible name. The recipe model numbers `prepSteps` and `cookingSteps` independently, so a name of only `Read step 1` collides between the two lists; use `Read prep step 1` vs `Read cooking step 1`.
 
 ```tsx
 'use client';
@@ -391,9 +395,11 @@ Do not render a detached block of identical `Read this step` buttons. Place one 
 import { useSpeech } from '@/lib/hooks/useSpeech';
 
 export function RecipeReadAloudButton({
+  phase,
   stepNumber,
   text,
 }: {
+  phase: 'prep' | 'cooking';
   stepNumber: number;
   text: string;
 }) {
@@ -401,7 +407,7 @@ export function RecipeReadAloudButton({
   return (
     <button
       type="button"
-      aria-label={`Read step ${stepNumber}`}
+      aria-label={`Read ${phase} step ${stepNumber}`}
       onClick={() => speak(text)}
     >
       Read this step
@@ -410,7 +416,7 @@ export function RecipeReadAloudButton({
 }
 ```
 
-When mapping steps in `page.tsx`, render the button inside the same `<li>`/step container as the instruction. Build `text` from instruction + timing/temperature + safety note. If a `Read all` control is also desired, render one separate control after the step list and use the same ordered texts.
+When mapping steps in `page.tsx`, render the button inside the same `<li>`/step container as the instruction and pass `phase="prep"` or `phase="cooking"` accordingly. Build `text` from instruction + timing/temperature + safety note. If a `Read all` control is also desired, render one separate control after the step list and use the same ordered texts.
 
 Run: `npx vitest run app/recipes/[id]/page.test.tsx`
 
@@ -471,6 +477,8 @@ onChange={(event) => {
   setPantryVoiceInitiated(false);
 }}
 ```
+
+For fields rendered through `FormInput`/`FormTextarea`, the voice path is the `onVoice` prop added in Task 5, not a direct `onTranscript`: pass `onVoice={(text) => { setPantryName((c) => appendTranscript(c, text)); setPantryVoiceInitiated(true); }}` and let the typed `onChange` clear it. Raw `<input>` fields render `VoiceInputButton` directly and use `onTranscript` for the same effect. Both paths set provenance true only on the voice callback, never on the typed path.
 
 Apply the same rule to every typed field in that form. If the user speaks, then corrects the value by keyboard, the final submit is treated as typed and remains silent.
 
@@ -541,15 +549,15 @@ const recipesSearchMicExists = await evaluate(`
 if (!recipesSearchMicExists) {
   fail('recipes search mic missing');
 } else {
-  pass('recipes search mic renders');
+  ok('recipes search mic renders');
 }
 ```
 
-Use the existing driver's `pass`/`fail` helpers and existing final failure-count exit behavior.
+Use the existing driver's `ok`/`fail` helpers (there is no `pass` helper) and existing final failure-count exit behavior.
 
 ### 8B — create a real kitchen driver
 
-Create `scripts/drive-kitchen.mjs` using the same raw-CDP connection, navigation, `evaluate`, `pass`, `fail`, and cleanup conventions as `drive-recipes-page.mjs`. It must navigate to `/kitchen` and assert the key controls actually render, including at minimum:
+Create `scripts/drive-kitchen.mjs` using the same raw-CDP connection, navigation, `evaluate`, `ok`, `fail`, and cleanup conventions as `drive-recipes-page.mjs`. It must navigate to `/kitchen` and assert the key controls actually render, including at minimum:
 
 ```js
 const pantryMic = await evaluate(`
@@ -585,7 +593,7 @@ Add to `scripts/AGENTS.md`:
 
 ```md
 - Voice Everywhere (spec 0004) uses browser Web Speech for transcription and browser SpeechSynthesis for output. It never round-trips through a model outside the existing cook-session path. Every voice control has a typed fallback and voice never auto-submits.
-- Live voice UI proofs use the repository's raw-CDP driver helpers (`evaluate`, `pass`, `fail`); do not use Puppeteer `page.*` APIs unless the harness itself is migrated first.
+- Live voice UI proofs use the repository's raw-CDP driver helpers (`evaluate`, `ok`, `fail`); do not use Puppeteer `page.*` APIs unless the harness itself is migrated first.
 ```
 
 Run the drivers through the same local/dev-server procedure already used by the repository, then run:
@@ -611,7 +619,7 @@ git commit -m "test(scripts): verify voice-everywhere controls with raw CDP"
 - [ ] `useSpeech.supported` is false when `speechSynthesis` or `SpeechSynthesisUtterance` is missing/undefined.
 - [ ] Recognition fakes emit a final result before ending.
 - [ ] Listening buttons expose `Stop listening for …` names even when a custom `Speak …` label was supplied.
-- [ ] Every recipe step's read button is inside that step's row and has a unique accessible name such as `Read step 3`.
+- [ ] Every recipe step's read button is inside that step's row and has a unique accessible name such as `Read prep step 3` and `Read cooking step 2`.
 - [ ] Kitchen mutations return explicit success/failure and never speak success after a rejected/failed request.
 - [ ] Typed edits clear voice provenance before submit.
 - [ ] Recipes live-driver checks use `evaluate` + `fail`, not Puppeteer `page` or `process.exitCode`.
