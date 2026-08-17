@@ -20,17 +20,38 @@ import { describe, expect, it } from 'vitest';
 // of test files would false-positive on exactly the assertions that keep the
 // migration locked. Non-test .mjs and .ts scripts are the surfaces that could
 // actually call Vercel, so those are scanned.
+//
+// The scripts scan is RECURSIVE on purpose: a runnable script added under a
+// subdirectory (e.g. scripts/deploy/release.mjs) must be caught by the same
+// contract as one at the top level. The workflow scan stays flat because
+// GitHub Actions only reads .github/workflows/*.yml at the top level.
 // ============================================================================
 
 const WORKFLOW_DIR = '.github/workflows';
 const SCRIPTS_DIR = 'scripts';
 
+// Walk a directory tree recursively and return every runnable script path
+// (.mjs or .ts, excluding test files and type declarations).
+function walkRunnableScripts(dir: string, acc: string[] = []): string[] {
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    const full = join(dir, entry.name);
+    if (entry.isDirectory()) {
+      walkRunnableScripts(full, acc);
+    } else if (
+      (entry.name.endsWith('.mjs') || entry.name.endsWith('.ts')) &&
+      !entry.name.includes('.test.') &&
+      !entry.name.endsWith('.d.ts')
+    ) {
+      acc.push(full);
+    }
+  }
+  return acc;
+}
+
 const workflowFiles = readdirSync(WORKFLOW_DIR).filter(
   (f) => f.endsWith('.yml') || f.endsWith('.yaml'),
 );
-const scriptFiles = readdirSync(SCRIPTS_DIR)
-  .filter((f) => f.endsWith('.mjs') || f.endsWith('.ts'))
-  .filter((f) => !f.includes('.test.') && !f.endsWith('.d.ts'));
+const scriptFiles = walkRunnableScripts(SCRIPTS_DIR);
 
 describe('no Vercel wiring can reappear in workflows or scripts', () => {
   it('reads the REAL files from disk (non-empty, never fixtures)', () => {
@@ -52,7 +73,7 @@ describe('no Vercel wiring can reappear in workflows or scripts', () => {
 
   it('has NO Vercel reference of any kind in any non-test script', () => {
     for (const f of scriptFiles) {
-      expect(readFileSync(join(SCRIPTS_DIR, f), 'utf8')).not.toMatch(/vercel/i);
+      expect(readFileSync(f, 'utf8')).not.toMatch(/vercel/i);
     }
   });
 
