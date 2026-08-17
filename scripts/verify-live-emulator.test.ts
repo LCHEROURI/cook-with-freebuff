@@ -150,3 +150,67 @@ describe('verify:live · [2b] model resolution proof', () => {
     expect(guardCount).toBeGreaterThanOrEqual(2);
   });
 });
+
+describe('verify:live · [2b.2] model_source log smoke', () => {
+  it('mints a logging.read-scoped OAuth token from the deploy SA (the authorize-domain.mjs pattern)', () => {
+    // The smoke reads Cloud Logging with the SAME credential the run already
+    // has (FIREBASE_SERVICE_ACCOUNT), scoped to logging.read only. A missing
+    // or differently-scoped mint must fail this contract.
+    expect(VERIFY_LIVE).toContain("const LOG_SCOPE = 'https://www.googleapis.com/auth/logging.read';");
+    expect(VERIFY_LIVE).toContain('grant_type=urn:ietf:params:oauth:grant-type:jwt-bearer');
+  });
+
+  it('queries Cloud Logging entries:list filtered to model_source events in a bounded window', () => {
+    // The deployed server emits one model_source line per role at boot
+    // (lib/server/model-config.ts). The smoke reads exactly those lines so a
+    // boot that silently fell back to env/default fails the gate.
+    expect(VERIFY_LIVE).toContain("fetch('https://logging.googleapis.com/v2/entries:list'");
+    expect(VERIFY_LIVE).toContain('jsonPayload.event="model_source"');
+    expect(VERIFY_LIVE).toContain('orderBy: \'timestamp desc\'');
+  });
+
+  it('scopes the query to the deployed revision so a previous boot can never stand in', () => {
+    // The deploy job waited for GITHUB_SHA; each model_source line carries the
+    // app's stamped commit, so the filter correlates records to the revision
+    // under test. Without this, a healthy previous boot's lines in the window
+    // could satisfy every role while the fresh (broken) revision passes.
+    expect(VERIFY_LIVE).toContain("const deployedSha = process.env.GITHUB_SHA ?? '';");
+    expect(VERIFY_LIVE).toContain('jsonPayload.commit="');
+  });
+
+  it('keeps checking the remaining roles after a missing entry instead of crashing the verifier', () => {
+    // fail() records and continues (it never throws), so the missing-entry
+    // branch must guard the deref that follows: a TypeError would skip every
+    // stage after [2b] and hide the real diagnostics. The guard is the
+    // continue directly after the no-entry fail, not a stray continue
+    // elsewhere in the file.
+    const noEntryIdx = VERIFY_LIVE.indexOf('no log entry for role');
+    const guardIdx = VERIFY_LIVE.indexOf('continue;', noEntryIdx);
+    expect(noEntryIdx).toBeGreaterThan(-1);
+    expect(guardIdx).toBeGreaterThan(noEntryIdx);
+    expect(guardIdx - noEntryIdx).toBeLessThan(400);
+  });
+
+  it('hard-asserts every role resolved from remote-config with the template model', () => {
+    // All five roles, not just live-voice: a resolver drift on any role must
+    // fail the gate, and a model that disagrees with the template must too.
+    expect(VERIFY_LIVE).toContain("entry.source !== 'remote-config'");
+    expect(VERIFY_LIVE).toContain('Remote Config is NOT authoritative');
+    expect(VERIFY_LIVE).toContain('template and runtime drifted');
+    expect(VERIFY_LIVE).toContain('resolved from remote-config');
+  });
+
+  it('fails loudly (never skips) when the SA cannot read Cloud Logging (missing roles/logging.viewer)', () => {
+    // A 403 must be a distinct FAIL naming the IAM gap, so RC drift can never
+    // hide behind a silently skipped check.
+    expect(VERIFY_LIVE).toContain('grant roles/logging.viewer');
+    expect(VERIFY_LIVE).toContain('the smoke cannot run and RC drift would go unnoticed');
+  });
+
+  it('retries the query to ride out Cloud Logging ingestion lag', () => {
+    // Ingestion can lag a boot's lines by tens of seconds; the smoke re-queries
+    // (bounded) until every role's entry lands before failing on a missing one.
+    expect(VERIFY_LIVE).toContain('MAX_LOG_ATTEMPTS');
+    expect(VERIFY_LIVE).toContain('waiting for log ingestion');
+  });
+});

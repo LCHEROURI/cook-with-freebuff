@@ -184,4 +184,32 @@ describe('logModelResolutionSources', () => {
     expect(byRole.conversation).toEqual({ model: MODEL_ROLE_CONFIG.conversation.defaultModel, source: 'default' });
     expect(byRole.vision).toEqual({ model: MODEL_ROLE_CONFIG.vision.defaultModel, source: 'default' });
   });
+
+  it('stamps the deployed commit into every line (the smoke\'s revision correlation key)', async () => {
+    // verify:live scopes its Cloud Logging query to jsonPayload.commit, so a
+    // previous healthy boot's lines can never stand in for the revision under
+    // test. The deployed build inlines NEXT_PUBLIC_APP_COMMIT_SHA; a bare unit
+    // run has none, and the field must still be present (empty) in every line.
+    getTemplate.mockResolvedValue(template({}));
+    process.env.NEXT_PUBLIC_APP_COMMIT_SHA = '0123456789abcdef';
+    try {
+      const lines: string[] = [];
+      const spy = vi.spyOn(console, 'log').mockImplementation((line?: unknown) => {
+        if (typeof line === 'string') lines.push(line);
+      });
+      try {
+        const { logModelResolutionSources } = await import('./model-config');
+        await logModelResolutionSources();
+      } finally {
+        spy.mockRestore();
+      }
+      const events = lines
+        .map((l) => JSON.parse(l) as { event?: string; commit?: string })
+        .filter((e) => e.event === 'model_source');
+      expect(events.length).toBe(5);
+      for (const e of events) expect(e.commit).toBe('0123456789abcdef');
+    } finally {
+      delete process.env.NEXT_PUBLIC_APP_COMMIT_SHA;
+    }
+  });
 });

@@ -101,6 +101,10 @@ export async function logModelResolutionSources(): Promise<void> {
     const fromEnv = process.env[envVar];
     const model = remote ?? fromEnv ?? defaultModel;
     const source = remote ? 'remote-config' : fromEnv ? 'env' : 'default';
-    logInfo('model_source', { role, model, source });
+    // The deployed commit (inlined at build time by next.config.mjs; empty in
+    // bare unit runs) is the smoke's correlation key: verify:live scopes its
+    // Cloud Logging query to this value so a previous healthy boot's lines in
+    // the window can never stand in for the revision under test.
+    logInfo('model_source', { role, model, source, commit: process.env.NEXT_PUBLIC_APP_COMMIT_SHA ?? '' });
   }
 }
