@@ -69,7 +69,7 @@
 // ============================================================================
 
 import { spawnSync } from 'node:child_process';
-import { readFileSync } from 'node:fs';
+import { readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { initializeApp, cert, getApps } from 'firebase-admin/app';
 import { getAuth } from 'firebase-admin/auth';
@@ -1185,6 +1185,14 @@ try {
     console.error(`RESULT: EXTERNAL (Gemini credits — deploy check passes)`);
   } else {
     console.error(`\nRESULT: FAIL (${runExit !== 0 ? 'crash' : failures.length})`);
+  }
+  // Propagate the SEMANTIC verdict to the CI recorder: exiting 0 on external
+  // would otherwise make steps.verify.outcome == 'success' and the /status
+  // page would claim full verification. GITHUB_ENV is set on Actions runners
+  // only; locally this is a no-op.
+  const recordVerdict = verdict.kind === 'pass' ? 'success' : verdict.kind === 'external' ? 'external' : 'failure';
+  if (process.env.GITHUB_ENV) {
+    writeFileSync(process.env.GITHUB_ENV, `VERIFY_LIVE_VERDICT=${recordVerdict}\n`, { flag: 'a' });
   }
   await cleanup();
 }

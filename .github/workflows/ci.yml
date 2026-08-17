@@ -414,6 +414,12 @@ jobs:
       # it only records when verify:live actually RAN (a skipped pre-flight
       # never overwrites the last real result), and it reads
       # FIREBASE_SERVICE_ACCOUNT from the job env — no new secret wiring.
+      #
+      # The verdict comes from VERIFY_LIVE_VERDICT (set by verify:live itself
+      # via GITHUB_ENV) so the distinct 'external' state — the Gemini credits
+      # block — is preserved instead of collapsing into the step's exit status
+      # ('success' on a zero exit); the step outcome is only the fallback for
+      # paths where verify:live never got far enough to write it.
       - name: Record verify:live result for the status page
         if: ${{ always() && (steps.verify.outcome == 'success' || steps.verify.outcome == 'failure') }}
-        run: node scripts/record-verify-status.mjs --verdict "${{ steps.verify.outcome }}" --commit "${{ github.sha }}" --run-url "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+        run: node scripts/record-verify-status.mjs --verdict "${{ env.VERIFY_LIVE_VERDICT != '' ? env.VERIFY_LIVE_VERDICT : steps.verify.outcome }}" --commit "${{ github.sha }}" --run-url "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"

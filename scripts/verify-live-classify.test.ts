@@ -87,7 +87,6 @@ describe('scripts/verify-live-classify.mjs · mutation-proof allowlists', () => 
       'credits are depleted',
       'prepayment credits',
       'Your prepayment credits',
-      'RESOURCE_EXHAUSTED',
     ]);
     // Each entry is load-bearing: a root that matches ONLY that signature
     // must classify external. Removing the entry from the allowlist (or
@@ -96,7 +95,6 @@ describe('scripts/verify-live-classify.mjs · mutation-proof allowlists', () => 
       'credits are depleted': `create_recipe → 400 {"code":"INTERNAL_ERROR","message":"[GoogleGenerativeAI Error]: ... credits are depleted. Top up at ai.studio/projects."}`,
       'prepayment credits': `create_recipe → 400 {"code":"INTERNAL_ERROR","message":"[GoogleGenerativeAI Error]: ... Your prepayment credits are depleted."}`,
       'Your prepayment credits': `create_recipe → 400 {"code":"INTERNAL_ERROR","message":"[GoogleGenerativeAI Error]: ... Your prepayment credits are depleted. Please go to AI Studio."}`,
-      'RESOURCE_EXHAUSTED': `create_recipe → 400 {"code":"INTERNAL_ERROR","message":"[GoogleGenerativeAI Error]: ... status RESOURCE_EXHAUSTED — quota exhausted."}`,
     };
     for (const sig of GEMINI_CREDITS_SIGNATURES) {
       const root = rootsBySignature[sig];
@@ -106,6 +104,18 @@ describe('scripts/verify-live-classify.mjs · mutation-proof allowlists', () => 
         `signature “${sig}” must classify external`,
       ).toBe('external');
     }
+  });
+
+  it('REJECTS a generic quota status without a depletion phrase (a quota failure is NOT a credits block)', () => {
+    // The generic RESOURCE_EXHAUSTED status (free-tier quota, rate limit) must
+    // never trip the top-up-credits report — only depletion-specific phrases
+    // classify external (Codex P1, PR #128 review).
+    const genericQuotaRoot =
+      'create_recipe → 400 {"code":"INTERNAL_ERROR","message":"[GoogleGenerativeAI Error]: ... status RESOURCE_EXHAUSTED — quota exceeded. Try again later."}'
+    const v = classifyVerifyVerdict({
+      failures: [genericQuotaRoot, 'voice driver: missing “x” in the driver log'],
+    });
+    expect(v.kind).toBe('fail');
   });
 
   it('pins the cascade prefix allowlist — a failure outside it stays FAIL', () => {
@@ -141,5 +151,15 @@ describe('scripts/verify-live.mjs · wiring (the gate actually uses the classifi
     expect(LIVE).toContain('process.exit(verdict.kind === \'fail\' ? 1 : 0);');
     expect(LIVE).toContain('RESULT: EXTERNAL (Gemini credits — deploy check passes)');
     expect(LIVE).toContain('⚠ EXTERNAL: Gemini API prepayment credits are depleted (429)');
+  });
+
+  it('propagates the semantic verdict to the CI recorder via GITHUB_ENV (not the exit status)', () => {
+    // P2 on PR #128: exiting 0 makes steps.verify.outcome == 'success', so the
+    // recorder would persist 'success' and /status would claim full
+    // verification. verify-live must forward the mapped verdict (external /
+    // success / failure) through GITHUB_ENV for the record step to read.
+    expect(LIVE).toContain("const recordVerdict = verdict.kind === 'pass' ? 'success' : verdict.kind === 'external' ? 'external' : 'failure';");
+    expect(LIVE).toContain('process.env.GITHUB_ENV');
+    expect(LIVE).toContain('writeFileSync(process.env.GITHUB_ENV');
   });
 });

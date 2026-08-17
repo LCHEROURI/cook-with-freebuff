@@ -62,7 +62,8 @@ describe('app/status/page.tsx · the glance surface', () => {
     expect(PAGE).toContain('Last verify:live');
     expect(PAGE).toContain("'✓ Passing'");
     expect(PAGE).toContain("'✗ Failing'");
-    expect(PAGE).toContain('No run recorded yet');
+    expect(PAGE).toContain("'⚠ External'");
+    expect(PAGE).toContain("'No run recorded yet'");
   });
 
   it('fetches the status route WITH the ID token and links to the commit + CI run', () => {
@@ -122,9 +123,12 @@ describe('scripts/record-verify-status.mjs · the recorder', () => {
     expect(RECORDER).toContain('already wired in the verify-live job env');
   });
 
-  it('only accepts success|failure and fails loudly otherwise', () => {
-    expect(RECORDER).toContain("verdict !== 'success' && verdict !== 'failure'");
-    expect(RECORDER).toContain("verdict must be success|failure");
+  it('only accepts success|failure|external and fails loudly otherwise', () => {
+    // 'external' is the Gemini credits block: the deploy check passed but
+    // recipe generation could not run — the /status page renders it distinctly.
+    expect(RECORDER).toContain("verdict !== 'success' && verdict !== 'failure' && verdict !== 'external'");
+    expect(RECORDER).toContain("verdict must be success|failure|external");
+    expect(RECORDER).toContain('z.enum([\'success\', \'failure\', \'external\']');
     expect(RECORDER).toContain('process.exit(1)');
   });
 

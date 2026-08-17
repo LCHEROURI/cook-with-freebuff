@@ -24,14 +24,16 @@
 // "[429 Too Many Requests] Your prepayment credits are depleted…" verbatim.
 // ============================================================================
 
-// The exact signatures observed in the Gemini API 429 response body (and the
-// SDK error that embeds it). Each entry is load-bearing: deleting one flips
-// its case back to FAIL, which the mutation test pins.
+// The exact depletion phrases observed in the Gemini API 429 response body
+// (and the SDK error that embeds it). DELIBERATELY depletion specific: the
+// generic quota status RESOURCE_EXHAUSTED is NOT here, because an unrelated
+// quota failure (free tier, rate limit) must never trip the top-up-credits
+// report. Each entry is load-bearing: deleting one flips its case back to
+// FAIL, which the mutation test pins.
 export const GEMINI_CREDITS_SIGNATURES = [
   'credits are depleted',
   'prepayment credits',
   'Your prepayment credits',
-  'RESOURCE_EXHAUSTED',
 ];
 
 export const GEMINI_CREDITS_RE = new RegExp(
