@@ -14,9 +14,10 @@
 //     comment. The lookalike key `in_reply_to_id` is NOT permitted and the
 //     request is rejected with 422 ("in_reply_to_id is not a permitted key"),
 //     leaving the thread open — the exact stall observed live on PR #128.
-//   • the value must be a JSON number: the typed -F (not -f) flag, because a
-//     string in_reply_to fails the endpoint schema and is rejected as if the
-//     key were absent.
+//   • the value must be a JSON number: the payload is JSON.stringify'd into a
+//     temp file and sent via --input, so in_reply_to is a real number AND no
+//     body content (quotes, $VAR, $(...), backticks) ever reaches a shell
+//     (Codex P2, PR #130 — the previous -f body interpolation was rejected).
 // scripts/reply-finding.test.ts pins all three, so a wrong key or endpoint
 // fails CI instead of silently stalling a merge.
 //
@@ -29,6 +30,9 @@
 // ============================================================================
 
 import { execSync } from 'node:child_process';
+import { writeFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 const DEFAULT_REPO = 'LCHEROURI/cook-with-freebuff';
 
@@ -77,10 +81,17 @@ function runLoud(cmd) {
   return out;
 }
 
-// The reply goes to the REVIEW-comments endpoint with the typed -F
-// in_reply_to=<id>. The body is a plain string field. Single line body only:
-// a body containing double quotes would break the shell quoting.
-const postedId = runLoud(
-  gh(`--method POST "repos/${repo}/pulls/${pr}/comments" -f body="${body}" -F in_reply_to=${commentId} --jq '.id'`),
-);
+// The payload is JSON.stringify'd into a temp file and sent via --input: the
+// body and in_reply_to (a JSON number) can never be shell-interpolated, and
+// the reply goes to the REVIEW-comments endpoint (pulls/{n}/comments).
+const bodyFile = join(tmpdir(), `reply-body-${process.pid}.json`);
+writeFileSync(bodyFile, JSON.stringify({ body, in_reply_to: Number(commentId) }));
+let postedId;
+try {
+  postedId = runLoud(
+    gh(`--method POST "repos/${repo}/pulls/${pr}/comments" --input ${bodyFile} --jq '.id'`),
+  );
+} finally {
+  rmSync(bodyFile, { force: true });
+}
 console.log(`  ✓ reply posted (comment id ${postedId}) on finding ${commentId} (PR #${pr})`);
