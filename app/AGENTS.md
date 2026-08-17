@@ -27,8 +27,8 @@ The Next.js App Router surface: every page the user sees and every API route the
 
 ## Conventions
 
-- Every page is a client component (`'use client'`) using the shared auth pattern: `useAuthSession` → loading gate → signed-out `router.replace('/login')` → `auth.error` branch → content. Reads go through `/api/*` routes, never a client-side Firestore query.
-- Every API route resolves the Firebase ID token server side via `resolveUserId` — the client never supplies the user id. Quota-bearing routes gate App Check (`gateAppCheck`) before any model work.
+- Every protected page is a client component (`'use client'`) using the shared auth pattern: `useAuthSession` → loading gate → signed-out `router.replace('/login')` → `auth.error` branch → content. Public pages deliberately break this: `page.tsx` renders a sign-in CTA, `login/page.tsx` must stay accessible while signed out (it redirects the other way, to `/cook`, when signed in), and `status/page.tsx` shows an inline sign-in control instead of redirecting. Reads go through `/api/*` routes, never a client-side Firestore query.
+- Every API route resolves the Firebase ID token server side via `resolveUserId` — the client never supplies the user id. The one exception is `api/build-info`, public by design (a commit SHA carries no secrets) and read tokenless by the deployed-hash gate; it must never gain token resolution. Quota-bearing routes gate App Check (`gateAppCheck`) before any model work.
 - Route handlers are thin: parse → validate → call a `lib/server` service or tool → return `{ success: true, data }` or `{ success: false, error: { code, message, recoverable } }`.
 - Errors mirror the repo shape: `INVALID_BODY` 400, `NOT_FOUND` 404, `UNAUTHENTICATED` 401 — with the matching HTTP status.
 - Pure logic beside the page (node-testable, no React): `recipes/recipe-filter.ts`, `recipes/recipe-scaler.ts`. Page-level pieces the recipes/cook pages share live as small components in the page dir or in `components/`.
