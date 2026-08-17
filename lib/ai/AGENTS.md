@@ -25,6 +25,7 @@ The AI layer is the provider boundary between business logic and the model SDKs.
 - The model is only ever asked for structured JSON, which is zod validated before it enters the system.
 - Gemini emits `null` for optional fields (for example `description: null`), so `pruneNulls` drops null optional keys before schema parsing, except `quantity` and `unit` which may legally be null.
 - Model names resolve from `model-roles.ts` in the order Remote Config, then env var, then hardcoded default; call sites never hardcode a model name.
+- Model names are currency guarded by `model-roles.test.ts`: it pins the exact defaults AND the Remote Config template (`remote_config.json`) to current names, and any deprecated `gemini-2.*` value fails CI (the 2.5 family shuts down October 2026), so a model bump moves the pins together.
 - Tool declarations are pure JSON with no SDK imports so the server agent and the browser Live client share the same tool surface.
 - Providers register only when `GOOGLE_AI_API_KEY` is present; without it, generation and validation report unavailable, while the deterministic substitution engine always works (no key needed).
 
