@@ -11,7 +11,7 @@ Everything that proves the deployed app and gates a merge. The verify:live drive
 | `verify-live.mjs` | The main post-deploy E2E driver: stages [1] seed → [2] mint token → [2b] model resolution → [2c] login popup → [3] guided cook → [3c] settle → [3d]/[3e] UI and voice drivers → [4] agent turns, then cleanup. Exit 0 + `RESULT: PASS` is the contract |
 | `verify-live-local.mjs` | Boots `next dev` on its own process group, warms lazily compiled routes, runs verify-live against localhost, tears the group down on every exit path including SIGINT/SIGTERM handlers |
 | `verify-live-emulator.mjs`, `verify-live-compare.mjs`, `verify-live-compare-emulator.mjs` | Emulator and guided-vs-live compare variants of the same check |
-| `drive-*.mjs` | Headless Chrome drivers, one per UI proof: `drive-login-popup.mjs` ([2c] OAuth popup), `drive-starter-prefs.mjs` ([3d] ready card), `drive-live-voice.mjs` ([3e] Gemini Live dictation + active mics), `drive-recipes-page.mjs`, `drive-home-button.mjs`, `drive-ui-skin.mjs` |
+| `drive-*.mjs` | Headless Chrome drivers, one per UI proof: `drive-login-popup.mjs` ([2c] OAuth popup), `drive-starter-prefs.mjs` ([3d] ready card), `drive-live-voice.mjs` ([3e] Gemini Live dictation + active mics), `drive-recipes-page.mjs`, `drive-kitchen.mjs` (Voice Everywhere mics), `drive-home-button.mjs`, `drive-ui-skin.mjs` |
 | `verify-deployed-hash.mjs`, `verify-deployed-hash-gate.mjs`, `wait-for-deploy-sha.mjs`, `record-verify-status.mjs` | Deploy SHA gates: what the host is serving vs local HEAD, the push-time stale-guard, and recording verify results to `deploy_status` for the status page |
 | `codex-review-pr-gate.mjs` | Required PR check: scans the bot's inline findings, blocks on open P0/P1, polls for the bot review, nudges and certifies per the conventions below |
 | `codex-review-monitor.mjs` | Scheduled sweep that opens a labeled issue the first time a finding is seen, deduped by comment id |
@@ -54,6 +54,8 @@ node --import ./scripts/stub-server-only.mjs --import tsx scripts/cleanup-correl
 - A cancelled gate run can leave the merge evaluation stale (BLOCKED even when green, PR #113). A green gate in a canonical pull_request run self-heals it by re-running its own check through the Actions API (`actions: write`, no PAT); the re-run posts a fresh check run that re-evaluates the merge. Only run_attempt 1 self-heals, so the re-run itself cannot loop.
 - `deploy:apphosting` runs `write-commit.mjs` first; the stamped `commit-sha.txt` is how the deployed build reports its real commit.
 - CLI scripts that import the server layer run under the `server-only` stub, never raw node.
+- Voice Everywhere (spec 0004) uses browser Web Speech for transcription and browser SpeechSynthesis for output. It never round-trips through a model outside the existing cook-session path. Every voice control has a typed fallback and voice never auto-submits.
+- Live voice UI proofs use the repository's raw-CDP driver helpers (`evaluate`, `ok`, `fail`); do not use Puppeteer `page.*` APIs unless the harness itself is migrated first.
 
 ## Gotchas
 
@@ -69,5 +71,6 @@ node --import ./scripts/stub-server-only.mjs --import tsx scripts/cleanup-correl
 
 - [0001](docs/specs/0001-app-hosting-primary-host.md): Firebase App Hosting as the primary host; the deploy gates this area implements
 - [0002](docs/specs/0002-probe-grace-constants-source-of-truth.md): the per-driver grace declarations and the lockstep contract test
+- [0004](docs/specs/0004-voice-everywhere.md): browser Web Speech transcription + SpeechSynthesis output; the `drive-recipes-page.mjs`/`drive-kitchen.mjs` mic proofs pinned by `drive-voice-everywhere.test.ts`
 
 _Drafted by /audit from the repo, worth a quick human pass. Edit freely: once a line stops matching this draft, later runs treat it as curated and will flag rather than overwrite it._
