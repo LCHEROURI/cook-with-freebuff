@@ -16,6 +16,7 @@ Everything that proves the deployed app and gates a merge. The verify:live drive
 | `verify-deployed-hash.mjs`, `verify-deployed-hash-gate.mjs`, `wait-for-deploy-sha.mjs`, `record-verify-status.mjs` | Deploy SHA gates: what the host is serving vs local HEAD, the push-time stale-guard, and recording verify results to `deploy_status` for the status page |
 | `codex-review-pr-gate.mjs` | Required PR check: scans the bot's inline findings, blocks on open P0/P1, polls for the bot review, nudges and certifies per the conventions below |
 | `codex-review-monitor.mjs` | Scheduled sweep that opens a labeled issue the first time a finding is seen, deduped by comment id |
+| `reply-finding.mjs` | Resolves a bot finding's thread: posts the `Resolved ...` reply on the review-comments endpoint with the typed `in_reply_to` key (pinned by `reply-finding.test.ts`); the gate counts a finding open until a reply lands |
 | `land-pr.mjs` | One-command branch → PR → auto-merge landing path; refuses to push to main |
 | `write-commit.mjs` | Stamps the git commit into `commit-sha.txt` before every apphosting deploy (the build zip excludes `.git`) |
 | `cleanup-correlation-markers.ts` | Bounds the `correlation_markers` collection via the repository boundary, never raw Firestore |

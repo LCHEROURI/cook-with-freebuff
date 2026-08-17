@@ -69,6 +69,7 @@
 // ============================================================================
 
 import { spawnSync } from 'node:child_process';
+import { createSign } from 'node:crypto';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { initializeApp, cert, getApps } from 'firebase-admin/app';
@@ -584,6 +585,95 @@ try {
         : fail(`live-voice model is ${returnedModel}, Remote Config says ${rcLive} — the resolver ignored Remote Config`);
     } else {
       note(`live-voice model from env/default fallback: ${returnedModel}`);
+    }
+
+    // ── 2b.2. model_source log smoke ─────────────────────────────────────
+    // The template mirror above proves what Remote Config SAYS and the token
+    // probe proves ONE role (live-voice) end to end. This smoke reads the
+    // DEPLOYED server's own startup `model_source` log lines (emitted by
+    // logModelResolutionSources() in lib/server/model-config.ts on every
+    // boot) and hard-asserts that ALL FIVE roles resolved with
+    // source=remote-config and the model the template declares. A boot that
+    // silently fell back to env/default (RC unreachable at runtime, or a
+    // deploy that raced a publish) fails here. Reads Cloud Logging via the
+    // REST API with a SA-minted OAuth token scoped to logging.read (the
+    // authorize-domain.mjs mint pattern). A log the SA cannot read (missing
+    // roles/logging.viewer) is a distinct FAIL naming the IAM gap — never a
+    // silent skip, so RC provisioning drift can never hide behind a skipped
+    // check. Bounded retry: Cloud Logging ingestion can lag a boot's lines
+    // by tens of seconds, so re-query until every role's entry lands.
+    const LOG_SCOPE = 'https://www.googleapis.com/auth/logging.read';
+    const saObj = JSON.parse(SA_JSON);
+    const b64url = (buf) => Buffer.from(buf).toString('base64url');
+    const jwtHdr = b64url(JSON.stringify({ alg: 'RS256', typ: 'JWT' }));
+    const jwtNow = Math.floor(Date.now() / 1000);
+    const jwtBody = b64url(JSON.stringify({
+      iss: saObj.client_email,
+      scope: LOG_SCOPE,
+      aud: 'https://oauth2.googleapis.com/token',
+      iat: jwtNow,
+      exp: jwtNow + 3600,
+    }));
+    const jwtSig = b64url(createSign('sha256').update(`${jwtHdr}.${jwtBody}`).sign(saObj.private_key.replace(/\\n/g, '\n')));
+    const mintRes = await fetch('https://oauth2.googleapis.com/token', {
+      method: 'POST',
+      headers: { 'content-type': 'application/x-www-form-urlencoded' },
+      body: `grant_type=urn:ietf:params:oauth:grant-type:jwt-bearer&assertion=${jwtHdr}.${jwtBody}.${jwtSig}`,
+    });
+    const mintBody = await mintRes.json().catch(() => ({}));
+    if (!mintRes.ok || !mintBody.access_token) {
+      fail(`model_source smoke: OAuth mint failed (HTTP ${mintRes.status}) — ${j(mintBody).slice(0, 160)}`);
+    }
+    const LOG_WINDOW_MIN = 30;
+    const windowStart = new Date(Date.now() - LOG_WINDOW_MIN * 60_000).toISOString();
+    const LOG_FILTER = `jsonPayload.event="model_source" AND timestamp>="${windowStart}"`;
+    let latestByRole = {};
+    let logAttempts = 0;
+    const MAX_LOG_ATTEMPTS = 6;
+    while (logAttempts < MAX_LOG_ATTEMPTS) {
+      const entriesRes = await fetch('https://logging.googleapis.com/v2/entries:list', {
+        method: 'POST',
+        headers: { authorization: `Bearer ${mintBody.access_token}`, 'content-type': 'application/json' },
+        body: JSON.stringify({
+          resourceNames: [`projects/${saObj.project_id}`],
+          filter: LOG_FILTER,
+          orderBy: 'timestamp desc',
+          pageSize: 50,
+        }),
+      });
+      const entriesBody = await entriesRes.json().catch(() => ({}));
+      if (!entriesRes.ok) {
+        const permHint = entriesRes.status === 403
+          ? ' — the deploy SA lacks Cloud Logging read (grant roles/logging.viewer); the smoke cannot run and RC drift would go unnoticed'
+          : '';
+        fail(`model_source smoke: Cloud Logging read failed (HTTP ${entriesRes.status}${permHint}) — ${j(entriesBody).slice(0, 200)}`);
+      }
+      latestByRole = {};
+      for (const e of entriesBody.entries ?? []) {
+        const p = e.jsonPayload ?? {};
+        if (typeof p.role === 'string' && !(p.role in latestByRole)) latestByRole[p.role] = p;
+      }
+      const missing = MODEL_ROLE_TABLE.filter(({ role }) => !(role in latestByRole)).map(({ role }) => role);
+      if (missing.length === 0) break;
+      logAttempts += 1;
+      if (logAttempts < MAX_LOG_ATTEMPTS) {
+        note(`model_source smoke: waiting for log ingestion (missing ${missing.join(', ')})…`);
+        await new Promise((r) => setTimeout(r, 10_000));
+      }
+    }
+    for (const { role, rcParam } of MODEL_ROLE_TABLE) {
+      const entry = latestByRole[role];
+      if (!entry) {
+        fail(`model_source smoke: no log entry for role ${role} in the last ${LOG_WINDOW_MIN} min — the deployed server never logged its model source`);
+      }
+      if (entry.source !== 'remote-config') {
+        fail(`model_source smoke: role ${role} resolved from ${entry.source} (${entry.model}) at runtime — Remote Config is NOT authoritative (the resolver fell back)`);
+      }
+      const rcModel = rcParams[rcParam];
+      if (rcModel && entry.model !== rcModel) {
+        fail(`model_source smoke: role ${role} runs ${entry.model} but Remote Config declares ${rcModel} — template and runtime drifted`);
+      }
+      ok(`model_source smoke: ${role} resolved from remote-config (${entry.model})`);
     }
   }
 

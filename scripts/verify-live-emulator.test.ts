@@ -150,3 +150,45 @@ describe('verify:live · [2b] model resolution proof', () => {
     expect(guardCount).toBeGreaterThanOrEqual(2);
   });
 });
+
+describe('verify:live · [2b.2] model_source log smoke', () => {
+  it('mints a logging.read-scoped OAuth token from the deploy SA (the authorize-domain.mjs pattern)', () => {
+    // The smoke reads Cloud Logging with the SAME credential the run already
+    // has (FIREBASE_SERVICE_ACCOUNT), scoped to logging.read only. A missing
+    // or differently-scoped mint must fail this contract.
+    expect(VERIFY_LIVE).toContain("const LOG_SCOPE = 'https://www.googleapis.com/auth/logging.read';");
+    expect(VERIFY_LIVE).toContain('grant_type=urn:ietf:params:oauth:grant-type:jwt-bearer');
+  });
+
+  it('queries Cloud Logging entries:list filtered to model_source events in a bounded window', () => {
+    // The deployed server emits one model_source line per role at boot
+    // (lib/server/model-config.ts). The smoke reads exactly those lines so a
+    // boot that silently fell back to env/default fails the gate.
+    expect(VERIFY_LIVE).toContain("fetch('https://logging.googleapis.com/v2/entries:list'");
+    expect(VERIFY_LIVE).toContain('jsonPayload.event="model_source"');
+    expect(VERIFY_LIVE).toContain('orderBy: \'timestamp desc\'');
+  });
+
+  it('hard-asserts every role resolved from remote-config with the template model', () => {
+    // All five roles, not just live-voice: a resolver drift on any role must
+    // fail the gate, and a model that disagrees with the template must too.
+    expect(VERIFY_LIVE).toContain("entry.source !== 'remote-config'");
+    expect(VERIFY_LIVE).toContain('Remote Config is NOT authoritative');
+    expect(VERIFY_LIVE).toContain('template and runtime drifted');
+    expect(VERIFY_LIVE).toContain('resolved from remote-config');
+  });
+
+  it('fails loudly (never skips) when the SA cannot read Cloud Logging (missing roles/logging.viewer)', () => {
+    // A 403 must be a distinct FAIL naming the IAM gap, so RC drift can never
+    // hide behind a silently skipped check.
+    expect(VERIFY_LIVE).toContain('grant roles/logging.viewer');
+    expect(VERIFY_LIVE).toContain('the smoke cannot run and RC drift would go unnoticed');
+  });
+
+  it('retries the query to ride out Cloud Logging ingestion lag', () => {
+    // Ingestion can lag a boot's lines by tens of seconds; the smoke re-queries
+    // (bounded) until every role's entry lands before failing on a missing one.
+    expect(VERIFY_LIVE).toContain('MAX_LOG_ATTEMPTS');
+    expect(VERIFY_LIVE).toContain('waiting for log ingestion');
+  });
+});

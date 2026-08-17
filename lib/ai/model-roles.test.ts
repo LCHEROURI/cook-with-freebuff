@@ -22,11 +22,24 @@ import { MODEL_ROLES, MODEL_ROLE_CONFIG, type GeminiModelRole } from './model-ro
 // The deprecated family: any gemini-2.x name is on the October 2026 shutdown.
 const DEPRECATED_GEMINI_2_RE = /^gemini-2\./;
 
+// A STABLE 3.x live name: `gemini-3.<digit>-…-live` with no `-preview`
+// suffix. Preview live models retire within weeks or months of their stable
+// release, so the moment a stable 3.x live name enters a configured source
+// the migration off preview must be a deliberate, coherent change — this
+// flag makes that transition loud instead of silent (the docs say preview
+// deprecation promises at least 2 weeks' notice, so the clock is real).
+const STABLE_3X_LIVE_RE = /^gemini-3\.\d+-[a-z0-9-]*-live$/;
+
 // The published Remote Config template (read from disk, never a fixture) and
 // its five model parameters, keyed exactly as MODEL_ROLES names them.
 const RC_TEMPLATE = JSON.parse(readFileSync('remote_config.json', 'utf8')) as {
   parameters: Record<string, { defaultValue?: { value?: string } }>;
 };
+
+// The voice client's own hardcoded fallback (used when a minted token omits
+// the model), read from disk like every contract target — never a fixture.
+const VOICE_SRC = readFileSync('lib/voice/gemini-live.ts', 'utf8');
+const VOICE_DEFAULT_LIVE_MODEL = VOICE_SRC.match(/DEFAULT_LIVE_MODEL\s*=\s*'([^']+)'/)?.at(1) ?? '';
 
 describe('lib/ai/model-roles.ts · model default currency contract', () => {
   it('pins the exact current defaults (a bump must move these pins together)', () => {
@@ -87,6 +100,29 @@ describe('lib/ai/model-roles.ts · model default currency contract', () => {
     // matters: every rcParam in the table must resolve in the template.
     for (const { rcParam } of MODEL_ROLES) {
       expect(rcValue(rcParam), `remote config param ${rcParam} must resolve`).toBeTruthy();
+    }
+  });
+
+  it('flags a STABLE 3.x live name in any configured source as a migration prompt', () => {
+    // A stable 3.x live model name (no `-preview`) in the default, the RC
+    // template, or the voice fallback means the preview model's retirement
+    // clock has started: the repo must migrate coherently — default, RC
+    // param, the verify-live mirror, and the voice fallback together — and
+    // this test's pins move in the SAME change. A lone stable name is an
+    // unnoticed half-migration, so it fails here with the prompt instead of
+    // passing silently.
+    const configured = [
+      MODEL_ROLE_CONFIG['live-voice'].defaultModel,
+      rcValue('live_voice_model'),
+      VOICE_DEFAULT_LIVE_MODEL,
+    ];
+    for (const value of configured) {
+      expect(
+        !STABLE_3X_LIVE_RE.test(value),
+        `stable 3.x live model ${value} in a configured source — preview retirement clock started: ` +
+          'migrate the default, the RC template (live_voice_model), the verify-live mirror, and ' +
+          "gemini-live DEFAULT_LIVE_MODEL together, then update this test's pins",
+      ).toBe(true);
     }
   });
 });
