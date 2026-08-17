@@ -32,7 +32,7 @@ export interface GeminiOptions {
   resolveModel?: (role: string) => Promise<string | undefined>;
 }
 
-const DEFAULT_MODEL = 'gemini-2.5-flash';
+const DEFAULT_MODEL = 'gemini-3.7-flash';
 
 function resolveKey(opts: GeminiOptions): string | undefined {
   return opts.apiKey ?? process.env.GOOGLE_AI_API_KEY;

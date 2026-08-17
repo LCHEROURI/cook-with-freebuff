@@ -544,10 +544,10 @@ try {
   if (!EMULATOR && !GUIDED_ONLY) {
     console.log(`\n[2b] Model resolution proof (Remote Config → /api/voice/token)`);
     const MODEL_ROLE_TABLE = [
-      { role: 'generation', rcParam: 'recipe_generation_model', envVar: 'RECIPE_GENERATION_MODEL', defaultModel: 'gemini-2.5-flash' },
-      { role: 'validation', rcParam: 'recipe_validation_model', envVar: 'RECIPE_VALIDATION_MODEL', defaultModel: 'gemini-2.5-flash' },
-      { role: 'conversation', rcParam: 'conversation_model', envVar: 'CONVERSATION_MODEL', defaultModel: 'gemini-2.5-flash' },
-      { role: 'vision', rcParam: 'vision_model', envVar: 'VISION_MODEL', defaultModel: 'gemini-2.5-flash' },
+      { role: 'generation', rcParam: 'recipe_generation_model', envVar: 'RECIPE_GENERATION_MODEL', defaultModel: 'gemini-3.7-flash' },
+      { role: 'validation', rcParam: 'recipe_validation_model', envVar: 'RECIPE_VALIDATION_MODEL', defaultModel: 'gemini-3.7-flash' },
+      { role: 'conversation', rcParam: 'conversation_model', envVar: 'CONVERSATION_MODEL', defaultModel: 'gemini-3.7-flash' },
+      { role: 'vision', rcParam: 'vision_model', envVar: 'VISION_MODEL', defaultModel: 'gemini-3.7-flash' },
       { role: 'live-voice', rcParam: 'live_voice_model', envVar: 'LIVE_MODEL', defaultModel: 'gemini-3.1-flash-live-preview' },
     ];
     const rcParams = {};

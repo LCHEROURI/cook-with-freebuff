@@ -3,7 +3,7 @@
 // Config so a model version can change without a deploy.
 //
 // Each Gemini role maps to a Remote Config parameter whose DEFAULT value names
-// the model (e.g. `recipe_generation_model` → "gemini-2.5-flash"). This module
+// the model (e.g. `recipe_generation_model` → "gemini-3.7-flash"). This module
 // reads the published template via the Admin SDK, caches it briefly, and hands
 // the value back. It only supplies the Remote Config layer: when a parameter
 // is unset, unreachable, or running under the emulator, it returns undefined

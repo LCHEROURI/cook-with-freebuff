@@ -68,12 +68,12 @@ describe('resolveGeminiModel', () => {
 
   it('returns the published default value for a role', async () => {
     getTemplate.mockResolvedValue(template({
-      recipe_generation_model: { defaultValue: { value: 'gemini-2.5-flash' } },
+      recipe_generation_model: { defaultValue: { value: 'gemini-3.7-flash' } },
       live_voice_model: { defaultValue: { value: 'gemini-3.1-flash-live-preview' } },
     }));
     const { resolveGeminiModel } = await import('./model-config');
 
-    await expect(resolveGeminiModel('generation')).resolves.toBe('gemini-2.5-flash');
+    await expect(resolveGeminiModel('generation')).resolves.toBe('gemini-3.7-flash');
     await expect(resolveGeminiModel('live-voice')).resolves.toBe('gemini-3.1-flash-live-preview');
   });
 
@@ -86,7 +86,7 @@ describe('resolveGeminiModel', () => {
 
   it('caches the template — one fetch across repeated calls', async () => {
     getTemplate.mockResolvedValue(template({
-      recipe_generation_model: { defaultValue: { value: 'gemini-2.5-flash' } },
+      recipe_generation_model: { defaultValue: { value: 'gemini-3.7-flash' } },
     }));
     const { resolveGeminiModel } = await import('./model-config');
 
@@ -106,7 +106,7 @@ describe('resolveGeminiModel', () => {
     let now = 1_700_000_000_000;
     const nowSpy = vi.spyOn(Date, 'now').mockImplementation(() => now);
     try {
-      getTemplate.mockResolvedValue(template({ recipe_generation_model: { defaultValue: { value: 'gemini-2.5-flash' } } }));
+      getTemplate.mockResolvedValue(template({ recipe_generation_model: { defaultValue: { value: 'gemini-3.7-flash' } } }));
       const { resolveGeminiModel } = await import('./model-config');
 
       await resolveGeminiModel('generation'); // success, caches the template
@@ -115,12 +115,12 @@ describe('resolveGeminiModel', () => {
       // The cache expires and the refresh fails.
       now += 6 * 60 * 1000;
       getTemplate.mockRejectedValue(new Error('unavailable'));
-      await expect(resolveGeminiModel('generation')).resolves.toBe('gemini-2.5-flash'); // last-good value
+      await expect(resolveGeminiModel('generation')).resolves.toBe('gemini-3.7-flash'); // last-good value
       expect(getTemplate).toHaveBeenCalledTimes(2);
 
       // Within the TTL after the failure: the backoff holds, no re-fetch.
       now += 1 * 60 * 1000;
-      await expect(resolveGeminiModel('generation')).resolves.toBe('gemini-2.5-flash');
+      await expect(resolveGeminiModel('generation')).resolves.toBe('gemini-3.7-flash');
       expect(getTemplate).toHaveBeenCalledTimes(2);
     } finally {
       nowSpy.mockRestore();
