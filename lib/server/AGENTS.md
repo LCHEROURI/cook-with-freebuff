@@ -2,7 +2,7 @@
 
 ## Overview
 
-The server side of the app: Firebase Admin wiring, Firestore repositories, the cooking-session state machine service, guided-cooking delivery, pantry/leftover/grocery services, and the tool registry the AI model calls to touch state. `/api/agent` and `/api/tools` execute state tools through the tool executor and build a `ToolContext` via `buildProductionContext`. `/api/cook` also builds a `ToolContext`, but consumes `GuidedCookingService` directly and, for `create_recipe`, calls `generateRecipeTool.handler` directly rather than dispatching through `executeTool`; `/api/kitchen` uses the context as a store container while calling domain services directly. Authentication-only routes like `/api/voice/token` never touch it.
+The server side of the app: Firebase Admin wiring, Firestore repositories, the cooking-session state machine service, guided-cooking delivery, pantry/leftover/grocery services, and the tool registry the AI model calls to touch state. `/api/agent` and `/api/tools` execute state tools through the tool executor and build a `ToolContext` via `buildProductionContext`. `/api/cook` also builds a `ToolContext`, but consumes `GuidedCookingService` directly and, for `create_recipe`, calls `generateRecipeTool.handler` directly rather than dispatching through `executeTool`; `/api/kitchen` uses the context as a store container while calling domain services directly. Routes that never build a `ToolContext` — like `/api/voice/token`, which mints a Gemini credential and is quota-bearing — stay out of it.
 
 ## Key files
 
@@ -10,7 +10,7 @@ The server side of the app: Firebase Admin wiring, Firestore repositories, the c
 |---|---|
 | `admin.ts` | Firebase Admin app + auth + Firestore singletons (server-only) |
 | `app-check.ts` | Verifies the `X-Firebase-AppCheck` attestation before Gemini-quota work; monitor mode today, enforced via flag |
-| `repositories.ts` | Typed repository interfaces + Firestore implementations. NO raw Firestore calls from service modules (route-level admin reads like `/api/status`' deploy_status check are intentional) |
+| `repositories.ts` | Typed Firestore CRUD functions behind the narrow store contracts (`SessionStore` in `session-service.ts`, the store interfaces in `tools/types.ts`). NO raw Firestore calls from service modules (route-level admin reads like `/api/status`' deploy_status check are intentional) |
 | `stores.ts` | Binds repositories to the tool-store interfaces and builds `buildProductionContext(userId)` — the `ToolContext` for tool-executing routes and other routes, such as `/api/kitchen`, that need the same production stores |
 | `session-service.ts` | The K1 state machine as a persistent service; optimistic version checks on existing-session updates + caller-supplied correlation markers, with non-atomic audit events (see Conventions) |
 | `guide-service.ts` | Guided cooking (K6): one physical action at a time, timer auto-start, safety gates |
