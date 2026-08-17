@@ -229,6 +229,7 @@ describe('scripts/codex-review-pr-gate.mjs', () => {
       comments: unknown[],
       opts: {
         reviews?: unknown[];
+        reviews404?: boolean;
         extraArgs?: string;
         extraEnv?: Record<string, string>;
         gateComments?: unknown[];
@@ -238,6 +239,7 @@ describe('scripts/codex-review-pr-gate.mjs', () => {
     ) => {
       const {
         reviews = [botReview],
+        reviews404 = false,
         extraArgs = '',
         extraEnv = {},
         gateComments = [],
@@ -256,6 +258,7 @@ const fs = require('node:fs');
 const HEAD = ${JSON.stringify(HEAD)};
 const comments = ${JSON.stringify(comments)};
 const reviews = ${JSON.stringify(reviews)};
+const reviews404 = ${JSON.stringify(reviews404)};
 const gateComments = ${JSON.stringify(gateComments)};
 const nudgeCommits = ${JSON.stringify(nudgeCommits)};
 const gateRuns = ${JSON.stringify(gateRuns)};
@@ -271,6 +274,7 @@ if (url.includes('issues/42/comments?')) {
 } else if (url.includes('/42/comments?')) {
   process.stdout.write(JSON.stringify([comments]));
 } else if (url.includes('/42/reviews?')) {
+  if (reviews404) { process.stderr.write('gh: Not Found (HTTP 404)'); process.exit(1); }
   process.stdout.write(JSON.stringify([reviews]));
 } else if (url.includes('pulls/42/commits')) {
   process.stdout.write(JSON.stringify(nudgeCommits));
@@ -389,6 +393,23 @@ fs.appendFileSync(${JSON.stringify(gitLog)}, process.argv.join(' ') + '<<<GIT>>>
         extraEnv: { CODEX_GATE_WAIT_SECONDS: '1', CODEX_GATE_BOT_SKIPPED_PRS: '41, 42' },
       }).status,
     ).toBe(0);
+
+    // ── Transient reviews-list 404 (Codex P1, PR #125 review) ─────────────
+    // A list endpoint can transiently 404 in Actions even for a PR the meta
+    // fetch resolved. The reviews list is a secondary signal behind the
+    // inline-comments endpoint, so a 404 must be treated as empty rather than
+    // a hard gate failure: a certified bot-skip still passes…
+    expect(
+      run([], {
+        reviews404: true,
+        extraArgs: '--allow-no-review',
+        extraEnv: { CODEX_GATE_WAIT_SECONDS: '1' },
+      }).status,
+    ).toBe(0);
+
+    // …and a bot inline comment on the head still counts as a review, so a
+    // non-certified run with a 404ing reviews endpoint also passes.
+    expect(run([P(92, 'P2')], { reviews404: true }).status).toBe(0);
 
     // ── Nudge (re-trigger a skipped review) ────────────────────────────────
     // In a pull_request Actions run, a skipped review pushes a capped empty
