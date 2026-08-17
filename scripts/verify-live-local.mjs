@@ -62,13 +62,15 @@ const group = -dev.pid;  // negative pid = the process group
 // handler mirrors the normal teardown (SIGTERM, short grace, SIGKILL) and
 // exits with the conventional 128+signum code (130 for SIGINT, 143 for
 // SIGTERM).
-let tearingDown = false;
+let teardownPromise = null;
 const teardownDevGroup = async () => {
-  if (tearingDown) return;            // two signals racing must not double-kill
-  tearingDown = true;
-  try { process.kill(group, 'SIGTERM'); } catch { /* already gone */ }
-  await sleep(1_500);                 // let npm/next shut down gracefully
-  try { process.kill(group, 'SIGKILL'); } catch { /* gone */ }
+  if (teardownPromise) return teardownPromise; // second signal awaits the in-flight teardown
+  teardownPromise = (async () => {
+    try { process.kill(group, 'SIGTERM'); } catch { /* already gone */ }
+    await sleep(1_500);                 // let npm/next shut down gracefully
+    try { process.kill(group, 'SIGKILL'); } catch { /* gone */ }
+  })();
+  return teardownPromise;
 };
 process.on('SIGINT', async () => {
   console.log('\n  - received SIGINT; tearing down the dev server group');
