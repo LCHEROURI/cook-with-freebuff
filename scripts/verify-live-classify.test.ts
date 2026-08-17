@@ -32,7 +32,7 @@ const LIVE = readFileSync('scripts/verify-live.mjs', 'utf8');
 
 // The real shape the deployed route surfaced (the @google/generative-ai SDK
 // embeds the API response body in its error message).
-const creditsRoot = `create_recipe → 400 {"code":"INTERNAL_ERROR","message":"[GoogleGenerativeAI Error]: Error fetching from https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent: [429 Too Many Requests] Your prepayment credits are depleted. Please go to AI Studio at https://ai.studio/projects to manage your project and billing."}`;
+const creditsRoot = `create_recipe → 400 {"code":"INTERNAL_ERROR","message":"[GoogleGenerativeAI Error]: Error fetching from https://generativelanguage.googleapis.com/v1beta/models/gemini-3.7-flash:generateContent: [429 Too Many Requests] Your prepayment credits are depleted. Please go to AI Studio at https://ai.studio/projects to manage your project and billing."}`;
 
 const cascadeFailures = [
   creditsRoot,

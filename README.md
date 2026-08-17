@@ -100,10 +100,10 @@ parameters in Firebase → Remote Config to change a model without a deploy:
 
 | Role | Remote Config parameter | Env fallback | Default |
 |---|---|---|---|
-| Recipe generation | `recipe_generation_model` | `RECIPE_GENERATION_MODEL` | `gemini-2.5-flash` |
-| Recipe validation | `recipe_validation_model` | `RECIPE_VALIDATION_MODEL` | `gemini-2.5-flash` |
-| Conversation | `conversation_model` | `CONVERSATION_MODEL` | `gemini-2.5-flash` |
-| Vision scanner | `vision_model` | `VISION_MODEL` | `gemini-2.5-flash` |
+| Recipe generation | `recipe_generation_model` | `RECIPE_GENERATION_MODEL` | `gemini-3.7-flash` |
+| Recipe validation | `recipe_validation_model` | `RECIPE_VALIDATION_MODEL` | `gemini-3.7-flash` |
+| Conversation | `conversation_model` | `CONVERSATION_MODEL` | `gemini-3.7-flash` |
+| Vision scanner | `vision_model` | `VISION_MODEL` | `gemini-3.7-flash` |
 | Live voice | `live_voice_model` | `LIVE_MODEL` | `gemini-3.1-flash-live-preview` |
 
 The live-voice model is server-authoritative: `/api/voice/token` returns the
