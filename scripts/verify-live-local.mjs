@@ -17,8 +17,9 @@
 //      (same seed → guided flow → safety gate → timer → pantry confirm →
 //      Gemini turn → cleanup as the deployed check — same .env.local backend).
 //   5. ALWAYS tears down: kills the whole process group (npm + next + workers)
-//      in a finally block, even on failure. Exit code mirrors verify-live
-//      (0 = PASS, 1 = FAIL).
+//      on every exit path — the tail below, the boot-failure early exit, and
+//      the SIGINT/SIGTERM handlers — so no run can leak a listener. Exit code
+//      mirrors verify-live (0 = PASS, 1 = FAIL).
 //
 // Usage:
 //   npm run verify:live:local                          # port 3100
@@ -52,6 +53,44 @@ const dev = spawn('npm', ['run', 'dev', '--', '--port', String(PORT)], {
   env: { ...process.env },
 });
 const group = -dev.pid;  // negative pid = the process group
+
+// ── Signal handlers: an interrupted run must never orphan the dev group ─────
+// The dev server is spawned detached into its OWN process group, so Ctrl+C
+// (SIGINT to this script's group) never reaches it. Without handlers an
+// interrupted run — especially during the up-to-180s boot wait — exits before
+// the teardown below and leaks `next dev` + workers holding the port. Each
+// handler mirrors the normal teardown (SIGTERM, short grace, SIGKILL) and
+// exits with the conventional 128+signum code (130 for SIGINT, 143 for
+// SIGTERM).
+let teardownPromise = null;
+const teardownDevGroup = async () => {
+  if (teardownPromise) return teardownPromise; // second signal awaits the in-flight teardown
+  teardownPromise = (async () => {
+    try { process.kill(group, 'SIGTERM'); } catch { /* already gone */ }
+    await sleep(1_500);                 // let npm/next shut down gracefully
+    try { process.kill(group, 'SIGKILL'); } catch { /* gone */ }
+  })();
+  return teardownPromise;
+};
+process.on('SIGINT', async () => {
+  console.log('\n  - received SIGINT; tearing down the dev server group');
+  await teardownDevGroup();
+  process.exit(130);
+});
+process.on('SIGTERM', async () => {
+  console.log('\n  - received SIGTERM; tearing down the dev server group');
+  await teardownDevGroup();
+  process.exit(143);
+});
+// SIGHUP fires when the controlling terminal or remote session closes.
+// Without a handler, Node exits with its default behavior while the detached
+// next dev process group survives and keeps the port occupied (Codex P1, PR
+// #122 review). Route it through the same teardown path as SIGINT/SIGTERM.
+process.on('SIGHUP', async () => {
+  console.log('\n  - received SIGHUP; tearing down the dev server group');
+  await teardownDevGroup();
+  process.exit(129);
+});
 
 // ── 2. Wait for the server to answer HTTP ───────────────────────────────────
 async function waitForServer(timeoutMs = 180_000) {

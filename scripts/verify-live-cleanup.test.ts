@@ -31,6 +31,17 @@ import { describe, expect, it } from 'vitest';
 const SRC = readFileSync('scripts/verify-live.mjs', 'utf8');
 const VOICE = readFileSync('scripts/drive-live-voice.mjs', 'utf8');
 
+// The per-driver cleanup split (scripts/AGENTS.md) pins which scripts may
+// claim the FULL exit-path guarantee. Read the real sources so a driver that
+// drifts into or out of the guarantee fails here before the doc lies.
+const LOCAL = readFileSync('scripts/verify-live-local.mjs', 'utf8');
+const EMULATOR = readFileSync('scripts/verify-live-emulator.mjs', 'utf8');
+const CHROME_DRIVERS = Object.fromEntries(
+  ['drive-recipes-page.mjs', 'drive-starter-prefs.mjs', 'drive-home-button.mjs',
+    'drive-login-popup.mjs', 'drive-ui-skin.mjs', 'audit-a11y.mjs']
+    .map((f) => [f, readFileSync(`scripts/${f}`, 'utf8')]),
+);
+
 // The declaration extraction the lockstep assertion runs. Kept as one helper
 // so the drift-mutation proof below exercises the SAME code path — a future
 // edit to the extraction (or the assertion) is immediately visible to both
@@ -217,6 +228,63 @@ describe('scripts/verify-live.mjs · fetch resilience', () => {
     // JSON body instead of the init options.
     expect(SRC).toContain("body: JSON.stringify({ action: 'launch', recipeId: seededRecipeId }),\n    retryOnConnectError: true,");
     expect(SRC).toContain('never user data');
+  });
+});
+
+describe('scripts/AGENTS.md · the per-driver cleanup split', () => {
+  // The documented split: verify-live.mjs and drive-live-voice.mjs implement
+  // the FULL exit-path guarantee (try/finally + signal handlers routed through
+  // the exitWithCleanup helper). verify-live-local.mjs tears its detached
+  // dev-server group down on every exit path, including its own SIGINT/SIGTERM
+  // handlers (so an interrupted run never orphans `next dev` on the port);
+  // verify-live-emulator.mjs tears its emulator/dev groups down on expected
+  // control paths only and registers NO signal handlers. The other Chrome
+  // drivers kill Chrome and drop their profile on the handlers they DO
+  // register, but never claim the full cleanup guarantee.
+  it('reserves the exitWithCleanup helper for the two full-guarantee drivers ONLY', () => {
+    // Positive: the two full-guarantee drivers route their signals through
+    // the cleanup helper (already pinned piecewise above — this asserts the
+    // marker itself on both).
+    expect(SRC).toContain('const exitWithCleanup = async (code, reason) => {');
+    expect(VOICE).toContain('const exitWithCleanup = async (code, reason) => {');
+    // Negative: NO other driver may claim the full guarantee. The Chrome
+    // drivers register handlers, but they are the limited kill-Chrome/
+    // drop-profile pattern — never the exitWithCleanup helper. A driver that
+    // grows into the full guarantee without this test noticing is exactly the
+    // drift scripts/AGENTS.md must stay true about.
+    for (const [name, src] of Object.entries(CHROME_DRIVERS)) {
+      expect(src, `${name} must not claim the full exit-path guarantee`).not.toContain('exitWithCleanup');
+    }
+  });
+
+  it('verify-live-local.mjs registers SIGINT/SIGTERM/SIGHUP handlers that kill the dev group', () => {
+    // An interrupted local run (Ctrl+C, CI timeout, terminal close) must not
+    // orphan the detached dev group: each handler kills the group and exits,
+    // mirroring the normal teardown. This is the narrower process-group
+    // guarantee, NOT the exitWithCleanup helper the full-guarantee drivers own.
+    expect(LOCAL).toContain("process.on('SIGINT'");
+    expect(LOCAL).toContain("process.on('SIGTERM'");
+    expect(LOCAL).toContain("process.on('SIGHUP'");
+    expect(LOCAL).not.toContain('exitWithCleanup');
+    expect(LOCAL).toContain('process.kill(');
+    expect(LOCAL).toContain("'SIGTERM'");
+    expect(LOCAL).toContain("'SIGKILL'");
+  });
+
+  it('verify-live-emulator.mjs still registers NO signal handlers — control-path teardown only', () => {
+    // The doc promise: the emulator variant guarantees its emulator/dev
+    // process-group teardown on expected control paths only, NOT on signals.
+    expect(EMULATOR).not.toMatch(/process\.on\('(SIGINT|SIGTERM|SIGHUP)'/);
+    expect(EMULATOR).toContain('process.kill(');
+    expect(EMULATOR).toContain("'SIGTERM'");
+  });
+
+  it('Chrome drivers register only the limited kill-Chrome / drop-profile handlers', () => {
+    for (const [name, src] of Object.entries(CHROME_DRIVERS)) {
+      expect(src, `${name} must register an exit handler that kills Chrome`).toContain("process.on('exit', killChrome)");
+      expect(src).toContain('killChrome()');
+      expect(src).toContain('dropProfile()');
+    }
   });
 });
 

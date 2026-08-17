@@ -185,6 +185,24 @@ describe('scripts/codex-review-pr-gate.mjs', () => {
     expect(GATE).toContain('resolved');
   });
 
+  it('re-runs a stale merge evaluation after a cancelled gate run (Codex, PR #113)', () => {
+    // A burst of review events cancels the queued gate runs in the concurrency
+    // group, which can leave the merge BLOCKED even when the check is green
+    // (the recovery on PR #113 was a manual empty nudge commit). A green gate
+    // in a canonical pull_request run re-runs its own check through the
+    // Actions API — a fresh success check run re-evaluates the merge — with
+    // no PAT and no head churn. The re-run needs actions: write, only fires
+    // on pull_request runs, and only on run_attempt 1 so it cannot loop.
+    expect(WORKFLOW).toContain('actions: write');
+    expect(GATE).toContain('selfHealCancelledRun');
+    expect(GATE).toContain('selfHealCancelledRun();');
+    expect(GATE).toContain('actions/runs?head_sha=');
+    expect(GATE).toContain("r.conclusion === 'cancelled'");
+    expect(GATE).toContain('/rerun');
+    expect(GATE).toContain('healedEvents');
+    expect(GATE).toContain('process.env.GITHUB_RUN_ATTEMPT');
+  });
+
   it('behaves end to end against a stubbed gh', () => {
     const bot = 'chatgpt-codex-connector[bot]';
     const HEAD = 'abc123def456';
@@ -215,6 +233,7 @@ describe('scripts/codex-review-pr-gate.mjs', () => {
         extraEnv?: Record<string, string>;
         gateComments?: unknown[];
         nudgeCommits?: unknown[];
+        gateRuns?: unknown[];
       } = {},
     ) => {
       const {
@@ -223,11 +242,13 @@ describe('scripts/codex-review-pr-gate.mjs', () => {
         extraEnv = {},
         gateComments = [],
         nudgeCommits = [],
+        gateRuns = [],
       } = opts;
       const stubDir = mkdtempSync(join(tmpdir(), 'codex-gate-stub-'));
       const stubPath = join(stubDir, 'gh');
       const postsLog = join(stubDir, 'posts.log');
       const gitLog = join(stubDir, 'git.log');
+      const rerunLog = join(stubDir, 'rerun.log');
       writeFileSync(
         stubPath,
         `#!/usr/bin/env node
@@ -237,7 +258,9 @@ const comments = ${JSON.stringify(comments)};
 const reviews = ${JSON.stringify(reviews)};
 const gateComments = ${JSON.stringify(gateComments)};
 const nudgeCommits = ${JSON.stringify(nudgeCommits)};
+const gateRuns = ${JSON.stringify(gateRuns)};
 const postsLog = ${JSON.stringify(postsLog)};
+const rerunLog = ${JSON.stringify(rerunLog)};
 const url = process.argv.join(' ');
 if (url.includes('issues/42/comments?')) {
   process.stdout.write(JSON.stringify([gateComments]));
@@ -251,6 +274,11 @@ if (url.includes('issues/42/comments?')) {
   process.stdout.write(JSON.stringify([reviews]));
 } else if (url.includes('pulls/42/commits')) {
   process.stdout.write(JSON.stringify(nudgeCommits));
+} else if (url.includes('actions/runs?head_sha=')) {
+  process.stdout.write(JSON.stringify([{ workflow_runs: gateRuns }]));
+} else if (url.includes('/actions/runs/') && url.includes('/rerun')) {
+  fs.appendFileSync(rerunLog, process.argv.join(' ') + '<<<RERUN>>>');
+  process.stdout.write('{}');
 } else if (url.includes('pulls/42')) {
   process.stdout.write(JSON.stringify({ head: { sha: HEAD, ref: 'feature/branch', repo: { full_name: 'fake/repo' } } }));
 } else {
@@ -278,6 +306,10 @@ fs.appendFileSync(${JSON.stringify(gitLog)}, process.argv.join(' ') + '<<<GIT>>>
         existsSync(gitLog)
           ? readFileSync(gitLog, 'utf8').split('<<<GIT>>>').filter((s) => s.trim().length > 0)
           : [];
+      const readReruns = () =>
+        existsSync(rerunLog)
+          ? readFileSync(rerunLog, 'utf8').split('<<<RERUN>>>').filter((s) => s.trim().length > 0)
+          : [];
       try {
         try {
           const env: NodeJS.ProcessEnv = { ...process.env };
@@ -293,7 +325,7 @@ fs.appendFileSync(${JSON.stringify(gitLog)}, process.argv.join(' ') + '<<<GIT>>>
             `node scripts/codex-review-pr-gate.mjs --repo fake/repo --pr 42 ${extraArgs}`,
             { encoding: 'utf8', env },
           );
-          return { status: 0, out, posts: readPosts(), gitLog: readGitLog() };
+          return { status: 0, out, posts: readPosts(), gitLog: readGitLog(), reruns: readReruns() };
         } catch (e) {
           const err = e as { status?: number; stdout?: string; stderr?: string };
           return {
@@ -301,6 +333,7 @@ fs.appendFileSync(${JSON.stringify(gitLog)}, process.argv.join(' ') + '<<<GIT>>>
             out: `${err.stdout ?? ''}${err.stderr ?? ''}`,
             posts: readPosts(),
             gitLog: readGitLog(),
+            reruns: readReruns(),
           };
         }
       } finally {
@@ -466,5 +499,74 @@ fs.appendFileSync(${JSON.stringify(gitLog)}, process.argv.join(' ') + '<<<GIT>>>
     expect(resolved.posts.length).toBe(1);
     expect(resolved.posts[0]).toContain('Codex review gate is green');
     expect(resolved.posts[0]).toContain('codex-gate-resolved');
-  }, 20_000);
+
+    // ── Cancelled-run self-heal (Codex, PR #113) ─────────────────────────
+    // A green gate in a canonical pull_request Actions run re-runs its own
+    // check through the Actions API when a cancelled gate run left the merge
+    // evaluation stale. It re-runs the latest non-cancelled run, fires only
+    // on run_attempt 1 (the re-run itself must not loop), and never on red /
+    // review-event / local runs.
+    const pullEnv = { GH_TOKEN: 'stub-token', GITHUB_ACTIONS: 'true', GITHUB_EVENT_NAME: 'pull_request' };
+    const stale = run([], {
+      extraEnv: pullEnv,
+      gateRuns: [
+        { id: 501, name: 'Codex review gate', conclusion: 'cancelled', created_at: '2026-08-16T10:00:03Z' },
+        { id: 500, name: 'Codex review gate', conclusion: 'success', created_at: '2026-08-16T10:00:01Z' },
+      ],
+    });
+    expect(stale.status).toBe(0);
+    expect(stale.reruns.some((r) => r.includes('/actions/runs/500/rerun'))).toBe(true);
+    expect(stale.reruns.length).toBe(1);
+
+    // No cancelled run → no re-run.
+    expect(
+      run([], {
+        extraEnv: pullEnv,
+        gateRuns: [{ id: 502, name: 'Codex review gate', conclusion: 'success', created_at: '2026-08-16T10:00:01Z' }],
+      }).reruns.length,
+    ).toBe(0);
+
+    // A review-comment resolution run DOES self-heal (Codex P1, PR #122 review).
+    const reviewCommentEnv = { GH_TOKEN: 'stub-token', GITHUB_ACTIONS: 'true', GITHUB_EVENT_NAME: 'pull_request_review_comment' };
+    expect(
+      run([], {
+        extraEnv: reviewCommentEnv,
+        gateRuns: [
+          { id: 503, name: 'Codex review gate', conclusion: 'cancelled', created_at: '2026-08-16T10:00:03Z' },
+          { id: 502, name: 'Codex review gate', conclusion: 'success', created_at: '2026-08-16T10:00:01Z' },
+        ],
+      }).reruns.length,
+    ).toBe(1);
+
+    // An unrelated event (workflow_dispatch) never self-heals.
+    expect(
+      run([], {
+        extraEnv: { GH_TOKEN: 'stub-token', GITHUB_ACTIONS: 'true', GITHUB_EVENT_NAME: 'workflow_dispatch' },
+        gateRuns: [{ id: 503, name: 'Codex review gate', conclusion: 'cancelled', created_at: '2026-08-16T10:00:03Z' }],
+      }).reruns.length,
+    ).toBe(0);
+
+    // run_attempt > 1 never self-heals — the re-run itself must not loop.
+    expect(
+      run([], {
+        extraEnv: { ...pullEnv, GITHUB_RUN_ATTEMPT: '2' },
+        gateRuns: [{ id: 504, name: 'Codex review gate', conclusion: 'cancelled', created_at: '2026-08-16T10:00:03Z' }],
+      }).reruns.length,
+    ).toBe(0);
+
+    // A RED gate never self-heals — the block is correct, nothing to heal.
+    expect(
+      run([P(81, 'P1')], {
+        extraEnv: pullEnv,
+        gateRuns: [{ id: 505, name: 'Codex review gate', conclusion: 'cancelled', created_at: '2026-08-16T10:00:03Z' }],
+      }).reruns.length,
+    ).toBe(0);
+
+    // Local runs never self-heal.
+    expect(
+      run([], {
+        gateRuns: [{ id: 506, name: 'Codex review gate', conclusion: 'cancelled', created_at: '2026-08-16T10:00:03Z' }],
+      }).reruns.length,
+    ).toBe(0);
+  }, 60_000);
 });
