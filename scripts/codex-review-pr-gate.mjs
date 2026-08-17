@@ -133,12 +133,27 @@ function runQuiet(cmd) {
  * --slurp wraps every page in one outer array and we flatten one level — the
  * same pattern as the monitor.
  */
-function fetchList(cmd) {
+function fetchList(cmd, { tolerate404 = false } = {}) {
   try {
     return JSON.parse(runQuiet(`${cmd} --slurp`)).flat();
   } catch (e) {
+    const stderr = e && typeof e === 'object' && 'stderr' in e ? String(e.stderr) : '';
+    const message = e instanceof Error ? e.message : String(e);
+    const text = `${message}\n${stderr}`;
+    if (tolerate404 && /not found|404/i.test(text)) {
+      // A list endpoint can transiently 404 on the Actions runner even for a
+      // PR the meta fetch already resolved (Codex P1, PR #125 review): the
+      // reviews list is only the secondary "did the bot submit a review"
+      // signal behind the inline-comments endpoint, so an unreadable list is
+      // treated as empty rather than failing the whole gate. The PR-existence
+      // fetch (pulls/{pr}) above has already run, so a wrong repo/pr would
+      // have failed there before reaching this point.
+      console.warn(`  - ${cmd} returned 404 — treating as an empty list (no review list available)`);
+      return [];
+    }
     console.error(`✗ FAIL: could not read review comments (${cmd})`);
-    console.error(e instanceof Error ? e.message : String(e));
+    console.error(message);
+    if (stderr) console.error(stderr);
     process.exit(1);
   }
 }
@@ -158,7 +173,9 @@ function fetchComments() {
   return fetchList(`gh api --paginate "repos/${repo}/pulls/${pr}/comments?per_page=100"`);
 }
 function fetchReviews() {
-  return fetchList(`gh api --paginate "repos/${repo}/pulls/${pr}/reviews?per_page=100"`);
+  return fetchList(`gh api --paginate "repos/${repo}/pulls/${pr}/reviews?per_page=100"`, {
+    tolerate404: true,
+  });
 }
 
 /** Has the bot actually reviewed the CURRENT head (submitted review or inline comment)? */

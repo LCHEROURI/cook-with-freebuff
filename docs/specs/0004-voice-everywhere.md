@@ -1,7 +1,7 @@
 # Voice Everywhere — Design
 
 **Date**: 2026-08-17
-**Status**: Proposed (design approved by engineer in the 2026-08-17 brainstorm; implementation plan pending)
+**Status**: Accepted (built, tested, and merged via PR #124; verify:live includes the [3f] kitchen mic proof)
 
 ## Overview
 
