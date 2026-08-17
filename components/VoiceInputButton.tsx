@@ -1,7 +1,6 @@
 'use client';
 
 import { useVoiceInput } from '@/lib/hooks/useVoiceInput';
-import styles from './VoiceInputButton.module.css';
 
 interface Props {
   onTranscript: (text: string) => void;
@@ -19,7 +18,7 @@ export function VoiceInputButton({ onTranscript, 'aria-label': ariaLabel }: Prop
   const label = listening ? listeningLabel(ariaLabel) : (ariaLabel ?? 'Speak');
 
   return (
-    <span className={styles.wrap}>
+    <span className="voice-input-wrap">
       <button
         type="button"
         onClick={toggle}
@@ -27,12 +26,12 @@ export function VoiceInputButton({ onTranscript, 'aria-label': ariaLabel }: Prop
         aria-label={label}
         aria-pressed={listening}
         title={!supported ? 'Voice input is not supported in this browser' : undefined}
-        className={styles.mic}
+        className="voice-mic-btn"
       >
         {listening ? '⏹' : '🎤'}
       </button>
-      {listening && <span className={styles.interim}>{interim || 'Listening…'}</span>}
-      {error && <span className={styles.error} role="alert">{error}</span>}
+      {listening && <span className="voice-interim">{interim || 'Listening…'}</span>}
+      {error && <span className="voice-error" role="alert">{error}</span>}
     </span>
   );
 }

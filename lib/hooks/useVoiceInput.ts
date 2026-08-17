@@ -101,6 +101,14 @@ export function useVoiceInput(options: UseVoiceInputOptions = {}) {
     }, 100);
   }, []);
 
+  // Drain the accumulated final utterances and deliver them once. Idempotent:
+  // an empty buffer delivers nothing, so onresult and onend can both call it.
+  const flushAndDeliver = useCallback(() => {
+    const fullText = bufferRef.current.join(' ').trim();
+    bufferRef.current = [];
+    if (fullText) optionsRef.current.onFinal?.(fullText);
+  }, []);
+
   const createRecognition = useCallback((): SpeechRecognitionLike | null => {
     const Ctor = getSpeechRecognitionCtor();
     if (!Ctor) return null;
@@ -126,14 +134,23 @@ export function useVoiceInput(options: UseVoiceInputOptions = {}) {
         const finalText = raw.trim();
         setInterim('');
         if (finalText) bufferRef.current.push(finalText);
+        // A user stop drains on the FINAL result (browsers deliver it after
+        // stop() returns), not on the stop call itself.
+        if (stoppedByUserRef.current) flushAndDeliver();
       } else {
         setInterim(raw);
       }
     };
 
     rec.onend = () => {
+      if (stoppedByUserRef.current) {
+        // The user asked to stop: deliver whatever final text arrived (a stop
+        // with no final result delivers nothing) — never restart.
+        flushAndDeliver();
+        return;
+      }
       // Browser timed out or auto-stopped — restart transparently.
-      if (!stoppedByUserRef.current && recognitionRef.current === rec) {
+      if (recognitionRef.current === rec) {
         safeRestart(rec);
       }
     };
@@ -182,20 +199,18 @@ export function useVoiceInput(options: UseVoiceInputOptions = {}) {
     };
 
     return rec;
-  }, [safeRestart]);
+  }, [safeRestart, flushAndDeliver]);
 
   const toggle = useCallback(() => {
     setError(null);
     if (recognitionRef.current) {
-      // User explicitly stopping — flush the buffer.
+      // User explicitly stopping — the final result arrives async, so the
+      // flush happens on the final onresult/onend, not here.
       stoppedByUserRef.current = true;
       recognitionRef.current.stop();
       recognitionRef.current = null;
       setListening(false);
       setInterim('');
-      const fullText = bufferRef.current.join(' ').trim();
-      bufferRef.current = [];
-      if (fullText) optionsRef.current.onFinal?.(fullText);
       return;
     }
     // Starting fresh.
@@ -224,9 +239,7 @@ export function useVoiceInput(options: UseVoiceInputOptions = {}) {
     }
     setListening(false);
     setInterim('');
-    const fullText = bufferRef.current.join(' ').trim();
-    bufferRef.current = [];
-    if (fullText) optionsRef.current.onFinal?.(fullText);
+    // The flush happens on the final onresult/onend (async), not here.
   }, []);
 
   useEffect(

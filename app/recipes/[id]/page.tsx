@@ -227,6 +227,10 @@ export default function RecipeDetailPage() {
   const readAllTexts = [
     ...displayRecipe.prepSteps.map(stepReadText),
     ...displayRecipe.cookingSteps.map(stepReadText),
+    // Recipe-level safety notes live outside the step lists but are still
+    // spoken safety output (spec 0004 §Safety warnings), so Read all speaks
+    // them too, not only per-step notes.
+    ...displayRecipe.safetyNotes.map((note) => `Safety note: ${note}`),
   ];
 
   return (

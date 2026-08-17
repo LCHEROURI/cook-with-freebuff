@@ -13,6 +13,7 @@ import { describe, expect, it } from 'vitest';
 
 const RECIPES = readFileSync('scripts/drive-recipes-page.mjs', 'utf8');
 const KITCHEN = readFileSync('scripts/drive-kitchen.mjs', 'utf8');
+const VERIFY = readFileSync('scripts/verify-live.mjs', 'utf8');
 
 describe('drive-voice-everywhere contract', () => {
   it('pins the recipes search mic proof', () => {
@@ -25,5 +26,9 @@ describe('drive-voice-everywhere contract', () => {
 
   it('pins the kitchen dietary-profile mic proof', () => {
     expect(KITCHEN).toContain('button[aria-label="Speak Allergies, comma separated"]');
+  });
+
+  it('pins verify:live wiring the kitchen driver into the deployed proof', () => {
+    expect(VERIFY).toContain("scripts/drive-kitchen.mjs");
   });
 });

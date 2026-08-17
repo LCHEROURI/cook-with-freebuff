@@ -44,7 +44,7 @@ Stored in `docs/specs/NNNN-title.md`. Current: 0001 App Hosting primary host, 00
 - All Firestore writes are schema validated (Zod) at the repository layer before persisting
 - Tool calls are the only way the AI model touches state — every tool logs latency and error codes to `agent_tool_logs`
 - Gemini model names resolve from one shared table (`lib/ai/model-roles.ts`) in the order Remote Config, then env var, then hardcoded default, so a model version can change without a deploy; call sites never hardcode a model name
-- Voice flows through hooks (`useVoiceInput`, `useGeminiLive`, `useLiveDictation`), not form field level mic buttons
+- Voice flows through hooks (`useVoiceInput`, `useGeminiLive`, `useLiveDictation`); the reusable `VoiceInputButton` (spec 0004) wraps `useVoiceInput` as the transcription entry point on form fields, so no call site touches the raw Web Speech API
 - Components use controlled inputs with `useState`, not `react-hook-form`
 - Tests use `// @vitest-environment jsdom` pragma on component files; default environment is `node`
 - Probe cleanup grace durations are declared per driver (`scripts/verify-live.mjs`, `scripts/drive-live-voice.mjs`) with a rationale comment at each declaration, and the shared 15 minute seed grace is pinned identical across both files by the lockstep contract in `scripts/verify-live-cleanup.test.ts`; never introduce a shared constants module (spec 0002)

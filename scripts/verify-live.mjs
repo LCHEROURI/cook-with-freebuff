@@ -970,6 +970,33 @@ try {
       : fail(`voice driver: missing “${marker}” in the driver log`);
   }
 
+  // ── 3f. Voice Everywhere surface proof: kitchen transcription mics ────────
+  // Spec 0004 adds a transcription mic to every kitchen input. This stage
+  // spawns the committed driver (scripts/drive-kitchen.mjs) against the same
+  // deployed APP to prove the pantry and dietary-profile mics actually render
+  // with a REAL owner session — not just that the selectors exist in source.
+  console.log(`\n[3f] Voice Everywhere kitchen mics (${APP})`);
+  const kitchenDriver = spawnSync('node', ['scripts/drive-kitchen.mjs', '--app', APP, '--out', `/tmp/verify-live-kitchen-${t}`], {
+    encoding: 'utf8',
+    timeout: 180_000, // Chrome launch + owner session mint + /kitchen load
+    env: process.env,
+  });
+  const kitchenLog = `${kitchenDriver.stdout ?? ''}\n${kitchenDriver.stderr ?? ''}`;
+  if (kitchenDriver.status === 0 && /RESULT: PASS/.test(kitchenLog)) {
+    ok('kitchen voice driver → RESULT: PASS (pantry + profile mics)');
+  } else {
+    const tail = kitchenLog.split('\n').filter(Boolean).slice(-6).join('\n');
+    fail(`kitchen voice driver → exit ${kitchenDriver.status ?? 'crash'}${kitchenDriver.error ? ` (${kitchenDriver.error.message})` : ''}. Tail: ${tail}`);
+  }
+  for (const marker of [
+    'pantry item name mic renders',
+    'dietary profile allergies mic renders',
+  ]) {
+    kitchenLog.includes(marker)
+      ? ok(`kitchen voice driver: ${marker}`)
+      : fail(`kitchen voice driver: missing “${marker}” in the driver log`);
+  }
+
   // The [4] pantry flow rides on an ACTIVE session — every agent turn carries
   // `sessionId: sid`. The settle above deleted the probe sessions so the UI
   // driver saw the clean starter; re-establish `sid` by launching the seeded

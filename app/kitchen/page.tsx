@@ -364,6 +364,13 @@ export default function KitchenPage() {
             aria-label="Pantry item quantity"
             disabled={pending !== null}
           />
+          <VoiceInputButton
+            aria-label="Speak pantry item quantity"
+            onTranscript={(text) => {
+              setPantryQty((current) => appendTranscript(current, text));
+              setPantryVoiceInitiated(true);
+            }}
+          />
           <input
             className={`${styles.input} ${styles.inputSmall}`}
             value={pantryUnit}
@@ -374,6 +381,13 @@ export default function KitchenPage() {
             placeholder="Unit"
             aria-label="Pantry item unit"
             disabled={pending !== null}
+          />
+          <VoiceInputButton
+            aria-label="Speak pantry item unit"
+            onTranscript={(text) => {
+              setPantryUnit((current) => appendTranscript(current, text));
+              setPantryVoiceInitiated(true);
+            }}
           />
           <FormTextarea
             fieldUI={pantryFieldUI}
@@ -499,6 +513,13 @@ export default function KitchenPage() {
             aria-label="Grocery item quantity"
             disabled={pending !== null}
           />
+          <VoiceInputButton
+            aria-label="Speak grocery item quantity"
+            onTranscript={(text) => {
+              setGroceryQty((current) => appendTranscript(current, text));
+              setGroceryVoiceInitiated(true);
+            }}
+          />
           <input
             className={`${styles.input} ${styles.inputSmall}`}
             value={groceryUnit}
@@ -509,6 +530,13 @@ export default function KitchenPage() {
             placeholder="Unit"
             aria-label="Grocery item unit"
             disabled={pending !== null}
+          />
+          <VoiceInputButton
+            aria-label="Speak grocery item unit"
+            onTranscript={(text) => {
+              setGroceryUnit((current) => appendTranscript(current, text));
+              setGroceryVoiceInitiated(true);
+            }}
           />
           <button
             type="submit"
@@ -605,6 +633,13 @@ export default function KitchenPage() {
             placeholder="Servings"
             aria-label="Leftover servings"
             disabled={pending !== null}
+          />
+          <VoiceInputButton
+            aria-label="Speak leftover servings"
+            onTranscript={(text) => {
+              setLeftoverServings((current) => appendTranscript(current, text));
+              setLeftoverVoiceInitiated(true);
+            }}
           />
           <FormTextarea
             fieldUI={leftoverFieldUI}
@@ -733,6 +768,13 @@ export default function KitchenPage() {
               }}
               placeholder="2"
               aria-label="Default servings"
+            />
+            <VoiceInputButton
+              aria-label="Speak default servings"
+              onTranscript={(text) => {
+                setProfileServings((current) => appendTranscript(current, text));
+                setProfileVoiceInitiated(true);
+              }}
             />
           </label>
         </div>

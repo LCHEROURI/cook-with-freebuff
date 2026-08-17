@@ -166,6 +166,23 @@ describe('useVoiceInput', () => {
     expect(onFinal).not.toHaveBeenCalled();
   });
 
+  it('delivers a final result that arrives after stop() returns (async flush)', () => {
+    installFake();
+    const onFinal = vi.fn();
+    const { result } = renderHook(() => useVoiceInput({ onFinal }));
+    act(() => result.current.toggle());
+    // The user taps Stop while the utterance is still interim: nothing final
+    // has landed yet, so onFinal must NOT fire from the stop call itself.
+    act(() => result.current.toggle());
+    expect(onFinal).not.toHaveBeenCalled();
+    // The browser then delivers the requested final result after stop returns.
+    act(() => {
+      lastInstance?.onresult?.(resultEvent('eggs', true));
+    });
+    expect(onFinal).toHaveBeenCalledWith('eggs');
+    expect(onFinal).toHaveBeenCalledTimes(1);
+  });
+
   it('auto-restarts recognition on timeout after a short delay', () => {
     installFake();
     const { result } = renderHook(() => useVoiceInput());

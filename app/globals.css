@@ -268,6 +268,46 @@ a,
   }
 }
 
+/* ── Voice input mic (spec 0004) ──────────────────────────────────────────── */
+.voice-input-wrap {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.voice-mic-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 44px;
+  min-height: 44px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface-secondary);
+  color: var(--color-text);
+  font-size: 1.125rem;
+  cursor: pointer;
+}
+
+.voice-mic-btn:hover:not(:disabled) {
+  background: var(--color-surface-secondary-hover, var(--color-surface-secondary));
+}
+
+.voice-mic-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.voice-interim {
+  font-size: 0.875rem;
+  color: var(--color-text-secondary);
+}
+
+.voice-error {
+  font-size: 0.875rem;
+  color: var(--color-danger);
+}
+
 /* ── Utility ──────────────────────────────────────────────────────────────── */
 .sr-only {
   position: absolute;

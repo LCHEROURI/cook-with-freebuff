@@ -8,7 +8,7 @@ Everything that proves the deployed app and gates a merge. The verify:live drive
 
 | File | Owns |
 |---|---|
-| `verify-live.mjs` | The main post-deploy E2E driver: stages [1] seed → [2] mint token → [2b] model resolution → [2c] login popup → [3] guided cook → [3c] settle → [3d]/[3e] UI and voice drivers → [4] agent turns, then cleanup. Exit 0 + `RESULT: PASS` is the contract |
+| `verify-live.mjs` | The main post-deploy E2E driver: stages [1] seed → [2] mint token → [2b] model resolution → [2c] login popup → [3] guided cook → [3c] settle → [3d]/[3e]/[3f] UI, voice, and kitchen-mic drivers → [4] agent turns, then cleanup. Exit 0 + `RESULT: PASS` is the contract |
 | `verify-live-local.mjs` | Boots `next dev` on its own process group, warms lazily compiled routes, runs verify-live against localhost, tears the group down on every exit path including SIGINT/SIGTERM handlers |
 | `verify-live-emulator.mjs`, `verify-live-compare.mjs`, `verify-live-compare-emulator.mjs` | Emulator and guided-vs-live compare variants of the same check |
 | `drive-*.mjs` | Headless Chrome drivers, one per UI proof: `drive-login-popup.mjs` ([2c] OAuth popup), `drive-starter-prefs.mjs` ([3d] ready card), `drive-live-voice.mjs` ([3e] Gemini Live dictation + active mics), `drive-recipes-page.mjs`, `drive-kitchen.mjs` (Voice Everywhere mics), `drive-home-button.mjs`, `drive-ui-skin.mjs` |
