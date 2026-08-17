@@ -121,10 +121,64 @@ if (!pr) {
   process.exit(2);
 }
 
+// Only a real Actions run may touch the PR thread — GH_TOKEN alone is not an
+// Actions signal (a local dev exporting it would otherwise post comments),
+// so GITHUB_ACTIONS must also be true (Codex P2, PR #79 review). Defined here
+// rather than in the verdict section because the degraded-service note is
+// posted from the wait loop, before the scan reaches the verdict.
+const inActions = process.env.GITHUB_ACTIONS === 'true' && !!process.env.GH_TOKEN;
+
+// Preflight: is GitHub's platform degraded for the endpoints this gate needs?
+// The PR #125 reviews-list 404 and the PR #126 comments-list 504 were the
+// platform being degraded — not a bot skip and not a code finding. When the
+// relevant components are degraded, the gate reports a distinct "degraded
+// service, retry later" state instead of the bot-skip WAITING message, so a
+// human does not certify a skip for what is really a platform delay. The
+// probe is non-fatal: an unknown or failed probe never fails the gate.
+const STATUS_COMPONENTS = ['API Requests', 'Pull Requests', 'Actions', 'Webhooks'];
+async function checkGitHubStatus() {
+  // Test seam: an explicit value overrides the live probe so tests stay
+  // hermetic (no network from the test runner).
+  const forced = process.env.CODEX_GATE_STATUS;
+  if (forced === 'operational') return false;
+  if (forced === 'degraded') return true;
+  try {
+    const res = await fetch('https://www.githubstatus.com/api/v2/summary.json', {
+      signal: AbortSignal.timeout(5000),
+      headers: { accept: 'application/json' },
+    });
+    if (!res.ok) return null;
+    const data = await res.json();
+    return (data.components ?? []).some(
+      (c) => STATUS_COMPONENTS.includes(c.name) && c.status !== 'operational',
+    );
+  } catch {
+    return null; // unknown — never let the status probe fail the gate
+  }
+}
+
+// Pin the REST API version on every gh api call. gh has defaulted to
+// 2022-11-28 for years, but that default is not contractual: a future gh
+// release could bump it and silently change the endpoint responses this gate
+// parses. (The PR #125 reviews-list 404 was NOT version drift — the runner's
+// gh 2.97.0 sends the identical header — but pinning removes that whole class
+// of surprise.) Codex P1, PR #125 review.
+const API_VERSION = '2022-11-28';
+function gh(cmd) {
+  return `gh api -H "X-GitHub-Api-Version: ${API_VERSION}" ${cmd}`;
+}
+
 function runQuiet(cmd) {
   // Same cap as the monitor: a paginated PR/comments sweep can exceed
   // execSync's 1 MB default once the repo grows past a few dozen PRs.
   return execSync(cmd, { encoding: 'utf8', stdio: 'pipe', maxBuffer: 64 * 1024 * 1024 }).trim();
+}
+
+function sleepSync(ms) {
+  // Synchronous sleep: the initial comments/reviews fetches run before the
+  // async wait-for-review loop, so a transient-error retry cannot await.
+  // Atomics.wait on the main thread blocks for ms without spinning the CPU.
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 }
 
 /**
@@ -132,29 +186,45 @@ function runQuiet(cmd) {
  * JSON.parse breaks on a multi-page collection (Codex P2, PR #53 review);
  * --slurp wraps every page in one outer array and we flatten one level — the
  * same pattern as the monitor.
+ *
+ * Resilience: the reviews list may 404 on the Actions runner even for a PR the
+ * meta fetch already resolved, and a degraded GitHub API surfaces as transient
+ * 5xx/timeouts on any list (both observed on PR #125/#126). A 404 on the
+ * reviews list is treated as empty; transient errors are retried a bounded
+ * number of times before the gate fails closed.
  */
-function fetchList(cmd, { tolerate404 = false } = {}) {
-  try {
-    return JSON.parse(runQuiet(`${cmd} --slurp`)).flat();
-  } catch (e) {
-    const stderr = e && typeof e === 'object' && 'stderr' in e ? String(e.stderr) : '';
-    const message = e instanceof Error ? e.message : String(e);
-    const text = `${message}\n${stderr}`;
-    if (tolerate404 && /not found|404/i.test(text)) {
-      // A list endpoint can transiently 404 on the Actions runner even for a
-      // PR the meta fetch already resolved (Codex P1, PR #125 review): the
-      // reviews list is only the secondary "did the bot submit a review"
-      // signal behind the inline-comments endpoint, so an unreadable list is
-      // treated as empty rather than failing the whole gate. The PR-existence
-      // fetch (pulls/{pr}) above has already run, so a wrong repo/pr would
-      // have failed there before reaching this point.
-      console.warn(`  - ${cmd} returned 404 — treating as an empty list (no review list available)`);
-      return [];
+function fetchList(cmd, { tolerate404 = false, maxAttempts = 3 } = {}) {
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      return JSON.parse(runQuiet(`${cmd} --slurp`)).flat();
+    } catch (e) {
+      const stderr = e && typeof e === 'object' && 'stderr' in e ? String(e.stderr) : '';
+      const message = e instanceof Error ? e.message : String(e);
+      const text = `${message}\n${stderr}`;
+      if (tolerate404 && /not found|404/i.test(text)) {
+        // The reviews list is only the secondary "did the bot submit a review"
+        // signal behind the inline-comments endpoint, so an unreadable list is
+        // treated as empty rather than failing the whole gate (Codex P1,
+        // PR #125 review). The PR-existence fetch (pulls/{pr}) above has
+        // already run, so a wrong repo/pr would have failed there first.
+        console.warn(`  - ${cmd} returned 404 — treating as an empty list (no review list available)`);
+        return [];
+      }
+      // A degraded GitHub API also surfaces as transient 5xx/timeouts on the
+      // otherwise-healthy comments list (Codex P1, PR #126 review). Retry a
+      // few times before failing, so one 504 does not block the gate.
+      const transient = /50[0-9]|429|couldn't respond|timed out|timeout|try resubmitting|connection reset/i.test(text);
+      if (transient && attempt < maxAttempts) {
+        const backoff = 1000 * 2 ** (attempt - 1);
+        console.warn(`  - ${cmd} returned a transient error (attempt ${attempt}/${maxAttempts}) — retrying in ${backoff}ms`);
+        sleepSync(backoff);
+        continue;
+      }
+      console.error(`✗ FAIL: could not read review comments (${cmd})`);
+      console.error(message);
+      if (stderr) console.error(stderr);
+      process.exit(1);
     }
-    console.error(`✗ FAIL: could not read review comments (${cmd})`);
-    console.error(message);
-    if (stderr) console.error(stderr);
-    process.exit(1);
   }
 }
 
@@ -162,7 +232,7 @@ function fetchList(cmd, { tolerate404 = false } = {}) {
 
 // A finding/review only counts for the commit it was left on; a stale comment
 // from a previous head must never block the current one.
-const prMeta = JSON.parse(runQuiet(`gh api "repos/${repo}/pulls/${pr}"`));
+const prMeta = JSON.parse(runQuiet(gh(`"repos/${repo}/pulls/${pr}"`)));
 const headSha = prMeta.head.sha;
 const headRef = prMeta.head.ref;
 // Nudging only works for same-repo branches (a fork's head lives in the fork,
@@ -170,10 +240,10 @@ const headRef = prMeta.head.ref;
 const headRepoFullName = prMeta.head.repo?.full_name ?? repo;
 
 function fetchComments() {
-  return fetchList(`gh api --paginate "repos/${repo}/pulls/${pr}/comments?per_page=100"`);
+  return fetchList(gh(`--paginate "repos/${repo}/pulls/${pr}/comments?per_page=100"`));
 }
 function fetchReviews() {
-  return fetchList(`gh api --paginate "repos/${repo}/pulls/${pr}/reviews?per_page=100"`, {
+  return fetchList(gh(`--paginate "repos/${repo}/pulls/${pr}/reviews?per_page=100"`), {
     tolerate404: true,
   });
 }
@@ -183,6 +253,15 @@ function botObservedOnHead(comments, reviews) {
   return (
     comments.some((c) => c.user?.login === BOT_LOGIN && c.commit_id === headSha) ||
     reviews.some((r) => r.user?.login === BOT_LOGIN && r.commit_id === headSha)
+  );
+}
+
+const githubDegraded = await checkGitHubStatus();
+if (githubDegraded === true) {
+  console.warn(
+    '⚠ GitHub platform is degraded — the Codex review may be delayed; if none ' +
+      'arrives the gate reports a distinct "degraded service, retry later" state ' +
+      'rather than a bot skip.',
   );
 }
 
@@ -213,7 +292,7 @@ const canNudge =
   headRepoFullName === repo;
 
 function countNudges() {
-  const commits = fetchList(`gh api --paginate "repos/${repo}/pulls/${pr}/commits?per_page=100"`);
+  const commits = fetchList(gh(`--paginate "repos/${repo}/pulls/${pr}/commits?per_page=100"`));
   return commits.filter((c) => (c.commit?.message ?? '').includes(NUDGE_MARKER)).length;
 }
 
@@ -261,6 +340,20 @@ if (allowNoReview) {
     reviews = fetchReviews();
   }
   if (!botObservedOnHead(comments, reviews)) {
+    if (githubDegraded === true) {
+      // Distinct state (Codex P1, PR #125/#126 review): the review has not
+      // arrived because GitHub's platform is degraded — not because the bot
+      // skipped the PR and not because of a code finding. A human must retry
+      // later; certifying this as a bot skip would be wrong. The nudge is
+      // skipped too: pushing an empty commit re-fires the bot, which is
+      // itself delayed by the same outage.
+      console.error(
+        `✗ FAIL: GitHub platform is degraded — the Codex review has not arrived for head ${headSha} ` +
+          `and is likely delayed by the outage. Retry later (do NOT certify this as a bot skip).`,
+      );
+      postDegradedAlert(headSha);
+      process.exit(1);
+    }
     // Before asking for the human --allow-no-review certification, give the
     // bot another chance: push an empty nudge commit (capped) so its
     // synchronize event re-fires the review. Only in Actions, only on
@@ -329,11 +422,6 @@ for (const c of comments) {
 
 // ── Verdict ─────────────────────────────────────────────────────────────────
 
-// Only a real Actions run may touch the PR thread — GH_TOKEN alone is not an
-// Actions signal (a local dev exporting it would otherwise post comments),
-// so GITHUB_ACTIONS must also be true (Codex P2, PR #79 review).
-const inActions = process.env.GITHUB_ACTIONS === 'true' && !!process.env.GH_TOKEN;
-
 const botCommentCount = comments.filter((c) => c.user?.login === BOT_LOGIN).length;
 const label = includeP2 ? 'P0/P1/P2' : 'P0/P1';
 if (blocking.length === 0) {
@@ -342,17 +430,17 @@ if (blocking.length === 0) {
       ` (${botCommentCount} bot comment(s))`,
   );
   resolveAlertIfPosted(headSha);
+  resolveDegradedIfPosted(headSha);
   selfHealCancelledRun();
   process.exit(0);
 }
 
-/** The red-alert comment already posted for this head, if any (per-head marker). */
-function alertCommentForHead(head) {
-  const marker = `<!-- codex-gate-red: ${head} -->`;
+/** The gate's bot-style comment already posted on the thread carrying `marker`, if any. */
+function gateCommentForHead(marker) {
   try {
     return (
       JSON.parse(
-        runQuiet(`gh api --paginate "repos/${repo}/issues/${pr}/comments?per_page=100" --slurp`),
+        runQuiet(gh(`--paginate "repos/${repo}/issues/${pr}/comments?per_page=100" --slurp`)),
       ).flat().find((c) => typeof c.body === 'string' && c.body.includes(marker)) ?? null
     );
   } catch {
@@ -370,9 +458,9 @@ function sendComment(body, comment, verb) {
   const bodyFile = writeCommentBody(body);
   try {
     if (comment) {
-      runQuiet(`gh api --method PATCH "repos/${repo}/issues/comments/${comment.id}" --input ${bodyFile}`);
+      runQuiet(gh(`--method PATCH "repos/${repo}/issues/comments/${comment.id}" --input ${bodyFile}`));
     } else {
-      runQuiet(`gh api --method POST "repos/${repo}/issues/${pr}/comments" --input ${bodyFile}`);
+      runQuiet(gh(`--method POST "repos/${repo}/issues/${pr}/comments" --input ${bodyFile}`));
     }
     console.log(`  ✎ ${verb} alert comment on PR #${pr}`);
   } catch (e) {
@@ -413,7 +501,7 @@ function postRedAlert(findings, head) {
     '',
     'This check is required to merge — the block lifts when every thread above is answered.',
   ];
-  const existing = alertCommentForHead(head);
+  const existing = gateCommentForHead(`<!-- codex-gate-red: ${head} -->`);
   sendComment(lines.join('\n'), existing, existing ? 'updated' : 'posted');
 }
 
@@ -424,12 +512,51 @@ function postRedAlert(findings, head) {
  */
 function resolveAlertIfPosted(head) {
   if (!inActions) return;
-  const existing = alertCommentForHead(head);
+  const existing = gateCommentForHead(`<!-- codex-gate-red: ${head} -->`);
   if (!existing) return;
   const body =
     `<!-- codex-gate-resolved: ${head} -->\n` +
     `## ✅ Codex review gate is green on this head\n\n` +
     'All findings that blocked this PR have been answered on their threads.';
+  sendComment(body, existing, 'resolved');
+}
+
+/**
+ * Keep a visible note when the gate is blocked by a degraded GitHub platform
+ * rather than by a finding or a bot skip (Codex P1, PR #125/#126 review), so
+ * the "retry later" state is visible on the PR thread without opening the
+ * check details. One comment per head, edited in place like the red alert.
+ */
+function postDegradedAlert(head) {
+  if (!inActions) return;
+  const marker = `<!-- codex-gate-degraded: ${head} -->`;
+  const lines = [
+    marker,
+    '## ⚠️ Codex review gate: GitHub platform is degraded',
+    '',
+    'The Codex review has not arrived for this head because GitHub\'s platform is degraded. ' +
+      'Retry later — this is not a bot skip and not a code finding.',
+    '',
+    'This check is required to merge — the block lifts when the platform recovers and the bot\'s review lands.',
+  ];
+  const existing = gateCommentForHead(marker);
+  sendComment(lines.join('\n'), existing, existing ? 'updated' : 'posted');
+}
+
+/**
+ * Resolve a stale degraded-service note once the gate turns green on that
+ * head (the platform recovered and the review landed), mirroring the red-alert
+ * resolution so the thread never carries a permanent lie.
+ */
+function resolveDegradedIfPosted(head) {
+  if (!inActions) return;
+  const marker = `<!-- codex-gate-degraded: ${head} -->`;
+  const existing = gateCommentForHead(marker);
+  if (!existing) return;
+  const body =
+    `<!-- codex-gate-degraded-resolved: ${head} -->\n` +
+    '## ✅ Codex review gate is green on this head\n\n' +
+    'The degraded-platform block has lifted — the review landed and the gate is green.';
   sendComment(body, existing, 'resolved');
 }
 
@@ -458,7 +585,7 @@ function selfHealCancelledRun() {
   let runs;
   try {
     runs = JSON.parse(
-      runQuiet(`gh api --paginate "repos/${repo}/actions/runs?head_sha=${headSha}&per_page=100" --slurp`),
+      runQuiet(gh(`--paginate "repos/${repo}/actions/runs?head_sha=${headSha}&per_page=100" --slurp`)),
     ).flatMap((page) => page.workflow_runs ?? []);
   } catch {
     return; // a read-only probe — never fail the gate because the probe did
@@ -472,7 +599,7 @@ function selfHealCancelledRun() {
   if (!toRerun) return;
 
   try {
-    runQuiet(`gh api --method POST "repos/${repo}/actions/runs/${toRerun.id}/rerun"`);
+    runQuiet(gh(`--method POST "repos/${repo}/actions/runs/${toRerun.id}/rerun"`));
     console.log(
       `  ↻ re-ran the gate check (run ${toRerun.id}) to refresh a stale merge evaluation ` +
         `after a cancelled run on head ${headSha}`,

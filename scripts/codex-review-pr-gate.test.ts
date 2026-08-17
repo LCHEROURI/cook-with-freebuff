@@ -39,7 +39,8 @@ describe('scripts/codex-review-pr-gate.mjs', () => {
     expect(GATE).toContain("c.user?.login !== BOT_LOGIN");
     expect(GATE).toContain('pulls/${pr}/comments?per_page=100');
     expect(GATE).toContain('pulls/${pr}/reviews?per_page=100');
-    expect(GATE).toContain('gh api --paginate');
+    expect(GATE).toContain('gh api -H "X-GitHub-Api-Version: ${API_VERSION}"');
+    expect(GATE).toContain('--paginate');
     expect(GATE).toContain('--slurp');
     expect(GATE).toContain(')).flat()');
     // Findings are scoped to the current head (stale comments from a previous
@@ -47,6 +48,21 @@ describe('scripts/codex-review-pr-gate.mjs', () => {
     expect(GATE).toContain('pulls/${pr}"`))');
     expect(GATE).toContain('const headSha = prMeta.head.sha;');
     expect(GATE).toContain('c.commit_id != null && c.commit_id !== headSha');
+  });
+
+  it('pins the REST API version on every gh api call so a future gh default drift cannot change the gate', () => {
+    // gh has sent X-GitHub-Api-Version: 2022-11-28 by default for years, but
+    // that default is not contractual. Every gh api call routes through the
+    // gh() wrapper, which stamps the header explicitly, so a future gh release
+    // that bumps its default cannot silently change the endpoint responses the
+    // gate parses (Codex P1, PR #125 review).
+    expect(GATE).toContain("const API_VERSION = '2022-11-28';");
+    expect(GATE).toContain('X-GitHub-Api-Version: ${API_VERSION}');
+    expect(GATE).toContain('function gh(cmd)');
+    // No bare gh api invocation may bypass the wrapper — the header must be
+    // stamped on every call, not just the reviews one.
+    expect(GATE).not.toContain('runQuiet(`gh api');
+    expect(GATE).not.toContain('fetchList(`gh api');
   });
 
   it('classifies severity from the badge URL and blocks on P0 and P1 by default', () => {
@@ -230,6 +246,7 @@ describe('scripts/codex-review-pr-gate.mjs', () => {
       opts: {
         reviews?: unknown[];
         reviews404?: boolean;
+        commentsFailures?: number;
         extraArgs?: string;
         extraEnv?: Record<string, string>;
         gateComments?: unknown[];
@@ -240,6 +257,7 @@ describe('scripts/codex-review-pr-gate.mjs', () => {
       const {
         reviews = [botReview],
         reviews404 = false,
+        commentsFailures = 0,
         extraArgs = '',
         extraEnv = {},
         gateComments = [],
@@ -249,6 +267,7 @@ describe('scripts/codex-review-pr-gate.mjs', () => {
       const stubDir = mkdtempSync(join(tmpdir(), 'codex-gate-stub-'));
       const stubPath = join(stubDir, 'gh');
       const postsLog = join(stubDir, 'posts.log');
+      const commentsFailLog = join(stubDir, 'comments-fail.log');
       const gitLog = join(stubDir, 'git.log');
       const rerunLog = join(stubDir, 'rerun.log');
       writeFileSync(
@@ -259,6 +278,8 @@ const HEAD = ${JSON.stringify(HEAD)};
 const comments = ${JSON.stringify(comments)};
 const reviews = ${JSON.stringify(reviews)};
 const reviews404 = ${JSON.stringify(reviews404)};
+const commentsFailures = ${JSON.stringify(commentsFailures)};
+const commentsFailLog = ${JSON.stringify(commentsFailLog)};
 const gateComments = ${JSON.stringify(gateComments)};
 const nudgeCommits = ${JSON.stringify(nudgeCommits)};
 const gateRuns = ${JSON.stringify(gateRuns)};
@@ -272,6 +293,12 @@ if (url.includes('issues/42/comments?')) {
   fs.appendFileSync(postsLog, fs.readFileSync(process.argv[i + 1], 'utf8') + '<<<POST>>>');
   process.stdout.write('{}');
 } else if (url.includes('/42/comments?')) {
+  const n = parseInt(fs.existsSync(commentsFailLog) ? fs.readFileSync(commentsFailLog, 'utf8') : '0', 10) || 0;
+  if (n < commentsFailures) {
+    fs.writeFileSync(commentsFailLog, String(n + 1));
+    process.stderr.write("gh: We couldn't respond to your request in time. Sorry about that. Please try resubmitting your request and contact us if the problem persists. (HTTP 504)");
+    process.exit(1);
+  }
   process.stdout.write(JSON.stringify([comments]));
 } else if (url.includes('/42/reviews?')) {
   if (reviews404) { process.stderr.write('gh: Not Found (HTTP 404)'); process.exit(1); }
@@ -324,7 +351,11 @@ fs.appendFileSync(${JSON.stringify(gitLog)}, process.argv.join(' ') + '<<<GIT>>>
           delete env.GH_TOKEN;
           delete env.GITHUB_TOKEN;
           delete env.GITHUB_ACTIONS;
-          Object.assign(env, { PATH: `${stubDir}:${process.env.PATH}` }, extraEnv);
+          Object.assign(
+            env,
+            { PATH: `${stubDir}:${process.env.PATH}`, CODEX_GATE_STATUS: 'operational' },
+            extraEnv,
+          );
           const out = execSync(
             `node scripts/codex-review-pr-gate.mjs --repo fake/repo --pr 42 ${extraArgs}`,
             { encoding: 'utf8', env },
@@ -411,6 +442,18 @@ fs.appendFileSync(${JSON.stringify(gitLog)}, process.argv.join(' ') + '<<<GIT>>>
     // non-certified run with a 404ing reviews endpoint also passes.
     expect(run([P(92, 'P2')], { reviews404: true }).status).toBe(0);
 
+    // ── Transient 5xx retry (Codex P1, PR #126 review) ─────────────────────
+    // A degraded GitHub API surfaces as transient 5xx/timeouts on the
+    // otherwise-healthy comments list. The gate retries a bounded number of
+    // times before failing, so a couple of 504s do not block the merge.
+    expect(run([P(94, 'P2')], { commentsFailures: 2 }).status).toBe(0);
+
+    // The retry is bounded: a persistently failing comments list still fails
+    // closed rather than hanging forever.
+    const exhausted = run([P(95, 'P2')], { commentsFailures: 99 });
+    expect(exhausted.status).toBe(1);
+    expect(exhausted.out).toContain('FAIL');
+
     // ── Nudge (re-trigger a skipped review) ────────────────────────────────
     // In a pull_request Actions run, a skipped review pushes a capped empty
     // nudge commit (re-firing the bot's synchronize event) before the WAITING
@@ -476,6 +519,34 @@ fs.appendFileSync(${JSON.stringify(gitLog)}, process.argv.join(' ') + '<<<GIT>>>
     expect(noToken.out).toContain('no Codex review observed on head');
     expect(noToken.gitLog.length).toBe(0);
 
+    // ── Degraded-platform preflight (Codex P1, PR #125/#126 review) ────────
+    // A degraded GitHub platform surfaces a distinct "retry later" state, NOT
+    // the bot-skip WAITING message, and skips the nudge (the bot is delayed
+    // by the same outage).
+    const degraded = run([], {
+      reviews: [],
+      extraEnv: { ...nudgeEnv, CODEX_GATE_STATUS: 'degraded' },
+    });
+    expect(degraded.status).toBe(1);
+    expect(degraded.out).toContain('GitHub platform is degraded');
+    expect(degraded.out).toContain('do NOT certify this as a bot skip');
+    expect(degraded.out).not.toContain('no Codex review observed on head');
+    expect(degraded.gitLog.length).toBe(0);
+    // The degraded state is posted on the PR thread (like the red alert) so it
+    // is visible without opening the check details.
+    expect(degraded.posts.length).toBe(1);
+    expect(degraded.posts[0]).toContain('codex-gate-degraded');
+    expect(degraded.posts[0]).toContain('GitHub platform is degraded');
+
+    // Degradation does not bypass a real finding: with an open P1 on the head
+    // the gate still blocks on the finding, not on the degraded state.
+    const degradedFinding = run([P(96, 'P1')], {
+      extraEnv: { CODEX_GATE_STATUS: 'degraded', CODEX_GATE_WAIT_SECONDS: '1' },
+    });
+    expect(degradedFinding.status).toBe(1);
+    expect(degradedFinding.out).toContain('[P1] lib/a.ts:3');
+    expect(degradedFinding.out).toContain('open Codex finding(s)');
+
     // The stricter bar via env (repo variable / dispatch input) blocks a P2
     // the same way the --include-p2 flag does — no flag needed.
     expect(run([P(61, 'P2')], { extraEnv: { CODEX_GATE_INCLUDE_P2: 'true' } }).status).toBe(1);
@@ -520,6 +591,16 @@ fs.appendFileSync(${JSON.stringify(gitLog)}, process.argv.join(' ') + '<<<GIT>>>
     expect(resolved.posts.length).toBe(1);
     expect(resolved.posts[0]).toContain('Codex review gate is green');
     expect(resolved.posts[0]).toContain('codex-gate-resolved');
+
+    // A degraded-service note is resolved once the gate turns green on that
+    // head (the platform recovered and the review landed).
+    const degradedResolved = run([], {
+      gateComments: [{ id: 9003, body: '<!-- codex-gate-degraded: abc123def456 -->\nOld degraded note.' }],
+      extraEnv: actions,
+    });
+    expect(degradedResolved.status).toBe(0);
+    expect(degradedResolved.posts.length).toBe(1);
+    expect(degradedResolved.posts[0]).toContain('codex-gate-degraded-resolved');
 
     // ── Cancelled-run self-heal (Codex, PR #113) ─────────────────────────
     // A green gate in a canonical pull_request Actions run re-runs its own
