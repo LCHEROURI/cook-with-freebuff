@@ -7,7 +7,12 @@
 // is recorded too — a failure must be visible, not vanish). Writes the fixed
 // doc `deploy_status/verify_live`:
 //
-//   { verdict: 'success'|'failure', commitSha, ranAt, runUrl }
+//   { verdict: 'success'|'failure'|'external', commitSha, ranAt, runUrl }
+//
+// 'external' is the Gemini prepayment-credits block (verify-live-classify):
+// the deploy check passed but recipe generation and its downstream stages
+// could not run — the /status page renders it distinctly instead of as a
+// full verification.
 //
 // The doc is written with the admin SDK, so it bypasses client rules (the
 // catch-all deny keeps direct client reads blocked — the /status page reads
@@ -34,7 +39,7 @@ import { getFirestore } from 'firebase-admin/firestore';
 // trusted. Same contract the repository layer enforces for every Firestore
 // write (AGENTS.md: all writes are schema validated).
 const verifyLiveStatusSchema = z.object({
-  verdict: z.enum(['success', 'failure']),
+  verdict: z.enum(['success', 'failure', 'external']),
   commitSha: z
     .string()
     .regex(/^[0-9a-f]{40}$/i, 'commitSha must be a 40-hex git sha')
@@ -75,7 +80,9 @@ const ok = (m) => console.log(`  ✓ ${m}`);
 const fail = (m) => { console.error(`  ✗ FAIL: ${m}`); process.exit(1); };
 
 if (!SA_JSON) { fail('FIREBASE_SERVICE_ACCOUNT required (already wired in the verify-live job env)'); }
-if (verdict !== 'success' && verdict !== 'failure') { fail(`verdict must be success|failure, got "${verdict}"`); }
+if (verdict !== 'success' && verdict !== 'failure' && verdict !== 'external') {
+  fail(`verdict must be success|failure|external, got "${verdict}"`);
+}
 if (!commitSha) { fail('--commit <sha> required'); }
 
 let app;

@@ -163,7 +163,12 @@ describe('scripts/verify-live.mjs · guaranteed cleanup', () => {
   });
 
   it('still exits 0 on PASS and 1 on FAIL after the rewrite', () => {
-    expect(SRC).toContain("process.exit(runExit === 0 && failures === 0 ? 0 : 1);");
+    // The verdict refactor (verify-live-classify) replaced the inline
+    // runExit/failures test with a classified verdict: PASS and the external
+    // Gemini-credits verdict exit 0, a real FAIL exits 1. A crash (runExit
+    // non-zero) is never external, so it still exits 1.
+    expect(SRC).toContain("process.exit(verdict.kind === 'fail' ? 1 : 0);");
+    expect(SRC).toContain("verdict = runExit === 0 ? classifyVerifyVerdict({ failures }) : { kind: 'fail' };");
   });
 });
 

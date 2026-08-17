@@ -342,7 +342,13 @@ describe('.github/workflows/ci.yml · post-deploy verify:live needs-edge', () =>
     expect(verifyBlock).toContain('name: Record verify:live result for the status page');
     expect(verifyBlock).toContain("always() && (steps.verify.outcome == 'success' || steps.verify.outcome == 'failure')");
     expect(verifyBlock).toContain('node scripts/record-verify-status.mjs');
-    expect(verifyBlock).toContain('--verdict "${{ steps.verify.outcome }}"');
+    // The verdict comes from VERIFY_LIVE_VERDICT (set by verify:live itself via
+    // GITHUB_ENV) so the distinct 'external' Gemini-credits state survives;
+    // the step outcome is only the fallback for runs that never wrote it.
+    // Shell fallback (not an Actions ternary) on purpose: a ternary's colon
+    // breaks the plain YAML scalar, and the shell form reads the GITHUB_ENV
+    // variable with zero doubt about expression-context visibility.
+    expect(verifyBlock).toContain('--verdict "${VERIFY_LIVE_VERDICT:-${{ steps.verify.outcome }}}"');
     expect(verifyBlock).toContain('--commit "${{ github.sha }}"');
     expect(verifyBlock).toContain('--run-url "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"');
     // Negative: the record step must not introduce another secret wiring.

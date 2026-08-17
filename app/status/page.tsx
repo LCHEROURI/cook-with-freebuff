@@ -78,14 +78,18 @@ export default function StatusPage() {
       ? styles.pass
       : status?.verifyLive?.verdict === 'failure'
         ? styles.fail
-        : styles.unknown;
+        : status?.verifyLive?.verdict === 'external'
+          ? styles.unknown
+          : styles.unknown;
 
   const verdictLabel =
     status?.verifyLive?.verdict === 'success'
       ? '✓ Passing'
       : status?.verifyLive?.verdict === 'failure'
         ? '✗ Failing'
-        : 'No run recorded yet';
+        : status?.verifyLive?.verdict === 'external'
+          ? '⚠ External'
+          : 'No run recorded yet';
 
   return (
     <main className={styles.main}>
@@ -179,7 +183,11 @@ export default function StatusPage() {
               <>
                 <p className={`${styles.verdict} ${verdictClass}`}>{verdictLabel}</p>
                 <p className={styles.cardMeta}>
-                  {status.verifyLive.verdict === 'success' ? 'Verified' : 'Last failed'} on{' '}
+                  {status.verifyLive.verdict === 'success'
+                    ? 'Verified'
+                    : status.verifyLive.verdict === 'external'
+                      ? 'External issue (Gemini credits)'
+                      : 'Last failed'}{' '}
                   <a href={commitUrl(status.verifyLive.commitSha)} className={styles.link}>
                     {shortSha(status.verifyLive.commitSha)}
                   </a>

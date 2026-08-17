@@ -1,0 +1,73 @@
+// ============================================================================
+// scripts/verify-live-classify.mjs — classify verify:live failure sets.
+//
+// The post-deploy verify:live gate runs the full app surface after every
+// deploy. Most failures are regressions and must redden the deploy check.
+// One class is EXTERNAL and must not: the Gemini API prepayment-credits
+// block (HTTP 429, "Your prepayment credits are depleted"). When that block
+// hits, create_recipe fails, and every later stage that waits on a generated
+// recipe (UI starter driver, constraints view, voice driver, agent model
+// turn) cascades. Failing the deploy check for a billing issue is noise: the
+// deployed app itself is healthy.
+//
+// The rule is deliberately CONSERVATIVE: the run is classified external ONLY
+// when (a) the [3b] create_recipe failure itself carries a credits signature
+// (the root cause), AND (b) EVERY failure matches a known Gemini-cascade
+// prefix. Any failure outside that surface (a real serve/API/kitchen
+// regression) flips the verdict back to FAIL, so the classification can never
+// swallow a genuine app regression.
+//
+// The signature list is an explicit allowlist (same discipline as
+// STALE_SOCKET_CODES in verify-live.mjs): the exact phrases observed in the
+// field. The @google/generative-ai SDK embeds the API response body in its
+// error message, so the deployed route surfaces
+// "[429 Too Many Requests] Your prepayment credits are depleted…" verbatim.
+// ============================================================================
+
+// The exact depletion phrases observed in the Gemini API 429 response body
+// (and the SDK error that embeds it). DELIBERATELY depletion specific: the
+// generic quota status RESOURCE_EXHAUSTED is NOT here, because an unrelated
+// quota failure (free tier, rate limit) must never trip the top-up-credits
+// report. Each entry is load-bearing: deleting one flips its case back to
+// FAIL, which the mutation test pins.
+export const GEMINI_CREDITS_SIGNATURES = [
+  'credits are depleted',
+  'prepayment credits',
+  'Your prepayment credits',
+];
+
+export const GEMINI_CREDITS_RE = new RegExp(
+  GEMINI_CREDITS_SIGNATURES.map((s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|'),
+  'i',
+);
+
+// Failure prefixes that the credits block explains. The [3b] root is
+// `create_recipe →`; the rest wait on a generated recipe (starter UI,
+// constraints view, voice driver) or the [4] agent model turn.
+export const GEMINI_CASCADE_PREFIXES = [
+  'create_recipe →',
+  'UI starter driver',
+  'no result after',
+  'constraints view:',
+  'live voice driver',
+  'voice driver:',
+  'model turn →',
+];
+
+/**
+ * Classify a verify:live failure set into a verdict.
+ *
+ * @param {{ failures: string[] }} opts — the verify:live failure messages.
+ * @returns {{ kind: 'pass' | 'external' | 'fail' }}
+ */
+export function classifyVerifyVerdict({ failures }) {
+  if (failures.length === 0) return { kind: 'pass' };
+  const creditsRoot = failures.some(
+    (m) => m.startsWith('create_recipe →') && GEMINI_CREDITS_RE.test(m),
+  );
+  const allCascades = failures.every((m) =>
+    GEMINI_CASCADE_PREFIXES.some((p) => m.startsWith(p)),
+  );
+  if (creditsRoot && allCascades) return { kind: 'external' };
+  return { kind: 'fail' };
+}
