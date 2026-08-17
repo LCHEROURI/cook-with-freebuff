@@ -257,13 +257,14 @@ describe('scripts/AGENTS.md · the per-driver cleanup split', () => {
     }
   });
 
-  it('verify-live-local.mjs registers SIGINT/SIGTERM handlers that kill the dev group', () => {
-    // An interrupted local run (Ctrl+C, CI timeout) must not orphan the
-    // detached dev group: each handler kills the group and exits, mirroring
-    // the normal teardown. This is the narrower process-group guarantee, NOT
-    // the exitWithCleanup helper the full-guarantee drivers own.
+  it('verify-live-local.mjs registers SIGINT/SIGTERM/SIGHUP handlers that kill the dev group', () => {
+    // An interrupted local run (Ctrl+C, CI timeout, terminal close) must not
+    // orphan the detached dev group: each handler kills the group and exits,
+    // mirroring the normal teardown. This is the narrower process-group
+    // guarantee, NOT the exitWithCleanup helper the full-guarantee drivers own.
     expect(LOCAL).toContain("process.on('SIGINT'");
     expect(LOCAL).toContain("process.on('SIGTERM'");
+    expect(LOCAL).toContain("process.on('SIGHUP'");
     expect(LOCAL).not.toContain('exitWithCleanup');
     expect(LOCAL).toContain('process.kill(');
     expect(LOCAL).toContain("'SIGTERM'");

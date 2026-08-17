@@ -82,6 +82,15 @@ process.on('SIGTERM', async () => {
   await teardownDevGroup();
   process.exit(143);
 });
+// SIGHUP fires when the controlling terminal or remote session closes.
+// Without a handler, Node exits with its default behavior while the detached
+// next dev process group survives and keeps the port occupied (Codex P1, PR
+// #122 review). Route it through the same teardown path as SIGINT/SIGTERM.
+process.on('SIGHUP', async () => {
+  console.log('\n  - received SIGHUP; tearing down the dev server group');
+  await teardownDevGroup();
+  process.exit(129);
+});
 
 // ── 2. Wait for the server to answer HTTP ───────────────────────────────────
 async function waitForServer(timeoutMs = 180_000) {

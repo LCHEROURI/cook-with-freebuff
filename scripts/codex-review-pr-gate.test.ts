@@ -199,7 +199,7 @@ describe('scripts/codex-review-pr-gate.mjs', () => {
     expect(GATE).toContain('actions/runs?head_sha=');
     expect(GATE).toContain("r.conclusion === 'cancelled'");
     expect(GATE).toContain('/rerun');
-    expect(GATE).toContain("process.env.GITHUB_EVENT_NAME !== 'pull_request'");
+    expect(GATE).toContain('healedEvents');
     expect(GATE).toContain('process.env.GITHUB_RUN_ATTEMPT');
   });
 
@@ -526,10 +526,22 @@ fs.appendFileSync(${JSON.stringify(gitLog)}, process.argv.join(' ') + '<<<GIT>>>
       }).reruns.length,
     ).toBe(0);
 
-    // A review-event run never self-heals (only the canonical pull_request run).
+    // A review-comment resolution run DOES self-heal (Codex P1, PR #122 review).
+    const reviewCommentEnv = { GH_TOKEN: 'stub-token', GITHUB_ACTIONS: 'true', GITHUB_EVENT_NAME: 'pull_request_review_comment' };
     expect(
       run([], {
-        extraEnv: { GH_TOKEN: 'stub-token', GITHUB_ACTIONS: 'true', GITHUB_EVENT_NAME: 'pull_request_review' },
+        extraEnv: reviewCommentEnv,
+        gateRuns: [
+          { id: 503, name: 'Codex review gate', conclusion: 'cancelled', created_at: '2026-08-16T10:00:03Z' },
+          { id: 502, name: 'Codex review gate', conclusion: 'success', created_at: '2026-08-16T10:00:01Z' },
+        ],
+      }).reruns.length,
+    ).toBe(1);
+
+    // An unrelated event (workflow_dispatch) never self-heals.
+    expect(
+      run([], {
+        extraEnv: { GH_TOKEN: 'stub-token', GITHUB_ACTIONS: 'true', GITHUB_EVENT_NAME: 'workflow_dispatch' },
         gateRuns: [{ id: 503, name: 'Codex review gate', conclusion: 'cancelled', created_at: '2026-08-16T10:00:03Z' }],
       }).reruns.length,
     ).toBe(0);

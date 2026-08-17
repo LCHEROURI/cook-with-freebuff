@@ -430,7 +430,12 @@ function resolveAlertIfPosted(head) {
  */
 function selfHealCancelledRun() {
   if (!inActions) return;
-  if (process.env.GITHUB_EVENT_NAME !== 'pull_request') return;
+  // Permit green review-comment/review runs to refresh stale merge state as
+  // well as canonical pull_request runs: when a finding is resolved by replying
+  // to its thread, the resulting green run is triggered by
+  // pull_request_review_comment, not pull_request (Codex P1, PR #122 review).
+  const healedEvents = new Set(['pull_request', 'pull_request_review', 'pull_request_review_comment']);
+  if (!healedEvents.has(process.env.GITHUB_EVENT_NAME ?? '')) return;
   if ((process.env.GITHUB_RUN_ATTEMPT ?? '1') !== '1') return;
 
   let runs;
