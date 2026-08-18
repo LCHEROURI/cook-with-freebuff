@@ -34,17 +34,12 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Typecheck
-        run: npm run typecheck
-
-      - name: Lint
-        run: npm run lint
-
-      - name: Test
-        run: npm test
-
-      - name: Production build
-        run: npm run build
+      # The identical command an engineer runs locally: typecheck → lint →
+      # test → build in one invocation (npm run check). Local and CI run the
+      # SAME gate, so a green local check means a green validate job — no
+      # drift between what works on a laptop and what blocks a merge.
+      - name: Local green gate (typecheck · lint · test · build)
+        run: npm run check
 
       # Push-time stale-head guard: verifies the pushed HEAD is not a rollback
       # of what the App Hosting host is currently serving, BEFORE the deploy

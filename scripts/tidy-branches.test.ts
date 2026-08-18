@@ -96,4 +96,45 @@ describe('scripts/tidy-branches.mjs · safe branch tidy', () => {
     expect(TIDY).toContain("args.includes('--dry-run')");
     expect(TIDY).toContain('would delete');
   });
+
+  it('report mode is READ-ONLY and writes the findings to the given path', () => {
+    // The weekly workflow runs --report so it can open a PR instead of mutating
+    // the repo. Report mode must never prune or delete anything, and must end
+    // with the FINDINGS line the workflow branches on.
+    expect(TIDY).toContain("args.indexOf('--report')");
+    expect(TIDY).toContain('REPORT_MODE = REPORT_PATH !== null');
+    expect(TIDY).toContain('writeFileSync(REPORT_PATH, report)');
+    expect(TIDY).toContain('FINDINGS: ${findings}');
+    expect(TIDY).toContain('process.exit(0)');
+    // In report mode the prune pass and both delete passes report 'would'
+    // instead of acting — no mutation path can run.
+    expect(TIDY).toContain('if (REPORT_MODE || DRY_RUN)');
+  });
+
+  it('scans REMOTE branches against merged PR head OIDs (the origin accumulation)', () => {
+    // delete_branch_on_merge is OFF in this repo, so merged PR head branches
+    // stay on origin — the accumulation a weekly schedule must surface. The
+    // remote tip must equal the merged PR headRefOid (same proof as pass 3).
+    expect(TIDY).toContain("['ls-remote', '--heads', 'origin']");
+    expect(TIDY).toContain('remoteBranches()');
+    expect(TIDY).toContain('remotes.get(name) === prHeads.get(name).headRefOid');
+    expect(TIDY).toContain('git push origin --delete ${name}');
+  });
+
+  it('fails loudly when --report is given WITHOUT a filename (never falls into the mutating passes)', () => {
+    // `--report` with no value must not silently become a normal mutating run
+    // (prune + delete) — that would delete branches when the operator asked
+    // for a read-only report (Codex P1, PR #141 review).
+    expect(TIDY).toContain('REPORT_FLAG_PRESENT && REPORT_PATH === null');
+    expect(TIDY).toContain('--report requires a filename');
+    expect(TIDY).toContain('process.exit(1)');
+  });
+
+  it('counts ONLY the [would prune] lines as stale refs (not the prune metadata)', () => {
+    // `git remote prune --dry-run origin` also prints `Pruning origin` and
+    // `URL: ...` metadata; counting the whole output would inflate FINDINGS
+    // (Codex P2, PR #141 review).
+    expect(TIDY).toContain("filter((l) => l.includes('[would prune]'))");
+    expect(TIDY).not.toContain('staleRefs = dry ? dry.split');
+  });
 });

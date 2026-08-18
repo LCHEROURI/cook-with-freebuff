@@ -31,6 +31,9 @@ npm run typecheck
 
 # Test
 npm test
+
+# Local green gate (typecheck → lint → test → build, mirrors CI validate)
+npm run check
 ```
 
 ## Specs
