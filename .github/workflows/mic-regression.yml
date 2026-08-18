@@ -144,9 +144,6 @@ jobs:
           # Drill seam (workflow_dispatch input; empty on schedule runs → the
           # driver reads only `1` as armed, so scheduled runs never inject).
           PHASE_C_FORCE_STUCK: ${{ inputs.force_stuck_blob == 'true' && '1' || '' }}
-          # Flake-streak drill seam (workflow_dispatch input; armed on run 1
-          # only by the loop below, so one flake stays within budget).
-          PHASE_C_FORCE_FLAKE_STREAK: ${{ inputs.force_flake_streak == 'true' && '1' || '' }}
         run: |
           set -uo pipefail
           passes=0
@@ -165,11 +162,13 @@ jobs:
             # then grep-empty and be misclassified as a flake — proven by the
             # force-stuck drill, which reddened via the flake path).
             mkdir -p "${RUNNER_TEMP}/phase-c/run-$i"
-            # Flake-streak drill: arm the seam on run 1 ONLY so the injected
-            # flake stays within budget (the week stays green → the escalate
-            # step runs). Runs 2–6 pass normally.
+            # Flake-streak drill: arm the seam on run 1 ONLY via the CLI flag.
+            # The input is checked directly — a step-wide env would arm the
+            # driver's process.env.PHASE_C_FORCE_FLAKE_STREAK check on EVERY
+            # run, and six flakes exceed the budget (proven by the first
+            # force_flake_streak drill, which reddened 0/6). Runs 2–6 pass.
             flake_flag=""
-            if [ "$i" -eq 1 ] && [ "${PHASE_C_FORCE_FLAKE_STREAK:-0}" = "1" ]; then
+            if [ "$i" -eq 1 ] && [ "${{ inputs.force_flake_streak }}" = "true" ]; then
               flake_flag="--force-flake-streak"
             fi
             if node scripts/drive-live-voice.mjs --phase-c-only --probe-prefix mic-regression- --out "${RUNNER_TEMP}/phase-c/run-$i" $flake_flag 2>&1 | tee "$log"; then

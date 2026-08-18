@@ -545,8 +545,13 @@ describe('.github/workflows/mic-regression.yml · weekly two-burst pass-rate mon
     // classification → escalate step → escalation-issue path fires in ONE
     // dispatch. Defaults to false so the scheduled monitor never injects.
     expect(MIC_REGRESSION).toContain('force_flake_streak:');
-    expect(MIC_REGRESSION).toContain("PHASE_C_FORCE_FLAKE_STREAK: ${{ inputs.force_flake_streak == 'true' && '1' || '' }}");
+    // The seam must be armed on run 1 ONLY via the CLI flag. A step-wide
+    // PHASE_C_FORCE_FLAKE_STREAK env would arm the driver's process.env check
+    // on EVERY run and redden the week with 6 flakes (caught by the first
+    // force_flake_streak drill) — assert that env arming is absent.
+    expect(MIC_REGRESSION).not.toContain('PHASE_C_FORCE_FLAKE_STREAK:');
     expect(MIC_REGRESSION).toContain('flake_flag="--force-flake-streak"');
+    expect(MIC_REGRESSION).toContain('[ "$i" -eq 1 ] && [ "${{ inputs.force_flake_streak }}" = "true" ]');
     expect(MIC_REGRESSION).toContain('--drill-streak');
     expect(MIC_REGRESSION).toContain('inputs.force_flake_streak == \'true\'');
   });
