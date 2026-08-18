@@ -47,8 +47,10 @@ describe('scripts/tidy-branches.mjs · safe branch tidy', () => {
   });
 
   it('never deletes the base or the currently checked-out branch (in every pass)', () => {
-    // Both the -d pass and the squash pass must skip base and current.
-    expect(TIDY.match(/name !== base && name !== current/g)).toHaveLength(2);
+    // The -d pass skips via `name !== base && name !== current`; the squash
+    // pass bails via `name === base || name === current`. Both must exist.
+    expect(TIDY).toContain('name !== base && name !== current');
+    expect(TIDY).toContain('name !== base && name !== current && prHeads.has(name)');
   });
 
   it('verifies a branch is PROVABLY GONE before reporting it deleted', () => {
@@ -66,9 +68,20 @@ describe('scripts/tidy-branches.mjs · safe branch tidy', () => {
     // The squash-merge blind spot: git ancestry cannot see a squash merge, so
     // the branch never appears in --merged. The script asks GitHub which PR
     // head branches were merged and force-deletes only those.
-    expect(TIDY).toContain("run('gh', ['pr', 'list', '--state', 'merged', '--json', 'headRefName,number', '--limit', '1000'])");
+    expect(TIDY).toContain("run('gh', ['pr', 'list', '--state', 'merged', '--json', 'headRefName,headRefOid,number', '--limit', '1000'])");
     expect(TIDY).toContain('prHeads.has(name)');
-    expect(TIDY).toContain('squash-merged — PR #${pr} merged on GitHub');
+    expect(TIDY).toContain('squash-merged — PR #${pr} merged on GitHub, tip matches');
+  });
+
+  it('requires the local tip to EQUAL the merged PR headRefOid — a name match alone never force-deletes', () => {
+    // A reused branch name (or a fork's merged PR with the same name) must not
+    // delete NEW unmerged commits on that name: the merged PR's headRefOid is
+    // compared against the local tip and only an exact match authorizes -D
+    // (Codex P1, PR #140 review).
+    expect(TIDY).toContain('localTip(name) === prHeads.get(name).headRefOid');
+    expect(TIDY).toContain("['rev-parse', 'refs/heads/' + name]");
+    // The mismatched-tip case is visible, never a silent skip.
+    expect(TIDY).toContain('tip differs — possible reused/fork name with new work; left alone');
   });
 
   it('keeps squash candidates when gh is unavailable — never a blind force delete', () => {

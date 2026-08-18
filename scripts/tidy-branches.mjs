@@ -56,14 +56,26 @@ const localBranches = () =>
     .map((line) => line.trim())
     .filter(Boolean);
 
-// One gh call: head branch → merged PR number for every merged PR. Returns a
-// Map, or null when gh is unavailable (missing binary, unauthenticated, or
-// the call failed) — the caller then KEEPS squash candidates instead of
-// force-deleting blind.
+// One gh call: head branch → { number, headRefOid } for every merged PR.
+// headRefOid is the merged PR's head commit, which must EQUAL the local
+// branch's tip before a force delete — a reused branch name (or a fork's
+// merged PR with the same name) can otherwise match by name alone and delete
+// NEW unmerged commits (Codex P1, PR #140 review). Returns a Map, or null
+// when gh is unavailable (missing binary, unauthenticated, or the call
+// failed) — the caller then KEEPS squash candidates instead of force-deleting
+// blind.
 const mergedPrHeads = () => {
   try {
-    const out = run('gh', ['pr', 'list', '--state', 'merged', '--json', 'headRefName,number', '--limit', '1000']);
-    return new Map(JSON.parse(out).map((pr) => [pr.headRefName, pr.number]));
+    const out = run('gh', ['pr', 'list', '--state', 'merged', '--json', 'headRefName,headRefOid,number', '--limit', '1000']);
+    return new Map(JSON.parse(out).map((pr) => [pr.headRefName, { number: pr.number, headRefOid: pr.headRefOid }]));
+  } catch {
+    return null;
+  }
+};
+
+const localTip = (name) => {
+  try {
+    return run('git', ['rev-parse', 'refs/heads/' + name]);
   } catch {
     return null;
   }
@@ -139,22 +151,36 @@ const prHeads = mergedPrHeads();
 if (prHeads === null) {
   skip('gh unavailable (missing, unauthenticated, or failed) — squash-merged branches kept; verify manually with gh pr view before any -D');
 } else {
-  const squashCandidates = localBranches().filter(
-    (name) => prHeads.has(name) && name !== base && name !== current,
-  );
-  if (squashCandidates.length === 0) {
+  // A name match alone is NOT proof: the merged PR's headRefOid must equal the
+  // local branch's tip, or a reused/fork branch name would delete new work
+  // (Codex P1, PR #140 review). Three outcomes per local branch:
+  //   • tip == merged PR head  → force delete (the ONLY -D in the script)
+  //   • name matches, tip differs → KEPT, visible note (possible reused name
+  //     or fork PR — new work must never be deleted on a name match)
+  //   • no merged PR at all    → not a candidate, skipped silently
+  const named = localBranches().filter((name) => name !== base && name !== current && prHeads.has(name));
+  const tipMatches = named.filter((name) => localTip(name) === prHeads.get(name).headRefOid);
+  const tipDiffers = named.filter((name) => localTip(name) !== prHeads.get(name).headRefOid);
+  if (named.length === 0) {
     skip('none');
   } else {
-    for (const name of squashCandidates) {
-      const pr = prHeads.get(name);
+    for (const name of tipDiffers) {
+      // Visible, not silent: the name matches a merged PR but the tip does not
+      // — this is either a reused branch name with new work (must stay) or a
+      // fork's PR that merely shares the name. Never deleted on name alone.
+      skip(`kept ${name} (matches merged PR #${prHeads.get(name).number} but the tip differs — possible reused/fork name with new work; left alone)`);
+    }
+    for (const name of tipMatches) {
+      const pr = prHeads.get(name).number;
       if (DRY_RUN) {
-        step(`would delete ${name} (squash-merged — PR #${pr} merged on GitHub)`);
+        step(`would delete ${name} (squash-merged — PR #${pr} merged on GitHub, tip matches)`);
         continue;
       }
       let refused = false;
       try {
         // The ONLY force delete in the script, and only after GitHub confirmed
-        // the branch's PR is merged — the platform check replaces the blind -D.
+        // the branch's PR is merged AND its tip equals the merged PR's head —
+        // the platform check replaces the blind -D.
         run('git', ['branch', '-D', name]);
       } catch {
         refused = true;
@@ -162,7 +188,7 @@ if (prHeads === null) {
       if (refused || branchExists(name)) {
         skip(`kept ${name} (PR #${pr} merged but the branch would not delete — investigate)`);
       } else {
-        step(`deleted ${name} (squash-merged — PR #${pr} merged on GitHub)`);
+        step(`deleted ${name} (squash-merged — PR #${pr} merged on GitHub, tip matches)`);
       }
     }
   }
