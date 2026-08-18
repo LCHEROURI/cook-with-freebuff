@@ -96,4 +96,28 @@ describe('scripts/tidy-branches.mjs · safe branch tidy', () => {
     expect(TIDY).toContain("args.includes('--dry-run')");
     expect(TIDY).toContain('would delete');
   });
+
+  it('report mode is READ-ONLY and writes the findings to the given path', () => {
+    // The weekly workflow runs --report so it can open a PR instead of mutating
+    // the repo. Report mode must never prune or delete anything, and must end
+    // with the FINDINGS line the workflow branches on.
+    expect(TIDY).toContain("args.indexOf('--report')");
+    expect(TIDY).toContain('REPORT_MODE = REPORT_PATH !== null');
+    expect(TIDY).toContain('writeFileSync(REPORT_PATH, report)');
+    expect(TIDY).toContain('FINDINGS: ${findings}');
+    expect(TIDY).toContain('process.exit(0)');
+    // In report mode the prune pass and both delete passes report 'would'
+    // instead of acting — no mutation path can run.
+    expect(TIDY).toContain('if (REPORT_MODE || DRY_RUN)');
+  });
+
+  it('scans REMOTE branches against merged PR head OIDs (the origin accumulation)', () => {
+    // delete_branch_on_merge is OFF in this repo, so merged PR head branches
+    // stay on origin — the accumulation a weekly schedule must surface. The
+    // remote tip must equal the merged PR headRefOid (same proof as pass 3).
+    expect(TIDY).toContain("['ls-remote', '--heads', 'origin']");
+    expect(TIDY).toContain('remoteBranches()');
+    expect(TIDY).toContain('remotes.get(name) === prHeads.get(name).headRefOid');
+    expect(TIDY).toContain('git push origin --delete ${name}');
+  });
 });

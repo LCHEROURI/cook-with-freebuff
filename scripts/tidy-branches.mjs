@@ -4,8 +4,10 @@
 // merged local branches in one command, so the tidy state is one invocation
 // away.
 //
-//   node scripts/tidy-branches.mjs            # prune + delete merged branches
-//   node scripts/tidy-branches.mjs --dry-run  # report what would change, change nothing
+//   node scripts/tidy-branches.mjs                  # prune + delete merged branches
+//   node scripts/tidy-branches.mjs --dry-run        # report what would change, change nothing
+//   node scripts/tidy-branches.mjs --report <file>  # read-only scan: write a findings report,
+//                                                   # touch NOTHING (for the weekly workflow)
 //
 // Three passes, all safe by construction:
 //   1. `git remote prune origin` drops local tracking refs for branches that
@@ -23,6 +25,17 @@
 //      force delete. If gh is unavailable or the branch has no merged PR, the
 //      branch is kept with a visible note, never force-deleted.
 //
+// --report mode: the weekly maintenance workflow (branch-tidy-weekly.yml)
+// runs this read-only so it can OPEN A PR instead of mutating the repo. It
+// runs the same detections (dry-run prune, --merged list, merged-PR squash
+// check) PLUS a remote scan: because delete_branch_on_merge is OFF in this
+// repo, merged PR head branches accumulate ON ORIGIN, and a fresh CI checkout
+// has no local branches to tidy — so the remote list is the accumulation that
+// matters on a schedule. The report lists every remote branch whose merged
+// PR's headRefOid equals the remote tip (safe to delete via `git push origin
+// --delete <name>`) with its PR number, prints `FINDINGS: N`, and touches
+// nothing. Exit 0 either way; the workflow branches on the FINDINGS line.
+//
 // The current branch and the base itself are always skipped. Every git and gh
 // call goes through execFileSync with an ARGUMENT ARRAY — never a shell string
 // — so a branch name containing shell metacharacters (git allows names like
@@ -33,9 +46,13 @@
 // ============================================================================
 
 import { execFileSync } from 'node:child_process';
+import { writeFileSync } from 'node:fs';
 
 const args = process.argv.slice(2);
 const DRY_RUN = args.includes('--dry-run');
+const reportIdx = args.indexOf('--report');
+const REPORT_PATH = reportIdx >= 0 && args[reportIdx + 1] ? args[reportIdx + 1] : null;
+const REPORT_MODE = REPORT_PATH !== null;
 
 const run = (cmd, cmdArgs) => execFileSync(cmd, cmdArgs, { encoding: 'utf8' }).trim();
 const step = (m) => console.log(`  ${DRY_RUN ? '·' : '✓'} ${m}`);
@@ -81,6 +98,22 @@ const localTip = (name) => {
   }
 };
 
+// Remote branch name → tip sha, from origin (no fetch needed). The base
+// (main) is dropped: a merged-PR list can never justify deleting main.
+const remoteBranches = () => {
+  const out = run('git', ['ls-remote', '--heads', 'origin']).trim();
+  if (!out) return new Map();
+  return new Map(
+    out
+      .split('\n')
+      .map((line) => {
+        const m = line.match(/^([0-9a-f]{40})\trefs\/heads\/(.+)$/);
+        return m ? [m[2], m[1]] : null;
+      })
+      .filter(Boolean),
+  );
+};
+
 // The base is main when it exists; otherwise the current branch (a fresh
 // clone may have only its checked-out branch until the first fetch).
 const current = run('git', ['rev-parse', '--abbrev-ref', 'HEAD']);
@@ -93,12 +126,14 @@ try {
 
 // ── Pass 1: prune stale remote-tracking refs ────────────────────────────────
 console.log(`\nPruning stale remote-tracking refs (origin):`);
-if (DRY_RUN) {
+let staleRefs = [];
+if (REPORT_MODE || DRY_RUN) {
   const dry = run('git', ['remote', 'prune', '--dry-run', 'origin']).trim();
-  if (dry) {
-    for (const line of dry.split('\n')) step(`would ${line.trim()}`);
-  } else {
+  staleRefs = dry ? dry.split('\n').map((l) => l.trim()) : [];
+  if (staleRefs.length === 0) {
     skip('nothing stale');
+  } else {
+    for (const line of staleRefs) step(`would ${line}`);
   }
 } else {
   const out = run('git', ['remote', 'prune', 'origin']).trim();
@@ -121,7 +156,7 @@ if (merged.length === 0) {
   skip('none');
 } else {
   for (const name of merged) {
-    if (DRY_RUN) {
+    if (REPORT_MODE || DRY_RUN) {
       step(`would delete ${name}`);
       continue;
     }
@@ -148,6 +183,8 @@ if (merged.length === 0) {
 // ── Pass 3: squash-merged branches, confirmed against GitHub ────────────────
 console.log(`\nLocal branches with a MERGED PR on GitHub (squash-merge blind spot):`);
 const prHeads = mergedPrHeads();
+let localSquash = [];
+let localTipDiffers = [];
 if (prHeads === null) {
   skip('gh unavailable (missing, unauthenticated, or failed) — squash-merged branches kept; verify manually with gh pr view before any -D');
 } else {
@@ -159,20 +196,20 @@ if (prHeads === null) {
   //     or fork PR — new work must never be deleted on a name match)
   //   • no merged PR at all    → not a candidate, skipped silently
   const named = localBranches().filter((name) => name !== base && name !== current && prHeads.has(name));
-  const tipMatches = named.filter((name) => localTip(name) === prHeads.get(name).headRefOid);
-  const tipDiffers = named.filter((name) => localTip(name) !== prHeads.get(name).headRefOid);
+  localSquash = named.filter((name) => localTip(name) === prHeads.get(name).headRefOid);
+  localTipDiffers = named.filter((name) => localTip(name) !== prHeads.get(name).headRefOid);
   if (named.length === 0) {
     skip('none');
   } else {
-    for (const name of tipDiffers) {
+    for (const name of localTipDiffers) {
       // Visible, not silent: the name matches a merged PR but the tip does not
       // — this is either a reused branch name with new work (must stay) or a
       // fork's PR that merely shares the name. Never deleted on name alone.
       skip(`kept ${name} (matches merged PR #${prHeads.get(name).number} but the tip differs — possible reused/fork name with new work; left alone)`);
     }
-    for (const name of tipMatches) {
+    for (const name of localSquash) {
       const pr = prHeads.get(name).number;
-      if (DRY_RUN) {
+      if (REPORT_MODE || DRY_RUN) {
         step(`would delete ${name} (squash-merged — PR #${pr} merged on GitHub, tip matches)`);
         continue;
       }
@@ -192,6 +229,71 @@ if (prHeads === null) {
       }
     }
   }
+}
+
+// ── Pass 4 (report mode only): remote branches with a merged PR ─────────────
+// delete_branch_on_merge is OFF in this repo, so merged PR head branches stay
+// on origin — the accumulation a weekly schedule must surface. Same proof as
+// pass 3: the remote tip must EQUAL the merged PR's headRefOid, so a reused
+// name can never be listed as cleanable.
+let remoteSquash = [];
+let remoteTipDiffers = [];
+if (REPORT_MODE) {
+  console.log(`\nRemote branches (origin) with a MERGED PR on GitHub:`);
+  if (prHeads === null) {
+    skip('gh unavailable — cannot confirm remote squash merges');
+  } else {
+    const remotes = remoteBranches();
+    const named = [...remotes.keys()].filter((name) => name !== base && prHeads.has(name));
+    remoteSquash = named.filter((name) => remotes.get(name) === prHeads.get(name).headRefOid);
+    remoteTipDiffers = named.filter((name) => remotes.get(name) !== prHeads.get(name).headRefOid);
+    if (named.length === 0) {
+      skip('none');
+    } else {
+      for (const name of remoteTipDiffers) {
+        skip(`kept ${name} (matches merged PR #${prHeads.get(name).number} but the remote tip differs — possible reused/fork name; left alone)`);
+      }
+      for (const name of remoteSquash) {
+        step(`cleanable ${name} (PR #${prHeads.get(name).number} merged on GitHub, remote tip matches — safe to git push origin --delete ${name})`);
+      }
+    }
+  }
+}
+
+// ── Report ──────────────────────────────────────────────────────────────────
+if (REPORT_MODE) {
+  const findings =
+    staleRefs.length + merged.length + localSquash.length + remoteSquash.length;
+  const lines = [
+    '# Weekly branch tidy report',
+    '',
+    `Generated ${new Date().toISOString()} by scripts/tidy-branches.mjs (report mode). Read only: nothing was changed.`,
+    `Base: \`${base}\`. A branch is listed as cleanable only when GitHub confirms its PR merged AND the tip matches the merged PR head.`,
+    '',
+    `## Stale remote-tracking refs (${staleRefs.length})`,
+    ...(staleRefs.length ? staleRefs.map((l) => `- \`${l}\``) : ['- none']),
+    '',
+    `## Local branches fully merged into ${base} (${merged.length})`,
+    ...(merged.length ? merged.map((n) => `- \`${n}\``) : ['- none']),
+    '',
+    `## Local squash-merged branches (tip matches merged PR head) (${localSquash.length})`,
+    ...(localSquash.length ? localSquash.map((n) => `- \`${n}\` — PR #${prHeads.get(n).number}`) : ['- none']),
+    '',
+    `## Remote branches with a merged PR on origin (tip matches merged PR head) (${remoteSquash.length})`,
+    ...(remoteSquash.length ? remoteSquash.map((n) => `- \`${n}\` — PR #${prHeads.get(n).number} (delete with \`git push origin --delete ${n}\`)`) : ['- none']),
+    '',
+    `## Kept (name matches a merged PR but the tip differs — reused/fork risk) (${localTipDiffers.length + remoteTipDiffers.length})`,
+    ...(localTipDiffers.length ? localTipDiffers.map((n) => `- \`${n}\` — local, PR #${prHeads.get(n).number}`) : []),
+    ...(remoteTipDiffers.length ? remoteTipDiffers.map((n) => `- \`${n}\` — remote, PR #${prHeads.get(n).number}`) : []),
+    '',
+    `FINDINGS: ${findings}`,
+    '',
+  ];
+  const report = lines.join('\n');
+  writeFileSync(REPORT_PATH, report);
+  console.log(`\n${report}`);
+  console.log(`\nReport written to ${REPORT_PATH}`);
+  process.exit(0);
 }
 
 console.log(`\nRESULT: ${DRY_RUN ? 'DRY RUN (nothing changed)' : 'PASS (branches tidy)'}`);

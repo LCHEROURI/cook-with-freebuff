@@ -27,6 +27,7 @@ import { describe, expect, it } from 'vitest';
 const CI = readFileSync('.github/workflows/ci.yml', 'utf8');
 const MIC_REGRESSION = readFileSync('.github/workflows/mic-regression.yml', 'utf8');
 const CODEX_MONITOR = readFileSync('.github/workflows/codex-review-monitor.yml', 'utf8');
+const BRANCH_TIDY = readFileSync('.github/workflows/branch-tidy-weekly.yml', 'utf8');
 
 // The verify step's gating `if:` — the four secrets must ALL be present for
 // the deep gates to run (a missing one skips-not-fails, but only on forks;
@@ -46,13 +47,18 @@ describe('.github/workflows/ci.yml · push-time validate contract', () => {
   const smokeStart = CI.indexOf('\n  emulator-compare:');
   const validateBlock = CI.slice(CI.indexOf('\n  validate:'), smokeStart === -1 ? undefined : smokeStart);
 
-  it('keeps the four push-time checks (typecheck · lint · test · build)', () => {
+  it('runs the ONE canonical local gate (npm run check) so CI and local validate identically', () => {
     expect(validateBlock.length).toBeGreaterThan(0);
     expect(validateBlock).toContain('name: Typecheck · Lint · Test · Build');
-    expect(validateBlock).toContain('run: npm run typecheck');
-    expect(validateBlock).toContain('run: npm run lint');
-    expect(validateBlock).toContain('run: npm test');
-    expect(validateBlock).toContain('run: npm run build');
+    // The whole validate surface is one command — the same `npm run check` an
+    // engineer runs locally (typecheck → lint → test → build), so a green
+    // local check means a green validate job and vice versa. The four checks
+    // must never drift back into separate steps with different flags.
+    expect(validateBlock).toContain('run: npm run check');
+    expect(validateBlock).not.toContain('run: npm run typecheck');
+    expect(validateBlock).not.toContain('run: npm run lint');
+    expect(validateBlock).not.toContain('run: npm test');
+    expect(validateBlock).not.toContain('run: npm run build');
     expect(validateBlock).toContain('timeout-minutes: 15');
   });
 
@@ -446,6 +452,43 @@ describe('.github/workflows/mic-regression.yml · weekly two-burst pass-rate mon
     expect(MIC_REGRESSION).toContain('--body "The weekly phase-C two-burst check went red');
     expect(MIC_REGRESSION).toContain('$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/${{ github.run_id }}');
     expect(MIC_REGRESSION).toContain('skipping (dedupe)');
+  });
+});
+
+describe('.github/workflows/branch-tidy-weekly.yml · weekly branch tidy', () => {
+  it('runs weekly on a schedule (plus manual dispatch), same slot as the mic monitor', () => {
+    expect(BRANCH_TIDY).toContain('schedule:');
+    expect(BRANCH_TIDY).toContain("- cron: '0 6 * * 1'");
+    expect(BRANCH_TIDY).toContain('workflow_dispatch:');
+  });
+
+  it('runs tidy-branches in READ-ONLY report mode and branches the PR on the FINDINGS line', () => {
+    expect(BRANCH_TIDY).toContain('node scripts/tidy-branches.mjs --report');
+    expect(BRANCH_TIDY).toContain('FINDINGS: ');
+    expect(BRANCH_TIDY).toContain("findings=${findings:-0}");
+    // The workflow must NEVER delete anything — it opens a PR, cleanup stays
+    // local. No branch/prune mutation command may appear.
+    expect(BRANCH_TIDY).not.toContain('branch -D');
+    expect(BRANCH_TIDY).not.toContain('remote prune origin');
+    expect(BRANCH_TIDY).not.toContain('push origin --delete');
+  });
+
+  it('opens a dated report PR only when something accumulated, deduped against an open PR', () => {
+    expect(BRANCH_TIDY).toContain("steps.detect.outputs.findings != '0'");
+    expect(BRANCH_TIDY).toContain('gh pr create');
+    expect(BRANCH_TIDY).toContain('docs/reviews/');
+    expect(BRANCH_TIDY).toContain('--body-file "$report"');
+    expect(BRANCH_TIDY).toContain('weekly tidy PR already open on $branch — skipping (dedupe)');
+    expect(BRANCH_TIDY).toContain('gh pr list');
+  });
+
+  it('writes the report into docs/reviews/ and carries the minimal permission set', () => {
+    expect(BRANCH_TIDY).toContain('contents: write');
+    expect(BRANCH_TIDY).toContain('pull-requests: write');
+    expect(BRANCH_TIDY).toContain('GH_TOKEN: ${{ github.token }}');
+    // No Firebase/owner secrets — the scan is tokenless git + gh.
+    expect(BRANCH_TIDY).not.toContain('FIREBASE_SERVICE_ACCOUNT');
+    expect(BRANCH_TIDY).not.toContain('GOOGLE_AI_API_KEY');
   });
 });
 

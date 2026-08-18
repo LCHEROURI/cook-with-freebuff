@@ -1,0 +1,97 @@
+name: Branch tidy (weekly)
+
+# Weekly maintenance scan: detect stale remote-tracking refs, merged local
+# branches, and remote branches whose PR merged (the squash-merge blind spot —
+# delete_branch_on_merge is OFF in this repo, so merged PR head branches stay
+# on origin and a fresh CI checkout has no local branches to tidy, making the
+# remote scan the accumulation that matters on a schedule). Runs tidy-branches
+# in READ-ONLY report mode — nothing is ever deleted by this workflow — and
+# opens a PR carrying the dated report in docs/reviews/ when anything
+# accumulated, so the debt is visible and reviewable instead of silent.
+#
+# Event notes:
+#   - `schedule` runs on the default branch only (no fork PRs), but keep the
+#     repo's fork discipline: the PR step is gated on the canonical repo so a
+#     fork dispatch can never open PRs against upstream.
+#   - Tokenless: git ls-remote + gh pr list need no secret; the report and PR
+#     use only the runner's GITHUB_TOKEN (contents: write to push the report
+#     branch, pull-requests: write to open the PR).
+#   - Dedupe: an already-open weekly tidy PR for the same date means the state
+#     is known, so consecutive red weeks don't spam.
+
+on:
+  schedule:
+    - cron: '0 6 * * 1' # Mondays 06:00 UTC — same slot as the mic monitor
+  workflow_dispatch:
+
+concurrency:
+  group: branch-tidy-weekly
+  cancel-in-progress: false
+
+jobs:
+  detect:
+    name: Detect branch accumulation and open a report PR
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    permissions:
+      contents: write
+      pull-requests: write
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v5
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      # Read-only: writes docs/reviews/<date>-branch-tidy.md (the report IS the
+      # PR's diff) and prints FINDINGS: N. Exit 0 either way — the findings
+      # output decides whether the PR step runs. GH_TOKEN is explicit because
+      # gh inside Actions is not inherited from the runner env; the script's
+      # pass-3/4 GitHub confirmation needs it.
+      - name: Detect accumulation (report mode)
+        id: detect
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          stamp="$(date -u +%Y-%m-%d)"
+          report="docs/reviews/${stamp}-branch-tidy.md"
+          node scripts/tidy-branches.mjs --report "$report"
+          findings="$(sed -n 's/^FINDINGS: //p' "$report" || true)"
+          echo "findings=${findings:-0}" >> "$GITHUB_OUTPUT"
+          echo "stamp=$stamp" >> "$GITHUB_OUTPUT"
+
+      # A green week does nothing (findings = 0 → this step is skipped, no PR).
+      # A week with accumulation commits the report and opens a PR titled with
+      # the count, so the state is reviewable in the normal landing surface.
+      # Never auto-merges: the report is the record, the cleanup itself stays a
+      # local `npm run tidy:branches` (this workflow is deliberately read-only).
+      - name: Open a PR when branches accumulated
+        if: ${{ github.repository == 'LCHEROURI/cook-with-freebuff' && steps.detect.outputs.findings != '0' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          stamp="${{ steps.detect.outputs.stamp }}"
+          report="docs/reviews/${stamp}-branch-tidy.md"
+          branch="chore/weekly-branch-tidy-${stamp}"
+          existing="$(gh pr list --repo "$GITHUB_REPOSITORY" --head "$branch" --state open --json number --jq 'length')"
+          if [ "$existing" -gt 0 ]; then
+            echo "weekly tidy PR already open on $branch — skipping (dedupe)"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -b "$branch"
+          git add "$report"
+          git commit -m "chore: weekly branch tidy report — $stamp"
+          git push -u origin "$branch"
+          gh pr create \
+            --title "chore: weekly branch tidy — ${{ steps.detect.outputs.findings }} item(s) ($stamp)" \
+            --body-file "$report"
