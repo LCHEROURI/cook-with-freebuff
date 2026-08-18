@@ -120,4 +120,21 @@ describe('scripts/tidy-branches.mjs · safe branch tidy', () => {
     expect(TIDY).toContain('remotes.get(name) === prHeads.get(name).headRefOid');
     expect(TIDY).toContain('git push origin --delete ${name}');
   });
+
+  it('fails loudly when --report is given WITHOUT a filename (never falls into the mutating passes)', () => {
+    // `--report` with no value must not silently become a normal mutating run
+    // (prune + delete) — that would delete branches when the operator asked
+    // for a read-only report (Codex P1, PR #141 review).
+    expect(TIDY).toContain('REPORT_FLAG_PRESENT && REPORT_PATH === null');
+    expect(TIDY).toContain('--report requires a filename');
+    expect(TIDY).toContain('process.exit(1)');
+  });
+
+  it('counts ONLY the [would prune] lines as stale refs (not the prune metadata)', () => {
+    // `git remote prune --dry-run origin` also prints `Pruning origin` and
+    // `URL: ...` metadata; counting the whole output would inflate FINDINGS
+    // (Codex P2, PR #141 review).
+    expect(TIDY).toContain("filter((l) => l.includes('[would prune]'))");
+    expect(TIDY).not.toContain('staleRefs = dry ? dry.split');
+  });
 });

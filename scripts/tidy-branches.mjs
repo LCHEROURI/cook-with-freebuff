@@ -51,7 +51,15 @@ import { writeFileSync } from 'node:fs';
 const args = process.argv.slice(2);
 const DRY_RUN = args.includes('--dry-run');
 const reportIdx = args.indexOf('--report');
-const REPORT_PATH = reportIdx >= 0 && args[reportIdx + 1] ? args[reportIdx + 1] : null;
+const REPORT_FLAG_PRESENT = reportIdx >= 0;
+const REPORT_PATH = REPORT_FLAG_PRESENT && args[reportIdx + 1] ? args[reportIdx + 1] : null;
+if (REPORT_FLAG_PRESENT && REPORT_PATH === null) {
+  // `--report` without a filename must NOT silently fall through into the
+  // mutating passes (prune + delete) — that would delete branches when the
+  // operator asked for a read-only report (Codex P1, PR #141 review).
+  console.error('✗ FAIL: --report requires a filename (e.g. --report docs/reviews/2026-08-18-branch-tidy.md)');
+  process.exit(1);
+}
 const REPORT_MODE = REPORT_PATH !== null;
 
 const run = (cmd, cmdArgs) => execFileSync(cmd, cmdArgs, { encoding: 'utf8' }).trim();
@@ -128,8 +136,16 @@ try {
 console.log(`\nPruning stale remote-tracking refs (origin):`);
 let staleRefs = [];
 if (REPORT_MODE || DRY_RUN) {
+  // `git remote prune --dry-run origin` also prints metadata lines (`Pruning
+  // origin`, `URL: ...`); ONLY the per-ref `[would prune]` lines are stale
+  // refs — counting the headers would inflate FINDINGS (Codex P2, PR #141).
   const dry = run('git', ['remote', 'prune', '--dry-run', 'origin']).trim();
-  staleRefs = dry ? dry.split('\n').map((l) => l.trim()) : [];
+  staleRefs = dry
+    ? dry
+        .split('\n')
+        .map((l) => l.trim())
+        .filter((l) => l.includes('[would prune]'))
+    : [];
   if (staleRefs.length === 0) {
     skip('nothing stale');
   } else {
@@ -271,7 +287,7 @@ if (REPORT_MODE) {
     `Base: \`${base}\`. A branch is listed as cleanable only when GitHub confirms its PR merged AND the tip matches the merged PR head.`,
     '',
     `## Stale remote-tracking refs (${staleRefs.length})`,
-    ...(staleRefs.length ? staleRefs.map((l) => `- \`${l}\``) : ['- none']),
+    ...(staleRefs.length ? staleRefs.map((l) => `- \`${l.replace(/^\* \[would prune\] /, '')}\``) : ['- none']),
     '',
     `## Local branches fully merged into ${base} (${merged.length})`,
     ...(merged.length ? merged.map((n) => `- \`${n}\``) : ['- none']),

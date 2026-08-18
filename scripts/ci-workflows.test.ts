@@ -473,20 +473,38 @@ describe('.github/workflows/branch-tidy-weekly.yml · weekly branch tidy', () =>
     expect(BRANCH_TIDY).not.toContain('push origin --delete');
   });
 
-  it('opens a dated report PR only when something accumulated, deduped against an open PR', () => {
+  it('opens a dated report PR only when something accumulated, deduped against an open PR AND a leftover remote branch', () => {
     expect(BRANCH_TIDY).toContain("steps.detect.outputs.findings != '0'");
     expect(BRANCH_TIDY).toContain('gh pr create');
     expect(BRANCH_TIDY).toContain('docs/reviews/');
     expect(BRANCH_TIDY).toContain('--body-file "$report"');
     expect(BRANCH_TIDY).toContain('weekly tidy PR already open on $branch — skipping (dedupe)');
     expect(BRANCH_TIDY).toContain('gh pr list');
+    // A merged/closed PR leaves its branch on origin — the dedupe must catch
+    // that too or a same-date re-dispatch collides with the stale remote
+    // branch (Codex P2, PR #141 review).
+    expect(BRANCH_TIDY).toContain('git ls-remote --heads origin "$branch"');
+    expect(BRANCH_TIDY).toContain('remote branch $branch already exists — skipping (dedupe)');
   });
 
-  it('writes the report into docs/reviews/ and carries the minimal permission set', () => {
-    expect(BRANCH_TIDY).toContain('contents: write');
-    expect(BRANCH_TIDY).toContain('pull-requests: write');
+  it('creates the PR with a PAT so its checks run, and fails loudly when it is missing', () => {
+    // A PR created with GITHUB_TOKEN does NOT trigger the pull_request
+    // workflows (GitHub suppresses runs for events created by that token), so
+    // the report PR would never run validate/gate and could not merge. The PR
+    // step must use the WEEKLY_TIDY_TOKEN PAT, with a loud guard on the
+    // canonical repo (Codex P1, PR #141 review).
+    expect(BRANCH_TIDY).toContain('WEEKLY_TIDY_TOKEN: ${{ secrets.WEEKLY_TIDY_TOKEN }}');
+    expect(BRANCH_TIDY).toContain('GH_TOKEN: ${{ secrets.WEEKLY_TIDY_TOKEN }}');
+    expect(BRANCH_TIDY).toContain('Fail loudly if WEEKLY_TIDY_TOKEN is missing (canonical repo)');
+    expect(BRANCH_TIDY).toContain('::error::WEEKLY_TIDY_TOKEN secret missing');
+    expect(BRANCH_TIDY).toContain('exit 1');
+  });
+
+  it('writes the report into docs/reviews/ and keeps the scan tokenless', () => {
+    expect(BRANCH_TIDY).toContain('docs/reviews/');
+    // The SCAN (detect step) stays tokenless git + gh with the runner token;
+    // only the PR creation needs the PAT. No Firebase/owner secrets anywhere.
     expect(BRANCH_TIDY).toContain('GH_TOKEN: ${{ github.token }}');
-    // No Firebase/owner secrets — the scan is tokenless git + gh.
     expect(BRANCH_TIDY).not.toContain('FIREBASE_SERVICE_ACCOUNT');
     expect(BRANCH_TIDY).not.toContain('GOOGLE_AI_API_KEY');
   });

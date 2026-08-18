@@ -13,11 +13,16 @@ name: Branch tidy (weekly)
 #   - `schedule` runs on the default branch only (no fork PRs), but keep the
 #     repo's fork discipline: the PR step is gated on the canonical repo so a
 #     fork dispatch can never open PRs against upstream.
-#   - Tokenless: git ls-remote + gh pr list need no secret; the report and PR
-#     use only the runner's GITHUB_TOKEN (contents: write to push the report
-#     branch, pull-requests: write to open the PR).
-#   - Dedupe: an already-open weekly tidy PR for the same date means the state
-#     is known, so consecutive red weeks don't spam.
+#   - The scan itself is tokenless: git ls-remote + gh pr list need no secret.
+#     The PR step uses a PAT (WEEKLY_TIDY_TOKEN, repo scope) instead of
+#     GITHUB_TOKEN, because a PR created with GITHUB_TOKEN does NOT trigger
+#     the pull_request workflows (GitHub suppresses runs for events created by
+#     that token) — the report PR would never run the required validate/gate
+#     checks and could not merge (Codex P1, PR #141 review).
+#   - Dedupe: an already-open weekly tidy PR for the same date, OR an existing
+#     remote report branch (a merged/closed PR leaves the branch on origin),
+#     means the state is known — both are skipped so consecutive red weeks
+#     don't spam (Codex P2, PR #141 review).
 
 on:
   schedule:
@@ -73,10 +78,24 @@ jobs:
       # the count, so the state is reviewable in the normal landing surface.
       # Never auto-merges: the report is the record, the cleanup itself stays a
       # local `npm run tidy:branches` (this workflow is deliberately read-only).
-      - name: Open a PR when branches accumulated
-        if: ${{ github.repository == 'LCHEROURI/cook-with-freebuff' && steps.detect.outputs.findings != '0' }}
+      # The PR is created with the WEEKLY_TIDY_TOKEN PAT so the pull_request
+      # workflows actually run on it (GITHUB_TOKEN-created PRs are suppressed);
+      # a missing PAT fails loudly on the canonical repo instead of silently
+      # opening a PR that can never merge.
+      - name: Fail loudly if WEEKLY_TIDY_TOKEN is missing (canonical repo)
+        if: ${{ github.repository == 'LCHEROURI/cook-with-freebuff' && env.WEEKLY_TIDY_TOKEN == '' }}
         env:
-          GH_TOKEN: ${{ github.token }}
+          WEEKLY_TIDY_TOKEN: ${{ secrets.WEEKLY_TIDY_TOKEN }}
+        run: |
+          echo "::error::WEEKLY_TIDY_TOKEN secret missing — the report PR needs a PAT (repo scope) so its checks run."
+          echo "Create a PAT with repo scope and add it under GitHub -> Settings -> Secrets and variables -> Actions."
+          exit 1
+
+      - name: Open a PR when branches accumulated
+        if: ${{ github.repository == 'LCHEROURI/cook-with-freebuff' && steps.detect.outputs.findings != '0' && env.WEEKLY_TIDY_TOKEN != '' }}
+        env:
+          GH_TOKEN: ${{ secrets.WEEKLY_TIDY_TOKEN }}
+          WEEKLY_TIDY_TOKEN: ${{ secrets.WEEKLY_TIDY_TOKEN }}
         run: |
           stamp="${{ steps.detect.outputs.stamp }}"
           report="docs/reviews/${stamp}-branch-tidy.md"
@@ -84,6 +103,12 @@ jobs:
           existing="$(gh pr list --repo "$GITHUB_REPOSITORY" --head "$branch" --state open --json number --jq 'length')"
           if [ "$existing" -gt 0 ]; then
             echo "weekly tidy PR already open on $branch — skipping (dedupe)"
+            exit 0
+          fi
+          # A merged/closed PR leaves its branch on origin; without this check a
+          # same-date re-dispatch would collide with the stale remote branch.
+          if git ls-remote --heads origin "$branch" | grep -q "$branch"; then
+            echo "remote branch $branch already exists — skipping (dedupe)"
             exit 0
           fi
           git config user.name "github-actions[bot]"
