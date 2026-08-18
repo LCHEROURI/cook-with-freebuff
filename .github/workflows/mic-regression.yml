@@ -229,7 +229,7 @@ jobs:
           - **Run:** $run_url
           - **Artifacts (phase-c-runs — the failing run's copy-voice-details blob + screenshot):** $artifact_url
 
-          A healthy run shows stuckQueueSince=0 in the diagnostics blob. The blob's drop-classification verdict (queue / network / audio-graph) pinpoints which layer dropped the mic. A latency-bound failure (flush→transcript, transcript→reply, or inter-burst gap over budget) means the pipeline degraded but did not drop — the phase-c-latency blob + screenshot show the state at the violation. Investigate the artifact evidence before dismissing."
+          A healthy run shows stuckQueueSince=0 in the diagnostics blob. The blob's drop-classification verdict (queue / network / audio-graph) pinpoints which layer dropped the mic. A latency-bound failure (flush→transcript, transcript→reply, or inter-burst gap over budget) means the pipeline degraded but did not drop — the phase-c-latency blob + screenshot show the state at the violation. Investigate the artifact evidence before dismissing.")
           echo "created_issue=${issue_url##*/}" >> "$GITHUB_OUTPUT"
 
       # Drill runs are SELF-CLEANING: a force_stuck_blob run exists only to

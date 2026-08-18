@@ -1,3 +1,4 @@
+import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
@@ -640,5 +641,32 @@ describe('.github/workflows/codex-review-monitor.yml · the daily Codex sweep', 
   it('keeps the concurrency guard so overlapping sweeps never double-report', () => {
     expect(CODEX_MONITOR).toContain('group: codex-review-monitor');
     expect(CODEX_MONITOR).toContain('cancel-in-progress: false');
+  });
+  it('alert + drill-cleanup scripts are syntactically valid bash', () => {
+    // The alert step wraps gh issue create in a $( ) command substitution to
+    // capture the created issue number for the drill cleanup. A missing close
+    // paren breaks the WHOLE step at parse time — the step fails before any
+    // line runs, so the drill opens no issue and the rehearsal silently
+    // degrades (caught live by the first self-cleaning drill: "unexpected EOF
+    // while looking for matching ')'"). bash -n both scripts so this class of
+    // break is a suite failure, not a CI surprise.
+    const scriptOf = (anchor: string): string => {
+      const from = MIC_REGRESSION.indexOf(anchor);
+      expect(from, `anchor ${anchor} missing`).toBeGreaterThan(-1);
+      const runIdx = MIC_REGRESSION.indexOf('run: |', from);
+      const nextStep = MIC_REGRESSION.indexOf('\n      - name:', runIdx);
+      const end = nextStep === -1 ? MIC_REGRESSION.length : nextStep;
+      return MIC_REGRESSION
+        .slice(runIdx + 'run: |'.length, end)
+        .split('\n')
+        .map((l) => l.replace(/^          /, ''))
+        .join('\n');
+    };
+    for (const script of [
+      scriptOf('id: alert'),
+      scriptOf('Clean up drill residue (close issue + delete artifacts)'),
+    ]) {
+      execFileSync('bash', ['-n'], { input: script });
+    }
   });
 });
