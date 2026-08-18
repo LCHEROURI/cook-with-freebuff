@@ -24,7 +24,9 @@ const HEALTHY = JSON.stringify({
 
 // The pre-fix drop signature verbatim: playing=false, queue non-empty, and a
 // non-zero stuckQueueSince — this is exactly what the four failing blobs
-// looked like, except the stuck state was invisible then.
+// looked like, except the stuck state was invisible then (the raw blobs were
+// never archived; see docs/pre-fix-drop-signature.md for the reconstruction
+// and the diff against a healthy blob).
 const STUCK_SINCE = JSON.stringify({
   gemini: { client: { playing: false, playbackQueueLength: 2, stuckQueueSince: 1786500000000, stuckQueueMs: 10000 } },
 });
@@ -80,5 +82,329 @@ describe('scripts/voice-blob-verdict.mjs · the passing-run stuck-queue assertio
     const v = evaluateVoiceBlob(PRE_DEPLOY);
     expect(v.stuck).toBe(false);
     expect(v.stuckMs).toBeUndefined();
+  });
+});
+
+// ============================================================================
+// Drop-classification suite — a pasted blob must pinpoint WHICH layer dropped
+// the mic, not just that it did. The verdict classifies in priority order:
+// queue (classic stuck drain) > network (socket/frame silence) > audio-graph
+// (capture frozen while the socket stayed up). All staleness is measured
+// against the blob's own capturedAt, so a paste taken minutes ago still
+// classifies correctly (no wall-clock dependence).
+// ============================================================================
+
+describe('scripts/voice-blob-verdict.mjs · drop classification (queue / network / audio-graph)', () => {
+  const CAPTURE = '2026-01-01T00:00:05.000Z';
+  const T0 = Date.parse(CAPTURE);
+
+  // 5s + 1ms older than capture: beyond DROP_STALL_MS.
+  const STALE = T0 - 5001;
+  // 1s older: within the stall window — must NOT fire.
+  const FRESH = T0 - 1000;
+
+  it('network class — a non-clean WebSocket close (wsCloses) is a network drop', () => {
+    const v = evaluateVoiceBlob(
+      JSON.stringify({
+        capturedAt: CAPTURE,
+        gemini: {
+          client: {
+            connected: false,
+            wsCloses: 1,
+            wsErrors: 0,
+            framesSent: 12,
+            framesReceived: 9,
+            lastFrameReceivedAt: FRESH,
+            lastFrameSentAt: FRESH,
+            playing: false,
+            playbackQueueLength: 0,
+            stuckQueueSince: 0,
+            stuckQueueMs: 0,
+          },
+        },
+      }),
+    );
+    expect(v.stuck).toBe(true);
+    expect(v.kind).toBe('network');
+    expect(v.evidence).toContain('wsCloses=1');
+  });
+
+  it('network class — WebSocket errors (wsErrors) are a network drop', () => {
+    const v = evaluateVoiceBlob(
+      JSON.stringify({
+        capturedAt: CAPTURE,
+        gemini: {
+          client: {
+            wsErrors: 2,
+            framesSent: 12,
+            framesReceived: 9,
+            stuckQueueSince: 0,
+            stuckQueueMs: 0,
+          },
+        },
+      }),
+    );
+    expect(v.kind).toBe('network');
+  });
+
+  it('network class — half-open socket: mic frames flowing but zero received', () => {
+    const v = evaluateVoiceBlob(
+      JSON.stringify({
+        capturedAt: CAPTURE,
+        gemini: {
+          client: {
+            connected: true,
+            wsCloses: 0,
+            wsErrors: 0,
+            framesSent: 12,
+            framesReceived: 0,
+            lastFrameReceivedAt: 0,
+            lastFrameSentAt: FRESH,
+            stuckQueueSince: 0,
+            stuckQueueMs: 0,
+          },
+        },
+      }),
+    );
+    expect(v.stuck).toBe(true);
+    expect(v.kind).toBe('network');
+    expect(v.evidence).toContain('framesReceived=0');
+  });
+
+  it('network class — socket reports disconnected while audio was being sent', () => {
+    const v = evaluateVoiceBlob(
+      JSON.stringify({
+        capturedAt: CAPTURE,
+        gemini: {
+          client: {
+            connected: false,
+            framesSent: 12,
+            framesReceived: 9,
+            lastFrameReceivedAt: FRESH,
+            lastFrameSentAt: FRESH,
+            stuckQueueSince: 0,
+            stuckQueueMs: 0,
+          },
+        },
+      }),
+    );
+    expect(v.kind).toBe('network');
+  });
+
+  it('network class — stale server frames: lastFrameReceivedAt older than 5s at capture', () => {
+    const v = evaluateVoiceBlob(
+      JSON.stringify({
+        capturedAt: CAPTURE,
+        gemini: {
+          client: {
+            connected: true,
+            wsCloses: 0,
+            wsErrors: 0,
+            framesSent: 12,
+            framesReceived: 9,
+            lastFrameReceivedAt: STALE,
+            lastFrameSentAt: T0,
+            micStarted: true,
+            captureRuns: 120,
+            lastCaptureAt: T0,
+            stuckQueueSince: 0,
+            stuckQueueMs: 0,
+          },
+        },
+      }),
+    );
+    expect(v.kind).toBe('network');
+  });
+
+  it('audio-graph class — capture heartbeat frozen while the socket stayed up', () => {
+    const v = evaluateVoiceBlob(
+      JSON.stringify({
+        capturedAt: CAPTURE,
+        gemini: {
+          client: {
+            connected: true,
+            wsCloses: 0,
+            wsErrors: 0,
+            framesSent: 12,
+            framesReceived: 9,
+            lastFrameReceivedAt: T0, // server frames still flowing
+            lastFrameSentAt: T0,
+            micStarted: true,
+            captureRuns: 120,
+            lastCaptureAt: STALE, // but the mic graph froze
+            stuckQueueSince: 0,
+            stuckQueueMs: 0,
+          },
+        },
+      }),
+    );
+    expect(v.stuck).toBe(true);
+    expect(v.kind).toBe('audio-graph');
+    expect(v.evidence).toContain('captureRuns=120');
+  });
+
+  it('audio-graph class — never captures after mic start is NOT a frozen graph (no ticks yet)', () => {
+    const v = evaluateVoiceBlob(
+      JSON.stringify({
+        capturedAt: CAPTURE,
+        gemini: {
+          client: {
+            connected: true,
+            framesSent: 2,
+            framesReceived: 1,
+            lastFrameReceivedAt: T0,
+            lastFrameSentAt: T0,
+            micStarted: true,
+            captureRuns: 0,
+            lastCaptureAt: 0,
+            stuckQueueSince: 0,
+            stuckQueueMs: 0,
+          },
+        },
+      }),
+    );
+    // Zero ticks is a startup state, not a stall — require captureRuns > 0
+    // before judging the graph frozen.
+    expect(v.stuck).toBe(false);
+  });
+
+  it('priority — the classic queue signature wins over network evidence', () => {
+    const v = evaluateVoiceBlob(
+      JSON.stringify({
+        capturedAt: CAPTURE,
+        gemini: {
+          client: {
+            playing: false,
+            playbackQueueLength: 2,
+            stuckQueueSince: T0,
+            stuckQueueMs: 10000,
+            wsCloses: 1,
+            wsErrors: 0,
+            framesSent: 12,
+            framesReceived: 9,
+          },
+        },
+      }),
+    );
+    expect(v.kind).toBe('queue');
+  });
+
+  it('priority — network evidence wins over a frozen audio graph', () => {
+    const v = evaluateVoiceBlob(
+      JSON.stringify({
+        capturedAt: CAPTURE,
+        gemini: {
+          client: {
+            connected: true,
+            wsCloses: 1,
+            wsErrors: 0,
+            framesSent: 12,
+            framesReceived: 0,
+            micStarted: true,
+            captureRuns: 120,
+            lastCaptureAt: STALE,
+            stuckQueueSince: 0,
+            stuckQueueMs: 0,
+          },
+        },
+      }),
+    );
+    expect(v.kind).toBe('network');
+  });
+
+  it('healthy — a live session with flowing frames and ticking capture is clean', () => {
+    const v = evaluateVoiceBlob(
+      JSON.stringify({
+        capturedAt: CAPTURE,
+        gemini: {
+          client: {
+            connected: true,
+            wsCloses: 0,
+            wsErrors: 0,
+            framesSent: 120,
+            framesReceived: 45,
+            lastFrameReceivedAt: T0,
+            lastFrameSentAt: T0,
+            micStarted: true,
+            captureRuns: 500,
+            lastCaptureAt: T0,
+            playing: false,
+            playbackQueueLength: 0,
+            stuckQueueSince: 0,
+            stuckQueueMs: 0,
+          },
+        },
+      }),
+    );
+    expect(v.stuck).toBe(false);
+    expect(v.kind).toBeNull();
+    expect(v.evidence).toBeNull();
+  });
+
+  it('healthy — a pre-deploy blob without the new fields stays clean (no false network/audio flags)', () => {
+    const v = evaluateVoiceBlob(
+      JSON.stringify({
+        gemini: {
+          client: {
+            playing: false,
+            playbackQueueLength: 0,
+            stuckQueueSince: 0,
+            stuckQueueMs: 0,
+          },
+        },
+      }),
+    );
+    expect(v.stuck).toBe(false);
+    expect(v.kind).toBeNull();
+  });
+
+  it('boundary — a frame/capture exactly at the stall window (5s) is NOT stale', () => {
+    const AT_WINDOW = T0 - 5000;
+    const v = evaluateVoiceBlob(
+      JSON.stringify({
+        capturedAt: CAPTURE,
+        gemini: {
+          client: {
+            connected: true,
+            wsCloses: 0,
+            wsErrors: 0,
+            framesSent: 12,
+            framesReceived: 9,
+            lastFrameReceivedAt: AT_WINDOW,
+            lastFrameSentAt: T0,
+            micStarted: true,
+            captureRuns: 120,
+            lastCaptureAt: T0,
+            stuckQueueSince: 0,
+            stuckQueueMs: 0,
+          },
+        },
+      }),
+    );
+    expect(v.stuck).toBe(false);
+  });
+
+  it('no capturedAt — staleness is unprovable, so socket/capture age cannot fire (absent = clean)', () => {
+    const v = evaluateVoiceBlob(
+      JSON.stringify({
+        gemini: {
+          client: {
+            connected: true,
+            wsCloses: 0,
+            wsErrors: 0,
+            framesSent: 12,
+            framesReceived: 9,
+            lastFrameReceivedAt: 1,
+            lastFrameSentAt: 1,
+            micStarted: true,
+            captureRuns: 120,
+            lastCaptureAt: 1,
+            stuckQueueSince: 0,
+            stuckQueueMs: 0,
+          },
+        },
+      }),
+    );
+    expect(v.stuck).toBe(false);
   });
 });

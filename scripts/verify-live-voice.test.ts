@@ -261,4 +261,64 @@ describe('scripts/verify-live.mjs · live-voice gate [3e] (dictation + active-sc
     expect(DRIVER).toContain('${seen[0]}');
     expect(DRIVER).toContain('${seen[1]}');
   });
+
+  it('Phase C — bounds the two bursts end-to-end latency so degradation reddens before the drop', () => {
+    // The two-burst proof asserts the bursts HAPPEN; the latency bounds
+    // assert they happen FAST ENOUGH. A slow-but-eventual burst would pass
+    // the old gate (only the 90s cap caught it, as an undiagnosed drop) — a
+    // future edit that relaxes or removes the bounds fails HERE. The bounds
+    // live in scripts/phase-c-latency.mjs (unit-tested with injected wire
+    // fixtures); these pins lock that the DRIVER still runs them on the
+    // passing path, where the settle has already proved both replies drained
+    // (so a null transcript→reply is a real stall, not a reply that simply
+    // had not arrived yet).
+    expect(DRIVER).toContain("import { phaseCLatency, latencyViolations, isTranscriptionFrame, isReplyFrame } from './phase-c-latency.mjs'");
+    expect(DRIVER).toContain('ok(`latency bounds ok — flush→transcript');   // the pass marker
+    expect(DRIVER).toContain('fail(`two-burst latency bounds exceeded');     // the degradation marker
+    // Degradation evidence must ride the same artifact path as a drop.
+    expect(DRIVER).toContain('phase-c-latency-blob.json');
+    expect(DRIVER).toContain("cdpC.screenshot('phase-c-latency')");
+  });
+
+  it('Phase C — archives a STRUCTURED per-run summary (not raw text) on every outcome', () => {
+    // Green runs used to persist nothing, so the pre-fix failing blobs had to
+    // be reconstructed (docs/pre-fix-drop-signature.md). The archive is now a
+    // schema-locked record (scripts/phase-c-summary.mjs) carrying the
+    // comparison fields a cross-week report reads — stuckQueueSince,
+    // playbackQueueLength, outcome, latency — with the raw blob text embedded
+    // as `rawBlob`, written ONCE at the shared exit so every outcome archives
+    // the same shape.
+    expect(DRIVER).toContain("import { emptyPhaseCSummary, extractCapturedAt, extractComparisonDiagnostics } from './phase-c-summary.mjs'");
+    expect(DRIVER).toContain('structured summary archived: phase-c-summary.json');
+    // Exactly ONE write, at the shared exit — a per-branch write could skip
+    // an outcome on an early return.
+    expect(DRIVER.match(/\$\{OUT\}\/phase-c-summary\.json/g)).toHaveLength(1);
+    // The blob is normalized to diagnostics on BOTH paths (two-burst + drop),
+    // and every terminal outcome is recorded.
+    expect(DRIVER.match(/extractComparisonDiagnostics\(/g)).toHaveLength(2);
+    for (const o of ["'pass'", "'stuck'", "'undrained'", "'unverifiable'", "'latency'", "'drop'"]) {
+      expect(DRIVER).toContain(`summary.outcome = ${o}`);
+    }
+    // The force-stuck drill seam (see below) must NOT bypass the summary —
+    // the injected copy is what the summary, verdict, and evidence all see.
+    expect(DRIVER).toContain("summary.outcome = 'stuck'");
+  });
+
+  it('Phase C — the force-stuck drill seam injects the documented signature so the red-week evidence path can be proven', () => {
+    // The artifact-upload drill arms PHASE_C_FORCE_STUCK / --force-stuck-blob:
+    // the captured blob is rewritten with the exact documented pre-fix stuck
+    // signature (stuckQueueSince=1786500000000, stuckQueueMs=10000) so the
+    // verdict fires, the run reddens as a HARD failure ('reports a stuck
+    // queue' — never budgeted), and the blob + screenshot artifacts are
+    // uploaded. A future edit that disables or weakens the seam fails here.
+    expect(DRIVER).toContain("const FORCE_STUCK_BLOB = process.argv.includes('--force-stuck-blob') || process.env.PHASE_C_FORCE_STUCK === '1'");
+    expect(DRIVER).toContain('p.gemini.client.stuckQueueSince = 1786500000000');
+    expect(DRIVER).toContain('p.gemini.client.stuckQueueMs = 10000');
+    expect(DRIVER).toContain('drill: stuck signature injected into the judged blob');
+    // The seam must be inert when unarmed — the helper returns the blob
+    // unchanged — and the settle re-capture keeps the injected copy
+    // consistent through to the verdict.
+    expect(DRIVER).toContain('if (!FORCE_STUCK_BLOB || b.startsWith');
+    expect(DRIVER).toContain('blob = injectStuckForDrill(await captureVoiceDetailsBlob(cdpC, evC));');
+  });
 });

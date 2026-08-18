@@ -28,6 +28,7 @@ const CI = readFileSync('.github/workflows/ci.yml', 'utf8');
 const MIC_REGRESSION = readFileSync('.github/workflows/mic-regression.yml', 'utf8');
 const CODEX_MONITOR = readFileSync('.github/workflows/codex-review-monitor.yml', 'utf8');
 const BRANCH_TIDY = readFileSync('.github/workflows/branch-tidy-weekly.yml', 'utf8');
+const COMPARE_WEEKLY = readFileSync('.github/workflows/compare-live-weekly.yml', 'utf8');
 
 // The verify step's gating `if:` — the four secrets must ALL be present for
 // the deep gates to run (a missing one skips-not-fails, but only on forks;
@@ -452,6 +453,85 @@ describe('.github/workflows/mic-regression.yml · weekly two-burst pass-rate mon
     expect(MIC_REGRESSION).toContain('--body "The weekly phase-C two-burst check went red');
     expect(MIC_REGRESSION).toContain('$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/${{ github.run_id }}');
     expect(MIC_REGRESSION).toContain('skipping (dedupe)');
+  });
+
+  it('forgives transient runs up to a CONFIGURABLE flake budget but NEVER budgets the mic-contract failures', () => {
+    // The session-launch 503 that reddened a real batch (5/6) must not open a
+    // false-positive issue. The budget is kind-aware: a failed run is a HARD
+    // failure (never budgeted) when its log carries a monitored-contract
+    // signature — two-burst drop, stuck queue, latency violation, an undrained
+    // second reply, or an uncapturable blob — and a FLAKE otherwise (pre-mic /
+    // infra, e.g. launch 503). Hard failures redden the very first week, so a
+    // true regression cannot hide behind the budget; only flakes are forgiven
+    // up to MIC_REGRESSION_FLAKE_BUDGET (workflow_dispatch input, default 1).
+    expect(MIC_REGRESSION).toContain('flake_budget:');
+    expect(MIC_REGRESSION).toContain("default: '1'");
+    expect(MIC_REGRESSION).toContain("flake_budget=\"${MIC_REGRESSION_FLAKE_BUDGET:-1}\"");
+    expect(MIC_REGRESSION).toContain("MIC_REGRESSION_FLAKE_BUDGET: ${{ inputs.flake_budget || '1' }}");
+    // The hard-signature classifier — a failed run matching ANY of these is
+    // never a flake (the driver's own fail strings, verbatim substrings).
+    expect(MIC_REGRESSION).toContain("reports a stuck queue|transcription\\(s\\) after 90s|latency bounds exceeded|latency cannot be bounded|second reply never drained|diagnostics blob was not capturable");
+    // Hard failures redden unconditionally (no budget path exists for them).
+    expect(MIC_REGRESSION).toContain('hard failure(s):${hard_failed} (never budgeted)');
+    // Over-budget flakes redden; a forgiven week is a NOTICE that sets no
+    // `result` output, so the issue step stays silent on a flaky-but-green
+    // week (a single transient run cannot open a false-positive issue).
+    expect(MIC_REGRESSION).toContain('exceed the flake budget ${flake_budget}');
+    expect(MIC_REGRESSION).toContain('within budget ${flake_budget} (forgiven — no issue)');
+    // A non-numeric budget falls back to 1 loudly rather than crashing the
+    // numeric comparison.
+    expect(MIC_REGRESSION).toContain('is not a number — defaulting to 1');
+  });
+
+  it('wires the force_stuck_blob drill input and keeps it OFF for scheduled runs', () => {
+    // The artifact-upload drill: dispatch with force_stuck_blob=true to inject
+    // the documented stuck signature into every run and prove the red-week
+    // evidence chain (verdict → fail → blob + screenshot artifacts) end to
+    // end. The input defaults to false and the env is empty on schedule runs,
+    // so the scheduled weekly monitor NEVER injects.
+    expect(MIC_REGRESSION).toContain('force_stuck_blob:');
+    expect(MIC_REGRESSION).toContain("default: 'false'");
+    expect(MIC_REGRESSION).toContain("PHASE_C_FORCE_STUCK: ${{ inputs.force_stuck_blob == 'true' && '1' || '' }}");
+  });
+});
+
+describe('.github/workflows/compare-live-weekly.yml · weekly stack-divergence compare', () => {
+  // Between deploys the LIVE stack can drift without any push (Firestore
+  // data, Remote Config, indexes, rules), and the emulator-compare normally
+  // only runs as ci.yml's pre-deploy gate — so this scheduled run re-runs
+  // the full compare (whose deployed leg touches production) weekly. The
+  // load-bearing contracts: it runs on a schedule + dispatch, runs the real
+  // compare command, shares the live-voice-probe concurrency group with the
+  // voice monitor, pins the canonical host, and keeps the skip-not-fail fork
+  // discipline.
+
+  it('runs weekly on a schedule (plus manual dispatch) in a slot clear of the other monitors', () => {
+    expect(COMPARE_WEEKLY).toMatch(/^name: Compare live vs emulator \(weekly divergence\)/m);
+    expect(COMPARE_WEEKLY).toContain('schedule:');
+    expect(COMPARE_WEEKLY).toContain("- cron: '30 6 * * 4'");
+    expect(COMPARE_WEEKLY).toContain('workflow_dispatch:');
+  });
+
+  it('runs the real compare against the live deployed host', () => {
+    expect(COMPARE_WEEKLY).toContain('npm run verify:live:compare:emulator');
+    expect(COMPARE_WEEKLY).toContain('VERIFY_BASE_URL: https://cook-with-freebuff--portfolio-app-freebuff2.us-central1.hosted.app');
+    // The emulator leg boots the Firestore emulator — Java 21 is required.
+    expect(COMPARE_WEEKLY).toContain('actions/setup-java@v5');
+    expect(COMPARE_WEEKLY).toContain("java-version: '21'");
+  });
+
+  it('shares the live-voice-probe concurrency group with the voice monitor (same discipline)', () => {
+    expect(COMPARE_WEEKLY).toContain('group: live-voice-probe');
+    expect(COMPARE_WEEKLY).toContain('cancel-in-progress: false');
+  });
+
+  it('wires the three owner credentials and keeps the run fork-safe', () => {
+    for (const name of ['NEXT_PUBLIC_FIREBASE_API_KEY', 'FIREBASE_SERVICE_ACCOUNT', 'APP_OWNER_UID']) {
+      expect(COMPARE_WEEKLY.match(new RegExp(SECRET_WIRING(name).replace(/[$\\{\\}]/g, '\\$&'), 'g'))).toHaveLength(1);
+    }
+    expect(COMPARE_WEEKLY).toContain("github.repository == 'LCHEROURI/cook-with-freebuff'");
+    expect(COMPARE_WEEKLY).toContain('::error::Owner-credential secrets missing');
+    expect(COMPARE_WEEKLY).toContain("if: ${{ env.NEXT_PUBLIC_FIREBASE_API_KEY != '' && env.FIREBASE_SERVICE_ACCOUNT != '' && env.APP_OWNER_UID != '' }}");
   });
 });
 

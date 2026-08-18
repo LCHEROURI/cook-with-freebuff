@@ -41,6 +41,8 @@ import { setTimeout as sleep } from 'node:timers/promises';
 import { initializeApp, cert, getApps } from 'firebase-admin/app';
 import { getFirestore } from 'firebase-admin/firestore';
 import { evaluateVoiceBlob } from './voice-blob-verdict.mjs';
+import { phaseCLatency, latencyViolations, isTranscriptionFrame, isReplyFrame } from './phase-c-latency.mjs';
+import { emptyPhaseCSummary, extractCapturedAt, extractComparisonDiagnostics } from './phase-c-summary.mjs';
 
 // ── Env loading (process.env wins; .env.local fills gaps) ───────────────────
 function loadEnv() {
@@ -67,6 +69,29 @@ const OUT = flag('--out', '/tmp/live-voice-drive');
 // Run ONLY the two-burst phase (used to measure its pass rate across repeated
 // runs — Phase A and B are skipped, and the owner session is injected fresh).
 const PHASE_C_ONLY = process.argv.includes('--phase-c-only');
+// Drill seam: inject the stuck-queue signature into the judged blob so the
+// red-week evidence chain (verdict fires → fail → blob + screenshot archived
+// → the batch reddens → artifacts upload) can be proven end-to-end WITHOUT a
+// real regression. Armed by the workflow's `force_stuck_blob` dispatch input
+// or a local --force-stuck-blob flag; NEVER set in the scheduled run. The
+// settle still runs against the REAL session first — only the judged copy is
+// rewritten, with the exact documented pre-fix signature values.
+const FORCE_STUCK_BLOB = process.argv.includes('--force-stuck-blob') || process.env.PHASE_C_FORCE_STUCK === '1';
+// Rewrite a captured blob with the stuck signature (queue class), used by the
+// drill seam. Returns the blob unchanged unless the seam is armed AND the
+// blob is a parseable JSON diagnostics blob.
+const injectStuckForDrill = (b) => {
+  if (!FORCE_STUCK_BLOB || b.startsWith('NO_COPY_BUTTON') || b.startsWith('BLob_CAPTURE_MISS')) return b;
+  try {
+    const p = JSON.parse(b);
+    if (!p?.gemini?.client) return b;
+    p.gemini.client.stuckQueueSince = 1786500000000;
+    p.gemini.client.stuckQueueMs = 10000;
+    return JSON.stringify(p, null, 2);
+  } catch {
+    return b;
+  }
+};
 const CHROME = process.env.CHROME_PATH ?? '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
 const SPEECH_WAV = '/tmp/live-voice-speech.wav';
 const SILENCE_WAV = '/tmp/live-voice-silence.wav';
@@ -409,6 +434,19 @@ const wsUrlObserved = (n) => {
 };
 const tokenPosted = (n) =>
   n.some((e) => e.method === 'Network.requestWillBeSent' && e.params.request.url.includes('/api/voice/token'));
+
+// ── Phase-C latency wire helpers ─────────────────────────────────────────────
+// CDP Network events carry a monotonic `timestamp` (seconds since the target
+// started) — the driver records the raw events, so only DELTAS are ever used
+// and the base is irrelevant. The pairing + bound judgement itself lives in
+// scripts/phase-c-latency.mjs (unit-tested); these helpers only map the raw
+// events into the timestamped-frame shape it expects.
+const receivedFramesTs = (n) => n
+  .filter((e) => e.method === 'Network.webSocketFrameReceived')
+  .map((e) => ({ t: e.params?.timestamp ?? null, payload: framePayload(e.params.response?.payloadData) }));
+const sentFramesTs = (n) => n
+  .filter((e) => e.method === 'Network.webSocketFrameSent')
+  .map((e) => ({ t: e.params?.timestamp ?? null, payload: framePayload(e.params.response?.payloadData) }));
 
 // Capture the copy-voice-details blob — the exact artifact the deployed
 // button produces — by patching navigator.clipboard.writeText and clicking
@@ -930,6 +968,11 @@ for (let i = 0; i < 90 && !got2; i++) {
   seen = transcriptions();
   got2 = seen.length >= 2;
 }
+// Per-run STRUCTURED archive — the comparison surface a cross-week report
+// reads (stuckQueueSince, queue length, outcome, latency) without parsing
+// the raw blob; the raw text rides along as `rawBlob`. Filled through the
+// branches below, written once at the shared exit for every outcome.
+const summary = emptyPhaseCSummary(APP);
 if (got2) {
   ok(`TWO spoken bursts transcribed through the active mic — “${seen[0]}” / “${seen[1]}”`);
   // A passing run must ALSO prove the mic is not stuck: the "first burst then
@@ -944,6 +987,17 @@ if (got2) {
     await sleep(1000);
     blob = await captureVoiceDetailsBlob(cdpC, evC);
   }
+  blob = injectStuckForDrill(blob);
+  if (FORCE_STUCK_BLOB && !blob.startsWith('NO_COPY_BUTTON') && !blob.startsWith('BLob_CAPTURE_MISS')) {
+    note('drill: stuck signature injected into the judged blob (--force-stuck-blob)');
+  }
+  // Fill the per-run summary with what this run's blob showed. The raw text
+  // stays embedded as `rawBlob` so no fidelity is lost — the pre-fix failing
+  // blobs had to be reconstructed from memory (docs/pre-fix-drop-signature.md),
+  // and a future regression's raw diagnostics must exist without reconstruction.
+  summary.rawBlob = blob;
+  summary.capturedAt = extractCapturedAt(blob);
+  summary.diagnostics = extractComparisonDiagnostics(blob);
   // The second transcription can arrive before its reply's audio has queued
   // and drained, so a blob captured then reads stuckQueueSince=0 even though
   // the queue could still stall right after (Codex P1, PR #12). Settle until
@@ -980,13 +1034,17 @@ if (got2) {
       }
       if (!drained) {
         await sleep(1000);
-        blob = await captureVoiceDetailsBlob(cdpC, evC);
+        // The settle re-captures the live blob each second — keep the drill's
+        // injected copy consistent so the final verdict + evidence carry it.
+        blob = injectStuckForDrill(await captureVoiceDetailsBlob(cdpC, evC));
       }
     }
   }
   if (blob.startsWith('NO_COPY_BUTTON') || blob.startsWith('BLob_CAPTURE_MISS')) {
+    summary.outcome = 'unverifiable';
     fail(`passing run but the diagnostics blob was not capturable (${blob}) — cannot prove the mic is not stuck`);
   } else if (!drained) {
+    summary.outcome = 'undrained';
     fail(`passing run but the second reply never drained within the settle window — the queue never returned to a stable idle state, so the mic cannot be proven unstuck`);
   } else {
     // The parse + stuck decision is shared (scripts/voice-blob-verdict.mjs),
@@ -994,24 +1052,87 @@ if (got2) {
     // verdict fires — this branch must stay a thin caller so the tested
     // logic can never drift from what the driver runs.
     const verdict = evaluateVoiceBlob(blob);
+    summary.verdict = { stuck: verdict.stuck, kind: verdict.kind, evidence: verdict.evidence };
     if (verdict.stuck) {
-      fail(`passing run but the blob reports a stuck queue (stuckQueueSince=${verdict.stuckSince}, stuckQueueMs=${verdict.stuckMs}) — blob + screenshot saved`);
+      summary.outcome = 'stuck';
+      fail(`passing run but the blob reports a stuck queue — drop class ${verdict.kind}: ${verdict.evidence ?? 'no evidence'} (stuckQueueSince=${verdict.stuckSince}, stuckQueueMs=${verdict.stuckMs}) — blob + screenshot saved`);
       try { writeFileSync(`${OUT}/phase-c-pass-blob.json`, blob); note('suspicious blob saved: phase-c-pass-blob.json'); } catch { /* non-fatal */ }
       try { await cdpC.screenshot('phase-c-pass-blob'); note('screenshot: phase-c-pass-blob.png'); } catch { /* non-fatal */ }
     } else {
       ok(`diagnostics blob clean — stuckQueueSince=0${typeof verdict.stuckMs === 'number' ? `, stuckQueueMs=${verdict.stuckMs}` : ''} (no stall)`);
+      // LATENCY BOUNDS — the bursts transcribed AND drained (the settle above
+      // proved the second reply's playback completed, so reply frames are on
+      // the wire — a null transcript→reply here is a real stall, not a reply
+      // that simply had not arrived yet). Pairing + judgement live in
+      // scripts/phase-c-latency.mjs so the unit tests inject wire fixtures
+      // and prove the bounds fire — this branch stays a thin caller.
+      const lat = phaseCLatency({
+        flushes: sentFramesTs(netC).filter((f) => f.payload.includes('audioStreamEnd')),
+        transcriptions: receivedFramesTs(netC).filter((f) => isTranscriptionFrame(f.payload)),
+        replies: receivedFramesTs(netC).filter((f) => isReplyFrame(f.payload)),
+      });
+      summary.latency = {
+        flushToTranscript: [lat.bursts[0]?.flushToTranscript ?? null, lat.bursts[1]?.flushToTranscript ?? null],
+        transcriptToReply: [lat.bursts[0]?.transcriptToReply ?? null, lat.bursts[1]?.transcriptToReply ?? null],
+        interBurstMs: lat.interBurst,
+      };
+      const violations = latencyViolations(lat);
+      if (violations.length > 0) {
+        summary.outcome = 'latency';
+        const fmt = (v) => (v == null ? '?' : `${(v / 1000).toFixed(1)}s`);
+        fail(`two-burst latency bounds exceeded — ${violations
+          .map((v) => v.kind === 'unmeasurable'
+            ? v.message
+            : `${v.kind}${v.burst ? ` ${v.burst}` : ''} ${fmt(v.ms)} > ${v.limit / 1000}s`)
+          .join('; ')}`);
+        const lb = await captureVoiceDetailsBlob(cdpC, evC);
+        try { writeFileSync(`${OUT}/phase-c-latency-blob.json`, lb); note('blob saved: phase-c-latency-blob.json'); } catch { /* non-fatal */ }
+        try { await cdpC.screenshot('phase-c-latency'); note('screenshot: phase-c-latency.png'); } catch { /* non-fatal */ }
+      } else {
+        summary.outcome = 'pass';
+        const b1 = lat.bursts[0];
+        const b2 = lat.bursts[1];
+        const fmt = (v) => `${(v / 1000).toFixed(1)}s`;
+        ok(`latency bounds ok — flush→transcript ${fmt(b1.flushToTranscript)}/${fmt(b2.flushToTranscript)} (perceived speech-end→transcript +1.2s flush), transcript→reply ${fmt(b1.transcriptToReply)}/${fmt(b2.transcriptToReply)}, inter-burst ${fmt(lat.interBurst)}`);
+      }
     }
   }
 } else {
+  summary.outcome = 'drop';
   fail(`only ${seen.length} transcription(s) after 90s: ${JSON.stringify(seen.slice(-3))}`);
+  // Latency context for the drop: if burst 1 transcribed, its wire latencies
+  // show how healthy the pipeline was right up to the point it stopped.
+  const lat = phaseCLatency({
+    flushes: sentFramesTs(netC).filter((f) => f.payload.includes('audioStreamEnd')),
+    transcriptions: receivedFramesTs(netC).filter((f) => isTranscriptionFrame(f.payload)),
+    replies: receivedFramesTs(netC).filter((f) => isReplyFrame(f.payload)),
+  });
+  summary.latency = {
+    flushToTranscript: [lat.bursts[0]?.flushToTranscript ?? null, lat.bursts[1]?.flushToTranscript ?? null],
+    transcriptToReply: [lat.bursts[0]?.transcriptToReply ?? null, lat.bursts[1]?.transcriptToReply ?? null],
+    interBurstMs: lat.interBurst,
+  };
+  if (lat.bursts[0]) {
+    const fmt = (v) => (v == null ? '?' : `${(v / 1000).toFixed(1)}s`);
+    note(`burst 1 before the drop: flush→transcript ${fmt(lat.bursts[0].flushToTranscript)}, transcript→reply ${fmt(lat.bursts[0].transcriptToReply)}`);
+  }
   // The drop just happened — capture the copy-voice-details blob live (the
   // exact artifact the deployed button produces) plus a screenshot.
   const blob = await captureVoiceDetailsBlob(cdpC, evC);
   console.log('\n=== copy-voice-details blob captured at the drop ===');
   console.log(blob);
+  // Same structured fill as the passing path, so a drop run archives the
+  // identical shape (raw text embedded as `rawBlob`).
+  summary.rawBlob = blob;
+  summary.capturedAt = extractCapturedAt(blob);
+  summary.diagnostics = extractComparisonDiagnostics(blob);
   try { writeFileSync(`${OUT}/phase-c-drop-blob.json`, blob); note(`blob saved: phase-c-drop-blob.json`); } catch { /* non-fatal */ }
   try { await cdpC.screenshot('phase-c-drop'); note('screenshot: phase-c-drop.png'); } catch { /* non-fatal */ }
 }
+// ARCHIVE the structured summary for this run — one write at the shared
+// exit, so EVERY outcome (pass, stuck, undrained, unverifiable, latency,
+// drop) archives the same schema-locked record the cross-week reports read.
+try { writeFileSync(`${OUT}/phase-c-summary.json`, JSON.stringify(summary, null, 2)); note('structured summary archived: phase-c-summary.json'); } catch { /* non-fatal */ }
 c.kill(); c.dropProfile(); try { cdpC.ws.close(); } catch { /* socket already gone */ }
 
 // ── 6. Cleanup (idempotent; the handlers above also run it) ─────────────────
