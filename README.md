@@ -2,6 +2,8 @@
 
 Voice-first / screen-light intelligent cooking companion.
 
+**Live app:** [cook-with-freebuff--portfolio-app-freebuff2.us-central1.hosted.app](https://cook-with-freebuff--portfolio-app-freebuff2.us-central1.hosted.app)
+
 ## Stack
 
 | Layer | Technology |
@@ -422,6 +424,8 @@ npm run verify:live
 # runs against the live deploy and turns red if any run drops the second
 # burst, uploading the failing run's copy-voice-details blob + screenshot as
 # an artifact — so a mic regression surfaces as a red check within a week.
+# Pass-rate history across the weekly batches and every verify:live voice
+# stage: docs/mic-regression-trend.md
 
 # Same check against a LOCAL dev server — boots `next dev` on port 3100,
 # warms the routes, runs the full check, and tears the server down, all in

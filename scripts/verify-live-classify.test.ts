@@ -79,6 +79,29 @@ describe('scripts/verify-live-classify.mjs · behavior', () => {
     });
     expect(v.kind).toBe('fail');
   });
+
+  it('keeps the credits phrase intact end to end even when it sits past the old 800-char cut', () => {
+    // The jLong 800-char slice worked for the ~360-char SDK error seen live, but
+    // that offset is not a contract. A deeper model id or a longer error body
+    // pushes the depletion phrase past the cut; the [3b] root must serialize with
+    // jFull (JSON.stringify, no slice) so the phrase still reaches
+    // classifyVerifyVerdict and the run is EXTERNAL, not FAIL.
+    const body = {
+      code: 'INTERNAL_ERROR',
+      message:
+        '[GoogleGenerativeAI Error]: Error fetching from ' +
+        `https://generativelanguage.googleapis.com/v1beta/models/${'m'.repeat(900)}:generateContent: ` +
+        '[429 Too Many Requests] Your prepayment credits are depleted. ' +
+        'Please go to AI Studio at https://ai.studio/projects to manage your project and billing.',
+    };
+    const serialized = JSON.stringify(body); // jFull: no slice
+    expect(serialized).toContain('Your prepayment credits are depleted');
+    expect(serialized.length).toBeGreaterThan(800);
+    const root = `create_recipe → 400 ${serialized}`;
+    expect(
+      classifyVerifyVerdict({ failures: [root, 'voice driver: missing “x” in the driver log'] }).kind,
+    ).toBe('external');
+  });
 });
 
 describe('scripts/verify-live-classify.mjs · mutation-proof allowlists', () => {
@@ -127,6 +150,7 @@ describe('scripts/verify-live-classify.mjs · mutation-proof allowlists', () => 
       'live voice driver',
       'voice driver:',
       'model turn →',
+      'vision scan →',
     ]);
   });
 });
@@ -137,13 +161,14 @@ describe('scripts/verify-live.mjs · wiring (the gate actually uses the classifi
     expect(LIVE).toContain('verdict = runExit === 0 ? classifyVerifyVerdict({ failures }) : { kind: \'fail\' };');
   });
 
-  it('the [3b] create_recipe failure carries the FULL body, not the 160-char j() slice', () => {
-    // j() truncates at 160 chars; the credits text lives ~250 chars in, so the
-    // root failure must be built with jLong or the classifier can never see it
-    // (the exact bug that hid the cause on the live failures).
-    expect(LIVE).toContain('const jLong = (v) => JSON.stringify(v ?? null).slice(0, 800);');
+  it('the [3b] create_recipe failure carries the FULL untruncated body, not any slice', () => {
+    // j() cuts at 160 and jLong() at 800; the credits signature's offset is not
+    // contractually bounded, so the root must serialize with jFull (no slice) or
+    // a longer SDK error hides the cause again (the exact bug the jLong fix only
+    // papered over for the current ~360-char error).
+    expect(LIVE).toContain('const jFull = (v) => JSON.stringify(v ?? null);');
     expect(LIVE).toContain(
-      'fail(`create_recipe → ${starterCreated.status} ${jLong(starterCreated.body?.error ?? starterCreated.body)}`);',
+      'fail(`create_recipe → ${starterCreated.status} ${jFull(starterCreated.body?.error ?? starterCreated.body)}`);',
     );
   });
 

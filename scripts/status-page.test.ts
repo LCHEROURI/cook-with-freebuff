@@ -50,6 +50,14 @@ describe('app/api/status/route.ts · authenticated status route', () => {
     expect(ROUTE).not.toContain('getFirestore(');
   });
 
+  it('reads the sticky last_external doc so a later green run cannot erase the outage', () => {
+    // The single-slot verify_live doc is overwritten every run; the last
+    // Gemini-credits outage lives in its own doc that success/failure never
+    // writes, so the page can show the recurrence pattern.
+    expect(ROUTE).toContain("collection('deploy_status').doc('last_external')");
+    expect(ROUTE).toContain('lastExternal');
+  });
+
   it('degrades gracefully when the record cannot be read', () => {
     expect(ROUTE).toContain('verifyLive = null');
   });
@@ -64,6 +72,12 @@ describe('app/status/page.tsx · the glance surface', () => {
     expect(PAGE).toContain("'✗ Failing'");
     expect(PAGE).toContain("'⚠ External'");
     expect(PAGE).toContain("'No run recorded yet'");
+  });
+
+  it('shows when the last Gemini-credits outage occurred (sticky across later green runs)', () => {
+    expect(PAGE).toContain('Last Gemini-credits outage');
+    expect(PAGE).toContain('No Gemini-credits outage recorded yet.');
+    expect(PAGE).toContain('lastExternal');
   });
 
   it('fetches the status route WITH the ID token and links to the commit + CI run', () => {
@@ -140,5 +154,12 @@ describe('scripts/record-verify-status.mjs · the recorder', () => {
     expect(RECORDER).toContain('safeParse(statusDoc)');
     expect(RECORDER).toContain('refusing to persist an invalid status document');
     expect(RECORDER).toContain('doc.set(parsed.data)');
+  });
+
+  it('pins the last external run to its own doc — only when the verdict is external', () => {
+    // The sticky doc must be written ONLY on 'external'; a success/failure run
+    // leaves it untouched so the last credits outage survives later green runs.
+    expect(RECORDER).toContain("if (verdict === 'external')");
+    expect(RECORDER).toContain("collection('deploy_status').doc('last_external')");
   });
 });

@@ -874,6 +874,106 @@ describe('GeminiLiveClient — mic capture + playback plumbing', () => {
     vi.useRealTimers();
   });
 
+  it('exposes drop-classification counters: frame liveness, capture heartbeat, close reason, drain progress', async () => {
+    mintOk();
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-01-01T00:00:00Z'));
+    const procHolder: { fn: ((e: { inputBuffer: { getChannelData(c: number): Float32Array } }) => void) | null } = { fn: null };
+    try {
+      await runCountersTest(procHolder);
+    } finally {
+      // Never leak fake timers into later tests, even on a failed assertion.
+      vi.useRealTimers();
+    }
+  });
+
+  // The body lives in its own helper so the test above can guarantee timer
+  // cleanup on ANY exit path (a failing assertion skips the tail otherwise).
+  async function runCountersTest(procHolder: { fn: ((e: { inputBuffer: { getChannelData(c: number): Float32Array } }) => void) | null }): Promise<void> {
+    const { client, getWs } = setupClient({
+      deps: {
+        createWebSocket: (url: string) => new FakeWebSocket(url),
+        getUserMedia: async () => ({ getTracks: () => [{ stop: vi.fn() }] }) as unknown as MediaStream,
+        createAudioContext: () =>
+          ({
+            sampleRate: 48000,
+            createMediaStreamSource: () => ({ connect: () => undefined }),
+            createScriptProcessor: () => ({
+              connect: () => undefined,
+              get onaudioprocess() {
+                return procHolder.fn;
+              },
+              set onaudioprocess(fn: ((e: { inputBuffer: { getChannelData(c: number): Float32Array } }) => void) | null) {
+                procHolder.fn = fn;
+              },
+            }),
+            createGain: () => ({ gain: { value: 0 }, connect: () => undefined }),
+            // start() fires onended so playBuffer resolves (decodeAudioData
+            // throws 'raw' → the PCM fallback path runs).
+            createBufferSource: () => ({
+              buffer: null,
+              onended: null,
+              start: function () {
+                (this as { onended: (() => void) | null }).onended?.();
+              },
+              stop: () => undefined,
+              connect: () => undefined,
+            }),
+            decodeAudioData: async () => {
+              throw new Error('raw');
+            },
+            destination: {},
+            close: async () => undefined,
+          }) as never,
+      },
+    });
+
+    await client.connect();
+    const ws = getWs();
+    ws.open();
+    await ws.receive({ setupComplete: {} });
+    await client.startListening();
+    const t0 = Date.parse('2026-01-01T00:00:00Z');
+
+    // Audio-graph heartbeat: every processor tick counts (even while muted).
+    procHolder.fn?.({ inputBuffer: { getChannelData: () => new Float32Array(4096).fill(0.3) } });
+    let diag = client.getDiagnostics();
+    expect(diag.captureRuns).toBe(1);
+    expect(diag.lastCaptureAt).toBe(t0);
+    expect(diag.framesSent).toBe(1);
+    expect(diag.lastFrameSentAt).toBe(t0);
+
+    // Frame liveness: a received server frame increments framesReceived.
+    await ws.receive({ serverContent: { inputTranscription: { text: 'add salt' }, turnComplete: true } });
+    diag = client.getDiagnostics();
+    expect(diag.framesReceived).toBe(2); // setupComplete + this frame
+    expect(diag.lastFrameReceivedAt).toBe(t0);
+
+    // Queue + drain progress: a model audio frame queues, then the drain
+    // plays it (raw-PCM fallback → playBuffer resolves on onended). The
+    // payload must be an EVEN byte count — an odd buffer makes the Int16Array
+    // decode throw RangeError and the drain would drop the chunk.
+    vi.setSystemTime(new Date('2026-01-01T00:00:01Z'));
+    await ws.receive({ serverContent: { modelTurn: { parts: [{ inlineData: { data: btoa('\x00\x00') } }] } } });
+    await vi.advanceTimersByTimeAsync(10);
+    diag = client.getDiagnostics();
+    expect(diag.playbackChunksPlayed).toBe(1);
+    expect(diag.lastQueueChangeAt).toBe(Date.parse('2026-01-01T00:00:01Z'));
+
+    // Close reason: a hard close records why the socket went down. The fake
+    // clock has moved to 00:00:01.010 (the 10ms advance), so the close
+    // timestamp must match the clock AT close time — assert against Date.now()
+    // rather than hard-coding, so this stays robust to future timer tweaks.
+    const tClose = Date.now();
+    ws.onclose?.({ code: 1006, reason: 'abnormal closure' });
+    diag = client.getDiagnostics();
+    expect(diag.wsCloses).toBe(1);
+    expect(diag.wsLastCloseReason).toBe('abnormal closure');
+    expect(diag.wsLastCloseAt).toBe(tClose);
+
+    client.disconnect();
+  }
+
   it('emits hearing while speech is present and drops it after a silence gap (waiting vs hearing)', async () => {
     mintOk();
     vi.useFakeTimers();

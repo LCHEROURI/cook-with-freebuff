@@ -139,6 +139,30 @@ export interface VoiceSessionDiagnostics {
    *  0 when not stuck — the human-readable form of the epoch above, so a paste
    *  shows the stuck duration without epoch math. */
   stuckQueueMs: number;
+  // ── Drop-classification fields ─────────────────────────────────────────────
+  // A pasted blob must pinpoint WHICH layer dropped the mic, not just that it
+  // did: network (socket/frame stall), audio-graph (capture frozen), or queue
+  // (stuck playback drain — the existing stuckQueueSince signature).
+  /** Server→client frames received (any message, incl. setupComplete). */
+  framesReceived: number;
+  /** Epoch ms of the last received server frame; 0 = none yet. */
+  lastFrameReceivedAt: number;
+  /** Epoch ms of the last frame the client sent; 0 = none yet. */
+  lastFrameSentAt: number;
+  /** Reason text of the last WebSocket close ('' when none was given). */
+  wsLastCloseReason: string | null;
+  /** Epoch ms of the last WebSocket close; 0 = never closed. */
+  wsLastCloseAt: number;
+  /** onaudioprocess invocations — the mic audio-graph heartbeat. */
+  captureRuns: number;
+  /** Epoch ms of the last onaudioprocess tick; 0 = never captured. */
+  lastCaptureAt: number;
+  /** Cumulative audio chunks successfully played by the drain. */
+  playbackChunksPlayed: number;
+  /** Times the drain re-entered via the 100ms error-path retry. */
+  drainReentries: number;
+  /** Epoch ms the playback queue last changed size (push or shift). */
+  lastQueueChangeAt: number;
 }
 
 export interface GeminiLiveOptions {
@@ -246,6 +270,16 @@ export class GeminiLiveClient {
     playbackQueueLength: 0,
     stuckQueueSince: 0,
     stuckQueueMs: 0,
+    framesReceived: 0,
+    lastFrameReceivedAt: 0,
+    lastFrameSentAt: 0,
+    wsLastCloseReason: null,
+    wsLastCloseAt: 0,
+    captureRuns: 0,
+    lastCaptureAt: 0,
+    playbackChunksPlayed: 0,
+    drainReentries: 0,
+    lastQueueChangeAt: 0,
   };
 
   constructor(private readonly opts: GeminiLiveOptions = {}) {}
@@ -344,6 +378,8 @@ export class GeminiLiveClient {
       this.clearConnectTimer();
       this.diag.wsCloses += 1;
       this.diag.wsLastCloseCode = e.code ?? null;
+      this.diag.wsLastCloseReason = e.reason ?? null;
+      this.diag.wsLastCloseAt = Date.now();
       // A live session ending on a non-clean close is the first thing to
       // check when the mic "stops working" mid-conversation.
       if (e.code !== undefined && e.code !== 1000 && e.code !== 1001) {
@@ -379,7 +415,16 @@ export class GeminiLiveClient {
       console.error('[voice] WebSocket error — the voice connection dropped.');
       this.emit('error', new Error('The voice connection dropped.'));
     };
-    ws.onmessage = (e) => this.handleMessage(e.data);
+    ws.onmessage = (e) => {
+      // Frame liveness: ANY server frame (including setupComplete) proves the
+      // server→client path is alive. A socket that keeps sending mic audio but
+      // receives nothing is the half-open network stall a dropped mic shows.
+      this.diag.framesReceived += 1;
+      this.diag.lastFrameReceivedAt = Date.now();
+      // Return the promise so a caller awaiting the handler (tests, or any
+      // future wrapper) sees the message fully processed.
+      return this.handleMessage(e.data);
+    };
   }
 
   /** Send a text utterance into the live session (replaces speaking). */
@@ -440,6 +485,11 @@ export class GeminiLiveClient {
       this.flushSent = false;
 
       processor.onaudioprocess = (e) => {
+        // Audio-graph heartbeat: EVERY tick counts (even while the mic is
+        // intentionally muted for playback) — a frozen lastCaptureAt at
+        // capture time means the audio graph itself died, not the network.
+        this.diag.captureRuns += 1;
+        this.diag.lastCaptureAt = Date.now();
         // While the model's reply is playing back, don't stream the mic at
         // all: the speaker's echo would otherwise reach the server's VAD as a
         // phantom user turn (the reply playing from the speakers IS "speech"
@@ -582,6 +632,7 @@ export class GeminiLiveClient {
     if (!this.connected) return;
     try {
       this.ws!.send(JSON.stringify(obj));
+      this.diag.lastFrameSentAt = Date.now();
     } catch {
       this.fail('The voice connection failed.');
     }
@@ -717,6 +768,7 @@ export class GeminiLiveClient {
       const view = new Uint8Array(buf);
       for (let i = 0; i < bin.length; i++) view[i] = bin.charCodeAt(i);
       this.playbackQueue.push(buf);
+      this.diag.lastQueueChangeAt = Date.now();
       void this.drainPlayback();
     } catch {
       // Malformed audio frame — skip rather than kill the session.
@@ -730,6 +782,7 @@ export class GeminiLiveClient {
     try {
       while (this.playbackQueue.length > 0) {
         const chunk = this.playbackQueue.shift()!;
+        this.diag.lastQueueChangeAt = Date.now();
         const ctx = this.getPlaybackContext();
         if (!ctx) break;
         try {
@@ -742,6 +795,7 @@ export class GeminiLiveClient {
             audio = decodePcmToAudioBuffer(ctx, chunk, OUTPUT_RATE) as unknown as AudioBuffer;
           }
           await playBuffer(ctx, audio, (src) => (this.currentSource = src));
+          this.diag.playbackChunksPlayed += 1;
         } catch {
           // A chunk that cannot be decoded or scheduled (a broken context, a
           // rejected playBuffer) must NOT kill the drain: dropping it and
@@ -763,6 +817,7 @@ export class GeminiLiveClient {
         // "first burst transcribed, then dead" signature. Re-enter shortly
         // so the queue gets another chance to drain.
         setTimeout(() => {
+          this.diag.drainReentries += 1;
           if (this.playbackQueue.length > 0 && !this.playing) void this.drainPlayback();
         }, 100);
       }

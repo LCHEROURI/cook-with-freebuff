@@ -1,0 +1,94 @@
+name: Compare live vs emulator (weekly divergence)
+
+# Weekly scheduled run of the emulator-compare — whose DEPLOYED leg is the
+# stack-divergence check that normally only fires right after a deploy
+# (ci.yml's emulator-compare gates deploy-apphosting on every main push).
+# Between deploys the LIVE stack can drift on its own — Firestore data,
+# Remote Config params, indexes, rules — without any push, and the emulator
+# leg is deterministic code from the repo, so re-running the full compare
+# weekly proves the local emulator stack still reproduces the deployed
+# guided flow + pantry turns even when nothing changed in the repo. Exit 0
+# = both stacks agree on all seventeen shared steps; 1 = a leg failed or the
+# shared lines diverged.
+#
+# Same concurrency discipline as the voice monitor (mic-regression.yml): the
+# deployed leg is a verify-live run for the SAME owner with the SAME
+# `verify-live-` probe namespace, so overlapping the post-deploy verify:live
+# voice stage or the weekly mic-regression batch would let each run's sweep
+# touch the other's in-flight probe. One shared `live-voice-probe` group
+# serializes them (Codex P2, PR #98 review).
+#
+# Event notes:
+#   - `schedule` runs on the default branch only (no fork PRs), but keep the
+#     same fork discipline as the other scheduled jobs: the run step is gated
+#     on the owner credentials (skip-not-fail) and the loud guard is
+#     canonical-repo-only, so a missing credential never masquerades as a
+#     green weekly compare.
+#   - The compare is idempotent and cleans up after itself (probe recipe +
+#     session deleted on every exit path), so a red run can simply be
+#     re-run; nothing is left behind.
+
+on:
+  schedule:
+    # Thursdays 06:30 UTC — clear of the Monday mic-regression + branch-tidy
+    # slot (06:00), the Saturday marker-cleanup slot (06:30), and the daily
+    # codex monitor (07:00).
+    - cron: '30 6 * * 4'
+  workflow_dispatch:
+
+concurrency:
+  group: live-voice-probe
+  cancel-in-progress: false
+
+jobs:
+  compare:
+    name: Compare deployed vs emulator guided flow
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    permissions:
+      contents: read
+
+    env:
+      NEXT_PUBLIC_FIREBASE_API_KEY: ${{ secrets.NEXT_PUBLIC_FIREBASE_API_KEY }}
+      FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+      APP_OWNER_UID: ${{ secrets.APP_OWNER_UID }}
+      # The deployed leg defaults to the canonical URL; pin it explicitly so a
+      # future move of the default can never silently re-target the weekly
+      # compare (same convention as the mic-regression monitor).
+      VERIFY_BASE_URL: https://cook-with-freebuff--portfolio-app-freebuff2.us-central1.hosted.app
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v5
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+
+      # The emulator leg boots the Firestore emulator, which requires Java 21
+      # (same pin as ci.yml's emulator-compare job).
+      - name: Set up Java 21
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Fail loudly if owner credentials are missing
+        if: ${{ github.repository == 'LCHEROURI/cook-with-freebuff' && (env.NEXT_PUBLIC_FIREBASE_API_KEY == '' || env.FIREBASE_SERVICE_ACCOUNT == '' || env.APP_OWNER_UID == '') }}
+        run: |
+          echo "::error::Owner-credential secrets missing — the weekly stack-divergence compare cannot run its deployed leg."
+          echo "Add NEXT_PUBLIC_FIREBASE_API_KEY, FIREBASE_SERVICE_ACCOUNT and APP_OWNER_UID under GitHub -> Settings -> Secrets and variables -> Actions, then re-run."
+          exit 1
+
+      # Credential-gated so forks stay green; the loud guard above already
+      # failed the job on the canonical repo when the secrets are missing
+      # (same skip-not-fail discipline as mic-regression.yml).
+      - name: Run the deployed-vs-emulator compare
+        if: ${{ env.NEXT_PUBLIC_FIREBASE_API_KEY != '' && env.FIREBASE_SERVICE_ACCOUNT != '' && env.APP_OWNER_UID != '' }}
+        run: npm run verify:live:compare:emulator

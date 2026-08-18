@@ -22,30 +22,36 @@ export async function GET(request: Request) {
       { status: 401 },
     );
   }
-  let verifyLive: {
+  type VerifyRecord = {
     verdict: string;
     commitSha: string;
     ranAt: string;
     runUrl: string;
-  } | null = null;
+  };
+  const toVerifyRecord = (d: Record<string, unknown>): VerifyRecord => ({
+    verdict: typeof d.verdict === 'string' ? d.verdict : '',
+    commitSha: typeof d.commitSha === 'string' ? d.commitSha : '',
+    ranAt: typeof d.ranAt === 'string' ? d.ranAt : '',
+    runUrl: typeof d.runUrl === 'string' ? d.runUrl : '',
+  });
+
+  let verifyLive: VerifyRecord | null = null;
+  // Sticky Gemini-credits marker: survives later non-external runs so the
+  // /status page can show when the billing outage last hit.
+  let lastExternal: VerifyRecord | null = null;
 
   const db = getAdminDb();
   if (db) {
     try {
       const snap = await db.collection('deploy_status').doc('verify_live').get();
-      if (snap.exists) {
-        const d = snap.data() ?? {};
-        verifyLive = {
-          verdict: typeof d.verdict === 'string' ? d.verdict : '',
-          commitSha: typeof d.commitSha === 'string' ? d.commitSha : '',
-          ranAt: typeof d.ranAt === 'string' ? d.ranAt : '',
-          runUrl: typeof d.runUrl === 'string' ? d.runUrl : '',
-        };
-      }
+      if (snap.exists) verifyLive = toVerifyRecord(snap.data() ?? {});
+      const externalSnap = await db.collection('deploy_status').doc('last_external').get();
+      if (externalSnap.exists) lastExternal = toVerifyRecord(externalSnap.data() ?? {});
     } catch {
       // The status page degrades gracefully — build facts still show even if
       // the verify record can't be read (e.g. emulator mode without one).
       verifyLive = null;
+      lastExternal = null;
     }
   }
 
@@ -54,5 +60,6 @@ export async function GET(request: Request) {
     builtAt: process.env.NEXT_PUBLIC_APP_BUILT_AT ?? '',
     emulator: !!process.env.FIRESTORE_EMULATOR_HOST,
     verifyLive,
+    lastExternal,
   });
 }

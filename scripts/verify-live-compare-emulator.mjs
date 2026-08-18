@@ -4,22 +4,25 @@
 // reproduces the DEPLOYED stack's deterministic guided flow, offline on the
 // local side.
 //
-// Two legs run the SAME deterministic guided flow (seed recipe → owner token
-// → launch → prep steps → safety gate → timer), which is stages [1]–[3] of
-// scripts/verify-live.mjs and the only part the emulator mode runs:
+// Two legs run the SAME deterministic flow (seed recipe → owner token →
+// launch → prep steps → safety gate → timer → the pantry lifecycle: add →
+// confirm → query → remove → follow-up), which is stages [1]–[3] plus the
+// deterministic pantry turns of scripts/verify-live.mjs — the parts the
+// emulator mode runs:
 //
-//   DEPLOYED  — npm run verify:live             (production Firestore + Auth)
+//   DEPLOYED  — npm run verify:live -- --guided-only
+//               (production Firestore + Auth, deterministic flow only)
 //   EMULATOR  — npm run verify:live:emulator    (local Firestore + Auth, no
 //                production traffic)
 //
-// The comparison is on the SEVEN shared guided-flow status lines only (the
-// deterministic steps both legs emit identically). The deployed leg's extra
-// Gemini/Chrome/App-Hosting stages and the emulator leg's create-user/SKIP
-// lines are all ignored — they are leg-specific, not part of the shared
-// contract. Ephemeral content (seeded recipe ids, owner uids) is normalized
-// before diffing, so a divergence that matters — a guided-flow step that
-// passed on one stack and failed (or ordered differently) on the other —
-// fails the comparison.
+// The comparison is on the SEVENTEEN shared status lines only (the seven
+// guided-flow steps plus the ten pantry-turn lines, which both legs emit
+// identically). The deployed leg's extra Gemini/Chrome/App-Hosting stages and
+// the emulator leg's create-user/SKIP lines are all ignored — they are
+// leg-specific, not part of the shared contract. Ephemeral content (seeded
+// recipe ids, owner uids) is normalized before diffing, so a divergence that
+// matters — a step that passed on one stack and failed (or ordered
+// differently) on the other — fails the comparison.
 //
 // Usage:
 //   npm run verify:live:compare:emulator
@@ -36,11 +39,14 @@ const ok = (m) => console.log(`  ✓ ${m}`);
 const fail = (m) => { console.log(`  ✗ FAIL: ${m}`); process.exitCode = 1; };
 const note = (m) => console.log(`  - ${m}`);
 
-// The seven deterministic guided-flow steps ([1]–[3] in verify-live.mjs) that
-// both legs emit verbatim. Each marker appears exactly once per transcript, so
-// matching in order yields the two comparable sequences; every other status
-// line (the deployed leg's starter/Gemini/Chrome/App-Hosting stages, the
-// emulator leg's create-user + SKIP lines) is excluded by design.
+// The deterministic status lines both legs emit verbatim: the seven
+// guided-flow steps ([1]–[3] in verify-live.mjs) plus the ten pantry-turn
+// lines (the K8 lifecycle through /api/agent — deterministic, no model
+// dependency, so the emulator leg runs it against the local stack too). Each
+// marker appears exactly once per transcript, so matching in order yields the
+// two comparable sequences; every other status line (the deployed leg's
+// starter/Gemini/Chrome/App-Hosting stages, the emulator leg's create-user +
+// SKIP lines) is excluded by design.
 const SHARED_MARKERS = [
   'seeded (owner ',                              // ✓ recipe verify-live-N seeded (owner <uid>)
   'owner ID token minted',                       // ✓ owner ID token minted
@@ -49,6 +55,16 @@ const SHARED_MARKERS = [
   'done → prep step 2',                          // ✓ done → prep step 2
   'safety gate surfaced',                        // ✓ safety gate surfaced: “…” (step preserved at 2)
   'gate acknowledged → timer auto-started',      // ✓ gate acknowledged → timer auto-started (“…”)
+  'add_pantry_item succeeded live',              // ✓ “I always have olive oil” → add_pantry_item succeeded live
+  'confirm_pending_pantry_items succeeded live', // ✓ “yes” → confirm_pending_pantry_items succeeded live
+  'pending pantry item “olive oil” confirmed',   // ✓ pending pantry item “olive oil” confirmed
+  'pendingPantryItems cleared in Firestore',     // ✓ session pendingPantryItems cleared in Firestore
+  'pantry item confidence raised to 1',          // ✓ pantry item confidence raised to 1 in Firestore
+  'get_pantry succeeded live',                   // ✓ “what's in my pantry?” → get_pantry succeeded live
+  'pantry query lists the confirmed',            // ✓ pantry query lists the confirmed “olive oil” item
+  'remove_pantry_item succeeded live',           // ✓ “remove olive oil from my pantry” → remove_pantry_item succeeded live
+  'pantry item doc removed from Firestore',      // ✓ pantry item doc removed from Firestore
+  'follow-up pantry query no longer lists',      // ✓ follow-up pantry query no longer lists “olive oil”
 ];
 
 const STATUS_RE = /^\s*(✓|✗)/;

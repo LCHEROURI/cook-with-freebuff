@@ -17,6 +17,7 @@ interface Status {
   builtAt: string;
   emulator: boolean;
   verifyLive: VerifyLive | null;
+  lastExternal: VerifyLive | null;
 }
 
 const shortSha = (sha: string) => (sha ? sha.slice(0, 7) : 'unknown');
@@ -171,6 +172,34 @@ export default function StatusPage() {
               </p>
               <p className={styles.cardMeta}>Built {formatTime(status.builtAt)}</p>
             </>
+          ) : (
+            <p className={styles.cardMeta}>Loading…</p>
+          )}
+        </article>
+
+        <article className={styles.card}>
+          <h2 className={styles.cardTitle}>Last Gemini-credits outage</h2>
+          {status ? (
+            status.lastExternal ? (
+              <>
+                <p className={`${styles.verdict} ${styles.unknown}`}>⚠ External</p>
+                <p className={styles.cardMeta}>
+                  {formatTime(status.lastExternal.ranAt)} ·{' '}
+                  <a href={commitUrl(status.lastExternal.commitSha)} className={styles.link}>
+                    {shortSha(status.lastExternal.commitSha)}
+                  </a>
+                </p>
+                {status.lastExternal.runUrl && (
+                  <p className={styles.cardMeta}>
+                    <a href={status.lastExternal.runUrl} className={styles.link}>
+                      View the CI run ↗
+                    </a>
+                  </p>
+                )}
+              </>
+            ) : (
+              <p className={styles.cardMeta}>No Gemini-credits outage recorded yet.</p>
+            )
           ) : (
             <p className={styles.cardMeta}>Loading…</p>
           )}

@@ -43,7 +43,8 @@ export const GEMINI_CREDITS_RE = new RegExp(
 
 // Failure prefixes that the credits block explains. The [3b] root is
 // `create_recipe →`; the rest wait on a generated recipe (starter UI,
-// constraints view, voice driver) or the [4] agent model turn.
+// constraints view, voice driver), the [4] agent model turn, or the [4d]
+// vision scan (a scan of any image also calls Gemini).
 export const GEMINI_CASCADE_PREFIXES = [
   'create_recipe →',
   'UI starter driver',
@@ -52,6 +53,7 @@ export const GEMINI_CASCADE_PREFIXES = [
   'live voice driver',
   'voice driver:',
   'model turn →',
+  'vision scan →',
 ];
 
 /**

@@ -40,22 +40,31 @@
 //      verify:live itself asserts the driver's log contains the summary-click
 //      and the three expanded-row markers (the driver is not a black box — a
 //      future edit dropping the row assertions fails even on exit 0).
-//   5. One agent turn through /api/agent: a deterministic pantry command
-//      (proves tools + persistence live) and a free-form turn (proves the
+//   5. Agent turns through /api/agent: the deterministic pantry lifecycle
+//      (add → confirm → query → remove → follow-up, with Firestore read-back;
+//      no model dependency, so it also runs in emulator / --guided-only mode
+//      and feeds the emulator-compare diff) and a free-form turn (proves the
 //      Gemini provider answers — SKIP, not fail, when GOOGLE_AI_API_KEY is
-//      absent locally).
+//      absent locally). After the agent turns: a substitution proof through
+//      /api/cook (request → SUBSTITUTION_REQUIRED → apply → recipe rewritten,
+//      persisted, revalidated, exact step resumed) and a grocery list proof
+//      through /api/agent (add → dedupe → list → remove, with Firestore
+//      read-back at every step). Plus a vision scan proof through
+//      /api/vision/scan (deterministic 400 on a missing image + a structured
+//      200 on a generated label image — the route contract, never specific
+//      contents).
 //   6. GUARANTEED cleanup: the whole flow runs inside try/finally and
 //      SIGINT/SIGTERM/unhandledRejection/uncaughtException handlers, so the
 //      seeded recipe, starter probe (recipe + session), session, events,
-//      timers, and pantry item are removed on EVERY exit path — success,
-//      failure, signal, or crash. A killed run is still caught by the next
-//      run's pre-run sweep.
+//      timers, pantry item, and grocery item are removed on EVERY exit path —
+//      success, failure, signal, or crash. A killed run is still caught by
+//      the next run's pre-run sweep.
 //
 // Usage:
 //   npm run verify:live                       # → https://cook-with-freebuff--portfolio-app-freebuff2.us-central1.hosted.app
 //   npm run verify:live -- --app http://localhost:3000
 //   VERIFY_BASE_URL=... node scripts/verify-live.mjs
-//   npm run verify:live:emulator              # guided flow vs the LOCAL emulators
+//   npm run verify:live:emulator              # guided flow + pantry turns vs the LOCAL emulators
 //   npm run verify:live -- --guided-only       # deployed guided flow [1]–[3] only
 //   npm run verify:live -- --require-app-check-enforced
 //                                             # FAIL unless the deployed server 403s an unattested request
@@ -134,6 +143,13 @@ const SA_JSON = process.env.FIREBASE_SERVICE_ACCOUNT;
 // attests to App Check with it via admin.appCheck().createToken() so the
 // post-deploy gate keeps exercising the gated routes once enforcement is on.
 const APP_ID = process.env.NEXT_PUBLIC_FIREBASE_APP_ID;
+// A tiny generated label image ("APPLE" in black on white, 132x44 PNG) used
+// by the [4d] vision scan proof. Encoded once with a pure-Node PNG encoder —
+// no binary fixture in the repo, no runtime image code. The stage asserts the
+// STRUCTURED contract (a 200 whose data.ingredients is a well-formed array),
+// never the specific contents, so what the model sees is not load-bearing.
+const VISION_FIXTURE_IMAGE =
+  'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAIQAAAAsCAIAAAAraYdzAAABPUlEQVR4nO2RMRLDMAzD8v9Pt2NPg+/oCorZlJwTiCauV2KT63SB5JPIMEpkGCUyjBIZRokMo0SGUSQZl5DOv6c4ytupPlI36jBV+k6O8naqj9SNOkyVvpOjvJ3qI3WjDlOl7+Qob6f6SN2o0qvvf52zy28xqWNuI0aG0YiRYTRiZBiNGBlGI0aG0YiRYTTiY2XspsOh+iic7yZj+xQmdWx1mCo9wVEGmu5TmNSx1WGq9ARHGWi6T2FSx1aHqdITHGWg6T6FSZVefT/x+CdxCpM6Fhn9RMZhTmFSxyKjn8g4zClM6lhk9BMZhzmFSR2LjH7+WsZuJjiFST1eKa1wqD4KpzMixSlM6vFKaYVD9VE4nREpTmFSj1dKKxyqj8LpjEhxCrPzsIRNZBglMowSGUaJDKNEhlEiwyiRYZQ3guRtfJKasiAAAAAASUVORK5CYII=';
 
 let failures = [];
 const ok = (m) => console.log(`  ✓ ${m}`);
@@ -145,10 +161,16 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 // Safe pretty-print for fail messages — a non-JSON body (e.g. a proxy error
 // page) must print as `null`, never crash the verifier.
 const j = (v) => JSON.stringify(v ?? null).slice(0, 160);
-// Long slice for the [3b] create_recipe failure: the Gemini credits signature
-// sits past j()'s 160-char cut (the SDK error is ~360 chars), so the root
-// failure must keep enough of the body for verify-live-classify to see it.
+// Long slice for non-root failure bodies (substitute/apply_substitution/vision
+// scan): enough of the body to debug the failure without unbounded log lines.
 const jLong = (v) => JSON.stringify(v ?? null).slice(0, 800);
+// FULL, untruncated serialization for the [3b] create_recipe root. The Gemini
+// credits signature is what verify-live-classify matches, and its offset is not
+// bounded by any SDK contract — a longer model id or a deeper error body can
+// push it past jLong()'s 800-char cut and hide the cause again (the exact
+// failure mode j()'s 160-char slice once caused). The root is therefore never
+// sliced.
+const jFull = (v) => JSON.stringify(v ?? null);
 // Socket-level errors that mean the request was never delivered: undici
 // reports these when it tries to REUSE a keep-alive socket the peer has
 // already closed (the Chrome driver stages block this process in spawnSync
@@ -192,6 +214,7 @@ const fetchJson = async (url, init) => {
 // ── Runtime state for cleanup (defined before any early exit can use it) ────
 let sid = null;
 let pantryItemId = null;
+let groceryItemId = null;
 let seededRecipeId = null;
 // Starter-flow probe artifacts: the recipe created via the deployed
 // create_recipe action (renamed to a sweep-compatible `verify-live-` id) and
@@ -208,6 +231,7 @@ async function cleanup() {
   if (seededRecipeId) deletes.push(db.collection('recipes').doc(seededRecipeId).delete());
   if (starterRecipeId) deletes.push(db.collection('recipes').doc(starterRecipeId).delete());
   if (pantryItemId) deletes.push(db.collection('pantry_items').doc(pantryItemId).delete());
+  if (groceryItemId) deletes.push(db.collection('grocery_list').doc(groceryItemId).delete());
   if (sid) {
     deletes.push(db.collection('cooking_sessions').doc(sid).delete());
     const [events, timers] = await Promise.all([
@@ -228,7 +252,7 @@ async function cleanup() {
   }
   try {
     await Promise.allSettled(deletes);
-    console.log('  ↳ seeded recipe, starter probe (recipe + session), events, timers, and pantry probe removed');
+    console.log('  ↳ seeded recipe, starter probe (recipe + session), events, timers, pantry probe, and grocery probe removed');
   } catch {
     console.log('  ↳ cleanup best-effort (some docs may remain)');
   }
@@ -400,9 +424,15 @@ try {
     estimatedPrepMinutes: 5,
     estimatedCookMinutes: 15,
     totalMinutes: 20,
+    // onion is referenced by the first prep step, so it must be listed for
+    // the deterministic validation engine to pass; garlic is what the [4b]
+    // substitution stage replaces, proving replace-throughout against a real
+    // ingredient in the recipe.
     ingredients: [
       { id: 'i1', name: 'chicken thighs', quantity: 4, unit: 'pieces', optional: false },
       { id: 'i2', name: 'rice', quantity: 1, unit: 'cup', optional: false },
+      { id: 'i3', name: 'onion', quantity: 1, unit: 'medium', optional: false },
+      { id: 'i4', name: 'garlic', quantity: 2, unit: 'cloves', optional: false },
     ],
     equipment: ['pan', 'knife'],
     prepSteps: [
@@ -772,6 +802,118 @@ try {
     fail(`expected WAITING_FOR_TIMER + timer, got ${ack.status} ${j(ack.body?.data)}`);
   }
 
+  // ── 4. Pantry turns (deterministic — no model) ────────────────────────────
+  // The K8 pantry lifecycle through /api/agent: add → confirm → query →
+  // remove → follow-up, with Firestore read-back at every step. The command
+  // router short-circuits before any provider call, so it runs WITHOUT a
+  // Gemini key — which is exactly why BOTH the deployed and the emulator
+  // stack can drive it, and why the emulator-compare shared-marker diff
+  // covers it. Full mode calls this on the re-established [4] session;
+  // emulator/--guided-only call it on the [3] session.
+  async function runPantryTurns(sessionId) {
+    const agent = (utterance) =>
+      fetchJson(`${APP}/api/agent`, {
+        method: 'POST', headers: AUTH,
+        body: JSON.stringify({ utterance, sessionId }),
+      });
+
+    // Deterministic command: pantry persistence through the real tool layer.
+    const pantryTurn = await agent('I always have olive oil');
+    const pantryTool = pantryTurn.body?.toolCalls?.find((c) => c.tool === 'add_pantry_item');
+    if (pantryTurn.status === 200 && pantryTool?.result?.success) {
+      ok(`“I always have olive oil” → add_pantry_item succeeded live`);
+      pantryItemId = pantryTool.result.data?.item?.id ?? null;
+    } else {
+      fail(`pantry agent turn → ${pantryTurn.status} ${JSON.stringify(pantryTurn.body).slice(0, 200)}`);
+    }
+
+    // K8 confirmation: "yes" must confirm the pending pantry item (CONFIRM chain →
+    // confirm_pending_pantry_items), raise its confidence to 1, and clear the
+    // session's pending list — the persisted state read back from Firestore.
+    const confirmTurn = await agent('yes');
+    const confirmTool = confirmTurn.body?.toolCalls?.find((c) => c.tool === 'confirm_pending_pantry_items');
+    if (confirmTurn.status === 200 && confirmTool?.result?.success) {
+      ok(`“yes” → confirm_pending_pantry_items succeeded live`);
+      const confirmed = confirmTool.result.data?.confirmed ?? [];
+      confirmed.some((c) => c.name === 'olive oil')
+        ? ok(`pending pantry item “olive oil” confirmed`)
+        : fail(`confirm_pending_pantry_items did not include olive oil (${JSON.stringify(confirmed).slice(0, 120)})`);
+    } else {
+      fail(`confirm turn → ${confirmTurn.status} ${JSON.stringify(confirmTurn.body).slice(0, 200)}`);
+    }
+
+    // Persisted-state proof: the session's pending list must be empty and the
+    // pantry doc must carry full confidence (the confirm contract, read back).
+    if (sessionId) {
+      try {
+        const sessionSnap = await db.collection('cooking_sessions').doc(sessionId).get();
+        const pending = sessionSnap.data()?.pendingPantryItems ?? [];
+        pending.length === 0
+          ? ok('session pendingPantryItems cleared in Firestore')
+          : fail(`pendingPantryItems still has ${pending.length} item(s) after confirm`);
+      } catch (e) {
+        fail(`could not read session pending state back: ${e.message}`);
+      }
+    }
+    if (pantryItemId) {
+      try {
+        const itemSnap = await db.collection('pantry_items').doc(pantryItemId).get();
+        const confidence = itemSnap.data()?.confidence;
+        confidence === 1
+          ? ok('pantry item confidence raised to 1 in Firestore')
+          : fail(`pantry item confidence is ${confidence} (expected 1)`);
+      } catch (e) {
+        fail(`could not read pantry item back: ${e.message}`);
+      }
+    }
+
+    // K8 pantry query: "what's in my pantry?" must route to the get_pantry tool
+    // and list the just-confirmed item back (PANTRY_GET intent → tool → store).
+    const queryTurn = await agent("what's in my pantry?");
+    const queryTool = queryTurn.body?.toolCalls?.find((c) => c.tool === 'get_pantry');
+    if (queryTurn.status === 200 && queryTool?.result?.success) {
+      ok(`"what's in my pantry?" → get_pantry succeeded live`);
+      const items = queryTool.result.data?.items ?? [];
+      items.some((i) => i.name === 'olive oil')
+        ? ok('pantry query lists the confirmed “olive oil” item')
+        : fail(`get_pantry did not list olive oil (${JSON.stringify(items.map((i) => i.name).slice(0, 5)).slice(0, 160)})`);
+    } else {
+      fail(`pantry query turn → ${queryTurn.status} ${JSON.stringify(queryTurn.body).slice(0, 200)}`);
+    }
+
+    // K8 pantry remove: "remove olive oil from my pantry" must route to
+    // remove_pantry_item (PANTRY_REMOVE intent, name resolution) — the item must
+    // vanish from the store AND from the next query.
+    const removeTurn = await agent('remove olive oil from my pantry');
+    const removeTool = removeTurn.body?.toolCalls?.find((c) => c.tool === 'remove_pantry_item');
+    if (removeTurn.status === 200 && removeTool?.result?.success) {
+      ok('“remove olive oil from my pantry” → remove_pantry_item succeeded live');
+    } else {
+      fail(`pantry remove turn → ${removeTurn.status} ${JSON.stringify(removeTurn.body).slice(0, 200)}`);
+    }
+    if (pantryItemId) {
+      try {
+        const goneSnap = await db.collection('pantry_items').doc(pantryItemId).get();
+        !goneSnap.exists
+          ? ok('pantry item doc removed from Firestore')
+          : fail(`pantry item ${pantryItemId} still exists after remove`);
+      } catch (e) {
+        fail(`could not read pantry item after remove: ${e.message}`);
+      }
+    }
+    // Follow-up query proves the read path reflects the removal, not just the tool.
+    const followUpTurn = await agent("what's in my pantry?");
+    const followUpTool = followUpTurn.body?.toolCalls?.find((c) => c.tool === 'get_pantry');
+    if (followUpTurn.status === 200 && followUpTool?.result?.success) {
+      const items = followUpTool.result.data?.items ?? [];
+      !items.some((i) => i.name === 'olive oil')
+        ? ok('follow-up pantry query no longer lists “olive oil”')
+        : fail(`get_pantry still lists olive oil after remove (${JSON.stringify(items.map((i) => i.name).slice(0, 5)).slice(0, 160)})`);
+    } else {
+      fail(`follow-up pantry query → ${followUpTurn.status} ${JSON.stringify(followUpTurn.body).slice(0, 200)}`);
+    }
+  }
+
   if (!EMULATOR && !GUIDED_ONLY) {
   // ── 3b. Starter-flow proof: create → validate → start cooking ────────────
   // The /cook starter is the missing start-from-scratch stage: the user says
@@ -790,7 +932,7 @@ try {
   const starterCreated = await cookLong('create_recipe', { prompt: 'I have chicken thighs and rice' });
   let createdRecipeId = null;
   if (starterCreated.status !== 200 || !starterCreated.body?.success) {
-    fail(`create_recipe → ${starterCreated.status} ${jLong(starterCreated.body?.error ?? starterCreated.body)}`);
+    fail(`create_recipe → ${starterCreated.status} ${jFull(starterCreated.body?.error ?? starterCreated.body)}`);
   } else {
     const { recipeId, title, validation } = starterCreated.body.data;
     createdRecipeId = recipeId;
@@ -1140,101 +1282,10 @@ try {
       body: JSON.stringify({ utterance, sessionId: sid }),
     });
 
-  // Deterministic command: pantry persistence through the real tool layer.
-  const pantryTurn = await agent('I always have olive oil');
-  const pantryTool = pantryTurn.body?.toolCalls?.find((c) => c.tool === 'add_pantry_item');
-  if (pantryTurn.status === 200 && pantryTool?.result?.success) {
-    ok(`“I always have olive oil” → add_pantry_item succeeded live`);
-    pantryItemId = pantryTool.result.data?.item?.id ?? null;
-  } else {
-    fail(`pantry agent turn → ${pantryTurn.status} ${JSON.stringify(pantryTurn.body).slice(0, 200)}`);
-  }
-
-  // K8 confirmation: "yes" must confirm the pending pantry item (CONFIRM chain →
-  // confirm_pending_pantry_items), raise its confidence to 1, and clear the
-  // session's pending list — the persisted state read back from Firestore.
-  const confirmTurn = await agent('yes');
-  const confirmTool = confirmTurn.body?.toolCalls?.find((c) => c.tool === 'confirm_pending_pantry_items');
-  if (confirmTurn.status === 200 && confirmTool?.result?.success) {
-    ok(`“yes” → confirm_pending_pantry_items succeeded live`);
-    const confirmed = confirmTool.result.data?.confirmed ?? [];
-    confirmed.some((c) => c.name === 'olive oil')
-      ? ok(`pending pantry item “olive oil” confirmed`)
-      : fail(`confirm_pending_pantry_items did not include olive oil (${JSON.stringify(confirmed).slice(0, 120)})`);
-  } else {
-    fail(`confirm turn → ${confirmTurn.status} ${JSON.stringify(confirmTurn.body).slice(0, 200)}`);
-  }
-
-  // Persisted-state proof: the session's pending list must be empty and the
-  // pantry doc must carry full confidence (the confirm contract, read back).
-  if (sid) {
-    try {
-      const sessionSnap = await db.collection('cooking_sessions').doc(sid).get();
-      const pending = sessionSnap.data()?.pendingPantryItems ?? [];
-      pending.length === 0
-        ? ok('session pendingPantryItems cleared in Firestore')
-        : fail(`pendingPantryItems still has ${pending.length} item(s) after confirm`);
-    } catch (e) {
-      fail(`could not read session pending state back: ${e.message}`);
-    }
-  }
-  if (pantryItemId) {
-    try {
-      const itemSnap = await db.collection('pantry_items').doc(pantryItemId).get();
-      const confidence = itemSnap.data()?.confidence;
-      confidence === 1
-        ? ok('pantry item confidence raised to 1 in Firestore')
-        : fail(`pantry item confidence is ${confidence} (expected 1)`);
-    } catch (e) {
-      fail(`could not read pantry item back: ${e.message}`);
-    }
-  }
-
-  // K8 pantry query: "what's in my pantry?" must route to the get_pantry tool
-  // and list the just-confirmed item back (PANTRY_GET intent → tool → store).
-  const queryTurn = await agent("what's in my pantry?");
-  const queryTool = queryTurn.body?.toolCalls?.find((c) => c.tool === 'get_pantry');
-  if (queryTurn.status === 200 && queryTool?.result?.success) {
-    ok(`"what's in my pantry?" → get_pantry succeeded live`);
-    const items = queryTool.result.data?.items ?? [];
-    items.some((i) => i.name === 'olive oil')
-      ? ok('pantry query lists the confirmed “olive oil” item')
-      : fail(`get_pantry did not list olive oil (${JSON.stringify(items.map((i) => i.name).slice(0, 5)).slice(0, 160)})`);
-  } else {
-    fail(`pantry query turn → ${queryTurn.status} ${JSON.stringify(queryTurn.body).slice(0, 200)}`);
-  }
-
-  // K8 pantry remove: "remove olive oil from my pantry" must route to
-  // remove_pantry_item (PANTRY_REMOVE intent, name resolution) — the item must
-  // vanish from the store AND from the next query.
-  const removeTurn = await agent('remove olive oil from my pantry');
-  const removeTool = removeTurn.body?.toolCalls?.find((c) => c.tool === 'remove_pantry_item');
-  if (removeTurn.status === 200 && removeTool?.result?.success) {
-    ok('“remove olive oil from my pantry” → remove_pantry_item succeeded live');
-  } else {
-    fail(`pantry remove turn → ${removeTurn.status} ${JSON.stringify(removeTurn.body).slice(0, 200)}`);
-  }
-  if (pantryItemId) {
-    try {
-      const goneSnap = await db.collection('pantry_items').doc(pantryItemId).get();
-      !goneSnap.exists
-        ? ok('pantry item doc removed from Firestore')
-        : fail(`pantry item ${pantryItemId} still exists after remove`);
-    } catch (e) {
-      fail(`could not read pantry item after remove: ${e.message}`);
-    }
-  }
-  // Follow-up query proves the read path reflects the removal, not just the tool.
-  const followUpTurn = await agent("what's in my pantry?");
-  const followUpTool = followUpTurn.body?.toolCalls?.find((c) => c.tool === 'get_pantry');
-  if (followUpTurn.status === 200 && followUpTool?.result?.success) {
-    const items = followUpTool.result.data?.items ?? [];
-    !items.some((i) => i.name === 'olive oil')
-      ? ok('follow-up pantry query no longer lists “olive oil”')
-      : fail(`get_pantry still lists olive oil after remove (${JSON.stringify(items.map((i) => i.name).slice(0, 5)).slice(0, 160)})`);
-  } else {
-    fail(`follow-up pantry query → ${followUpTurn.status} ${JSON.stringify(followUpTurn.body).slice(0, 200)}`);
-  }
+  // Deterministic pantry lifecycle via the shared runPantryTurns() (also
+  // drives the emulator/guided-only legs — no model needed); the Gemini turn
+  // below stays production-only.
+  await runPantryTurns(sid);
 
   // Free-form turn: the Gemini provider must answer. A greeting is the clean
   // model-only path — food-phrase questions can be caught by the deterministic
@@ -1255,12 +1306,168 @@ try {
     skip('Gemini turn (GOOGLE_AI_API_KEY not set locally — provider check skipped, not failed)');
   }
 
+  // ── 4b. Substitution proof (K7 Part A): request → apply → resume → persisted ──
+  // The seeded recipe contains garlic (i4), so the full substitution contract
+  // is exercised against the DEPLOYED route: the session enters
+  // SUBSTITUTION_REQUIRED with honest candidates, applying the replacement
+  // rewrites the recipe, persists it, revalidates, and resumes the EXACT step
+  // the cook was on. Deterministic — no Gemini dependency.
+  console.log(`\n[4b] Substitution proof: request → apply → resume exact step (${APP}/api/cook)`);
+  const subReq = await cook('substitute', { sessionId: sid, unavailableIngredient: 'garlic' });
+  const subCandidates = subReq.body?.data?.candidates ?? [];
+  if (subReq.status === 200 && subReq.body?.success) {
+    ok(`substitute → ${subReq.body.data.snapshot?.phase} (${subCandidates.map((c) => c.ingredient).join(', ') || 'no candidates'})`);
+    subReq.body.data.snapshot?.phase === 'SUBSTITUTION_REQUIRED'
+      ? ok('session entered SUBSTITUTION_REQUIRED')
+      : fail(`expected SUBSTITUTION_REQUIRED, got ${j(subReq.body.data.snapshot?.phase)}`);
+    subCandidates.some((c) => c.ingredient === 'garlic powder')
+      ? ok('candidates include “garlic powder”')
+      : fail(`candidates missing garlic powder (${JSON.stringify(subCandidates.map((c) => c.ingredient)).slice(0, 160)})`);
   } else {
-    // Guided flow only: prove the deterministic steps [1]–[3] and stop. These
-    // stages each need a production-only dependency — real Gemini generation
-    // ([3b], [4]) and headless Chrome + Gemini Live ([3d], [3e]) — so they
-    // are skipped (emulator mode, or --guided-only).
-    skip('starter flow, UI/voice drivers, and agent turns — guided flow only');
+    fail(`substitute → ${subReq.status} ${jLong(subReq.body?.error ?? subReq.body)}`);
+  }
+  const stepBeforeSub = subReq.body?.data?.snapshot?.stepNumber;
+
+  const subApply = await cook('apply_substitution', { sessionId: sid, replacement: 'garlic powder' });
+  if (subApply.status === 200 && subApply.body?.success) {
+    const applied = subApply.body.data;
+    ok(`apply_substitution → ${applied.from} → ${applied.to} (${applied.snapshot?.phase} step ${applied.snapshot?.stepNumber})`);
+    applied.snapshot?.phase === 'PREP_GUIDANCE' && applied.snapshot?.stepNumber === stepBeforeSub
+      ? ok(`resumed the exact step after substitution (${applied.snapshot.phase} step ${applied.snapshot.stepNumber})`)
+      : fail(`expected resume to ${stepBeforeSub}, got ${applied.snapshot?.phase} step ${applied.snapshot?.stepNumber}`);
+    applied.validation?.valid === true
+      ? ok('replaced recipe revalidated (deterministic engine, no errors)')
+      : fail(`replaced recipe NOT validated: ${j(applied.validation)}`);
+  } else {
+    fail(`apply_substitution → ${subApply.status} ${jLong(subApply.body?.error ?? subApply.body)}`);
+  }
+
+  // Persistence proof: the replaced recipe must be in Firestore — garlic
+  // powder present, garlic gone (the apply contract, read back from the store).
+  if (seededRecipeId) {
+    try {
+      const replacedSnap = await db.collection('recipes').doc(seededRecipeId).get();
+      const names = (replacedSnap.data()?.ingredients ?? []).map((i) => i.name);
+      names.includes('garlic powder') && !names.includes('garlic')
+        ? ok('replaced recipe persisted to Firestore (garlic → garlic powder, no garlic)')
+        : fail(`Firestore recipe ingredients after substitution: ${JSON.stringify(names).slice(0, 160)}`);
+    } catch (e) {
+      fail(`could not read replaced recipe back: ${e.message}`);
+    }
+  }
+
+  // ── 4c. Grocery list proof (K10): add → dedupe → list → remove, persisted ──
+  // The MANUAL grocery surface: add an open line, prove dedupe (an OPEN line
+  // is never duplicated), prove the read path lists it, then remove it — with
+  // Firestore read-back at every step, like the pantry turns above.
+  console.log(`\n[4c] Grocery list proof: add → dedupe → list → remove (${APP}/api/agent)`);
+  const groceryAdd = await agent('add milk to my grocery list');
+  const addGroceryTool = groceryAdd.body?.toolCalls?.find((c) => c.tool === 'add_grocery_item');
+  if (groceryAdd.status === 200 && addGroceryTool?.result?.success) {
+    ok('“add milk to my grocery list” → add_grocery_item succeeded live');
+    groceryItemId = addGroceryTool.result.data?.item?.id ?? null;
+  } else {
+    fail(`grocery add turn → ${groceryAdd.status} ${JSON.stringify(groceryAdd.body).slice(0, 200)}`);
+  }
+
+  // Dedupe contract: re-adding the same name must return the SAME open line.
+  const groceryAdd2 = await agent('add milk to my grocery list');
+  const addGroceryTool2 = groceryAdd2.body?.toolCalls?.find((c) => c.tool === 'add_grocery_item');
+  if (groceryAdd2.status === 200 && addGroceryTool2?.result?.success) {
+    addGroceryTool2.result.data?.item?.id === groceryItemId
+      ? ok('dedupe: re-adding “milk” returned the same open line (no duplicate)')
+      : fail(`dedupe broken: second add returned ${j(addGroceryTool2.result.data?.item)} (expected ${groceryItemId})`);
+  } else {
+    fail(`grocery dedupe turn → ${groceryAdd2.status} ${JSON.stringify(groceryAdd2.body).slice(0, 200)}`);
+  }
+
+  if (groceryItemId) {
+    try {
+      const itemSnap = await db.collection('grocery_list').doc(groceryItemId).get();
+      const d = itemSnap.data();
+      d && d.status === 'OPEN' && d.source === 'MANUAL' && d.name === 'milk'
+        ? ok('grocery item persisted to Firestore (OPEN, MANUAL)')
+        : fail(`grocery item state is ${j(d)}`);
+    } catch (e) {
+      fail(`could not read grocery item back: ${e.message}`);
+    }
+  }
+
+  const groceryList = await agent("what's on my grocery list?");
+  const listGroceryTool = groceryList.body?.toolCalls?.find((c) => c.tool === 'get_grocery_list');
+  if (groceryList.status === 200 && listGroceryTool?.result?.success) {
+    const items = listGroceryTool.result.data?.items ?? [];
+    items.some((i) => i.name === 'milk')
+      ? ok('grocery list query lists the added “milk” item')
+      : fail(`get_grocery_list did not list milk (${JSON.stringify(items.map((i) => i.name).slice(0, 5)).slice(0, 160)})`);
+  } else {
+    fail(`grocery list turn → ${groceryList.status} ${JSON.stringify(groceryList.body).slice(0, 200)}`);
+  }
+
+  const groceryRemove = await agent('remove milk from my grocery list');
+  const removeGroceryTool = groceryRemove.body?.toolCalls?.find((c) => c.tool === 'remove_grocery_item');
+  if (groceryRemove.status === 200 && removeGroceryTool?.result?.success) {
+    ok('“remove milk from my grocery list” → remove_grocery_item succeeded live');
+  } else {
+    fail(`grocery remove turn → ${groceryRemove.status} ${JSON.stringify(groceryRemove.body).slice(0, 200)}`);
+  }
+  if (groceryItemId) {
+    try {
+      const goneSnap = await db.collection('grocery_list').doc(groceryItemId).get();
+      !goneSnap.exists
+        ? ok('grocery item doc removed from Firestore')
+        : fail(`grocery item ${groceryItemId} still exists after remove`);
+    } catch (e) {
+      fail(`could not read grocery item after remove: ${e.message}`);
+    }
+  }
+
+  // ── 4d. Vision scan proof: input validation + structured result ──────────
+  // /api/vision/scan (camera/upload → Gemini vision → structured ingredients)
+  // is the last Gemini-quota surface the gate did not exercise. Deterministic
+  // probe first (no model): an empty body must be rejected 400 MISSING_IMAGE.
+  // Then the happy path with a generated label image — the gate asserts the
+  // STRUCTURED contract (a 200 whose data.ingredients is an array of
+  // well-formed items), never the specific contents, so model variance can
+  // never flake the post-deploy gate.
+  console.log(`\n[4d] Vision scan proof: validation + structured result (${APP}/api/vision/scan)`);
+  const missingImage = await fetchJson(`${APP}/api/vision/scan`, {
+    method: 'POST', headers: AUTH,
+    body: JSON.stringify({}),
+  });
+  missingImage.status === 400 && missingImage.body?.error?.code === 'MISSING_IMAGE'
+    ? ok('empty body → 400 MISSING_IMAGE (input validation live)')
+    : fail(`expected 400 MISSING_IMAGE, got ${missingImage.status} ${j(missingImage.body)}`);
+
+  const scanRes = await fetchJson(`${APP}/api/vision/scan`, {
+    method: 'POST', headers: AUTH,
+    body: JSON.stringify({ image: VISION_FIXTURE_IMAGE }),
+    timeoutMs: 60_000, // cold serverless boot + model latency
+  });
+  if (scanRes.status === 200 && scanRes.body?.success) {
+    ok(`vision scan → 200 (${scanRes.body.data?.ingredients?.length ?? 0} recognized ingredient(s))`);
+    const ingredients = scanRes.body.data?.ingredients;
+    Array.isArray(ingredients)
+      ? ok('scan result is a parsed ingredients array')
+      : fail(`data.ingredients is not an array: ${j(scanRes.body.data)}`);
+    const malformed = (ingredients ?? []).filter((i) => typeof i?.name !== 'string' || typeof i?.confidence !== 'number');
+    malformed.length === 0
+      ? ok('every recognized ingredient is well-formed (name + confidence)')
+      : fail(`malformed ingredient(s): ${j(malformed)}`);
+  } else {
+    fail(`vision scan → ${scanRes.status} ${jLong(scanRes.body?.error ?? scanRes.body)}`);
+  }
+
+  } else {
+    // Guided flow only: the deterministic [1]–[3] steps plus the pantry turns
+    // (also deterministic — no model), the exact surface the emulator-compare
+    // shared-marker diff covers. The remaining stages need a production-only
+    // dependency — real Gemini generation ([3b]) and headless Chrome + Gemini
+    // Live ([3d], [3e], [3f]) — so they are skipped (emulator mode, or
+    // --guided-only).
+    console.log(`\n[4] Pantry turns via ${APP}/api/agent (deterministic — no model)`);
+    await runPantryTurns(sid);
+    skip('starter flow, UI/voice drivers, Gemini turn, and the substitution/grocery/vision stages — guided flow only');
   }
 } catch (e) {
   // Only report if the token-exchange abort path hasn't already (that path

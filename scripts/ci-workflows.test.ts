@@ -456,6 +456,24 @@ describe('.github/workflows/mic-regression.yml · weekly two-burst pass-rate mon
     expect(MIC_REGRESSION).toContain('skipping (dedupe)');
   });
 
+  it('red-week issue body carries the run URL, artifact URL, and drop-classification guidance', () => {
+    // A genuine red alert must give the responder everything needed to find
+    // and diagnose the failing run from the issue alone: the run link, the
+    // artifacts link (blob + screenshot), and how to read the blob's
+    // drop-classification verdict. Each is pinned so a future edit cannot
+    // silently strip the diagnosis path from the alert.
+    // Run URL — built from the canonical env vars and linked in the body.
+    expect(MIC_REGRESSION).toContain('run_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/${{ github.run_id }}"');
+    expect(MIC_REGRESSION).toContain('- **Run:** $run_url');
+    // Artifact URL — derived from the run URL and linked in the body.
+    expect(MIC_REGRESSION).toContain('artifact_url="$run_url/artifacts"');
+    expect(MIC_REGRESSION).toContain('- **Artifacts (phase-c-runs — the failing run\'s copy-voice-details blob + screenshot):** $artifact_url');
+    // Drop-classification guidance — tells the responder which layer dropped
+    // the mic, and where the latency evidence lives when nothing dropped.
+    expect(MIC_REGRESSION).toContain('drop-classification verdict (queue / network / audio-graph) pinpoints which layer dropped the mic');
+    expect(MIC_REGRESSION).toContain('phase-c-latency blob + screenshot show the state at the violation');
+  });
+
   it('forgives transient runs up to a CONFIGURABLE flake budget but NEVER budgets the mic-contract failures', () => {
     // The session-launch 503 that reddened a real batch (5/6) must not open a
     // false-positive issue. The budget is kind-aware: a failed run is a HARD

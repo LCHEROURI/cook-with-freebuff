@@ -18,10 +18,12 @@
 //      FIRESTORE_EMULATOR_HOST).
 //   3. Runs `node scripts/verify-live.mjs --app http://localhost:<port>
 //      --emulator`, which mints a demo owner in the auth emulator, seeds a
-//      recipe in the Firestore emulator, and drives the full guided flow
-//      (launch → prep steps → safety gate → timer) with zero production
-//      traffic. The Gemini/Chrome/live-host stages are skipped in emulator
-//      mode (they are production-only), so the check is fast and offline.
+//      recipe in the Firestore emulator, and drives the guided flow
+//      (launch → prep steps → safety gate → timer) plus the deterministic
+//      pantry turns (add → confirm → query → remove — no model dependency)
+//      with zero production traffic. The Gemini/Chrome/live-host stages are
+//      skipped in emulator mode (they are production-only), so the check is
+//      fast and offline.
 //   4. ALWAYS tears down the processes it started (dev server + emulators,
 //      unless the emulators were reused). Exit code mirrors verify-live
 //      (0 = PASS, 1 = FAIL).
