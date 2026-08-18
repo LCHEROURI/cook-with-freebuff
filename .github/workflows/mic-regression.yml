@@ -253,7 +253,7 @@ jobs:
           else
             drill_flag=""
           fi
-          node scripts/mic-flake-escalate.mjs --out "${RUNNER_TEMP}/phase-c" --flake-indices "${steps.batch.outputs.flake_indices}" $drill_flag
+          node scripts/mic-flake-escalate.mjs --out "${RUNNER_TEMP}/phase-c" --flake-indices "${{ steps.batch.outputs.flake_indices }}" $drill_flag
 
       # A red week must alert someone — open a GitHub issue with the pass
       # rate, the run link, and the artifact link (the failing run's blob +

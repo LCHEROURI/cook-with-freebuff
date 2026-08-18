@@ -519,7 +519,12 @@ describe('.github/workflows/mic-regression.yml · weekly two-burst pass-rate mon
     expect(MIC_REGRESSION).toContain('echo "flake_count=${flake_count}" >> "$GITHUB_OUTPUT"');
     expect(MIC_REGRESSION).toContain('Escalate a same-flake streak (3 weeks running)');
     expect(MIC_REGRESSION).toContain('id: escalate');
-    expect(MIC_REGRESSION).toContain('node scripts/mic-flake-escalate.mjs --out "${RUNNER_TEMP}/phase-c" --flake-indices "${steps.batch.outputs.flake_indices}" $drill_flag');
+    // The flake indices must be read with the Actions expression syntax
+    // (${{ steps... }}), not bash ${steps...} — dots are illegal in a bash
+    // variable name, and the bad substitution made the step die with exit 1
+    // the first time the drill exercised it.
+    expect(MIC_REGRESSION).toContain('node scripts/mic-flake-escalate.mjs --out "${RUNNER_TEMP}/phase-c" --flake-indices "${{ steps.batch.outputs.flake_indices }}" $drill_flag');
+    expect(MIC_REGRESSION).not.toContain('"${steps.batch.outputs.flake_indices}"');
     expect(MIC_REGRESSION).toContain("steps.batch.outputs.result == ''");
     // The step runs on CLEAN weeks too (no flake_indices gate) so the
     // escalation script can auto-close a healed streak instead of leaving the
