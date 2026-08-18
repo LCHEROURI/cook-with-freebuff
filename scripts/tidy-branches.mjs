@@ -16,27 +16,46 @@
 //      unmerged branch — git enforces the "fully merged" claim, never the
 //      script. The current branch and the base itself are always skipped.
 //
+// Every git call goes through execFileSync with an ARGUMENT ARRAY — never a
+// shell string — so a branch name containing shell metacharacters (git allows
+// names like `evil;touch$IFS/tmp/pwn`) is passed literally and can never be
+// executed or expanded (Codex P1, PR #139 review). Deletions are verified
+// after the fact: `git branch -d` checks its OWN base (the branch's upstream,
+// or HEAD when none exists), which can differ from the `--merged main` list
+// when running from a feature branch, so a refused branch is reported as kept
+// and only a branch that is provably gone is reported as deleted (Codex P2,
+// PR #139 review).
+//
 // Squash-merged branches are intentionally refused: git ancestry cannot see
 // a squash merge, so `-d` reports them as not fully merged and the script
 // leaves them for a platform check (e.g. gh pr view) before any -D. A silent
 // force delete is exactly the destructive move this script exists to avoid.
 // ============================================================================
 
-import { execSync } from 'node:child_process';
+import { execFileSync } from 'node:child_process';
 
 const args = process.argv.slice(2);
 const DRY_RUN = args.includes('--dry-run');
 
-const run = (cmd) => execSync(cmd, { encoding: 'utf8' }).trim();
+const run = (cmd, cmdArgs) => execFileSync(cmd, cmdArgs, { encoding: 'utf8' }).trim();
 const step = (m) => console.log(`  ${DRY_RUN ? '·' : '✓'} ${m}`);
 const skip = (m) => console.log(`  - ${m}`);
 
+const branchExists = (name) => {
+  try {
+    run('git', ['rev-parse', '--verify', '--quiet', `refs/heads/${name}`]);
+    return true;
+  } catch {
+    return false;
+  }
+};
+
 // The base is main when it exists; otherwise the current branch (a fresh
 // clone may have only its checked-out branch until the first fetch).
-const current = run('git rev-parse --abbrev-ref HEAD');
+const current = run('git', ['rev-parse', '--abbrev-ref', 'HEAD']);
 let base = 'main';
 try {
-  run('git rev-parse --verify main');
+  run('git', ['rev-parse', '--verify', 'main']);
 } catch {
   base = current;
 }
@@ -44,14 +63,14 @@ try {
 // ── Pass 1: prune stale remote-tracking refs ────────────────────────────────
 console.log(`\nPruning stale remote-tracking refs (origin):`);
 if (DRY_RUN) {
-  const dry = run('git remote prune origin --dry-run').trim();
+  const dry = run('git', ['remote', 'prune', '--dry-run', 'origin']).trim();
   if (dry) {
     for (const line of dry.split('\n')) step(`would ${line.trim()}`);
   } else {
     skip('nothing stale');
   }
 } else {
-  const out = run('git remote prune origin').trim();
+  const out = run('git', ['remote', 'prune', 'origin']).trim();
   if (out) {
     for (const line of out.split('\n')) step(line.trim());
   } else {
@@ -61,7 +80,7 @@ if (DRY_RUN) {
 
 // ── Pass 2: delete fully merged local branches ──────────────────────────────
 console.log(`\nLocal branches fully merged into ${base}:`);
-const merged = run(`git branch --merged ${base}`)
+const merged = run('git', ['branch', '--merged', base])
   .split('\n')
   .map((line) => line.replace(/^\*?\s*/, '').trim())
   .filter(Boolean)
@@ -75,13 +94,21 @@ if (merged.length === 0) {
       step(`would delete ${name}`);
       continue;
     }
+    let refused = false;
     try {
-      run(`git branch -d ${name}`);
-      step(`deleted ${name}`);
+      // `-d` refuses unmerged (incl. squash-merged) branches AND branches not
+      // merged into ITS base (upstream, or HEAD) when that differs from the
+      // --merged list's base — both throws here, recorded, never force-deleted.
+      run('git', ['branch', '-d', name]);
     } catch {
-      // `-d` refuses unmerged (incl. squash-merged) branches; leave them for
-      // a platform check before any force delete.
-      skip(`kept ${name} (not fully merged — verify against GitHub before -D)`);
+      refused = true;
+    }
+    if (refused || branchExists(name)) {
+      // Either -d refused outright, or it reported success but the branch is
+      // still present — leave it for a platform check before any force delete.
+      skip(`kept ${name} (not fully merged against -d's base — verify against GitHub before -D)`);
+    } else {
+      step(`deleted ${name}`);
     }
   }
 }
