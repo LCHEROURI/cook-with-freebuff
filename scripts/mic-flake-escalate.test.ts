@@ -1,8 +1,12 @@
+import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import {
   extractBatchFlakeSignatures,
   extractFlakeSignature,
   flakeEscalationVerdict,
+  flakeHealedVerdict,
+  seedDrillPriorWeeks,
+  signatureFromTitle,
   weekKeyOf,
 } from './mic-flake-escalate.mjs';
 
@@ -119,6 +123,73 @@ describe('flakeEscalationVerdict · the 3-week streak', () => {
     });
     expect(v.escalate).toBe(true);
     expect(v.signature).toBe('launch → 503');
+  });
+});
+
+describe('seedDrillPriorWeeks · the escalation drill seeds a 3-week streak in one dispatch', () => {
+  it('seeds the two prior Mondays carrying the same signature, oldest first', () => {
+    expect(seedDrillPriorWeeks('2026-08-17', 'drill-flake → 503')).toEqual([
+      { date: '2026-08-03', signatures: ['drill-flake → 503'] },
+      { date: '2026-08-10', signatures: ['drill-flake → 503'] },
+    ]);
+  });
+
+  it('feeds the REAL verdict so the streak escalates end-to-end', () => {
+    const v = flakeEscalationVerdict({
+      current: { date: '2026-08-17', signatures: ['drill-flake → 503'] },
+      previous: seedDrillPriorWeeks('2026-08-17', 'drill-flake → 503'),
+    });
+    expect(v.escalate).toBe(true);
+    expect(v.signature).toBe('drill-flake → 503');
+    expect(v.dates).toEqual(['2026-08-03', '2026-08-10', '2026-08-17']);
+  });
+
+  it('crosses month boundaries without drifting the Monday anchor', () => {
+    expect(seedDrillPriorWeeks('2026-08-03', 'launch → 503')).toEqual([
+      { date: '2026-07-20', signatures: ['launch → 503'] },
+      { date: '2026-07-27', signatures: ['launch → 503'] },
+    ]);
+  });
+});
+
+describe('signatureFromTitle · parsing the escalation issue title', () => {
+  it('extracts the signature from the created title', () => {
+    expect(signatureFromTitle('Mic regression: same flake “launch → 503” 3 weeks running')).toBe('launch → 503');
+  });
+
+  it('returns null for an edited/unrecognized title (left open, not mis-closed)', () => {
+    expect(signatureFromTitle('Some edited title without the shape')).toBeNull();
+    expect(signatureFromTitle('')).toBeNull();
+  });
+});
+
+describe('flakeHealedVerdict · a subsequent week shows the flake gone', () => {
+  const cur = (signatures: string[]) => ({ date: '2026-08-24', signatures });
+
+  it('heals when the signature is absent from the current week', () => {
+    expect(flakeHealedVerdict({ signature: 'launch → 503', current: cur([]) })).toBe(true);
+    expect(flakeHealedVerdict({ signature: 'launch → 503', current: cur(['vision scan → 502']) })).toBe(true);
+  });
+
+  it('does NOT heal when the flake is still present this week', () => {
+    expect(flakeHealedVerdict({ signature: 'launch → 503', current: cur(['launch → 503']) })).toBe(false);
+  });
+});
+
+describe('wiring · the escalation issue is created and auto-closed end to end', () => {
+  const script = readFileSync('scripts/mic-flake-escalate.mjs', 'utf8');
+
+  it('creates the issue with the exact title shape signatureFromTitle parses', () => {
+    expect(script).toContain('same flake “${verdict.signature}” 3 weeks running');
+    expect(script).toContain('export function signatureFromTitle');
+  });
+
+  it('auto-closes healed issues on green weeks, never during a drill', () => {
+    expect(script).toContain('async function autoCloseHealedIssues(current)');
+    expect(script).toContain("'--json', 'number,title'");
+    expect(script).toContain('if (!drillStreak) {');
+    expect(script).toContain('await autoCloseHealedIssues(current)');
+    expect(script).toContain("['issue', 'close'");
   });
 });
 

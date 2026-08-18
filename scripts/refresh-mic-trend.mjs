@@ -96,6 +96,12 @@ export const RUN_MARKER = /--- run \d+\/6 ---/;
 // once per run when the seam is armed.
 export const DRILL_MARKER = 'stuck signature injected into the judged blob';
 
+// A force_flake_streak drill run INJECTS a synthetic flake (`drill-flake →
+// 503`) on purpose to rehearse the escalation path — its synthetic flake must
+// never count as a real infra flake in the trend (or a drill would pollute the
+// Infra flakes column). The driver prints this exactly once when armed.
+export const FLAKE_DRILL_MARKER = 'drill: flake signature injected into the judged log';
+
 // The driver prints every failure as `  ✗ FAIL: <message>` (fail() in
 // verify-live.mjs / drive-live-voice.mjs).
 const FAIL_LINE = /✗ FAIL:[^\r\n]*/;
@@ -126,8 +132,9 @@ async function parseBatchRun(run) {
   if (conclusion !== 'success' && conclusion !== 'failure') return null;
   const log = await gh(['run', 'view', String(databaseId), '--log']);
   // Drill runs are rehearsals, not measurements — exclude them entirely so
-  // their injected stuck blobs can't pollute the drop count.
-  if (log.includes(DRILL_MARKER)) return null;
+  // their injected stuck blobs can't pollute the drop count, and their
+  // injected flakes can't pollute the Infra flakes column.
+  if (log.includes(DRILL_MARKER) || log.includes(FLAKE_DRILL_MARKER)) return null;
   const segments = log.split(RUN_MARKER).slice(1);
   if (segments.length !== 6) {
     console.error(`!! run ${databaseId}: expected 6 "--- run N/6 ---" segments, found ${segments.length} — excluding from the table`);

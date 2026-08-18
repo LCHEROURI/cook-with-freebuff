@@ -27,13 +27,14 @@
 // ============================================================================
 
 import { execFile } from 'node:child_process';
-import { readFileSync } from 'node:fs';
+import { appendFileSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import {
   DRILL_MARKER,
   extractRootFailure,
+  FLAKE_DRILL_MARKER,
   HARD_SIGNATURES,
   RUN_MARKER,
 } from './refresh-mic-trend.mjs';
@@ -126,6 +127,88 @@ export function weekKeyOf(iso) {
   return d.toISOString().slice(0, 10);
 }
 
+/**
+ * Drill seam: synthesize the two prior weeks carrying the SAME flake
+ * signature so the real verdict + issue path can be proven in a single
+ * dispatch. Real prior-week history cannot be injected retroactively, so a
+ * force_flake_streak drill seeds the streak deterministically from the
+ * current week's Monday and the injected signature; `flakeEscalationVerdict`
+ * and the `gh` issue path then run exactly as they do for a real streak.
+ *
+ * @param {string} currentMonday Monday-of-week ISO date of the current week
+ * @param {string} signature the injected flake signature
+ * @returns {{ date: string, signatures: string[] }[]} two prior weeks, oldest first
+ */
+export function seedDrillPriorWeeks(currentMonday, signature) {
+  const weeksAgo = (n) => {
+    const d = new Date(`${currentMonday}T00:00:00Z`);
+    d.setUTCDate(d.getUTCDate() - 7 * n);
+    return d.toISOString().slice(0, 10);
+  };
+  return [
+    { date: weeksAgo(2), signatures: [signature] },
+    { date: weeksAgo(1), signatures: [signature] },
+  ];
+}
+
+/**
+ * Parse the flake signature out of an escalation issue title. The title is
+ * `Mic regression: same flake “<signature>” 3 weeks running` (created by main
+ * below) — a title edited away from that shape returns null and is left open
+ * rather than mis-closed.
+ *
+ * @param {string} title the issue title
+ * @returns {string|null} the flake signature, or null when the title is
+ *   unrecognized
+ */
+export function signatureFromTitle(title) {
+  const m = /same flake “(.+?)” 3 weeks running/.exec(title ?? '');
+  return m ? m[1] : null;
+}
+
+/**
+ * Auto-close verdict: an escalation issue for `signature` self-heals when a
+ * subsequent week's batch no longer carries that signature (the flake is
+ * gone). Absent-from-current is sufficient — the issue was opened for a
+ * 3-week streak, so one clean week breaks it.
+ *
+ * @param {{ signature: string, current: { signatures: string[] } }} opts
+ * @returns {boolean} true when the flake is gone this week
+ */
+export function flakeHealedVerdict({ signature, current }) {
+  return !current.signatures.includes(signature);
+}
+
+/**
+ * Auto-close healed escalation issues: an open `mic-regression-escalation`
+ * issue self-heals once a subsequent week's batch no longer carries its flake
+ * signature (the streak broke). Titles that no longer match the created shape
+ * are left open — a mis-close is worse than a lingering alert.
+ *
+ * @param {{ date: string, signatures: string[] }} current this week's flake set
+ */
+async function autoCloseHealedIssues(current) {
+  const open = JSON.parse(
+    await gh(['issue', 'list', '--label', 'mic-regression-escalation', '--state', 'open', '--json', 'number,title']),
+  );
+  for (const issue of open) {
+    const signature = signatureFromTitle(issue.title);
+    if (!signature) continue;
+    if (!flakeHealedVerdict({ signature, current })) continue;
+    await execFileAsync('gh', [
+      'issue',
+      'comment',
+      String(issue.number),
+      '--repo',
+      REPO,
+      '--body',
+      `Closing automatically: the flake “${signature}” was absent from this week's batch — the streak has healed.`,
+    ]);
+    await execFileAsync('gh', ['issue', 'close', String(issue.number), '--repo', REPO]);
+    console.log(`auto-closed healed escalation issue #${issue.number} (flake “${signature}” gone this week)`);
+  }
+}
+
 async function main() {
   const args = process.argv.slice(2);
   const flag = (name, fallback) => {
@@ -134,6 +217,7 @@ async function main() {
   };
   const outDir = flag('--out', '');
   const indices = (flag('--flake-indices', '') || '').trim().split(/\s+/).filter(Boolean);
+  const drillStreak = args.includes('--drill-streak');
 
   // The current week's flake signatures, read from THIS run's logs on disk.
   const currentSigs = new Set();
@@ -146,6 +230,14 @@ async function main() {
     date: weekKeyOf(new Date().toISOString()) ?? new Date().toISOString().slice(0, 10),
     signatures: [...currentSigs],
   };
+
+  // Auto-close healed escalations FIRST (real monitor only, never a drill):
+  // an open escalation issue self-heals once a subsequent week no longer
+  // shows its flake, so the alert does not linger open after the outage ends.
+  if (!drillStreak) {
+    await autoCloseHealedIssues(current);
+  }
+
   if (current.signatures.length === 0) {
     console.log('no flake signature this week — nothing to escalate');
     return;
@@ -154,25 +246,34 @@ async function main() {
   // Prior weeks, grouped by Monday-of-week (so several manual dispatches in
   // one week collapse to a single week instead of faking a streak). Drills
   // and the current run are excluded; weeks are ordered oldest → newest.
-  const currentRunId = process.env.GITHUB_RUN_ID ?? '';
-  const runs = JSON.parse(
-    await gh(['run', 'list', '--workflow', 'mic-regression.yml', '--limit', '200', '--json', 'databaseId,conclusion,createdAt']),
-  );
-  const byWeek = new Map();
-  for (const r of runs) {
-    if (String(r.databaseId) === currentRunId) continue;
-    if (r.conclusion !== 'success' && r.conclusion !== 'failure') continue;
-    const key = weekKeyOf(r.createdAt);
-    if (!key || key >= current.date) continue;
-    const log = await gh(['run', 'view', String(r.databaseId), '--log']);
-    if (log.includes(DRILL_MARKER)) continue;
-    const sigs = extractBatchFlakeSignatures(log);
-    if (!byWeek.has(key)) byWeek.set(key, new Set());
-    for (const s of sigs) byWeek.get(key).add(s);
+  let previous;
+  if (drillStreak) {
+    // A single dispatch can only write THIS week's log; the two prior weeks'
+    // history cannot be retroactively injected. Seed them with the SAME flake
+    // signature so the REAL verdict + issue path fire end-to-end.
+    previous = seedDrillPriorWeeks(current.date, current.signatures[0]);
+    console.log(`drill: seeding two prior weeks with the same flake signature “${current.signatures[0]}”`);
+  } else {
+    const currentRunId = process.env.GITHUB_RUN_ID ?? '';
+    const runs = JSON.parse(
+      await gh(['run', 'list', '--workflow', 'mic-regression.yml', '--limit', '200', '--json', 'databaseId,conclusion,createdAt']),
+    );
+    const byWeek = new Map();
+    for (const r of runs) {
+      if (String(r.databaseId) === currentRunId) continue;
+      if (r.conclusion !== 'success' && r.conclusion !== 'failure') continue;
+      const key = weekKeyOf(r.createdAt);
+      if (!key || key >= current.date) continue;
+      const log = await gh(['run', 'view', String(r.databaseId), '--log']);
+      if (log.includes(DRILL_MARKER) || log.includes(FLAKE_DRILL_MARKER)) continue;
+      const sigs = extractBatchFlakeSignatures(log);
+      if (!byWeek.has(key)) byWeek.set(key, new Set());
+      for (const s of sigs) byWeek.get(key).add(s);
+    }
+    previous = [...byWeek.entries()]
+      .sort((a, b) => a[0].localeCompare(b[0]))
+      .map(([date, sigs]) => ({ date, signatures: [...sigs] }));
   }
-  const previous = [...byWeek.entries()]
-    .sort((a, b) => a[0].localeCompare(b[0]))
-    .map(([date, sigs]) => ({ date, signatures: [...sigs] }));
 
   const verdict = flakeEscalationVerdict({ current, previous });
   if (!verdict.escalate) {
@@ -206,7 +307,7 @@ async function main() {
     '',
     'Each individual week was within budget, but a persistent flake must not be forgiven forever. Investigate the recurring infra failure (this is NOT a two-burst mic regression) before dismissing.',
   ].join('\n');
-  await execFileAsync('gh', [
+  const { stdout: issueUrl } = await execFileAsync('gh', [
     'issue',
     'create',
     '--repo',
@@ -218,7 +319,13 @@ async function main() {
     '--body',
     body,
   ]);
-  console.log('opened mic-regression-escalation issue');
+  const issueNumber = issueUrl.trim().split('/').pop();
+  console.log(`opened mic-regression-escalation issue #${issueNumber}`);
+  // Surface the created issue number so the workflow's drill cleanup can close
+  // EXACTLY this issue — never a real one that happens to be open.
+  if (process.env.GITHUB_OUTPUT) {
+    appendFileSync(process.env.GITHUB_OUTPUT, `created_issue=${issueNumber}\n`);
+  }
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {

@@ -77,6 +77,15 @@ const PHASE_C_ONLY = process.argv.includes('--phase-c-only');
 // settle still runs against the REAL session first — only the judged copy is
 // rewritten, with the exact documented pre-fix signature values.
 const FORCE_STUCK_BLOB = process.argv.includes('--force-stuck-blob') || process.env.PHASE_C_FORCE_STUCK === '1';
+// Drill seam: inject a synthetic pre-mic flake (`drill-flake → 503`) so the
+// escalation path (same flake 3 weeks running) can be proven end-to-end
+// WITHOUT a real infra failure. Armed by the workflow's `force_flake_streak`
+// dispatch input or a local --force-flake-streak flag; NEVER set in the
+// scheduled run. Unlike FORCE_STUCK_BLOB (which rewrites the judged blob), the
+// flake seam fails the run BEFORE any phase so the batch classifies it as a
+// FLAKE (no hard signature, no hard summary) — exactly the "launch 503"
+// transient the weekly budget forgives.
+const FORCE_FLAKE_STREAK = process.argv.includes('--force-flake-streak') || process.env.PHASE_C_FORCE_FLAKE_STREAK === '1';
 // Rewrite a captured blob with the stuck signature (queue class), used by the
 // drill seam. Returns the blob unchanged unless the seam is armed AND the
 // blob is a parseable JSON diagnostics blob.
@@ -117,6 +126,18 @@ if (!API_KEY) { console.error('✗ FAIL: NEXT_PUBLIC_FIREBASE_API_KEY required')
 if (!OWNER_UID) { console.error('✗ FAIL: APP_OWNER_UID required'); process.exit(1); }
 if (!SA_JSON) { console.error('✗ FAIL: FIREBASE_SERVICE_ACCOUNT required'); process.exit(1); }
 mkdirSync(OUT, { recursive: true });
+
+// Flake-streak drill: fail as a synthetic pre-mic flake BEFORE any phase runs,
+// so the batch classifies this run as a flake (within budget → the week stays
+// green → the escalate step runs) and the escalate step reads `drill-flake →
+// 503` from this run's driver.log. The note line doubles as FLAKE_DRILL_MARKER
+// (refresh-mic-trend.mjs) so drill runs never pollute the trend or a real
+// streak scan.
+if (FORCE_FLAKE_STREAK) {
+  note('drill: flake signature injected into the judged log (--force-flake-streak)');
+  fail('drill-flake → 503');
+  process.exit(1);
+}
 
 // ── 1. Mint a REAL owner session ────────────────────────────────────────────
 console.log(`\n[1] Minting owner session (${OWNER_UID.slice(0, 10)}…) via SA-signed custom token`);

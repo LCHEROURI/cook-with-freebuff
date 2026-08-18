@@ -518,9 +518,13 @@ describe('.github/workflows/mic-regression.yml · weekly two-burst pass-rate mon
     expect(MIC_REGRESSION).toContain('echo "flake_indices=${flake_failed}" >> "$GITHUB_OUTPUT"');
     expect(MIC_REGRESSION).toContain('echo "flake_count=${flake_count}" >> "$GITHUB_OUTPUT"');
     expect(MIC_REGRESSION).toContain('Escalate a same-flake streak (3 weeks running)');
-    expect(MIC_REGRESSION).toContain('node scripts/mic-flake-escalate.mjs --out "${RUNNER_TEMP}/phase-c" --flake-indices "${steps.batch.outputs.flake_indices}"');
+    expect(MIC_REGRESSION).toContain('id: escalate');
+    expect(MIC_REGRESSION).toContain('node scripts/mic-flake-escalate.mjs --out "${RUNNER_TEMP}/phase-c" --flake-indices "${steps.batch.outputs.flake_indices}" $drill_flag');
     expect(MIC_REGRESSION).toContain("steps.batch.outputs.result == ''");
-    expect(MIC_REGRESSION).toContain("steps.batch.outputs.flake_indices != ''");
+    // The step runs on CLEAN weeks too (no flake_indices gate) so the
+    // escalation script can auto-close a healed streak instead of leaving the
+    // alert open after the outage ends.
+    expect(MIC_REGRESSION).not.toContain("steps.batch.outputs.flake_indices != ''");
   });
 
   it('wires the force_stuck_blob drill input and keeps it OFF for scheduled runs', () => {
@@ -532,6 +536,19 @@ describe('.github/workflows/mic-regression.yml · weekly two-burst pass-rate mon
     expect(MIC_REGRESSION).toContain('force_stuck_blob:');
     expect(MIC_REGRESSION).toContain("default: 'false'");
     expect(MIC_REGRESSION).toContain("PHASE_C_FORCE_STUCK: ${{ inputs.force_stuck_blob == 'true' && '1' || '' }}");
+  });
+
+  it('wires the force_flake_streak drill input — one injected flake, seeded streak, self-cleaning', () => {
+    // The escalation drill: dispatch with force_flake_streak=true to fail run
+    // 1 with a synthetic pre-mic flake (--force-flake-streak) and seed the two
+    // prior weeks with the same signature (--drill-streak), so the batch flake
+    // classification → escalate step → escalation-issue path fires in ONE
+    // dispatch. Defaults to false so the scheduled monitor never injects.
+    expect(MIC_REGRESSION).toContain('force_flake_streak:');
+    expect(MIC_REGRESSION).toContain("PHASE_C_FORCE_FLAKE_STREAK: ${{ inputs.force_flake_streak == 'true' && '1' || '' }}");
+    expect(MIC_REGRESSION).toContain('flake_flag="--force-flake-streak"');
+    expect(MIC_REGRESSION).toContain('--drill-streak');
+    expect(MIC_REGRESSION).toContain('inputs.force_flake_streak == \'true\'');
   });
 });
 
@@ -593,12 +610,14 @@ describe('.github/workflows/compare-live-weekly.yml · weekly stack-divergence c
     // keeps its issue + artifacts.
     expect(MIC_REGRESSION).toContain('id: alert');
     expect(MIC_REGRESSION).toContain('created_issue=${issue_url##*/}');
-    expect(MIC_REGRESSION).toContain('Clean up drill residue (close issue + delete artifacts)');
-    expect(MIC_REGRESSION).toContain("inputs.force_stuck_blob == 'true'");
+    expect(MIC_REGRESSION).toContain('Clean up drill residue (close issues + delete artifacts)');
+    expect(MIC_REGRESSION).toContain("inputs.force_stuck_blob == 'true' || inputs.force_flake_streak == 'true'");
     expect(MIC_REGRESSION).toContain('-X DELETE "repos/$GITHUB_REPOSITORY/actions/artifacts/$id"');
     // The cleanup can only close the issue this run created — a blanket close
     // could silently swallow a real open mic-regression issue.
     expect(MIC_REGRESSION).toContain('steps.alert.outputs.created_issue');
+    // The flake-streak drill's escalation issue is cleaned the same way.
+    expect(MIC_REGRESSION).toContain('steps.escalate.outputs.created_issue');
     // Deleting artifacts needs the actions scope; the scheduled monitor never
     // exercises it (the drill input defaults to false, keeping cleanup off).
     expect(MIC_REGRESSION).toContain('actions: write');
@@ -626,7 +645,8 @@ describe('.github/workflows/compare-live-weekly.yml · weekly stack-divergence c
     };
     for (const script of [
       scriptOf('id: alert'),
-      scriptOf('Clean up drill residue (close issue + delete artifacts)'),
+      scriptOf('id: escalate'),
+      scriptOf('Clean up drill residue (close issues + delete artifacts)'),
     ]) {
       execFileSync('bash', ['-n'], { input: script });
     }

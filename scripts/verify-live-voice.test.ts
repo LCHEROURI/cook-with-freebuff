@@ -321,4 +321,17 @@ describe('scripts/verify-live.mjs · live-voice gate [3e] (dictation + active-sc
     expect(DRIVER).toContain('if (!FORCE_STUCK_BLOB || b.startsWith');
     expect(DRIVER).toContain('blob = injectStuckForDrill(await captureVoiceDetailsBlob(cdpC, evC));');
   });
+
+  it('Phase C — the force-flake-streak drill seam injects a synthetic pre-mic flake so the escalation path can be proven', () => {
+    // The escalation drill arms --force-flake-streak / PHASE_C_FORCE_FLAKE_STREAK:
+    // the run fails BEFORE any phase with `✗ FAIL: drill-flake → 503` (a
+    // pre-mic infra flake — NOT a hard signature, and no hard summary), so the
+    // batch classifies it as a FLAKE within budget. The note line doubles as
+    // FLAKE_DRILL_MARKER so the drill never pollutes the trend or a real
+    // streak scan. A future edit that disables or weakens the seam fails here.
+    expect(DRIVER).toContain("const FORCE_FLAKE_STREAK = process.argv.includes('--force-flake-streak') || process.env.PHASE_C_FORCE_FLAKE_STREAK === '1'");
+    expect(DRIVER).toContain("fail('drill-flake → 503')");
+    expect(DRIVER).toContain('drill: flake signature injected into the judged log');
+    expect(DRIVER).toContain('if (FORCE_FLAKE_STREAK) {');
+  });
 });

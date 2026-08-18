@@ -54,6 +54,15 @@ on:
         description: 'Drill: inject the stuck-queue signature into every run so the red-week evidence path fires — for artifact-upload drills only.'
         required: false
         default: 'false'
+      # Drill seam: fail ONE run with a synthetic pre-mic flake (drill-flake →
+      # 503) and seed the two prior weeks with the same signature, so the
+      # same-flake-3-weeks escalation path (batch flake classification →
+      # escalate step → escalation issue) can be proven end-to-end in ONE
+      # dispatch. Never set on scheduled runs.
+      force_flake_streak:
+        description: 'Drill: inject a synthetic flake and seed a 3-week streak so the escalation path fires — for escalation-drill runs only.'
+        required: false
+        default: 'false'
 
 # Shared with the post-deploy verify:live job (ci.yml): both drive the SAME
 # owner through the same /cook active session, so a Monday run overlapping a
@@ -135,6 +144,9 @@ jobs:
           # Drill seam (workflow_dispatch input; empty on schedule runs → the
           # driver reads only `1` as armed, so scheduled runs never inject).
           PHASE_C_FORCE_STUCK: ${{ inputs.force_stuck_blob == 'true' && '1' || '' }}
+          # Flake-streak drill seam (workflow_dispatch input; armed on run 1
+          # only by the loop below, so one flake stays within budget).
+          PHASE_C_FORCE_FLAKE_STREAK: ${{ inputs.force_flake_streak == 'true' && '1' || '' }}
         run: |
           set -uo pipefail
           passes=0
@@ -153,7 +165,14 @@ jobs:
             # then grep-empty and be misclassified as a flake — proven by the
             # force-stuck drill, which reddened via the flake path).
             mkdir -p "${RUNNER_TEMP}/phase-c/run-$i"
-            if node scripts/drive-live-voice.mjs --phase-c-only --probe-prefix mic-regression- --out "${RUNNER_TEMP}/phase-c/run-$i" 2>&1 | tee "$log"; then
+            # Flake-streak drill: arm the seam on run 1 ONLY so the injected
+            # flake stays within budget (the week stays green → the escalate
+            # step runs). Runs 2–6 pass normally.
+            flake_flag=""
+            if [ "$i" -eq 1 ] && [ "${PHASE_C_FORCE_FLAKE_STREAK:-0}" = "1" ]; then
+              flake_flag="--force-flake-streak"
+            fi
+            if node scripts/drive-live-voice.mjs --phase-c-only --probe-prefix mic-regression- --out "${RUNNER_TEMP}/phase-c/run-$i" $flake_flag 2>&1 | tee "$log"; then
               passes=$((passes + 1))
             # The structured archive is the authoritative signal: a hard
             # outcome (stuck/undrained/unverifiable/latency/drop) is NEVER
@@ -216,13 +235,26 @@ jobs:
       # silently forgiven forever. When the SAME flake signature appears in
       # the current week AND in each of the two most recent prior weeks (3
       # weeks running), escalate to a deduped alert even though every week
-      # stayed within budget. Skipped when the week already went red (the red
-      # alert below covers it) or there were no flakes this week.
+      # stayed within budget. The script ALSO self-heals: on a green week it
+      # closes any open escalation issue whose flake is now absent, so the
+      # alert does not linger open. Skipped only when the week already went
+      # red (the red alert below covers it) — it runs on clean weeks too, so
+      # the auto-close can fire.
       - name: Escalate a same-flake streak (3 weeks running)
-        if: ${{ always() && steps.batch.outputs.result == '' && steps.batch.outputs.flake_indices != '' && github.repository == 'LCHEROURI/cook-with-freebuff' }}
+        id: escalate
+        if: ${{ always() && steps.batch.outputs.result == '' && github.repository == 'LCHEROURI/cook-with-freebuff' }}
         env:
           GH_TOKEN: ${{ github.token }}
-        run: node scripts/mic-flake-escalate.mjs --out "${RUNNER_TEMP}/phase-c" --flake-indices "${steps.batch.outputs.flake_indices}"
+        run: |
+          # Flake-streak drill: seed the two prior weeks with the same injected
+          # flake (real history cannot be retroactively injected in one
+          # dispatch), so the real verdict + issue path fire end-to-end.
+          if [ "${{ inputs.force_flake_streak }}" = "true" ]; then
+            drill_flag="--drill-streak"
+          else
+            drill_flag=""
+          fi
+          node scripts/mic-flake-escalate.mjs --out "${RUNNER_TEMP}/phase-c" --flake-indices "${steps.batch.outputs.flake_indices}" $drill_flag
 
       # A red week must alert someone — open a GitHub issue with the pass
       # rate, the run link, and the artifact link (the failing run's blob +
@@ -264,23 +296,29 @@ jobs:
           A healthy run shows stuckQueueSince=0 in the diagnostics blob. The blob's drop-classification verdict (queue / network / audio-graph) pinpoints which layer dropped the mic. A latency-bound failure (flush→transcript, transcript→reply, or inter-burst gap over budget) means the pipeline degraded but did not drop — the phase-c-latency blob + screenshot show the state at the violation. Investigate the artifact evidence before dismissing.")
           echo "created_issue=${issue_url##*/}" >> "$GITHUB_OUTPUT"
 
-      # Drill runs are SELF-CLEANING: a force_stuck_blob run exists only to
-      # rehearse the red-week evidence chain, so it must not leave residue in
-      # the alert history. This step closes the issue THIS run created (the
-      # captured created_issue output — never a real open issue) and deletes
-      # this run's phase-c-runs artifact. Gated on the drill input, so a real
-      # red week (scheduled or manual without force_stuck_blob) keeps its open
-      # issue and artifacts.
-      - name: Clean up drill residue (close issue + delete artifacts)
-        if: ${{ always() && inputs.force_stuck_blob == 'true' && github.repository == 'LCHEROURI/cook-with-freebuff' }}
+      # Drill runs are SELF-CLEANING: a force_stuck_blob OR force_flake_streak
+      # run exists only to rehearse an evidence chain, so it must not leave
+      # residue in the alert history. This step closes the issue(s) THIS run
+      # created (the captured created_issue outputs — never a real open issue)
+      # and deletes this run's phase-c-runs artifact. Gated on the drill
+      # inputs, so a real red week or a real escalation (manual/scheduled
+      # without a drill input) keeps its open issue and artifacts.
+      - name: Clean up drill residue (close issues + delete artifacts)
+        if: ${{ always() && (inputs.force_stuck_blob == 'true' || inputs.force_flake_streak == 'true') && github.repository == 'LCHEROURI/cook-with-freebuff' }}
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          created="${{ steps.alert.outputs.created_issue }}"
-          if [ -n "$created" ]; then
-            gh issue comment "$created" --repo "$GITHUB_REPOSITORY" --body "Closing automatically: this was a force_stuck_blob drill run — the stuck signature was injected, not a real regression."
-            gh issue close "$created" --repo "$GITHUB_REPOSITORY"
-            echo "drill issue #$created closed"
+          alert_issue="${{ steps.alert.outputs.created_issue }}"
+          if [ -n "$alert_issue" ]; then
+            gh issue comment "$alert_issue" --repo "$GITHUB_REPOSITORY" --body "Closing automatically: this was a force_stuck_blob drill run — the stuck signature was injected, not a real regression."
+            gh issue close "$alert_issue" --repo "$GITHUB_REPOSITORY"
+            echo "drill issue #$alert_issue closed"
+          fi
+          escalate_issue="${{ steps.escalate.outputs.created_issue }}"
+          if [ -n "$escalate_issue" ]; then
+            gh issue comment "$escalate_issue" --repo "$GITHUB_REPOSITORY" --body "Closing automatically: this was a force_flake_streak drill run — the flake signature was injected, not a real streak."
+            gh issue close "$escalate_issue" --repo "$GITHUB_REPOSITORY"
+            echo "flake-streak drill issue #$escalate_issue closed"
           fi
           # The just-uploaded artifact may lag the list API briefly — retry.
           ids=""
