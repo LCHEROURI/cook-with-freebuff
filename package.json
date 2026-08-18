@@ -14,6 +14,7 @@
     "test:watch": "vitest",
     "test:emulator": "RUN_EMULATOR_TESTS=1 vitest run --no-file-parallelism lib/server/rollback-resume.emulator.test.ts scripts/cleanup-correlation-markers.emulator.test.ts",
     "cleanup:markers": "node --import ./scripts/stub-server-only.mjs --import tsx scripts/cleanup-correlation-markers.ts",
+    "tidy:branches": "node scripts/tidy-branches.mjs",
     "verify:live": "node scripts/verify-live.mjs",
     "verify:live:local": "node scripts/verify-live-local.mjs",
     "verify:live:emulator": "node scripts/verify-live-emulator.mjs",
