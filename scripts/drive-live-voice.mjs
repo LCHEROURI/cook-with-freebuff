@@ -173,6 +173,20 @@ const getAdminDb = () => {
   return getFirestore(adminApp);
 };
 
+// Stamp a launched session with the probe prefix so the pre-run sweep can
+// recognize it EVEN IF the live conversation later attaches a model-slug
+// recipeId (the collect-ingredients flow replaces the seeded prefixed id with
+// a slug the recipeId-only sweep cannot see — the stuck COLLECTING_INGREDIENTS
+// hijacker). Best-effort annotation: a failed stamp is NOT a driver failure;
+// the 10-min idle settle stays the backstop for an unstamped leftover.
+async function stampProbeSession(sid) {
+  try {
+    await getAdminDb().collection('cooking_sessions').doc(sid).update({ probePrefix: PROBE_PREFIX });
+  } catch (e) {
+    note(`probe stamp best-effort: ${e.message}`);
+  }
+}
+
 // ── Guaranteed cleanup on every exit path ───────────────────────────────────
 const probeSids = new Set();
 let seededRecipeId = null;
@@ -256,11 +270,13 @@ async function sweepStaleProbes() {
   ]);
   const probeSessions = sessionSnap.docs.filter((d) => {
     const s = d.data();
-    return (
-      typeof s.recipeId === 'string' &&
-      s.recipeId.startsWith(PROBE_PREFIX) &&
-      (s.status === 'ACTIVE' || s.status === 'PAUSED')
-    );
+    // A session is a probe if its recipeId carries the probe prefix OR this
+    // driver stamped it (probePrefix). The stamp survives a later recipeId
+    // replacement (the collect-ingredients flow attaches a model-slug recipe
+    // the prefix check alone cannot see). Exact-match keeps a sibling
+    // namespace's stamp (same owner) from matching this run's prefix.
+    const isProbe = (typeof s.recipeId === 'string' && s.recipeId.startsWith(PROBE_PREFIX)) || s.probePrefix === PROBE_PREFIX;
+    return isProbe && (s.status === 'ACTIVE' || s.status === 'PAUSED');
   });
   // Archive ONLY stale sessions (idle past the cutoff) — never a fresh one
   // that a concurrent same-prefix run just launched.
@@ -710,6 +726,7 @@ let sid = null;
 if (launch.status === 200 && launch.body?.success && launch.body?.data?.sessionId) {
   sid = launch.body.data.sessionId;
   probeSids.add(sid);
+  await stampProbeSession(sid);
   ok(`launch → ${launch.body.data.phase} step ${launch.body.data.stepNumber} (session ${sid.slice(0, 8)}…)`);
   launch.body.data.phase === 'PREP_GUIDANCE' && launch.body.data.stepNumber === 1
     ? ok('fresh session starts at prep step 1')
@@ -942,6 +959,7 @@ const launchC = await fetch(`${APP}/api/cook`, {
 }).then(async (r) => ({ status: r.status, body: await r.json().catch(() => null) }));
 if (launchC.status === 200 && launchC.body?.success && launchC.body?.data?.sessionId) {
   probeSids.add(launchC.body.data.sessionId);
+  await stampProbeSession(launchC.body.data.sessionId);
   ok(`launch → ${launchC.body.data.phase} step ${launchC.body.data.stepNumber} (session ${launchC.body.data.sessionId.slice(0, 8)}…)`);
 } else {
   fail(`launch → ${launchC.status} ${JSON.stringify(launchC.body ?? '').slice(0, 200)}`);

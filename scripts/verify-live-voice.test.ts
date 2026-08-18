@@ -138,6 +138,18 @@ describe('scripts/verify-live.mjs · live-voice gate [3e] (dictation + active-sc
     expect(DRIVER).toContain("d.ref.update({ status: 'ABANDONED', lastActivityAt: Date.now() })");
   });
 
+  it('stamps each launched session with the probe prefix so a later model-slug recipeId cannot hide it from the sweep', () => {
+    // The collect-ingredients flow can replace the seeded prefixed recipeId
+    // with a model-slug id the recipeId-only sweep cannot see (the stuck
+    // COLLECTING_INGREDIENTS hijacker). The driver must stamp the session at
+    // launch so the sweep recognizes it by the stamp regardless of recipeId.
+    expect(DRIVER).toContain('async function stampProbeSession(sid)');
+    expect(DRIVER).toContain("collection('cooking_sessions').doc(sid).update({ probePrefix: PROBE_PREFIX })");
+    expect(DRIVER).toContain('await stampProbeSession(sid);');
+    expect(DRIVER).toContain('await stampProbeSession(launchC.body.data.sessionId);');
+    expect(DRIVER).toContain('s.probePrefix === PROBE_PREFIX');
+  });
+
   it('never sweeps a recipe seeded within the grace period (a concurrent same-prefix run\'s in-flight probe)', () => {
     // The weekly mic-regression monitor and a manual re-run both use
     // `mic-regression-` and run as the same owner. Between a run's seed and

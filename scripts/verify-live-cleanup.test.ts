@@ -152,12 +152,16 @@ describe('scripts/verify-live.mjs · guaranteed cleanup', () => {
     expect(SRC).toContain("db.collection('recipes').doc(seededRecipeId).update({ orphanedAt: Date.now() })");
   });
 
-  it('sweeps ONLY verify-live- prefixed sessions — a real session can never be archived', () => {
+  it('sweeps ONLY probe-tagged sessions (recipeId prefix OR driver stamp) — a real session can never be archived', () => {
     const fnStart = SRC.indexOf('async function sweepStaleProbes');
     const fn = SRC.slice(fnStart, SRC.indexOf('\n}\n', fnStart));
-    // The ACTIVE/PAUSED filter must be AND-ed with the prefix check — never
-    // OR-ed — so every owner session is NOT a sweep target by default.
-    expect(fn).toMatch(/s\.recipeId\.startsWith\(PROBE_PREFIX\)\s*&&\s*\(s\.status === 'ACTIVE' \|\| s\.status === 'PAUSED'\)/);
+    // The ACTIVE/PAUSED filter must be AND-ed with a namespace-scoped probe
+    // tag — never a blanket status OR — so an untagged owner session is NOT a
+    // sweep target. The tag is (prefixed recipeId) OR (driver-stamped
+    // probePrefix in this namespace); a mic-regression- stamp must not match.
+    expect(fn).toMatch(/isProbe\s*&&\s*\(s\.status === 'ACTIVE' \|\| s\.status === 'PAUSED'\)/);
+    expect(fn).toContain("s.recipeId.startsWith(PROBE_PREFIX)");
+    expect(fn).toContain("typeof s.probePrefix === 'string' && s.probePrefix.startsWith(PROBE_PREFIX)");
     // And no blanket "archive all ACTIVE sessions" escape hatch anywhere.
     expect(fn).not.toContain('status: \'ACTIVE\'');
   });

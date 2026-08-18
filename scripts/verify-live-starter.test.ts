@@ -238,4 +238,36 @@ describe('scripts/verify-live.mjs · starter-flow gate (create → validate → 
     expect(SRC).toContain('(no recipe, idle');
     expect(SRC).not.toContain('if (typeof s.recipeId !== \'string\' || !s.recipeId) continue;');
   });
+
+  it('self-heals a blocked owner: archives the blocker and retries once instead of failing', () => {
+    // After the settle, a FRESH ACTIVE/PAUSED session (a concurrent monitor or
+    // voice run inside the 10-min idle window) can still hijack /cook. The
+    // guard must NOT fail the run outright: it archives the blocker (so a
+    // concurrent-run collision heals THIS run) and retries once, failing only
+    // if a blocker survives — always naming it instead of letting the driver
+    // report the opaque "starter input not found" cascade.
+    expect(SRC).toContain('Pre-stage guard: the UI starter must see a CLEAN owner');
+    expect(SRC).toContain('SELF-HEAL');
+    expect(SRC).toContain("const findBlocking = async () => {");
+    expect(SRC).toContain("db.collection('cooking_sessions').where('userId', '==', OWNER_UID).get()");
+    expect(SRC).toContain("return s.status === 'ACTIVE' || s.status === 'PAUSED';");
+    expect(SRC).toContain('archiving and retrying once');
+    // The archive is transactional and conditional: only a session that is
+    // STILL ACTIVE/PAUSED at write time is archived (a resumed session is
+    // skipped, never double-fought), and the version bump mirrors
+    // updateSession's optimistic check so a racing legitimate update surfaces
+    // as a conflict — the same discipline the [3c] leftover settle enforces.
+    expect(SRC).toContain('db.runTransaction');
+    expect(SRC).toContain("if (cur.status !== 'ACTIVE' && cur.status !== 'PAUSED') return false;");
+    expect(SRC).toContain('version: (typeof cur.version === \'number\' ? cur.version : 0) + 1');
+    // Retry once: re-query after the archive; clean owner proceeds, a
+    // survivor fails loudly named.
+    expect(SRC).toContain('archived ${archived} blocking session(s) — retried, owner is clean before the UI starter');
+    expect(SRC).toContain('owner still has ${remaining.length} ACTIVE/PAUSED session(s) blocking the UI starter after the archive retry');
+    expect(SRC).toContain('could not verify a clean owner before the UI starter');
+  });
+
+  it('keeps the clean-owner ok line for the unblocked path', () => {
+    expect(SRC).toContain('no ACTIVE/PAUSED session before the UI starter (clean owner)');
+  });
 });

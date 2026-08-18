@@ -298,11 +298,15 @@ async function sweepStaleProbes() {
 
   const probeSessions = sessionSnap.docs.filter((d) => {
     const s = d.data();
-    return (
-      typeof s.recipeId === 'string' &&
-      s.recipeId.startsWith(PROBE_PREFIX) &&
-      (s.status === 'ACTIVE' || s.status === 'PAUSED')
-    );
+    // A session is a probe if its recipeId carries the probe prefix OR a
+    // driver stamped it (probePrefix). The stamp survives a later recipeId
+    // replacement (the voice driver's collect-ingredients flow attaches a
+    // model-slug recipe the prefix check alone cannot see). Namespace-scoped:
+    // a `mic-regression-` stamp never matches this script's `verify-live-`
+    // prefix, so a concurrent monitor run's in-flight session is untouched.
+    const isProbe = (typeof s.recipeId === 'string' && s.recipeId.startsWith(PROBE_PREFIX)) ||
+      (typeof s.probePrefix === 'string' && s.probePrefix.startsWith(PROBE_PREFIX));
+    return isProbe && (s.status === 'ACTIVE' || s.status === 'PAUSED');
   });
 
   let archived = 0;
@@ -1111,6 +1115,76 @@ try {
     }
   } catch (e) {
     note(`leftover settle best-effort: ${e.message}`);
+  }
+
+  // ── 3c½. Pre-stage guard: the UI starter must see a CLEAN owner ────────────
+  // The [3c] settle archives stale leftovers and deletes the tracked probe
+  // sessions, but a FRESH ACTIVE/PAUSED session (a concurrent monitor/voice
+  // run inside the 10-min idle window, or a leaked slug session) survives it
+  // and would hijack /cook — the driver would then report the opaque "starter
+  // input not found" instead of the real cause.
+  //
+  // SELF-HEAL: instead of failing outright on a blocker, archive it and retry
+  // ONCE. A concurrent-run collision — a session left ACTIVE inside the
+  // settle's 10-min idle window by a run that just ended (voice driver,
+  // starter driver, or the weekly monitor) — then heals THIS run instead of
+  // turning a healthy deploy red. The archive is transactional and
+  // conditional: the session is re-read inside the transaction and only a
+  // still-ACTIVE/PAUSED session is archived (a session its own run resumed
+  // between our read and write is skipped, never double-fought), and the
+  // version is bumped like updateSession's optimistic check so a racing
+  // legitimate update surfaces as a conflict. The owner account is the shared
+  // CI test account — every ACTIVE/PAUSED session there is a driver artifact,
+  // and the [3c] settle already proved the only "real" alternative (a resumed
+  // session) by refusing to touch fresh ones. Only a blocker that SURVIVES
+  // the archive retry fails the run, named in the log.
+  const describeBlocking = (d) => {
+    const s = d.data();
+    const idle = typeof s.lastActivityAt === 'number' ? `${Math.round((Date.now() - s.lastActivityAt) / 1000)}s idle` : 'idle unknown';
+    const recipe = typeof s.recipeId === 'string' && s.recipeId ? s.recipeId.slice(0, 30) : 'no recipe';
+    const phase = s.currentPhase ?? s.phase ?? '?';
+    return `${d.id.slice(0, 8)}… (${phase}, ${recipe}, ${idle})`;
+  };
+  const findBlocking = async () => {
+    const ownerSessions = await db.collection('cooking_sessions').where('userId', '==', OWNER_UID).get();
+    return ownerSessions.docs.filter((d) => {
+      const s = d.data();
+      return s.status === 'ACTIVE' || s.status === 'PAUSED';
+    });
+  };
+  try {
+    let blocking = await findBlocking();
+    if (blocking.length === 0) {
+      ok('no ACTIVE/PAUSED session before the UI starter (clean owner)');
+    } else {
+      const names = blocking.map(describeBlocking).join('; ');
+      note(`owner has ${blocking.length} ACTIVE/PAUSED session(s) blocking the UI starter — archiving and retrying once: ${names}`);
+      let archived = 0;
+      for (const d of blocking) {
+        const archivedOne = await db.runTransaction(async (tx) => {
+          const fresh = await tx.get(d.ref);
+          if (!fresh.exists) return false;
+          const cur = fresh.data();
+          if (cur.status !== 'ACTIVE' && cur.status !== 'PAUSED') return false;
+          tx.update(d.ref, {
+            status: 'ABANDONED',
+            lastActivityAt: Date.now(),
+            version: (typeof cur.version === 'number' ? cur.version : 0) + 1,
+          });
+          return true;
+        });
+        if (archivedOne) archived += 1;
+      }
+      const remaining = await findBlocking();
+      if (remaining.length === 0) {
+        ok(`archived ${archived} blocking session(s) — retried, owner is clean before the UI starter`);
+      } else {
+        const survivors = remaining.map(describeBlocking).join('; ');
+        fail(`owner still has ${remaining.length} ACTIVE/PAUSED session(s) blocking the UI starter after the archive retry: ${survivors}`);
+      }
+    }
+  } catch (e) {
+    fail(`could not verify a clean owner before the UI starter: ${e.message}`);
   }
 
   // ── 3d. UI starter proof: preference-rich ready card + constraints view ──
