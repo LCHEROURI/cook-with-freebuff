@@ -66,9 +66,13 @@ jobs:
 
     # Minimal token scope: checkout needs contents:read; the alert step
     # (below) opens a GitHub issue on a red week, which needs issues:write.
+    # actions:write exists ONLY for the drill cleanup (deleting a
+    # force_stuck_blob run's artifacts) — the scheduled monitor never
+    # exercises it.
     permissions:
       contents: read
       issues: write
+      actions: write
 
     env:
       NEXT_PUBLIC_FIREBASE_API_KEY: ${{ secrets.NEXT_PUBLIC_FIREBASE_API_KEY }}
@@ -194,6 +198,7 @@ jobs:
       # regression is known, so consecutive red weeks don't spam. Gated on the
       # batch step's `result` output (empty on green) and the canonical repo.
       - name: Open a GitHub issue on a red week
+        id: alert
         # always(): the batch step exits 1 on a red week, and a status-less
         # condition would be implicitly wrapped in success() and never run —
         # the exact red-week scenario this alert exists for (Codex P1, PR #11).
@@ -213,7 +218,9 @@ jobs:
           run_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/${{ github.run_id }}"
           artifact_url="$run_url/artifacts"
           gh label create "mic-regression" --force 2>/dev/null || true
-          gh issue create \
+          # Capture the created issue number so the drill cleanup can close
+          # EXACTLY this issue — never a real one that happens to be open.
+          issue_url=$(gh issue create \
             --title "Mic regression: phase-C batch failed (${{ steps.batch.outputs.result }})" \
             --label "mic-regression" \
             --body "The weekly phase-C two-burst check went red on $(date -u +%Y-%m-%dT%H:%MZ).
@@ -223,3 +230,38 @@ jobs:
           - **Artifacts (phase-c-runs — the failing run's copy-voice-details blob + screenshot):** $artifact_url
 
           A healthy run shows stuckQueueSince=0 in the diagnostics blob. The blob's drop-classification verdict (queue / network / audio-graph) pinpoints which layer dropped the mic. A latency-bound failure (flush→transcript, transcript→reply, or inter-burst gap over budget) means the pipeline degraded but did not drop — the phase-c-latency blob + screenshot show the state at the violation. Investigate the artifact evidence before dismissing."
+          echo "created_issue=${issue_url##*/}" >> "$GITHUB_OUTPUT"
+
+      # Drill runs are SELF-CLEANING: a force_stuck_blob run exists only to
+      # rehearse the red-week evidence chain, so it must not leave residue in
+      # the alert history. This step closes the issue THIS run created (the
+      # captured created_issue output — never a real open issue) and deletes
+      # this run's phase-c-runs artifact. Gated on the drill input, so a real
+      # red week (scheduled or manual without force_stuck_blob) keeps its open
+      # issue and artifacts.
+      - name: Clean up drill residue (close issue + delete artifacts)
+        if: ${{ always() && inputs.force_stuck_blob == 'true' && github.repository == 'LCHEROURI/cook-with-freebuff' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          created="${{ steps.alert.outputs.created_issue }}"
+          if [ -n "$created" ]; then
+            gh issue comment "$created" --repo "$GITHUB_REPOSITORY" --body "Closing automatically: this was a force_stuck_blob drill run — the stuck signature was injected, not a real regression."
+            gh issue close "$created" --repo "$GITHUB_REPOSITORY"
+            echo "drill issue #$created closed"
+          fi
+          # The just-uploaded artifact may lag the list API briefly — retry.
+          ids=""
+          for attempt in 1 2 3 4 5; do
+            ids=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/${{ github.run_id }}/artifacts" --jq '[.artifacts[] | select(.name == "phase-c-runs") | .id] | join(" ")')
+            [ -n "$ids" ] && break
+            sleep 6
+          done
+          if [ -n "$ids" ]; then
+            for id in $ids; do
+              gh api -X DELETE "repos/$GITHUB_REPOSITORY/actions/artifacts/$id" >/dev/null
+              echo "drill artifact $id deleted"
+            done
+          else
+            echo "no drill artifacts to delete"
+          fi

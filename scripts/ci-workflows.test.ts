@@ -545,6 +545,25 @@ describe('.github/workflows/compare-live-weekly.yml · weekly stack-divergence c
     // GH_TOKEN environment variable").
     expect(MIC_REGRESSION).toContain('GH_TOKEN: ${{ github.token }}');
   });
+  it('makes drill runs self-cleaning — the drill issue is closed and its artifacts deleted', () => {
+    // A force_stuck_blob run must not leave residue in the alert history: the
+    // alert step captures the exact issue it created, and a cleanup step
+    // closes THAT issue (never a real open one) and deletes this run's
+    // phase-c-runs artifact. Gated on the drill input, so a genuine red week
+    // keeps its issue + artifacts.
+    expect(MIC_REGRESSION).toContain('id: alert');
+    expect(MIC_REGRESSION).toContain('created_issue=${issue_url##*/}');
+    expect(MIC_REGRESSION).toContain('Clean up drill residue (close issue + delete artifacts)');
+    expect(MIC_REGRESSION).toContain("inputs.force_stuck_blob == 'true'");
+    expect(MIC_REGRESSION).toContain('-X DELETE "repos/$GITHUB_REPOSITORY/actions/artifacts/$id"');
+    // The cleanup can only close the issue this run created — a blanket close
+    // could silently swallow a real open mic-regression issue.
+    expect(MIC_REGRESSION).toContain('steps.alert.outputs.created_issue');
+    // Deleting artifacts needs the actions scope; the scheduled monitor never
+    // exercises it (the drill input defaults to false, keeping cleanup off).
+    expect(MIC_REGRESSION).toContain('actions: write');
+  });
+
 });
 
 describe('.github/workflows/branch-tidy-weekly.yml · weekly branch tidy', () => {
