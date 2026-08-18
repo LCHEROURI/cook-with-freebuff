@@ -10,7 +10,7 @@
     "lint": "next lint",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "check": "npm run typecheck && npm run test",
+    "check": "npm run typecheck && npm run lint && npm run test && npm run build",
     "test:watch": "vitest",
     "test:emulator": "RUN_EMULATOR_TESTS=1 vitest run --no-file-parallelism lib/server/rollback-resume.emulator.test.ts scripts/cleanup-correlation-markers.emulator.test.ts",
     "cleanup:markers": "node --import ./scripts/stub-server-only.mjs --import tsx scripts/cleanup-correlation-markers.ts",
