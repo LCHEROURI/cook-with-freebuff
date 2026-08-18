@@ -137,6 +137,12 @@ jobs:
             # monitored contract (drop / stuck queue / latency) is NEVER
             # budgeted; only pre-mic / infra failures count as flakes.
             log="${RUNNER_TEMP}/phase-c/run-$i/driver.log"
+            # The driver creates its own --out dir at startup, but tee opens
+            # the log BEFORE the driver runs — create the dir first or tee's
+            # open fails and the log is never written (a hard failure would
+            # then grep-empty and be misclassified as a flake — proven by the
+            # force-stuck drill, which reddened via the flake path).
+            mkdir -p "${RUNNER_TEMP}/phase-c/run-$i"
             if node scripts/drive-live-voice.mjs --phase-c-only --probe-prefix mic-regression- --out "${RUNNER_TEMP}/phase-c/run-$i" 2>&1 | tee "$log"; then
               passes=$((passes + 1))
             elif grep -qE 'reports a stuck queue|transcription\(s\) after 90s|latency bounds exceeded|latency cannot be bounded|second reply never drained|diagnostics blob was not capturable' "$log"; then
@@ -192,6 +198,12 @@ jobs:
         # condition would be implicitly wrapped in success() and never run —
         # the exact red-week scenario this alert exists for (Codex P1, PR #11).
         if: ${{ always() && steps.batch.outputs.result != '' && github.repository == 'LCHEROURI/cook-with-freebuff' }}
+        # gh inside Actions is NOT authenticated by default — without GH_TOKEN
+        # every gh call here dies with "set the GH_TOKEN environment variable"
+        # and a red week never opens its issue (proven by the force-stuck
+        # drill: the batch reddened but the alert step failed).
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           existing=$(gh issue list --repo "$GITHUB_REPOSITORY" --label "mic-regression" --state open --json number --jq 'length')
           if [ "$existing" -gt 0 ]; then

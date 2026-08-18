@@ -533,6 +533,18 @@ describe('.github/workflows/compare-live-weekly.yml · weekly stack-divergence c
     expect(COMPARE_WEEKLY).toContain('::error::Owner-credential secrets missing');
     expect(COMPARE_WEEKLY).toContain("if: ${{ env.NEXT_PUBLIC_FIREBASE_API_KEY != '' && env.FIREBASE_SERVICE_ACCOUNT != '' && env.APP_OWNER_UID != '' }}");
   });
+  it('creates the per-run log dir before tee and authenticates the red-week alert', () => {
+    // The tee race (proven by the force-stuck drill): the driver creates its
+    // --out dir at startup, but tee opens the log first — without an explicit
+    // mkdir the log is never written, the classifier's grep finds nothing, and
+    // a hard stuck-queue failure is misclassified as a flake.
+    expect(MIC_REGRESSION).toContain('mkdir -p "${RUNNER_TEMP}/phase-c/run-$i"');
+    // gh inside Actions is NOT authenticated by default — without GH_TOKEN the
+    // red-week issue step dies on every gh call and the alert never opens
+    // (the drill reddened the batch but the issue step failed with "set the
+    // GH_TOKEN environment variable").
+    expect(MIC_REGRESSION).toContain('GH_TOKEN: ${{ github.token }}');
+  });
 });
 
 describe('.github/workflows/branch-tidy-weekly.yml · weekly branch tidy', () => {
