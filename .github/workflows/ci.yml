@@ -41,6 +41,16 @@ jobs:
       - name: Local green gate (typecheck · lint · test · build)
         run: npm run check
 
+      # The mic trend report is a MONITORED ARTIFACT: docs/mic-regression-
+      # trend.md may only ever declare ZERO two-burst drops. The weekly
+      # refresh (mic-trend-weekly.yml) regenerates it from Actions history;
+      # this tokenless gate fails any commit that carries a report with
+      # drops > 0 — a hand-edit that hides or adds drops, a parser drift in
+      # the refresh CLI that stops counting them, or a committed red report
+      # all red here, on every push.
+      - name: Verify the mic trend report shows zero drops (artifact gate)
+        run: node scripts/mic-trend-gate.mjs
+
       # Push-time stale-head guard: verifies the pushed HEAD is not a rollback
       # of what the App Hosting host is currently serving, BEFORE the deploy
       # starts (the post-deploy gate can only prove what was deployed == what

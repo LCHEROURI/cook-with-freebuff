@@ -1,0 +1,133 @@
+name: Mic trend report (weekly)
+
+# Regenerates docs/mic-regression-trend.md from GitHub Actions history — the
+# trend table is computed, never hand-maintained — and opens a PR when the
+# table changed. Runs Tuesday 06:30 UTC so the Monday mic-regression batch is
+# always in the data.
+#
+# Event notes:
+#   - The gather is read-only GitHub queries via the runner token: `gh run
+#     list` + `gh run view` need no secret. The PR step uses the
+#     WEEKLY_TIDY_TOKEN PAT (repo scope) instead of GITHUB_TOKEN, because a
+#     PR created with GITHUB_TOKEN does NOT trigger the pull_request
+#     workflows — the trend PR would never run validate/gate and could not
+#     merge. Same discipline as branch-tidy-weekly.yml, with the same loud
+#     guard on the canonical repo when the PAT is missing.
+#   - Dedupe: an already-open trend PR for the same date, OR a leftover remote
+#     branch from a merged/closed PR, means the state is known — skip, so
+#     consecutive green weeks don't spam PRs. The diff check gates the whole
+#     step: an unchanged report (a week with no new runs) does nothing.
+
+on:
+  schedule:
+    - cron: '30 6 * * 2' # Tuesdays 06:30 UTC — after Monday's mic-regression batch
+  workflow_dispatch:
+
+concurrency:
+  group: mic-trend-weekly
+  cancel-in-progress: false
+
+jobs:
+  regenerate:
+    name: Regenerate the mic trend report and open a PR when it changed
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    permissions:
+      contents: write
+      pull-requests: write
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v5
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      # Queries the GitHub API and rewrites the report in place. Exits 0 even
+      # when the file changed — the git diff below decides whether a PR is
+      # needed. A failed/incomplete gather exits 1 WITHOUT touching the file,
+      # so a stale report can never masquerade as fresh. GH_TOKEN is explicit
+      # because gh inside Actions is not inherited from the runner env.
+      - name: Regenerate the report (read-only GitHub queries)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/refresh-mic-trend.mjs
+
+      # The regenerated artifact is only allowed to say ZERO two-burst drops.
+      # A red week (drops > 0) fails the refresh job HERE, before any PR is
+      # opened — the batch already opened the mic-regression issue, and the
+      # report must never silently publish a drop count.
+      - name: Gate the regenerated report (must show zero drops)
+        run: node scripts/mic-trend-gate.mjs
+
+      # A zero-drop report is not enough — the monitor must still be RUNNING.
+      # If the Monday batch and the deploy voice stages both went silent for
+      # two consecutive weeks, the clean-check total stops growing while the
+      # report stays green. This fails the job so a stopped monitor cannot
+      # masquerade as a healthy one. Anchored to the report's windowEnd, which
+      # the refresh step above just rewrote to today.
+      - name: Fail when the clean-check total has not grown for two weeks
+        run: node scripts/mic-trend-staleness.mjs
+
+      # The gate itself must keep RUNNING: if its step was removed from ci.yml
+      # or no run has executed it in 14 days, the artifact is unguarded and
+      # this job must fail — a disabled gate cannot silently stop protecting
+      # the report. Queries ci.yml push-run history (read-only, runner token).
+      - name: Fail when the zero-drop gate has not run in ci.yml for 14 days
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/mic-trend-gate-presence.mjs
+
+      - name: Fail loudly if WEEKLY_TIDY_TOKEN is missing (canonical repo)
+        if: ${{ github.repository == 'LCHEROURI/cook-with-freebuff' && env.WEEKLY_TIDY_TOKEN == '' }}
+        env:
+          WEEKLY_TIDY_TOKEN: ${{ secrets.WEEKLY_TIDY_TOKEN }}
+        run: |
+          echo "::error::WEEKLY_TIDY_TOKEN secret missing — the trend PR needs a PAT (repo scope) so its checks run."
+          echo "Create a PAT with repo scope and add it under GitHub -> Settings -> Secrets and variables -> Actions."
+          exit 1
+
+      # Only opens a PR when the report actually changed (a green week with no
+      # new runs leaves the file byte-identical). The PR carries the fresh
+      # numbers as its diff; it is never auto-merged — merge to publish.
+      # Created with the WEEKLY_TIDY_TOKEN PAT so the pull_request workflows
+      # run on it; deduped against an open PR and a leftover remote branch.
+      - name: Open a PR when the report changed
+        if: ${{ github.repository == 'LCHEROURI/cook-with-freebuff' && env.WEEKLY_TIDY_TOKEN != '' }}
+        env:
+          GH_TOKEN: ${{ secrets.WEEKLY_TIDY_TOKEN }}
+          WEEKLY_TIDY_TOKEN: ${{ secrets.WEEKLY_TIDY_TOKEN }}
+        run: |
+          if git diff --exit-code --quiet docs/mic-regression-trend.md; then
+            echo "report unchanged — no PR needed"
+            exit 0
+          fi
+          stamp="$(date -u +%Y-%m-%d)"
+          branch="chore/weekly-mic-trend-${stamp}"
+          existing="$(gh pr list --repo "$GITHUB_REPOSITORY" --head "$branch" --state open --json number --jq 'length')"
+          if [ "$existing" -gt 0 ]; then
+            echo "trend PR already open on $branch — skipping (dedupe)"
+            exit 0
+          fi
+          # A merged/closed PR leaves its branch on origin; without this check a
+          # same-date re-dispatch would collide with the stale remote branch.
+          if git ls-remote --heads origin "$branch" | grep -q "$branch"; then
+            echo "remote branch $branch already exists — skipping (dedupe)"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -b "$branch"
+          git add docs/mic-regression-trend.md
+          git commit -m "chore: refresh the mic regression trend report — $stamp"
+          git push -u origin "$branch"
+          gh pr create \
+            --title "chore: mic regression trend — $stamp" \
+            --body "Automatically regenerated from GitHub Actions history by \`npm run refresh:mic-trend\`. The diff is the fresh numbers — merge to publish the updated trend table."

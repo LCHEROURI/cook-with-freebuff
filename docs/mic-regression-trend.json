@@ -1,0 +1,137 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-08-18",
+  "windowStart": "2026-08-13",
+  "windowEnd": "2026-08-18",
+  "summary": {
+    "cleanChecks": 166,
+    "dropFreeProbability": 5.872878238266013e-30,
+    "probabilityExponent": 29
+  },
+  "rows": [
+    {
+      "date": "2026-08-13",
+      "batches": 2,
+      "batchChecks": 12,
+      "batchPasses": 12,
+      "batchFlakes": 0,
+      "voiceClean": 12,
+      "voiceRed": 2,
+      "voiceOther": 0,
+      "voiceSkipped": 0,
+      "voiceCancelled": 0,
+      "drops": 0
+    },
+    {
+      "date": "2026-08-14",
+      "batches": 0,
+      "batchChecks": 0,
+      "batchPasses": 0,
+      "batchFlakes": 0,
+      "voiceClean": 20,
+      "voiceRed": 0,
+      "voiceOther": 0,
+      "voiceSkipped": 2,
+      "voiceCancelled": 2,
+      "drops": 0
+    },
+    {
+      "date": "2026-08-15",
+      "batches": 0,
+      "batchChecks": 0,
+      "batchPasses": 0,
+      "batchFlakes": 0,
+      "voiceClean": 13,
+      "voiceRed": 0,
+      "voiceOther": 0,
+      "voiceSkipped": 0,
+      "voiceCancelled": 0,
+      "drops": 0
+    },
+    {
+      "date": "2026-08-16",
+      "batches": 0,
+      "batchChecks": 0,
+      "batchPasses": 0,
+      "batchFlakes": 0,
+      "voiceClean": 13,
+      "voiceRed": 0,
+      "voiceOther": 0,
+      "voiceSkipped": 0,
+      "voiceCancelled": 0,
+      "drops": 0
+    },
+    {
+      "date": "2026-08-17",
+      "batches": 1,
+      "batchChecks": 6,
+      "batchPasses": 6,
+      "batchFlakes": 0,
+      "voiceClean": 13,
+      "voiceRed": 3,
+      "voiceOther": 1,
+      "voiceSkipped": 0,
+      "voiceCancelled": 1,
+      "drops": 0
+    },
+    {
+      "date": "2026-08-18",
+      "batches": 12,
+      "batchChecks": 72,
+      "batchPasses": 71,
+      "batchFlakes": 1,
+      "voiceClean": 6,
+      "voiceRed": 0,
+      "voiceOther": 0,
+      "voiceSkipped": 4,
+      "voiceCancelled": 0,
+      "drops": 0
+    }
+  ],
+  "totals": {
+    "batches": 15,
+    "batchChecks": 90,
+    "batchPasses": 89,
+    "batchFlakes": 1,
+    "voiceClean": 77,
+    "voiceRed": 5,
+    "voiceOther": 1,
+    "voiceSkipped": 6,
+    "voiceCancelled": 3,
+    "drops": 0
+  },
+  "redVoiceStages": [
+    {
+      "id": "32051251192",
+      "date": "2026-08-17",
+      "createdAt": "2026-08-17T17:38:48Z",
+      "rootFailure": "✗ FAIL: create_recipe → 400 {\"code\":\"INTERNAL_ERROR\",\"message\":\"[GoogleGenerativeAI Error]: Error fetching from https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:gen"
+    },
+    {
+      "id": "32036710667",
+      "date": "2026-08-17",
+      "createdAt": "2026-08-17T13:47:52Z",
+      "rootFailure": "✗ FAIL: create_recipe → 400 {\"code\":\"INTERNAL_ERROR\",\"message\":\"[GoogleGenerativeAI Error]: Error fetching from https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:gen"
+    },
+    {
+      "id": "32034641235",
+      "date": "2026-08-17",
+      "createdAt": "2026-08-17T13:21:09Z",
+      "rootFailure": "✗ FAIL: create_recipe → 400 {\"code\":\"INTERNAL_ERROR\",\"message\":\"[GoogleGenerativeAI Error]: Error fetching from https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:gen"
+    },
+    {
+      "id": "31717497070",
+      "date": "2026-08-13",
+      "createdAt": "2026-08-13T15:49:46Z",
+      "rootFailure": "✗ FAIL: UI starter driver → exit 1. Tail:   ✗ FAIL: starter input not found (no-input)"
+    },
+    {
+      "id": "31711117339",
+      "date": "2026-08-13",
+      "createdAt": "2026-08-13T14:37:38Z",
+      "rootFailure": "✗ FAIL: UI starter driver → exit 1. Tail:   ✗ FAIL: starter input not found (no-input)"
+    }
+  ],
+  "repo": "LCHEROURI/cook-with-freebuff",
+  "source": "GitHub Actions history via gh CLI"
+}

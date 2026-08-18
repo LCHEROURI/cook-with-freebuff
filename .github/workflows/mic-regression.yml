@@ -28,6 +28,11 @@ name: Mic regression (weekly phase-C pass rate)
 #     contract — two-burst drop, stuck queue, latency-bound violation, or an
 #     uncapturable diagnostics blob — is NEVER budgeted, so a true regression
 #     cannot hide behind the budget and still reddens the first week.
+#   - Escalation (same flake 3 weeks running): the budget forgives a flake PER
+#     WEEK, but the SAME flake within budget every week is a persistent infra
+#     problem, not a transient. mic-flake-escalate.mjs opens a deduped
+#     `mic-regression-escalation` issue when one signature appears in the
+#     current week AND in each of the two most recent prior weeks.
 
 on:
   schedule:
@@ -141,6 +146,7 @@ jobs:
             # monitored contract (drop / stuck queue / latency) is NEVER
             # budgeted; only pre-mic / infra failures count as flakes.
             log="${RUNNER_TEMP}/phase-c/run-$i/driver.log"
+            summary="${RUNNER_TEMP}/phase-c/run-$i/phase-c-summary.json"
             # The driver creates its own --out dir at startup, but tee opens
             # the log BEFORE the driver runs — create the dir first or tee's
             # open fails and the log is never written (a hard failure would
@@ -149,6 +155,13 @@ jobs:
             mkdir -p "${RUNNER_TEMP}/phase-c/run-$i"
             if node scripts/drive-live-voice.mjs --phase-c-only --probe-prefix mic-regression- --out "${RUNNER_TEMP}/phase-c/run-$i" 2>&1 | tee "$log"; then
               passes=$((passes + 1))
+            # The structured archive is the authoritative signal: a hard
+            # outcome (stuck/undrained/unverifiable/latency/drop) is NEVER
+            # budgeted, whatever the log line looked like.
+            elif [ -f "$summary" ] && grep -qE '"outcome": "(stuck|undrained|unverifiable|latency|drop)"' "$summary"; then
+              hard_failed="$hard_failed $i"
+            # Log-grep fallback: a crash before the summary write still
+            # prints its monitored-contract failure line.
             elif grep -qE 'reports a stuck queue|transcription\(s\) after 90s|latency bounds exceeded|latency cannot be bounded|second reply never drained|diagnostics blob was not capturable' "$log"; then
               hard_failed="$hard_failed $i"
             else
@@ -161,6 +174,13 @@ jobs:
           esac
           flake_count=0
           for n in $flake_failed; do flake_count=$((flake_count + 1)); done
+          # Expose the flaked run indices to the escalation step (empty = no
+          # flakes). Written BEFORE the red branches so the escalate step can
+          # still read it — and skip itself when the week already went red.
+          echo "flake_indices=${flake_failed}" >> "$GITHUB_OUTPUT"
+          # The flake count this week (transient pre-mic/infra runs, forgiven
+          # up to the budget) — feeds the trend report's Infra flakes column.
+          echo "flake_count=${flake_count}" >> "$GITHUB_OUTPUT"
           # A hard (never-budgeted) failure reddens the week unconditionally.
           if [ -n "$hard_failed" ]; then
             echo "::error::phase-C batch: ${passes}/6 passed — hard failure(s):${hard_failed} (never budgeted) — blobs + screenshots saved under ${RUNNER_TEMP}/phase-c"
@@ -191,6 +211,18 @@ jobs:
           name: phase-c-runs
           path: ${{ runner.temp }}/phase-c
           if-no-files-found: ignore
+
+      # A flake forgiven every week is a persistent infra problem being
+      # silently forgiven forever. When the SAME flake signature appears in
+      # the current week AND in each of the two most recent prior weeks (3
+      # weeks running), escalate to a deduped alert even though every week
+      # stayed within budget. Skipped when the week already went red (the red
+      # alert below covers it) or there were no flakes this week.
+      - name: Escalate a same-flake streak (3 weeks running)
+        if: ${{ always() && steps.batch.outputs.result == '' && steps.batch.outputs.flake_indices != '' && github.repository == 'LCHEROURI/cook-with-freebuff' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/mic-flake-escalate.mjs --out "${RUNNER_TEMP}/phase-c" --flake-indices "${steps.batch.outputs.flake_indices}"
 
       # A red week must alert someone — open a GitHub issue with the pass
       # rate, the run link, and the artifact link (the failing run's blob +

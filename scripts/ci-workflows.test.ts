@@ -472,6 +472,12 @@ describe('.github/workflows/mic-regression.yml · weekly two-burst pass-rate mon
     // The hard-signature classifier — a failed run matching ANY of these is
     // never a flake (the driver's own fail strings, verbatim substrings).
     expect(MIC_REGRESSION).toContain("reports a stuck queue|transcription\\(s\\) after 90s|latency bounds exceeded|latency cannot be bounded|second reply never drained|diagnostics blob was not capturable");
+    // The structured archive is the authoritative signal — a hard
+    // phase-c-summary.json outcome (stuck/undrained/unverifiable/latency/drop)
+    // is never budgeted, with the log grep kept as a fallback for a crash
+    // that predates the summary write.
+    expect(MIC_REGRESSION).toContain('summary="${RUNNER_TEMP}/phase-c/run-$i/phase-c-summary.json"');
+    expect(MIC_REGRESSION).toContain('"outcome": "(stuck|undrained|unverifiable|latency|drop)"');
     // Hard failures redden unconditionally (no budget path exists for them).
     expect(MIC_REGRESSION).toContain('hard failure(s):${hard_failed} (never budgeted)');
     // Over-budget flakes redden; a forgiven week is a NOTICE that sets no
@@ -482,6 +488,21 @@ describe('.github/workflows/mic-regression.yml · weekly two-burst pass-rate mon
     // A non-numeric budget falls back to 1 loudly rather than crashing the
     // numeric comparison.
     expect(MIC_REGRESSION).toContain('is not a number — defaulting to 1');
+  });
+
+  it('escalates a same-flake streak to an alert even when each week stays within budget', () => {
+    // The flake budget forgives a transient per week; the SAME flake within
+    // budget every week must NOT be forgiven forever. The batch exposes the
+    // flaked run indices, and a dedicated step runs the escalation script
+    // (which compares the current signature against the two most recent prior
+    // weeks and opens its own deduped issue) — gated off when the week already
+    // went red (the red alert covers it) or there were no flakes.
+    expect(MIC_REGRESSION).toContain('echo "flake_indices=${flake_failed}" >> "$GITHUB_OUTPUT"');
+    expect(MIC_REGRESSION).toContain('echo "flake_count=${flake_count}" >> "$GITHUB_OUTPUT"');
+    expect(MIC_REGRESSION).toContain('Escalate a same-flake streak (3 weeks running)');
+    expect(MIC_REGRESSION).toContain('node scripts/mic-flake-escalate.mjs --out "${RUNNER_TEMP}/phase-c" --flake-indices "${steps.batch.outputs.flake_indices}"');
+    expect(MIC_REGRESSION).toContain("steps.batch.outputs.result == ''");
+    expect(MIC_REGRESSION).toContain("steps.batch.outputs.flake_indices != ''");
   });
 
   it('wires the force_stuck_blob drill input and keeps it OFF for scheduled runs', () => {
@@ -565,6 +586,34 @@ describe('.github/workflows/compare-live-weekly.yml · weekly stack-divergence c
     expect(MIC_REGRESSION).toContain('actions: write');
   });
 
+  it('alert + drill-cleanup scripts are syntactically valid bash', () => {
+    // The alert step wraps gh issue create in a $( ) command substitution to
+    // capture the created issue number for the drill cleanup. A missing close
+    // paren breaks the WHOLE step at parse time — the step fails before any
+    // line runs, so the drill opens no issue and the rehearsal silently
+    // degrades (caught live by the first self-cleaning drill: "unexpected EOF
+    // while looking for matching ')'"). bash -n both scripts so this class of
+    // break is a suite failure, not a CI surprise.
+    const scriptOf = (anchor: string): string => {
+      const from = MIC_REGRESSION.indexOf(anchor);
+      expect(from, `anchor ${anchor} missing`).toBeGreaterThan(-1);
+      const runIdx = MIC_REGRESSION.indexOf('run: |', from);
+      const nextStep = MIC_REGRESSION.indexOf('\n      - name:', runIdx);
+      const end = nextStep === -1 ? MIC_REGRESSION.length : nextStep;
+      return MIC_REGRESSION
+        .slice(runIdx + 'run: |'.length, end)
+        .split('\n')
+        .map((l) => l.replace(/^          /, ''))
+        .join('\n');
+    };
+    for (const script of [
+      scriptOf('id: alert'),
+      scriptOf('Clean up drill residue (close issue + delete artifacts)'),
+    ]) {
+      execFileSync('bash', ['-n'], { input: script });
+    }
+  });
+
 });
 
 describe('.github/workflows/branch-tidy-weekly.yml · weekly branch tidy', () => {
@@ -622,6 +671,102 @@ describe('.github/workflows/branch-tidy-weekly.yml · weekly branch tidy', () =>
   });
 });
 
+const MIC_TREND = readFileSync('.github/workflows/mic-trend-weekly.yml', 'utf8');
+describe('.github/workflows/mic-trend-weekly.yml · regenerable trend report', () => {
+  it('runs Tuesday 06:30 UTC after the Monday batch (plus manual dispatch)', () => {
+    expect(MIC_TREND).toContain("cron: '30 6 * * 2'");
+    expect(MIC_TREND).toContain('workflow_dispatch:');
+    expect(MIC_TREND).toContain('group: mic-trend-weekly');
+    expect(MIC_TREND).toContain('cancel-in-progress: false');
+  });
+
+  it('regenerates the report with the committed CLI and the runner token', () => {
+    expect(MIC_TREND).toContain('node scripts/refresh-mic-trend.mjs');
+    expect(MIC_TREND).toContain('GH_TOKEN: ${{ github.token }}');
+    // The regenerated artifact is gated IN THE SAME JOB before any PR can be
+    // opened — a red week fails the refresh itself.
+    expect(MIC_TREND).toContain('node scripts/mic-trend-gate.mjs');
+    expect(MIC_TREND.indexOf('node scripts/mic-trend-gate.mjs')).toBeLessThan(MIC_TREND.indexOf('Open a PR when the report changed'));
+    // The gather is read-only GitHub queries — no owner/Firebase secrets may
+    // ever be wired into this job (it only reads Actions history).
+    expect(MIC_TREND).not.toContain('FIREBASE_SERVICE_ACCOUNT');
+    expect(MIC_TREND).not.toContain('NEXT_PUBLIC_FIREBASE_API_KEY');
+    expect(MIC_TREND).not.toContain('GOOGLE_AI_API_KEY');
+  });
+
+  it('fails the weekly job when the clean-check total has not grown for two weeks', () => {
+    // Zero drops is not enough — the monitor must still be producing fresh
+    // evidence. The staleness gate reads the regenerated JSON twin and fails
+    // when the trailing 14-day window holds no clean two-burst checks.
+    expect(MIC_TREND).toContain('node scripts/mic-trend-staleness.mjs');
+    // Order matters: after the zero-drop gate (so a red week still fails
+    // first with its drops message), before any PR is opened.
+    expect(MIC_TREND.indexOf('node scripts/mic-trend-gate.mjs')).toBeLessThan(
+      MIC_TREND.indexOf('node scripts/mic-trend-staleness.mjs'),
+    );
+    expect(MIC_TREND.indexOf('node scripts/mic-trend-staleness.mjs')).toBeLessThan(
+      MIC_TREND.indexOf('Open a PR when the report changed'),
+    );
+  });
+
+  it('alerts when the zero-drop gate has not run in ci.yml for 14 days', () => {
+    // A disabled gate (step removed from ci.yml, or never reaching it) must
+    // fail the weekly job — the report cannot keep publishing unguarded. The
+    // check queries ci.yml push-run history, so it needs the runner token.
+    expect(MIC_TREND).toContain('node scripts/mic-trend-gate-presence.mjs');
+    // Order: after the zero-drop gate and staleness, before any PR opens.
+    expect(MIC_TREND.indexOf('node scripts/mic-trend-staleness.mjs')).toBeLessThan(
+      MIC_TREND.indexOf('node scripts/mic-trend-gate-presence.mjs'),
+    );
+    expect(MIC_TREND.indexOf('node scripts/mic-trend-gate-presence.mjs')).toBeLessThan(
+      MIC_TREND.indexOf('Open a PR when the report changed'),
+    );
+    const presenceStep = MIC_TREND.slice(
+      MIC_TREND.indexOf('Fail when the zero-drop gate has not run in ci.yml for 14 days'),
+      MIC_TREND.indexOf('Fail loudly if WEEKLY_TIDY_TOKEN is missing'),
+    );
+    expect(presenceStep).toContain('GH_TOKEN: ${{ github.token }}');
+  });
+
+  it('gates the committed artifact on every push from ci.yml validate', () => {
+    // The report is a monitored artifact: ci.yml's validate job must keep
+    // running the zero-drop gate, so a commit carrying a red report fails
+    // before deploy.
+    expect(CI).toContain('Verify the mic trend report shows zero drops (artifact gate)');
+    expect(CI).toContain('node scripts/mic-trend-gate.mjs');
+    // The gate is tokenless (it only reads the committed markdown) — no
+    // owner/Firebase secrets may be wired into it.
+    const gateStep = CI.slice(CI.indexOf('Verify the mic trend report shows zero drops'), CI.indexOf('Push-time stale-head guard'));
+    expect(gateStep).not.toContain('FIREBASE_SERVICE_ACCOUNT');
+    expect(gateStep).not.toContain('GH_TOKEN');
+  });
+
+  it('opens a PR only when the diff changed, deduped against an open PR and a leftover remote branch', () => {
+    expect(MIC_TREND).toContain('git diff --exit-code --quiet docs/mic-regression-trend.md');
+    expect(MIC_TREND).toContain('report unchanged — no PR needed');
+    expect(MIC_TREND).toContain('gh pr create');
+    expect(MIC_TREND).toContain('trend PR already open on $branch — skipping (dedupe)');
+    expect(MIC_TREND).toContain('git ls-remote --heads origin "$branch"');
+    expect(MIC_TREND).toContain('remote branch $branch already exists — skipping (dedupe)');
+  });
+
+  it('creates the PR with the WEEKLY_TIDY_TOKEN PAT so its checks run, and fails loudly when it is missing', () => {
+    // Same discipline as branch-tidy-weekly.yml: a GITHUB_TOKEN-created PR
+    // does not trigger the pull_request workflows, so the trend PR could
+    // never merge without the PAT (Codex P1, PR #141 review).
+    expect(MIC_TREND).toContain('WEEKLY_TIDY_TOKEN: ${{ secrets.WEEKLY_TIDY_TOKEN }}');
+    expect(MIC_TREND).toContain('GH_TOKEN: ${{ secrets.WEEKLY_TIDY_TOKEN }}');
+    expect(MIC_TREND).toContain('Fail loudly if WEEKLY_TIDY_TOKEN is missing (canonical repo)');
+    expect(MIC_TREND).toContain('::error::WEEKLY_TIDY_TOKEN secret missing');
+    expect(MIC_TREND).toContain('exit 1');
+  });
+
+  it('never auto-merges — the PR is the record, merge to publish', () => {
+    expect(MIC_TREND).not.toContain('gh pr merge');
+    expect(MIC_TREND).not.toContain('--merge');
+  });
+});
+
 describe('.github/workflows/codex-review-monitor.yml · the daily Codex sweep', () => {
   it('runs on a daily schedule and supports manual dispatch', () => {
     expect(CODEX_MONITOR).toContain("cron: '0 7 * * *'");
@@ -641,32 +786,5 @@ describe('.github/workflows/codex-review-monitor.yml · the daily Codex sweep', 
   it('keeps the concurrency guard so overlapping sweeps never double-report', () => {
     expect(CODEX_MONITOR).toContain('group: codex-review-monitor');
     expect(CODEX_MONITOR).toContain('cancel-in-progress: false');
-  });
-  it('alert + drill-cleanup scripts are syntactically valid bash', () => {
-    // The alert step wraps gh issue create in a $( ) command substitution to
-    // capture the created issue number for the drill cleanup. A missing close
-    // paren breaks the WHOLE step at parse time — the step fails before any
-    // line runs, so the drill opens no issue and the rehearsal silently
-    // degrades (caught live by the first self-cleaning drill: "unexpected EOF
-    // while looking for matching ')'"). bash -n both scripts so this class of
-    // break is a suite failure, not a CI surprise.
-    const scriptOf = (anchor: string): string => {
-      const from = MIC_REGRESSION.indexOf(anchor);
-      expect(from, `anchor ${anchor} missing`).toBeGreaterThan(-1);
-      const runIdx = MIC_REGRESSION.indexOf('run: |', from);
-      const nextStep = MIC_REGRESSION.indexOf('\n      - name:', runIdx);
-      const end = nextStep === -1 ? MIC_REGRESSION.length : nextStep;
-      return MIC_REGRESSION
-        .slice(runIdx + 'run: |'.length, end)
-        .split('\n')
-        .map((l) => l.replace(/^          /, ''))
-        .join('\n');
-    };
-    for (const script of [
-      scriptOf('id: alert'),
-      scriptOf('Clean up drill residue (close issue + delete artifacts)'),
-    ]) {
-      execFileSync('bash', ['-n'], { input: script });
-    }
   });
 });
