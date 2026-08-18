@@ -39,6 +39,9 @@ emulator-data/
 # local env files
 .env*.local
 
+# Freebuff scratch artifacts (agent probe scripts + PR description drafts)
+.freebuff/
+.pr-body-*.md
 
 # typescript
 *.tsbuildinfo

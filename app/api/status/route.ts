@@ -35,10 +35,30 @@ export async function GET(request: Request) {
     runUrl: typeof d.runUrl === 'string' ? d.runUrl : '',
   });
 
+  type FlakeStreakRecord = {
+    active: boolean;
+    recurringCount: number;
+    signature: string | null;
+    weeks: string[];
+    ranAt: string;
+    runUrl: string;
+  };
+  const toFlakeStreakRecord = (d: Record<string, unknown>): FlakeStreakRecord => ({
+    active: d.active === true,
+    recurringCount: typeof d.recurringCount === 'number' ? d.recurringCount : 0,
+    signature: typeof d.signature === 'string' ? d.signature : null,
+    weeks: Array.isArray(d.weeks) ? d.weeks.filter((w) => typeof w === 'string') : [],
+    ranAt: typeof d.ranAt === 'string' ? d.ranAt : '',
+    runUrl: typeof d.runUrl === 'string' ? d.runUrl : '',
+  });
+
   let verifyLive: VerifyRecord | null = null;
   // Sticky Gemini-credits marker: survives later non-external runs so the
   // /status page can show when the billing outage last hit.
   let lastExternal: VerifyRecord | null = null;
+  // Current recurring-flake streak, written by the weekly mic-regression
+  // escalation step (deploy_status/flake_streak).
+  let flakeStreak: FlakeStreakRecord | null = null;
 
   const db = getAdminDb();
   if (db) {
@@ -47,11 +67,14 @@ export async function GET(request: Request) {
       if (snap.exists) verifyLive = toVerifyRecord(snap.data() ?? {});
       const externalSnap = await db.collection('deploy_status').doc('last_external').get();
       if (externalSnap.exists) lastExternal = toVerifyRecord(externalSnap.data() ?? {});
+      const flakeSnap = await db.collection('deploy_status').doc('flake_streak').get();
+      if (flakeSnap.exists) flakeStreak = toFlakeStreakRecord(flakeSnap.data() ?? {});
     } catch {
       // The status page degrades gracefully — build facts still show even if
       // the verify record can't be read (e.g. emulator mode without one).
       verifyLive = null;
       lastExternal = null;
+      flakeStreak = null;
     }
   }
 
@@ -61,5 +84,6 @@ export async function GET(request: Request) {
     emulator: !!process.env.FIRESTORE_EMULATOR_HOST,
     verifyLive,
     lastExternal,
+    flakeStreak,
   });
 }

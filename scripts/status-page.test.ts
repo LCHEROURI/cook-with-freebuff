@@ -58,6 +58,15 @@ describe('app/api/status/route.ts · authenticated status route', () => {
     expect(ROUTE).toContain('lastExternal');
   });
 
+  it('reads the flake_streak doc so infra flakes get the same at-a-glance visibility', () => {
+    // The weekly escalation step records the active recurring-flake streak to
+    // its own doc; the route reads and returns it alongside the credits
+    // outage, sanitizing each field the way it does the verify record.
+    expect(ROUTE).toContain("collection('deploy_status').doc('flake_streak')");
+    expect(ROUTE).toContain('flakeStreak');
+    expect(ROUTE).toContain('toFlakeStreakRecord');
+  });
+
   it('degrades gracefully when the record cannot be read', () => {
     expect(ROUTE).toContain('verifyLive = null');
   });
@@ -78,6 +87,14 @@ describe('app/status/page.tsx · the glance surface', () => {
     expect(PAGE).toContain('Last Gemini-credits outage');
     expect(PAGE).toContain('No Gemini-credits outage recorded yet.');
     expect(PAGE).toContain('lastExternal');
+  });
+
+  it('shows the recurring-flake streak card next to the Gemini-credits outage', () => {
+    expect(PAGE).toContain('Recurring infra flakes');
+    expect(PAGE).toContain('No recurring infra flake right now.');
+    expect(PAGE).toContain('flakeStreak');
+    expect(PAGE).toContain('recurringCount');
+    expect(PAGE).toContain('week streak');
   });
 
   it('fetches the status route WITH the ID token and links to the commit + CI run', () => {

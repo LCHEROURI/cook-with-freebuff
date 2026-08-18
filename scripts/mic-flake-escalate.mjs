@@ -21,22 +21,26 @@
 //
 // The verdict is pure and unit-tested; main() is the thin `gh` shell that
 // reads the current flaked runs' logs from disk (--out/--flake-indices) and
-// the prior weeks' signatures from Actions history. Exits 0 whether or not it
+// the prior weeks' signatures from the UPLOADED phase-c-runs artifacts —
+// downloaded and classified from each run's structured phase-c-summary.json +
+// driver.log, NOT by grepping the workflow log. Exits 0 whether or not it
 // escalates; exits 1 only on a real gather/issue failure (a blind escalation
 // check must be loud, never a silent pass).
 // ============================================================================
 
 import { execFile } from 'node:child_process';
-import { appendFileSync, readFileSync } from 'node:fs';
+import { appendFileSync, mkdtempSync, readFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
+import { z } from 'zod';
 import {
   DRILL_MARKER,
   extractRootFailure,
   FLAKE_DRILL_MARKER,
+  HARD_PHASE_C_OUTCOMES,
   HARD_SIGNATURES,
-  RUN_MARKER,
 } from './refresh-mic-trend.mjs';
 
 const execFileAsync = promisify(execFile);
@@ -73,23 +77,105 @@ export function extractFlakeSignature(log) {
 }
 
 /**
- * Split one full batch log into its six per-run segments and collect the flake
- * signatures of every non-pass, non-hard segment (a hard two-burst failure is
- * never a flake and never escalates).
+ * Classify ONE per-run artifact into its flake signature — or null when the
+ * run was a pass or a hard (never-budgeted) failure. `log` is the per-run
+ * driver.log text; `summary` is the phase-c-summary.json TEXT (null when the
+ * run crashed before the shared-exit summary write — exactly the pre-mic /
+ * infra flake case, e.g. a session-launch 503).
  *
- * @param {string} log a full mic-regression batch log
- * @returns {string[]} unique flake signatures (empty when the week had none)
+ * Mirrors the batch step's classification order, but reads the structured
+ * artifact instead of grepping the workflow log:
+ *   1. RESULT: PASS (exit 0) → pass, not a flake
+ *   2. structured hard outcome → hard, not a flake
+ *   3. hard-signature grep → hard (a crash before the summary write still
+ *      printed its monitored-contract failure line)
+ *   4. else → flake (extract the root ✗ FAIL: signature)
+ *
+ * @param {{ log: string, summary: string|null }} run one artifact run dir
+ * @returns {string|null} the flake signature, or null when not a flake
  */
-export function extractBatchFlakeSignatures(log) {
-  const segments = log.split(RUN_MARKER).slice(1);
+export function classifyRunFlake({ log, summary }) {
+  if (/RESULT: PASS/.test(log)) return null;
+  let outcome = null;
+  if (summary != null) {
+    try {
+      outcome = JSON.parse(summary)?.outcome ?? null;
+    } catch {
+      outcome = null; // corrupt summary — fall through to the log signals
+    }
+  }
+  if (outcome && HARD_PHASE_C_OUTCOMES.includes(outcome)) return null;
+  if (HARD_SIGNATURES.some((s) => log.includes(s))) return null;
+  return extractFlakeSignature(log);
+}
+
+/**
+ * Split a downloaded phase-c-runs artifact dir into its six per-run dirs and
+ * collect the flake signatures of every non-pass, non-hard run. A drill batch
+ * (force_stuck_blob / force_flake_streak) is a rehearsal, not a measurement —
+ * its injected signatures must never count — so any per-run log carrying a
+ * drill marker excludes the WHOLE batch.
+ *
+ * @param {string} baseDir the dir `gh run download` extracted the artifact to
+ * @returns {{ drill: boolean, signatures: string[] }} unique flake signatures
+ *   (empty when the batch had none), or { drill: true } for a drill batch
+ */
+export function extractArtifactBatchFlakeSignatures(baseDir) {
   const sigs = new Set();
-  for (const seg of segments) {
-    if (/RESULT: PASS/.test(seg)) continue;
-    if (HARD_SIGNATURES.some((s) => seg.includes(s))) continue;
-    const sig = extractFlakeSignature(seg);
+  for (let i = 1; i <= 6; i++) {
+    const dir = join(baseDir, `run-${i}`);
+    let log;
+    try {
+      log = readFileSync(join(dir, 'driver.log'), 'utf8');
+    } catch {
+      continue; // a run whose log never landed (e.g. tee open failed) — skip
+    }
+    if (log.includes(DRILL_MARKER) || log.includes(FLAKE_DRILL_MARKER)) {
+      return { drill: true, signatures: [] };
+    }
+    let summary = null;
+    try {
+      summary = readFileSync(join(dir, 'phase-c-summary.json'), 'utf8');
+    } catch {
+      // no summary = the run crashed before the shared-exit write (a flake).
+    }
+    const sig = classifyRunFlake({ log, summary });
     if (sig) sigs.add(sig);
   }
-  return [...sigs];
+  return { drill: false, signatures: [...sigs] };
+}
+
+/**
+ * Download a prior run's uploaded phase-c-runs artifact into destDir via
+ * `gh run download`. Returns true when the artifact downloaded; false when it
+ * is unavailable (expired past retention, or a self-cleaned drill run whose
+ * cleanup already deleted it) — the run is then skipped because it cannot be
+ * classified from the structured record.
+ *
+ * @param {string} runId the Actions run databaseId
+ * @param {string} destDir an empty destination dir
+ * @returns {Promise<boolean>}
+ */
+async function downloadBatchArtifact(runId, destDir) {
+  try {
+    await execFileAsync('gh', [
+      'run',
+      'download',
+      String(runId),
+      '--name',
+      'phase-c-runs',
+      '--dir',
+      destDir,
+      '--repo',
+      REPO,
+    ]);
+    return true;
+  } catch (err) {
+    console.log(
+      `!! run ${runId}: phase-c-runs artifact unavailable (${err.message}) — skipping (cannot classify from the structured record)`,
+    );
+    return false;
+  }
 }
 
 /**
@@ -124,6 +210,22 @@ export function weekKeyOf(iso) {
   const day = (d.getUTCDay() + 6) % 7; // Mon=0 .. Sun=6
   d.setUTCDate(d.getUTCDate() - day);
   d.setUTCHours(0, 0, 0, 0);
+  return d.toISOString().slice(0, 10);
+}
+
+/**
+ * The prior-week gather window: the Monday two weeks before the current
+ * Monday. flakeEscalationVerdict reads only previous.slice(-2) (the two most
+ * recent prior weeks), so a contiguous 3-week streak can never span anything
+ * older — and main() must not download/classify artifacts for runs outside
+ * this window (a `gh run download` per ancient run is wasted shell-out).
+ *
+ * @param {string} monday a Monday-of-week ISO date (as weekKeyOf returns)
+ * @returns {string} the Monday two weeks earlier
+ */
+export function streakWindowStart(monday) {
+  const d = new Date(`${monday}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() - 14);
   return d.toISOString().slice(0, 10);
 }
 
@@ -180,6 +282,52 @@ export function flakeHealedVerdict({ signature, current }) {
 }
 
 /**
+ * Parse the streak weeks out of an escalation issue body. The body carries
+ * `- **Weeks:** 2026-08-03 → 2026-08-10 → 2026-08-17` (written by
+ * escalateStreak below) — a body edited away from that shape yields an empty
+ * list, which the /status page renders as an unknown-length streak rather than
+ * a fabricated one.
+ *
+ * @param {string} body the issue body
+ * @returns {string[]} the streak weeks (Monday dates), oldest first
+ */
+export function parseStreakWeeks(body) {
+  const line = String(body ?? '').split('\n').find((l) => l.includes('**Weeks:**'));
+  if (!line) return [];
+  const rest = line.slice(line.indexOf('**Weeks:**') + '**Weeks:**'.length).trim();
+  return rest.split('→').map((s) => s.trim()).filter(Boolean);
+}
+
+const flakeStreakSchema = z.object({
+  active: z.boolean(),
+  recurringCount: z.number().int().nonnegative(),
+  signature: z.string().nullable(),
+  weeks: z.array(z.string()),
+  ranAt: z.string().min(1),
+  runUrl: z.string(),
+});
+
+/**
+ * Build the `deploy_status/flake_streak` doc the /status page reads: the
+ * CURRENT active streak, derived from the open escalation issues (title for
+ * the signature, body for the weeks). Schema-validated before persisting —
+ * same discipline as record-verify-status.mjs.
+ *
+ * @param {{ openIssues: { title: string, body?: string }[], ranAt: string, runUrl: string }} opts
+ */
+export function buildFlakeStreakDoc({ openIssues, ranAt, runUrl }) {
+  const first = openIssues[0] ?? null;
+  return flakeStreakSchema.parse({
+    active: openIssues.length > 0,
+    recurringCount: openIssues.length,
+    signature: first ? signatureFromTitle(first.title) : null,
+    weeks: first ? parseStreakWeeks(first.body ?? '') : [],
+    ranAt,
+    runUrl,
+  });
+}
+
+/**
  * Auto-close healed escalation issues: an open `mic-regression-escalation`
  * issue self-heals once a subsequent week's batch no longer carries its flake
  * signature (the streak broke). Titles that no longer match the created shape
@@ -207,6 +355,40 @@ async function autoCloseHealedIssues(current) {
     await execFileAsync('gh', ['issue', 'close', String(issue.number), '--repo', REPO]);
     console.log(`auto-closed healed escalation issue #${issue.number} (flake “${signature}” gone this week)`);
   }
+}
+
+/**
+ * Record the CURRENT active flake streak to `deploy_status/flake_streak` for
+ * the /status page. Reads the open escalation issues (title + body) so the doc
+ * reflects reality — a just-opened issue OR a pre-existing one. Writes with the
+ * admin SDK: the escalation step runs in the same job as the driver, so
+ * FIREBASE_SERVICE_ACCOUNT is already present. A missing credential skips
+ * loudly rather than crashing the escalation itself.
+ */
+async function recordFlakeStreakToFirestore() {
+  if (!process.env.FIREBASE_SERVICE_ACCOUNT) {
+    console.log('FIREBASE_SERVICE_ACCOUNT missing — skipping the flake-streak status write');
+    return;
+  }
+  const open = JSON.parse(
+    await gh(['issue', 'list', '--label', 'mic-regression-escalation', '--state', 'open', '--json', 'number,title,body']),
+  );
+  const base = process.env.GITHUB_SERVER_URL ?? 'https://github.com';
+  const runUrl = `${base}/${REPO}/actions/runs/${process.env.GITHUB_RUN_ID}`;
+  const doc = buildFlakeStreakDoc({ openIssues: open, ranAt: new Date().toISOString(), runUrl });
+
+  const { initializeApp, cert, getApps } = await import('firebase-admin/app');
+  const { getFirestore } = await import('firebase-admin/firestore');
+  const sa = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
+  const app = getApps()[0] ?? initializeApp({
+    credential: cert({
+      projectId: sa.project_id,
+      clientEmail: sa.client_email,
+      privateKey: sa.private_key.replace(/\\n/g, '\n'),
+    }),
+  });
+  await getFirestore(app).collection('deploy_status').doc('flake_streak').set(doc);
+  console.log(`recorded flake-streak state (active=${doc.active}, recurring=${doc.recurringCount}) → deploy_status/flake_streak`);
 }
 
 async function main() {
@@ -240,41 +422,67 @@ async function main() {
 
   if (current.signatures.length === 0) {
     console.log('no flake signature this week — nothing to escalate');
-    return;
-  }
-
-  // Prior weeks, grouped by Monday-of-week (so several manual dispatches in
-  // one week collapse to a single week instead of faking a streak). Drills
-  // and the current run are excluded; weeks are ordered oldest → newest.
-  let previous;
-  if (drillStreak) {
-    // A single dispatch can only write THIS week's log; the two prior weeks'
-    // history cannot be retroactively injected. Seed them with the SAME flake
-    // signature so the REAL verdict + issue path fire end-to-end.
-    previous = seedDrillPriorWeeks(current.date, current.signatures[0]);
-    console.log(`drill: seeding two prior weeks with the same flake signature “${current.signatures[0]}”`);
   } else {
-    const currentRunId = process.env.GITHUB_RUN_ID ?? '';
-    const runs = JSON.parse(
-      await gh(['run', 'list', '--workflow', 'mic-regression.yml', '--limit', '200', '--json', 'databaseId,conclusion,createdAt']),
-    );
-    const byWeek = new Map();
-    for (const r of runs) {
-      if (String(r.databaseId) === currentRunId) continue;
-      if (r.conclusion !== 'success' && r.conclusion !== 'failure') continue;
-      const key = weekKeyOf(r.createdAt);
-      if (!key || key >= current.date) continue;
-      const log = await gh(['run', 'view', String(r.databaseId), '--log']);
-      if (log.includes(DRILL_MARKER) || log.includes(FLAKE_DRILL_MARKER)) continue;
-      const sigs = extractBatchFlakeSignatures(log);
-      if (!byWeek.has(key)) byWeek.set(key, new Set());
-      for (const s of sigs) byWeek.get(key).add(s);
+    // Prior weeks, grouped by Monday-of-week (so several manual dispatches in
+    // one week collapse to a single week instead of faking a streak). Drills
+    // and the current run are excluded; weeks are ordered oldest → newest.
+    let previous;
+    if (drillStreak) {
+      // A single dispatch can only write THIS week's log; the two prior weeks'
+      // history cannot be retroactively injected. Seed them with the SAME flake
+      // signature so the REAL verdict + issue path fire end-to-end.
+      previous = seedDrillPriorWeeks(current.date, current.signatures[0]);
+      console.log(`drill: seeding two prior weeks with the same flake signature “${current.signatures[0]}”`);
+    } else {
+      const currentRunId = process.env.GITHUB_RUN_ID ?? '';
+      // The verdict reads only the two most recent prior weeks
+      // (previous.slice(-2)), so filter the run list to the streak window
+      // BEFORE downloading: the escalation step never shells out `gh run
+      // download` for artifacts of ancient or irrelevant runs (a run older
+      // than the window cannot be part of a contiguous 3-week streak).
+      const streakStart = streakWindowStart(current.date);
+      const runs = JSON.parse(
+        await gh(['run', 'list', '--workflow', 'mic-regression.yml', '--limit', '200', '--json', 'databaseId,conclusion,createdAt']),
+      ).filter((r) => {
+        const key = weekKeyOf(r.createdAt);
+        return key && key >= streakStart && key < current.date;
+      });
+      // Prior weeks are classified from the UPLOADED structured record (each
+      // run's phase-c-summary.json + driver.log), not by grepping the workflow
+      // log — so a historical flake uses the same structured classification
+      // the live batch step applies. Each run downloads into its own dir under
+      // a scratch base so runs can't collide.
+      const scratch = mkdtempSync(join(tmpdir(), 'mic-flake-artifacts-'));
+      const byWeek = new Map();
+      for (const r of runs) {
+        if (String(r.databaseId) === currentRunId) continue;
+        if (r.conclusion !== 'success' && r.conclusion !== 'failure') continue;
+        const key = weekKeyOf(r.createdAt);
+        const dest = join(scratch, String(r.databaseId));
+        if (!(await downloadBatchArtifact(r.databaseId, dest))) continue;
+        const { drill, signatures } = extractArtifactBatchFlakeSignatures(dest);
+        if (drill) continue;
+        if (!byWeek.has(key)) byWeek.set(key, new Set());
+        for (const s of signatures) byWeek.get(key).add(s);
+      }
+      previous = [...byWeek.entries()]
+        .sort((a, b) => a[0].localeCompare(b[0]))
+        .map(([date, sigs]) => ({ date, signatures: [...sigs] }));
     }
-    previous = [...byWeek.entries()]
-      .sort((a, b) => a[0].localeCompare(b[0]))
-      .map(([date, sigs]) => ({ date, signatures: [...sigs] }));
+    await escalateStreak(current, previous);
   }
 
+  // Record the CURRENT active-streak state for the /status page (real monitor
+  // only — a drill's synthetic streak must never pollute the at-a-glance view).
+  if (!drillStreak) {
+    await recordFlakeStreakToFirestore();
+  }
+}
+
+/**
+ * Open (or dedupe) the escalation issue for a verified 3-week flake streak.
+ */
+async function escalateStreak(current, previous) {
   const verdict = flakeEscalationVerdict({ current, previous });
   if (!verdict.escalate) {
     console.log(

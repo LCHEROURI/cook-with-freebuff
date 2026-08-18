@@ -296,7 +296,8 @@ describe('the refresh pipeline wiring', () => {
     // corrupt the drop column and the confidence bound with synthetic reds.
     const cli = readFileSync('scripts/refresh-mic-trend.mjs', 'utf8');
     expect(cli).toContain("export const DRILL_MARKER = 'stuck signature injected into the judged blob';");
-    expect(cli).toContain('if (log.includes(DRILL_MARKER) || log.includes(FLAKE_DRILL_MARKER)) return null;');
+    expect(cli).toContain('if (log.includes(DRILL_MARKER) || log.includes(FLAKE_DRILL_MARKER)) {');
+    expect(cli).toContain('return { drill: true, incomplete: false, passes, drops };');
   });
 
   it('excludes force_flake_streak drill runs from the Infra flakes column', () => {

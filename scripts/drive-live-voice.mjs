@@ -42,7 +42,7 @@ import { initializeApp, cert, getApps } from 'firebase-admin/app';
 import { getFirestore } from 'firebase-admin/firestore';
 import { evaluateVoiceBlob } from './voice-blob-verdict.mjs';
 import { phaseCLatency, latencyViolations, isTranscriptionFrame, isReplyFrame } from './phase-c-latency.mjs';
-import { emptyPhaseCSummary, extractCapturedAt, extractComparisonDiagnostics } from './phase-c-summary.mjs';
+import { emptyPhaseCSummary, extractCapturedAt, extractComparisonDiagnostics, OUTCOME, PHASE_C_OUTCOME_MARKER } from './phase-c-summary.mjs';
 
 // ── Env loading (process.env wins; .env.local fills gaps) ───────────────────
 function loadEnv() {
@@ -1062,10 +1062,10 @@ if (got2) {
     }
   }
   if (blob.startsWith('NO_COPY_BUTTON') || blob.startsWith('BLob_CAPTURE_MISS')) {
-    summary.outcome = 'unverifiable';
+    summary.outcome = OUTCOME.unverifiable;
     fail(`passing run but the diagnostics blob was not capturable (${blob}) — cannot prove the mic is not stuck`);
   } else if (!drained) {
-    summary.outcome = 'undrained';
+    summary.outcome = OUTCOME.undrained;
     fail(`passing run but the second reply never drained within the settle window — the queue never returned to a stable idle state, so the mic cannot be proven unstuck`);
   } else {
     // The parse + stuck decision is shared (scripts/voice-blob-verdict.mjs),
@@ -1075,7 +1075,7 @@ if (got2) {
     const verdict = evaluateVoiceBlob(blob);
     summary.verdict = { stuck: verdict.stuck, kind: verdict.kind, evidence: verdict.evidence };
     if (verdict.stuck) {
-      summary.outcome = 'stuck';
+      summary.outcome = OUTCOME.stuck;
       fail(`passing run but the blob reports a stuck queue — drop class ${verdict.kind}: ${verdict.evidence ?? 'no evidence'} (stuckQueueSince=${verdict.stuckSince}, stuckQueueMs=${verdict.stuckMs}) — blob + screenshot saved`);
       try { writeFileSync(`${OUT}/phase-c-pass-blob.json`, blob); note('suspicious blob saved: phase-c-pass-blob.json'); } catch { /* non-fatal */ }
       try { await cdpC.screenshot('phase-c-pass-blob'); note('screenshot: phase-c-pass-blob.png'); } catch { /* non-fatal */ }
@@ -1099,7 +1099,7 @@ if (got2) {
       };
       const violations = latencyViolations(lat);
       if (violations.length > 0) {
-        summary.outcome = 'latency';
+        summary.outcome = OUTCOME.latency;
         const fmt = (v) => (v == null ? '?' : `${(v / 1000).toFixed(1)}s`);
         fail(`two-burst latency bounds exceeded — ${violations
           .map((v) => v.kind === 'unmeasurable'
@@ -1110,7 +1110,7 @@ if (got2) {
         try { writeFileSync(`${OUT}/phase-c-latency-blob.json`, lb); note('blob saved: phase-c-latency-blob.json'); } catch { /* non-fatal */ }
         try { await cdpC.screenshot('phase-c-latency'); note('screenshot: phase-c-latency.png'); } catch { /* non-fatal */ }
       } else {
-        summary.outcome = 'pass';
+        summary.outcome = OUTCOME.pass;
         const b1 = lat.bursts[0];
         const b2 = lat.bursts[1];
         const fmt = (v) => `${(v / 1000).toFixed(1)}s`;
@@ -1119,7 +1119,7 @@ if (got2) {
     }
   }
 } else {
-  summary.outcome = 'drop';
+  summary.outcome = OUTCOME.drop;
   fail(`only ${seen.length} transcription(s) after 90s: ${JSON.stringify(seen.slice(-3))}`);
   // Latency context for the drop: if burst 1 transcribed, its wire latencies
   // show how healthy the pipeline was right up to the point it stopped.
@@ -1154,6 +1154,10 @@ if (got2) {
 // exit, so EVERY outcome (pass, stuck, undrained, unverifiable, latency,
 // drop) archives the same schema-locked record the cross-week reports read.
 try { writeFileSync(`${OUT}/phase-c-summary.json`, JSON.stringify(summary, null, 2)); note('structured summary archived: phase-c-summary.json'); } catch { /* non-fatal */ }
+// Structured outcome marker on stdout — the trend + escalation parsers read
+// the WORKFLOW LOG (not the uploaded summary file), so they classify a run
+// from this line; the summary file stays the artifact for the batch step.
+console.log(`${PHASE_C_OUTCOME_MARKER} ${summary.outcome}`);
 c.kill(); c.dropProfile(); try { cdpC.ws.close(); } catch { /* socket already gone */ }
 
 // ── 6. Cleanup (idempotent; the handlers above also run it) ─────────────────

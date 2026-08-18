@@ -146,6 +146,14 @@ jobs:
           PHASE_C_FORCE_STUCK: ${{ inputs.force_stuck_blob == 'true' && '1' || '' }}
         run: |
           set -uo pipefail
+          # Single source of truth for the hard outcomes: phase-c-summary.mjs
+          # exports HARD_PHASE_C_OUTCOMES; the summary grep below builds its
+          # ERE alternation from it so a rename/add touches only that file.
+          hard_outcomes="$(node --input-type=module -e 'const { HARD_PHASE_C_OUTCOMES } = await import("./scripts/phase-c-summary.mjs"); process.stdout.write(HARD_PHASE_C_OUTCOMES.join("|"));')"
+          if [ -z "$hard_outcomes" ]; then
+            echo "::error::could not derive hard outcomes from scripts/phase-c-summary.mjs — refusing to classify"
+            exit 1
+          fi
           passes=0
           hard_failed=""
           flake_failed=""
@@ -176,7 +184,7 @@ jobs:
             # The structured archive is the authoritative signal: a hard
             # outcome (stuck/undrained/unverifiable/latency/drop) is NEVER
             # budgeted, whatever the log line looked like.
-            elif [ -f "$summary" ] && grep -qE '"outcome": "(stuck|undrained|unverifiable|latency|drop)"' "$summary"; then
+            elif [ -f "$summary" ] && grep -qE "\"outcome\": \"(${hard_outcomes})\"" "$summary"; then
               hard_failed="$hard_failed $i"
             # Log-grep fallback: a crash before the summary write still
             # prints its monitored-contract failure line.

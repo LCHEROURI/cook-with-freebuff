@@ -288,7 +288,7 @@ describe('scripts/verify-live.mjs · live-voice gate [3e] (dictation + active-sc
     // playbackQueueLength, outcome, latency — with the raw blob text embedded
     // as `rawBlob`, written ONCE at the shared exit so every outcome archives
     // the same shape.
-    expect(DRIVER).toContain("import { emptyPhaseCSummary, extractCapturedAt, extractComparisonDiagnostics } from './phase-c-summary.mjs'");
+    expect(DRIVER).toContain("import { emptyPhaseCSummary, extractCapturedAt, extractComparisonDiagnostics, OUTCOME, PHASE_C_OUTCOME_MARKER } from './phase-c-summary.mjs'");
     expect(DRIVER).toContain('structured summary archived: phase-c-summary.json');
     // Exactly ONE write, at the shared exit — a per-branch write could skip
     // an outcome on an early return.
@@ -296,12 +296,12 @@ describe('scripts/verify-live.mjs · live-voice gate [3e] (dictation + active-sc
     // The blob is normalized to diagnostics on BOTH paths (two-burst + drop),
     // and every terminal outcome is recorded.
     expect(DRIVER.match(/extractComparisonDiagnostics\(/g)).toHaveLength(2);
-    for (const o of ["'pass'", "'stuck'", "'undrained'", "'unverifiable'", "'latency'", "'drop'"]) {
-      expect(DRIVER).toContain(`summary.outcome = ${o}`);
+    for (const key of ['pass', 'stuck', 'undrained', 'unverifiable', 'latency', 'drop']) {
+      expect(DRIVER).toContain(`summary.outcome = OUTCOME.${key}`);
     }
     // The force-stuck drill seam (see below) must NOT bypass the summary —
     // the injected copy is what the summary, verdict, and evidence all see.
-    expect(DRIVER).toContain("summary.outcome = 'stuck'");
+    expect(DRIVER).toContain("summary.outcome = OUTCOME.stuck");
   });
 
   it('Phase C — the force-stuck drill seam injects the documented signature so the red-week evidence path can be proven', () => {
@@ -333,5 +333,14 @@ describe('scripts/verify-live.mjs · live-voice gate [3e] (dictation + active-sc
     expect(DRIVER).toContain("fail('drill-flake → 503')");
     expect(DRIVER).toContain('drill: flake signature injected into the judged log');
     expect(DRIVER).toContain('if (FORCE_FLAKE_STREAK) {');
+  });
+
+  it('Phase C — prints the structured outcome marker so the log parsers can classify from it', () => {
+    // The batch step classifies from the phase-c-summary.json FILE; the trend
+    // and escalation parsers read the workflow LOG. The driver must therefore
+    // also print the outcome to stdout (`phase-c-outcome: <outcome>`), so the
+    // same structured verdict reaches both classification surfaces.
+    expect(DRIVER).toContain('PHASE_C_OUTCOME_MARKER');
+    expect(DRIVER).toContain('console.log(`${PHASE_C_OUTCOME_MARKER} ${summary.outcome}`)');
   });
 });

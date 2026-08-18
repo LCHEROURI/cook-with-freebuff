@@ -6,9 +6,12 @@
 // with fixtures); this CLI is the thin data-gathering half:
 //
 //   1. mic-regression.yml runs since the fix window → per-run verdicts by
-//      parsing each workflow log's six `--- run N/6 ---` segments (RESULT:
-//      PASS vs the driver's hard-failure signatures vs a pre-mic flake like
-//      the launch 503 — which has NO two-burst verdict).
+//      DOWNLOADING each run's uploaded phase-c-runs artifact and classifying
+//      its structured record (driver.log + phase-c-summary.json) — the SAME
+//      record the batch step classifies — instead of grepping the workflow
+//      log (RESULT: PASS vs a structured hard outcome vs the driver's
+//      hard-failure signatures vs a pre-mic flake like the launch 503 —
+//      which has NO two-burst verdict).
 //   2. ci.yml push runs on main since the fix window → each run's
 //      "Verify deployed app after deploy (verify:live)" job conclusion
 //      (clean / voice-red / red-other / skipped / cancelled). Runs that
@@ -25,11 +28,13 @@
 // ============================================================================
 
 import { execFile, execFileSync } from 'node:child_process';
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import { aggregateMicTrend, buildTrendJson, renderReport, FIX_WINDOW_START } from './mic-trend-render.mjs';
+import { HARD_PHASE_C_OUTCOMES } from './phase-c-summary.mjs';
 
 const execFileAsync = promisify(execFile);
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -85,10 +90,6 @@ export const HARD_SIGNATURES = [
   'diagnostics blob was not capturable',
 ];
 
-// gh log lines carry a timestamp + step prefix ("… [phase-c-batch/Run the
-// phase-C batch (6 runs)] --- run 1/6 ---"), so the marker is mid-line.
-export const RUN_MARKER = /--- run \d+\/6 ---/;
-
 // A force_stuck_blob drill run INJECTS the stuck signature on purpose to
 // rehearse the red-week evidence chain — its synthetic drops must never
 // count as a real regression in the trend (or a drill would corrupt the
@@ -101,6 +102,10 @@ export const DRILL_MARKER = 'stuck signature injected into the judged blob';
 // never count as a real infra flake in the trend (or a drill would pollute the
 // Infra flakes column). The driver prints this exactly once when armed.
 export const FLAKE_DRILL_MARKER = 'drill: flake signature injected into the judged log';
+
+// Re-export the structured hard outcomes so mic-flake-escalate.mjs classifies
+// flakes from the SAME outcome set the trend does (one source of truth).
+export { HARD_PHASE_C_OUTCOMES };
 
 // The driver prints every failure as `  ✗ FAIL: <message>` (fail() in
 // verify-live.mjs / drive-live-voice.mjs).
@@ -122,35 +127,124 @@ export function extractRootFailure(log) {
 }
 
 /**
+ * Download a run's uploaded phase-c-runs artifact into destDir. Returns true
+ * when the artifact downloaded; false when it is unavailable (expired past
+ * retention, or a self-cleaned drill run whose cleanup deleted it) — the run
+ * is then skipped because its drops cannot be classified from the structured
+ * record.
+ */
+async function downloadBatchArtifact(runId, destDir) {
+  try {
+    await execFileAsync('gh', [
+      'run',
+      'download',
+      String(runId),
+      '--name',
+      'phase-c-runs',
+      '--dir',
+      destDir,
+      '--repo',
+      REPO,
+    ]);
+    return true;
+  } catch (err) {
+    console.log(
+      `!! run ${runId}: phase-c-runs artifact unavailable (${err.message}) — skipping (cannot classify from the structured record)`,
+    );
+    return false;
+  }
+}
+
+/**
+ * Classify ONE per-run artifact into its verdict, mirroring the batch step's
+ * exact order but reading the structured record (driver.log +
+ * phase-c-summary.json) instead of grepping the workflow log:
+ *   1. RESULT: PASS (exit 0) → pass
+ *   2. a structured hard outcome → drop (the authoritative signal)
+ *   3. the hard-signature grep → drop (a crash before the summary write)
+ *   4. else → flake (a pre-mic / infra failure with no two-burst verdict)
+ *
+ * @param {{ log: string, summary: string|null }} run one artifact run dir
+ * @returns {'pass'|'drop'|'flake'}
+ */
+export function classifyRunVerdict({ log, summary }) {
+  if (/RESULT: PASS/.test(log)) return 'pass';
+  let outcome = null;
+  if (summary != null) {
+    try {
+      outcome = JSON.parse(summary)?.outcome ?? null;
+    } catch {
+      outcome = null; // corrupt summary — fall through to the log signals
+    }
+  }
+  if (outcome && HARD_PHASE_C_OUTCOMES.includes(outcome)) return 'drop';
+  if (HARD_SIGNATURES.some((s) => log.includes(s))) return 'drop';
+  return 'flake';
+}
+
+/**
+ * Walk a downloaded phase-c-runs artifact dir (run-1 … run-6) and aggregate
+ * the batch's passes/drops. A drill batch (force_stuck_blob /
+ * force_flake_streak) is a rehearsal, not a measurement — its injected
+ * signatures must never count — so any per-run log carrying a drill marker
+ * marks the WHOLE batch as a drill. A missing driver.log marks the batch
+ * incomplete (the old log-split's six-segment invariant, kept).
+ *
+ * @param {string} baseDir the dir `gh run download` extracted the artifact to
+ * @returns {{ drill: boolean, incomplete: boolean, passes: number, drops: number }}
+ */
+export function classifyArtifactBatch(baseDir) {
+  let passes = 0;
+  let drops = 0;
+  for (let i = 1; i <= 6; i++) {
+    const dir = join(baseDir, `run-${i}`);
+    let log;
+    try {
+      log = readFileSync(join(dir, 'driver.log'), 'utf8');
+    } catch {
+      return { drill: false, incomplete: true, passes, drops };
+    }
+    if (log.includes(DRILL_MARKER) || log.includes(FLAKE_DRILL_MARKER)) {
+      return { drill: true, incomplete: false, passes, drops };
+    }
+    let summary = null;
+    try {
+      summary = readFileSync(join(dir, 'phase-c-summary.json'), 'utf8');
+    } catch {
+      // no summary = the run crashed before the shared-exit write (a flake).
+    }
+    const verdict = classifyRunVerdict({ log, summary });
+    if (verdict === 'pass') passes += 1;
+    else if (verdict === 'drop') drops += 1;
+  }
+  return { drill: false, incomplete: false, passes, drops };
+}
+
+/**
  * Parse one mic-regression workflow run into {passes, checks, drops} by
- * reading its log's six per-run segments. Returns null when the run has no
- * batch verdict (cancelled/skipped, or the batch step never ran) — such runs
- * are excluded from the table, exactly like the 503 flake's missing verdict.
+ * downloading its uploaded phase-c-runs artifact and classifying each run's
+ * structured record (phase-c-summary.json + driver.log) — the SAME record the
+ * batch step classifies — instead of grepping the workflow log. Returns null
+ * when the run has no verdict to report (cancelled/skipped, an unavailable
+ * artifact, a drill rehearsal, or an incomplete archive).
  */
 async function parseBatchRun(run) {
   const { databaseId, conclusion } = run;
   if (conclusion !== 'success' && conclusion !== 'failure') return null;
-  const log = await gh(['run', 'view', String(databaseId), '--log']);
-  // Drill runs are rehearsals, not measurements — exclude them entirely so
-  // their injected stuck blobs can't pollute the drop count, and their
-  // injected flakes can't pollute the Infra flakes column.
-  if (log.includes(DRILL_MARKER) || log.includes(FLAKE_DRILL_MARKER)) return null;
-  const segments = log.split(RUN_MARKER).slice(1);
-  if (segments.length !== 6) {
-    console.error(`!! run ${databaseId}: expected 6 "--- run N/6 ---" segments, found ${segments.length} — excluding from the table`);
-    return null;
-  }
-  let passes = 0;
-  let drops = 0;
-  for (const seg of segments) {
-    if (/RESULT: PASS/.test(seg)) {
-      passes += 1;
-    } else if (HARD_SIGNATURES.some((s) => seg.includes(s))) {
-      drops += 1;
+  const scratch = mkdtempSync(join(tmpdir(), 'mic-trend-'));
+  try {
+    const dest = join(scratch, String(databaseId));
+    if (!(await downloadBatchArtifact(databaseId, dest))) return null;
+    const { drill, incomplete, passes, drops } = classifyArtifactBatch(dest);
+    if (drill) return null; // drill runs are rehearsals, not measurements
+    if (incomplete) {
+      console.error(`!! run ${databaseId}: phase-c-runs artifact is missing a run's driver.log — excluding from the table`);
+      return null;
     }
-    // else: a pre-mic / infra flake (launch 503 etc.) — no two-burst verdict.
+    return { passes, checks: 6, drops };
+  } finally {
+    rmSync(scratch, { recursive: true, force: true });
   }
-  return { passes, checks: 6, drops };
 }
 
 /**

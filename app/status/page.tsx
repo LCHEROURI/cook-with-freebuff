@@ -12,12 +12,22 @@ interface VerifyLive {
   runUrl: string;
 }
 
+interface FlakeStreak {
+  active: boolean;
+  recurringCount: number;
+  signature: string | null;
+  weeks: string[];
+  ranAt: string;
+  runUrl: string;
+}
+
 interface Status {
   commitSha: string;
   builtAt: string;
   emulator: boolean;
   verifyLive: VerifyLive | null;
   lastExternal: VerifyLive | null;
+  flakeStreak: FlakeStreak | null;
 }
 
 const shortSha = (sha: string) => (sha ? sha.slice(0, 7) : 'unknown');
@@ -199,6 +209,40 @@ export default function StatusPage() {
               </>
             ) : (
               <p className={styles.cardMeta}>No Gemini-credits outage recorded yet.</p>
+            )
+          ) : (
+            <p className={styles.cardMeta}>Loading…</p>
+          )}
+        </article>
+
+        <article className={styles.card}>
+          <h2 className={styles.cardTitle}>Recurring infra flakes</h2>
+          {status ? (
+            status.flakeStreak?.active ? (
+              <>
+                <p className={`${styles.verdict} ${styles.fail}`}>
+                  {status.flakeStreak.recurringCount} recurring flake
+                  {status.flakeStreak.recurringCount === 1 ? '' : 's'}
+                </p>
+                <p className={styles.mono}>{status.flakeStreak.signature ?? 'unknown signature'}</p>
+                {status.flakeStreak.weeks.length > 0 && (
+                  <p className={styles.cardMeta}>
+                    {status.flakeStreak.weeks.length}-week streak ·{' '}
+                    {status.flakeStreak.weeks[0]} →{' '}
+                    {status.flakeStreak.weeks[status.flakeStreak.weeks.length - 1]}
+                  </p>
+                )}
+                <p className={styles.cardMeta}>{formatTime(status.flakeStreak.ranAt)}</p>
+                {status.flakeStreak.runUrl && (
+                  <p className={styles.cardMeta}>
+                    <a href={status.flakeStreak.runUrl} className={styles.link}>
+                      View the CI run ↗
+                    </a>
+                  </p>
+                )}
+              </>
+            ) : (
+              <p className={styles.cardMeta}>No recurring infra flake right now.</p>
             )
           ) : (
             <p className={styles.cardMeta}>Loading…</p>

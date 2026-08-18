@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
+  HARD_PHASE_C_OUTCOMES,
+  OUTCOME,
+  PHASE_C_OUTCOME_MARKER,
   PHASE_C_SUMMARY_SCHEMA,
   emptyPhaseCSummary,
   extractCapturedAt,
@@ -119,5 +122,23 @@ describe('scripts/phase-c-summary.mjs · capturedAt + envelope', () => {
     expect(s.latency).toBeNull();
     expect(s.diagnostics).toBeNull();
     expect(s.rawBlob).toBeNull();
+  });
+});
+
+describe('scripts/phase-c-summary.mjs · structured outcome marker', () => {
+  it('OUTCOME is the single source of truth and HARD_PHASE_C_OUTCOMES derives from it', () => {
+    // The driver assigns summary.outcome = OUTCOME.* and the batch grep builds
+    // its alternation from HARD_PHASE_C_OUTCOMES — so the non-pass values are
+    // derived from OUTCOME, never a parallel hand-maintained list.
+    expect(HARD_PHASE_C_OUTCOMES).toEqual(['stuck', 'undrained', 'unverifiable', 'latency', 'drop']);
+    expect(HARD_PHASE_C_OUTCOMES).toEqual(
+      Object.entries(OUTCOME)
+        .filter(([key]) => key !== 'pass')
+        .map(([, value]) => value),
+    );
+  });
+
+  it('exports the stdout marker the driver prints for the log parsers', () => {
+    expect(PHASE_C_OUTCOME_MARKER).toBe('phase-c-outcome:');
   });
 });

@@ -20,6 +20,35 @@
 
 export const PHASE_C_SUMMARY_SCHEMA = 1;
 
+// The six phase-C outcome VALUES — the single source of truth. The driver
+// assigns `summary.outcome = OUTCOME.stuck` etc., and the batch step builds
+// its summary-outcome grep alternation from HARD_PHASE_C_OUTCOMES below, so
+// adding or renaming an outcome touches only this file.
+export const OUTCOME = {
+  pass: 'pass',
+  stuck: 'stuck',
+  undrained: 'undrained',
+  unverifiable: 'unverifiable',
+  latency: 'latency',
+  drop: 'drop',
+};
+
+// The five monitored-contract (non-pass) phase-C outcomes — a failed run
+// whose summary records one of these is a hard failure, never a flake.
+// Derived from OUTCOME so the set can never drift from the driver's values.
+export const HARD_PHASE_C_OUTCOMES = [
+  OUTCOME.stuck,
+  OUTCOME.undrained,
+  OUTCOME.unverifiable,
+  OUTCOME.latency,
+  OUTCOME.drop,
+];
+
+// The structured outcome marker the driver prints to stdout, so the trend +
+// escalation parsers (which read workflow LOGS, not the uploaded summary
+// file) can classify a run from its outcome instead of grepping fail lines.
+export const PHASE_C_OUTCOME_MARKER = 'phase-c-outcome:';
+
 // The comparison surface: exactly the fields the monitors/reports reason
 // about. Type-guarded like the verdict — a wrong-typed field is null, never
 // a silent string in a numeric column.
