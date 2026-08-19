@@ -77,6 +77,17 @@ on:
 # owner through the same /cook active session, so a Monday run overlapping a
 # deploy must QUEUE behind it (or ahead of it) instead of both attaching to
 # whichever probe is newest (Codex P2, PR #98 review).
+#
+# One run per group at a time: a new dispatch on the SAME group queues BEHIND
+# the in-progress run (cancel-in-progress: false) instead of cancelling it —
+# the opposite of ci.yml, which cancels. This is EXPECTED behavior, not a
+# failure: e.g. dispatching a drill while the weekly batch is running makes
+# the drill wait until the batch finishes, so both runs still execute and
+# neither's deploy/verify:live leg is yanked mid-flight. The run to check is
+# therefore ALWAYS the LATEST COMPLETED run on the group (newest createdAt
+# for its headSha / the final result), never a queued one — a queued run's
+# verdict is stale by definition, and the batch + escalation steps re-run in
+# full once it actually starts.
 concurrency:
   group: live-voice-probe
   cancel-in-progress: false
