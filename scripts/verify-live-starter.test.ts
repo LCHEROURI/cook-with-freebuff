@@ -260,11 +260,29 @@ describe('scripts/verify-live.mjs · starter-flow gate (create → validate → 
     expect(SRC).toContain('db.runTransaction');
     expect(SRC).toContain("if (cur.status !== 'ACTIVE' && cur.status !== 'PAUSED') return false;");
     expect(SRC).toContain('version: (typeof cur.version === \'number\' ? cur.version : 0) + 1');
+    // LIVE_SESSION_GRACE_MS (60s): a session touched within the last minute is
+    // a GENUINELY LIVE concurrent run's session — the guard must never archive
+    // it (that would yank the other run's /cook session out from under it).
+    // Only true leftovers (idle past the grace) are archivable; a live
+    // blocker survives the retry and fails THIS run loudly instead.
+    expect(SRC).toContain('const LIVE_SESSION_GRACE_MS = 60 * 1000;');
+    expect(SRC).toContain("const curLast = typeof cur.lastActivityAt === 'number' ? cur.lastActivityAt : 0;");
+    expect(SRC).toContain('if (curLast >= Date.now() - LIVE_SESSION_GRACE_MS) return false;');
     // Retry once: re-query after the archive; clean owner proceeds, a
     // survivor fails loudly named.
     expect(SRC).toContain('archived ${archived} blocking session(s) — retried, owner is clean before the UI starter');
     expect(SRC).toContain('owner still has ${remaining.length} ACTIVE/PAUSED session(s) blocking the UI starter after the archive retry');
     expect(SRC).toContain('could not verify a clean owner before the UI starter');
+    // The guard must fire AFTER the [3c] settle and IMMEDIATELY before the
+    // [3d] driver spawn — nothing (no new stage label) may sit between the
+    // guard and the spawn, so the monitor batch's only collision window is
+    // the guard instant itself.
+    const guardStart = SRC.indexOf('Pre-stage guard: the UI starter must see a CLEAN owner');
+    const settleEnd = SRC.indexOf('leftover settle best-effort');
+    const driverSpawn = SRC.indexOf('let driver = runDriver(1);');
+    expect(guardStart).toBeGreaterThan(settleEnd);
+    expect(driverSpawn).toBeGreaterThan(SRC.indexOf('could not verify a clean owner'));
+    expect(SRC.slice(guardStart, driverSpawn)).not.toMatch(/console\.log\(`\n\[/);
   });
 
   it('keeps the clean-owner ok line for the unblocked path', () => {

@@ -289,6 +289,13 @@ async function cleanup() {
 // Chrome driver stages (~25 min worst case), so it is deliberately longer.
 const PROBE_GRACE_MS = 15 * 60 * 1000;
 const ORPHAN_GRACE_MS = 30 * 60 * 1000;
+// A session touched within LIVE_SESSION_GRACE_MS is a GENUINELY LIVE
+// concurrent run's session (its phase is mid-turn), never a leftover — the
+// 3c½ guard must NOT archive it, or it would yank the other run's /cook
+// session out from under it. Only sessions idle past this grace are true
+// leftovers and safe to archive; a live one survives the guard's retry and
+// fails THIS run loudly instead of breaking the other run.
+const LIVE_SESSION_GRACE_MS = 60 * 1000;
 async function sweepStaleProbes() {
   if (!db) return { archived: 0, deleted: 0 };
   const [sessionSnap, recipeSnap] = await Promise.all([
@@ -1126,12 +1133,40 @@ try {
     note(`leftover settle best-effort: ${e.message}`);
   }
 
+  // ── 3d. UI starter proof: preference-rich ready card + constraints view ──
+  // The API-level [3b] stage proves create → validate → launch over HTTP.
+  // This stage drives the REAL /cook UI in headless Chrome — type the
+  // preference-rich prompt → Create my recipe → ready card shows the parsed
+  // constraints → expand the "Generation constraints applied" details view —
+  // by spawning the committed driver against the same deployed APP. The
+  // driver is self-contained: it mints its own owner session, asserts the
+  // card + details rows, screenshots them, and sweeps its own probe recipe
+  // (the owner list ends exactly as it started). Any driver exit without a
+  // RESULT: PASS — crash, timeout, or assertion failure — fails the gate.
+  console.log(`\n[3d] UI starter proof: preference-rich ready card + constraints view (${APP})`);
+  const driverOut = `/tmp/verify-live-driver-${t}`;
+  // Retry-once-after-30s (the portfolio's live-gate pattern): the [3b] API
+  // generation ran seconds before this stage, and a second consecutive Gemini
+  // call can stall on cold serverless (seen live: the first attempt timed out
+  // at the driver's 120s create poll; the next attempt passed). A non-PASS
+  // first attempt therefore waits 30s and retries ONCE before failing — a
+  // deterministic regression fails both attempts, a transient stall passes.
+  // (The driver self-caps at ~150s via its own 120s create poll, so two
+  // attempts + 30s backoff fit comfortably inside the job budget.)
+  const runDriver = (attempt) =>
+    spawnSync('node', ['scripts/drive-starter-prefs.mjs', '--app', APP, '--probe-prefix', `${PROBE_PREFIX}starter-prefs-`, '--out', `${driverOut}-${attempt}`], {
+      encoding: 'utf8',
+      timeout: 300_000, // Gemini generation + Chrome launch on cold serverless
+      env: process.env,
+    });
   // ── 3c½. Pre-stage guard: the UI starter must see a CLEAN owner ────────────
-  // The [3c] settle archives stale leftovers and deletes the tracked probe
-  // sessions, but a FRESH ACTIVE/PAUSED session (a concurrent monitor/voice
-  // run inside the 10-min idle window, or a leaked slug session) survives it
-  // and would hijack /cook — the driver would then report the opaque "starter
-  // input not found" instead of the real cause.
+  // Fires IMMEDIATELY BEFORE the driver spawn — the last thing the script does
+  // before the headless Chrome driver loads /cook. The [3c] settle above
+  // archives stale leftovers and deletes the tracked probe sessions, but a
+  // FRESH ACTIVE/PAUSED session (a concurrent monitor/voice run inside the
+  // 10-min idle window, or a leaked slug session) survives it and would
+  // hijack /cook — the driver would then report the opaque "starter input not
+  // found" instead of the real cause.
   //
   // SELF-HEAL: instead of failing outright on a blocker, archive it and retry
   // ONCE. A concurrent-run collision — a session left ACTIVE inside the
@@ -1142,11 +1177,13 @@ try {
   // still-ACTIVE/PAUSED session is archived (a session its own run resumed
   // between our read and write is skipped, never double-fought), and the
   // version is bumped like updateSession's optimistic check so a racing
-  // legitimate update surfaces as a conflict. The owner account is the shared
-  // CI test account — every ACTIVE/PAUSED session there is a driver artifact,
-  // and the [3c] settle already proved the only "real" alternative (a resumed
-  // session) by refusing to touch fresh ones. Only a blocker that SURVIVES
-  // the archive retry fails the run, named in the log.
+  // legitimate update surfaces as a conflict. A session touched within the
+  // last LIVE_SESSION_GRACE_MS (60s) is a GENUINELY LIVE run's session and is
+  // NEVER archived — only true leftovers (idle past the grace) are; a live
+  // blocker survives the retry and fails THIS run loudly instead of breaking
+  // the other run. The owner account is the shared CI test account — every
+  // ACTIVE/PAUSED session there is a driver artifact. Only a blocker that
+  // SURVIVES the archive retry fails the run, named in the log.
   const describeBlocking = (d) => {
     const s = d.data();
     const idle = typeof s.lastActivityAt === 'number' ? `${Math.round((Date.now() - s.lastActivityAt) / 1000)}s idle` : 'idle unknown';
@@ -1175,6 +1212,12 @@ try {
           if (!fresh.exists) return false;
           const cur = fresh.data();
           if (cur.status !== 'ACTIVE' && cur.status !== 'PAUSED') return false;
+          // A session touched within the grace is a LIVE run's session —
+          // re-read here, so a resume between our list read and this write
+          // protects it too. Never archive it; only true leftovers (idle past
+          // the grace) are archivable.
+          const curLast = typeof cur.lastActivityAt === 'number' ? cur.lastActivityAt : 0;
+          if (curLast >= Date.now() - LIVE_SESSION_GRACE_MS) return false;
           tx.update(d.ref, {
             status: 'ABANDONED',
             lastActivityAt: Date.now(),
@@ -1195,33 +1238,6 @@ try {
   } catch (e) {
     fail(`could not verify a clean owner before the UI starter: ${e.message}`);
   }
-
-  // ── 3d. UI starter proof: preference-rich ready card + constraints view ──
-  // The API-level [3b] stage proves create → validate → launch over HTTP.
-  // This stage drives the REAL /cook UI in headless Chrome — type the
-  // preference-rich prompt → Create my recipe → ready card shows the parsed
-  // constraints → expand the "Generation constraints applied" details view —
-  // by spawning the committed driver against the same deployed APP. The
-  // driver is self-contained: it mints its own owner session, asserts the
-  // card + details rows, screenshots them, and sweeps its own probe recipe
-  // (the owner list ends exactly as it started). Any driver exit without a
-  // RESULT: PASS — crash, timeout, or assertion failure — fails the gate.
-  console.log(`\n[3d] UI starter proof: preference-rich ready card + constraints view (${APP})`);
-  const driverOut = `/tmp/verify-live-driver-${t}`;
-  // Retry-once-after-30s (the portfolio's live-gate pattern): the [3b] API
-  // generation ran seconds before this stage, and a second consecutive Gemini
-  // call can stall on cold serverless (seen live: the first attempt timed out
-  // at the driver's 120s create poll; the next attempt passed). A non-PASS
-  // first attempt therefore waits 30s and retries ONCE before failing — a
-  // deterministic regression fails both attempts, a transient stall passes.
-  // (The driver self-caps at ~150s via its own 120s create poll, so two
-  // attempts + 30s backoff fit comfortably inside the job budget.)
-  const runDriver = (attempt) =>
-    spawnSync('node', ['scripts/drive-starter-prefs.mjs', '--app', APP, '--probe-prefix', `${PROBE_PREFIX}starter-prefs-`, '--out', `${driverOut}-${attempt}`], {
-      encoding: 'utf8',
-      timeout: 300_000, // Gemini generation + Chrome launch on cold serverless
-      env: process.env,
-    });
   let driver = runDriver(1);
   let driverLog = `${driver.stdout ?? ''}\n${driver.stderr ?? ''}`;
   if (!(driver.status === 0 && /RESULT: PASS/.test(driverLog))) {
