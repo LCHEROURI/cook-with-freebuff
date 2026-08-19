@@ -4,6 +4,7 @@ import {
   classifyVerifyVerdict,
   GEMINI_CASCADE_PREFIXES,
   GEMINI_CREDITS_SIGNATURES,
+  SPARED_LIVE_SESSION_SIGNATURE,
 } from './verify-live-classify.mjs';
 
 // ============================================================================
@@ -182,6 +183,48 @@ describe('scripts/verify-live-classify.mjs · mutation-proof allowlists', () => 
       'model turn →',
       'vision scan →',
     ]);
+  });
+
+  it('pins the spared-live-session signature exactly so a typo/edit fails the suite', () => {
+    expect(SPARED_LIVE_SESSION_SIGNATURE).toBe(
+      'ACTIVE/PAUSED session(s) blocking the UI starter after the archive retry',
+    );
+  });
+});
+
+describe('scripts/verify-live-classify.mjs · spared signature is mutation-proof', () => {
+  it('every distinctive phrase of the spared signature is load-bearing — removing any flips the case back to plain fail', () => {
+    // The signature is matched as a substring of the guard's fail(...) message
+    // (`owner still has N ACTIVE/PAUSED session(s) blocking the UI starter
+    // after the archive retry: …`). Every distinct phrase is load-bearing:
+    // weakening any one (typo, rename, drop) silently turns a genuine
+    // spared drill into a bare regression mislabel on the /status page.
+    const sparedFailure =
+      'owner still has 1 ACTIVE/PAUSED session(s) blocking the UI starter after the archive retry: drill-li… (COLLECTING_INGREDIENTS, chicken_rice_onion_001, 8s idle)';
+    expect(
+      classifyVerifyVerdict({ failures: [sparedFailure] }).reason,
+      'baseline spared failure must classify with reason spared-live-session',
+    ).toBe('spared-live-session');
+
+    const mutations: Array<{ name: string; mutated: string }> = [
+      {
+        name: 'drop "ACTIVE/PAUSED"',
+        mutated: 'owner still has 1 session(s) blocking the UI starter after the archive retry: drill-li… (COLLECTING_INGREDIENTS, chicken_rice_onion_001, 8s idle)',
+      },
+      {
+        name: 'drop "blocking the UI starter"',
+        mutated: 'owner still has 1 ACTIVE/PAUSED session(s) after the archive retry: drill-li… (COLLECTING_INGREDIENTS, chicken_rice_onion_001, 8s idle)',
+      },
+      {
+        name: 'drop "after the archive retry"',
+        mutated: 'owner still has 1 ACTIVE/PAUSED session(s) blocking the UI starter: drill-li… (COLLECTING_INGREDIENTS, chicken_rice_onion_001, 8s idle)',
+      },
+    ];
+    for (const m of mutations) {
+      const v = classifyVerifyVerdict({ failures: [m.mutated] });
+      expect(v.kind, `${m.name}: kind must stay plain fail`).toBe('fail');
+      expect(v.reason, `${m.name}: reason must NOT be spared-live-session`).toBeUndefined();
+    }
   });
 });
 
