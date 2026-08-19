@@ -1,0 +1,82 @@
+name: spare-drill-nightly
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Nightly spare-drill comparator — runs the existing
+# scripts/guard-spare-drill.mjs end to end on a daily trigger:
+#   1. dispatch ci.yml on main
+#   2. seed the drill-live-session (kept fresh <60s so the guard SPARES it)
+#   3. wait for completion, fetch the verify:live job log
+#   4. extract the two spare-path lines, normalize, diff against
+#      scripts/__golden__/guard-spare-drill.txt
+#
+# Drift detection: a future rename of the guard's `fail(...)` message,
+# the note phrasing, or the regex shape surfaces here as a non-zero exit
+# the next morning instead of needing a manual dispatch.
+#
+# Schedule rationale: 08:00 UTC sits well after the existing 06:00 (Mon —
+# mic-regression, branch-tidy), 06:30 (Tue/Thu/Sat — mic-trend /
+# compare-live / marker-cleanup), and 07:00 (daily codex-review-monitor)
+# slots, so this job never contests another nightly on the same minute.
+# ─────────────────────────────────────────────────────────────────────────────
+
+on:
+  schedule:
+    # Daily 08:00 UTC — clear of every existing nightly slot.
+    - cron: '0 8 * * *'
+  workflow_dispatch:
+
+concurrency:
+  # Queue, don't cancel: a manual rerun during an in-flight nightly waits
+  # for the live comparison to finish before it starts, so we never lose
+  # a fresh-drift signal to a stale rerun.
+  group: spare-drill-nightly
+  cancel-in-progress: false
+
+jobs:
+  compare-against-golden:
+    name: Compare live spare-path lines against scripts/__golden__/guard-spare-drill.txt
+    runs-on: ubuntu-latest
+    # Worst case: ci.yml deploy + verify:live + 24 × 15s keep-alive + 30 × 15s
+    # completion polls ≈ ~25 min. 35 min gives headroom for queue time.
+    timeout-minutes: 35
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v5
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      # End-to-end comparator: dispatches ci.yml on main, seeds +
+      # keep-alive touches drill-live-session through the guard window,
+      # fetches the verify:live job log, and diffs the captured
+      # NOTE/FAIL lines against the committed golden. Exits 0 on match,
+      # 1 on drift, 2 on missing/unparseable lines or any infra fault
+      # (no verify-live in_progress within the poll budget, etc.).
+      - name: Run the spare-drill comparator end to end
+        id: compare
+        run: node scripts/guard-spare-drill.mjs
+        env:
+          GH_TOKEN: ${{ github.token }}
+          APP_OWNER_UID: ${{ secrets.APP_OWNER_UID }}
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+          NEXT_PUBLIC_FIREBASE_API_KEY: ${{ secrets.NEXT_PUBLIC_FIREBASE_API_KEY }}
+          NEXT_PUBLIC_FIREBASE_APP_ID: ${{ secrets.NEXT_PUBLIC_FIREBASE_APP_ID }}
+
+      # Archive the captured verify-live log so a future drift debug
+      # can diff the raw log against the golden by hand. Mirrors the
+      # pattern in the dual-namespace-bound guard evidence.
+      - name: Upload the captured compare log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: spare-drill-log
+          path: /tmp/vlive-guard-spare-drill.log
+          if-no-files-found: warn
+          retention-days: 14

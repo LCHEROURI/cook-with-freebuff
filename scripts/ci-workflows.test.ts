@@ -28,6 +28,7 @@ import { describe, expect, it } from 'vitest';
 const CI = readFileSync('.github/workflows/ci.yml', 'utf8');
 const MIC_REGRESSION = readFileSync('.github/workflows/mic-regression.yml', 'utf8');
 const CODEX_MONITOR = readFileSync('.github/workflows/codex-review-monitor.yml', 'utf8');
+const SPARE_DRILL_NIGHTLY = readFileSync('.github/workflows/spare-drill-nightly.yml', 'utf8');
 const BRANCH_TIDY = readFileSync('.github/workflows/branch-tidy-weekly.yml', 'utf8');
 const COMPARE_WEEKLY = readFileSync('.github/workflows/compare-live-weekly.yml', 'utf8');
 
@@ -938,5 +939,66 @@ describe('.github/workflows/codex-review-monitor.yml · the daily Codex sweep', 
   it('keeps the concurrency guard so overlapping sweeps never double-report', () => {
     expect(CODEX_MONITOR).toContain('group: codex-review-monitor');
     expect(CODEX_MONITOR).toContain('cancel-in-progress: false');
+  });
+});
+
+describe('.github/workflows/spare-drill-nightly.yml · nightly spare-path golden comparator', () => {
+  // Spare-drill comparator on a daily slot. The workflow dispatches ci.yml,
+  // seeds + keep-alive touches drill-live-session through the guard window,
+  // fetches the verify-live log, and diffs the captured NOTE/FAIL lines
+  // against scripts/__golden__/guard-spare-drill.txt. Drift in the source
+  // fail(...) shape or the regex shows up as non-zero exit on its own the
+  // next morning — no manual dispatch required.
+
+  it('runs on a daily 08:00 UTC schedule and supports manual dispatch', () => {
+    // 08:00 UTC sits well clear of every other nightly slot: mon 06:00
+    // (mic-regression + branch-tidy), tue/thu/sat 06:30 (mic-trend /
+    // compare-live / marker-cleanup), and the daily 07:00 (codex). A future
+    // contributor who shifts it earlier than 07:30 or later than 10:00
+    // contests another job OR moves out of business hours — fail CI here
+    // so the move is deliberate.
+    expect(SPARE_DRILL_NIGHTLY).toMatch(/cron:\s*['"`]?\s*0\s+8\s+\*\s+\*\s+\*\s*['"`]?/);
+    expect(SPARE_DRILL_NIGHTLY).toContain('workflow_dispatch:');
+  });
+
+  it('keeps the queued-run discipline so a manual rerun never overwrites a fresh in-flight compare', () => {
+    // Same discipline as codex-review-monitor + mic-regression: a parallel
+    // dispatch queues behind the in-flight comparator instead of cancelling
+    // it, so the latest completed run is always authoritative. A cancel-
+    // in-progress: true swap would orphan a fresh-drift detection mid-poll.
+    expect(SPARE_DRILL_NIGHTLY).toContain('group: spare-drill-nightly');
+    expect(SPARE_DRILL_NIGHTLY).toContain('cancel-in-progress: false');
+  });
+
+  it('runs scripts/guard-spare-drill.mjs end to end with the full credential set', () => {
+    // The comparator needs GH_TOKEN to dispatch ci.yml + poll + fetch the
+    // log, and the three Firestore credentials the drill-session helper
+    // needs to seed/touch (next_public_firebase_app_id is the matching
+    // App Check secret, kept in sync with the rest of the workflows). A
+    // future edit that drops any of these breaks the dispatch on the
+    // first overnight run.
+    expect(SPARE_DRILL_NIGHTLY).toContain('node scripts/guard-spare-drill.mjs');
+    expect(SPARE_DRILL_NIGHTLY).toContain('GH_TOKEN: ${{ github.token }}');
+    expect(SPARE_DRILL_NIGHTLY).toContain('APP_OWNER_UID: ${{ secrets.APP_OWNER_UID }}');
+    expect(SPARE_DRILL_NIGHTLY).toContain('FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}');
+    expect(SPARE_DRILL_NIGHTLY).toContain('NEXT_PUBLIC_FIREBASE_API_KEY: ${{ secrets.NEXT_PUBLIC_FIREBASE_API_KEY }}');
+    expect(SPARE_DRILL_NIGHTLY).toContain('NEXT_PUBLIC_FIREBASE_APP_ID: ${{ secrets.NEXT_PUBLIC_FIREBASE_APP_ID }}');
+    // Pre-install dependencies so firebase-admin is available for the
+    // drill-session helper inside the comparator's dispatch loop.
+    expect(SPARE_DRILL_NIGHTLY).toContain('npm ci');
+    expect(SPARE_DRILL_NIGHTLY).toMatch(/node-version:\s*22/);
+  });
+
+  it('archives the captured verify-live log so a future drift debug has the raw lines', () => {
+    // Mirror of the dual-namespace guard evidence pattern: when the
+    // comparator diffs against the golden, an ops engineer needs the raw
+    // log to see what shape drifted. The script writes to
+    // /tmp/vlive-guard-spare-drill.log on every run; upload-artifact
+    // makes it pinnable to the run for 14 days. Drop either here and a
+    // future drift night loses its evidence.
+    expect(SPARE_DRILL_NIGHTLY).toContain('actions/upload-artifact@v4');
+    expect(SPARE_DRILL_NIGHTLY).toContain('spare-drill-log');
+    expect(SPARE_DRILL_NIGHTLY).toContain('/tmp/vlive-guard-spare-drill.log');
+    expect(SPARE_DRILL_NIGHTLY).toContain('retention-days: 14');
   });
 });
