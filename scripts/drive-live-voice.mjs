@@ -86,6 +86,16 @@ const FORCE_STUCK_BLOB = process.argv.includes('--force-stuck-blob') || process.
 // FLAKE (no hard signature, no hard summary) — exactly the "launch 503"
 // transient the weekly budget forgives.
 const FORCE_FLAKE_STREAK = process.argv.includes('--force-flake-streak') || process.env.PHASE_C_FORCE_FLAKE_STREAK === '1';
+// Drill seam: skip the phase-c-summary.json write at the shared exit, so a
+// run that fails with a hard signature in its log but archives NO summary
+// (the crash-before-summary shape) can be proven end-to-end — the batch's
+// log-grep fallback (branch 3, from HARD_SIGNATURES_GREP) is what classifies
+// it, not the summary grep. Armed by the workflow's force_crash_no_summary
+// dispatch input or a local --skip-phase-c-summary flag; NEVER set in the
+// scheduled run. Combined with --force-stuck-blob, the run fails with the
+// stuck signature in its log but writes no summary, so the drill exercises
+// branch 3 on a REAL failing run instead of only the codegen contract.
+const SKIP_PHASE_C_SUMMARY = process.argv.includes('--skip-phase-c-summary') || process.env.PHASE_C_FORCE_SKIP_SUMMARY === '1';
 // Rewrite a captured blob with the stuck signature (queue class), used by the
 // drill seam. Returns the blob unchanged unless the seam is armed AND the
 // blob is a parseable JSON diagnostics blob.
@@ -1180,7 +1190,15 @@ if (got2) {
 // ARCHIVE the structured summary for this run — one write at the shared
 // exit, so EVERY outcome (pass, stuck, undrained, unverifiable, latency,
 // drop) archives the same schema-locked record the cross-week reports read.
-try { writeFileSync(`${OUT}/phase-c-summary.json`, JSON.stringify(summary, null, 2)); note('structured summary archived: phase-c-summary.json'); } catch { /* non-fatal */ }
+// The crash-before-summary drill seam (SKIP_PHASE_C_SUMMARY) deliberately
+// skips this write: the run still fails with its hard signature in the log
+// but archives NO summary, so the batch classifies it via the log-grep
+// fallback (branch 3) — the exact crash-before-summary shape it exists for.
+if (SKIP_PHASE_C_SUMMARY) {
+  note('drill: phase-c-summary.json write skipped (--skip-phase-c-summary) — crash-before-summary exercise');
+} else {
+  try { writeFileSync(`${OUT}/phase-c-summary.json`, JSON.stringify(summary, null, 2)); note('structured summary archived: phase-c-summary.json'); } catch { /* non-fatal */ }
+}
 // Structured outcome marker on stdout — the trend + escalation parsers read
 // the WORKFLOW LOG (not the uploaded summary file), so they classify a run
 // from this line; the summary file stays the artifact for the batch step.

@@ -321,6 +321,24 @@ describe('scripts/verify-live.mjs · live-voice gate [3e] (dictation + active-sc
     expect(DRIVER).toContain("summary.outcome = OUTCOME.stuck");
   });
 
+  it('Phase C — the crash-before-summary drill seam can skip the summary write so the log-grep fallback fires', () => {
+    // Branch 3 of the batch classifier (the log-grep fallback from
+    // HARD_SIGNATURES_GREP) only fires when a run fails BEFORE archiving its
+    // summary — a shape force_stuck_blob alone can never produce, because the
+    // summary is always written at the shared exit. The seam arms
+    // --skip-phase-c-summary / PHASE_C_FORCE_SKIP_SUMMARY to skip that ONE
+    // write, so the drill can prove branch 3 on a real failing run: the stuck
+    // signature stays in the log (via --force-stuck-blob) while the summary
+    // file is absent, forcing the batch down to the log grep.
+    expect(DRIVER).toContain("const SKIP_PHASE_C_SUMMARY = process.argv.includes('--skip-phase-c-summary') || process.env.PHASE_C_FORCE_SKIP_SUMMARY === '1'");
+    // The write is still exactly ONE shared-exit write — the seam only guards
+    // it, never adds a second write path.
+    expect(DRIVER.match(/\$\{OUT\}\/phase-c-summary\.json/g)).toHaveLength(1);
+    expect(DRIVER).toContain('if (SKIP_PHASE_C_SUMMARY) {');
+    expect(DRIVER).toContain('drill: phase-c-summary.json write skipped (--skip-phase-c-summary) — crash-before-summary exercise');
+    expect(DRIVER).toContain("note('structured summary archived: phase-c-summary.json')");
+  });
+
   it('Phase C — the force-stuck drill seam injects the documented signature so the red-week evidence path can be proven', () => {
     // The artifact-upload drill arms PHASE_C_FORCE_STUCK / --force-stuck-blob:
     // the captured blob is rewritten with the exact documented pre-fix stuck

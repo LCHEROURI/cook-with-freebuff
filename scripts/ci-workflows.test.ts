@@ -567,6 +567,26 @@ describe('.github/workflows/mic-regression.yml · weekly two-burst pass-rate mon
     expect(MIC_REGRESSION).toContain('--drill-streak');
     expect(MIC_REGRESSION).toContain('inputs.force_flake_streak == \'true\'');
   });
+
+  it('wires the force_crash_no_summary drill seam — run 1 fails with the stuck signature but skips its summary, so the log-grep fallback fires', () => {
+    // Branch 3 (the log-grep fallback from HARD_SIGNATURES_GREP) only fires
+    // on a run that fails BEFORE archiving its summary — force_stuck_blob
+    // alone always writes the summary at the shared exit, so that branch was
+    // only provable via the codegen contract. The seam arms run 1 ONLY with
+    // --force-stuck-blob --skip-phase-c-summary, so the batch classifies it
+    // via the log grep on a real failing run. Defaults to false so the
+    // scheduled monitor never exercises it.
+    expect(MIC_REGRESSION).toContain('force_crash_no_summary:');
+    expect(MIC_REGRESSION).toContain("default: 'false'");
+    // Armed per-run via the CLI flag, exactly like the flake seam — a
+    // step-wide env would arm EVERY run (six crash-before-summary hard
+    // failures, not one). Assert env arming is absent.
+    expect(MIC_REGRESSION).not.toContain('PHASE_C_FORCE_SKIP_SUMMARY:');
+    expect(MIC_REGRESSION).toContain('crash_flag="--force-stuck-blob --skip-phase-c-summary"');
+    expect(MIC_REGRESSION).toContain('[ "$i" -eq 1 ] && [ "${{ inputs.force_crash_no_summary }}" = "true" ]');
+    // The drill must be self-cleaning like the other drill inputs.
+    expect(MIC_REGRESSION).toContain("inputs.force_crash_no_summary == 'true'");
+  });
 });
 
 describe('.github/workflows/compare-live-weekly.yml · weekly stack-divergence compare', () => {

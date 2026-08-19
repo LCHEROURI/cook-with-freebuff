@@ -63,6 +63,15 @@ on:
         description: 'Drill: inject a synthetic flake and seed a 3-week streak so the escalation path fires — for escalation-drill runs only.'
         required: false
         default: 'false'
+      # Drill seam: fail run 1 with the stuck signature but SKIP its
+      # phase-c-summary.json write, so the batch's log-grep fallback (branch
+      # 3, derived from HARD_SIGNATURES_GREP) fires on a REAL failing run —
+      # the crash-before-summary shape that branch exists for — instead of
+      # only the codegen contract proving it. Never set on scheduled runs.
+      force_crash_no_summary:
+        description: 'Drill: fail run 1 with the stuck signature but skip its summary write, so the log-grep fallback fires — for branch-3 drills only.'
+        required: false
+        default: 'false'
 
 # Shared with the post-deploy verify:live job (ci.yml): both drive the SAME
 # owner through the same /cook active session, so a Monday run overlapping a
@@ -189,7 +198,18 @@ jobs:
             if [ "$i" -eq 1 ] && [ "${{ inputs.force_flake_streak }}" = "true" ]; then
               flake_flag="--force-flake-streak"
             fi
-            if node scripts/drive-live-voice.mjs --phase-c-only --probe-prefix mic-regression- --out "${RUNNER_TEMP}/phase-c/run-$i" $flake_flag 2>&1 | tee "$log"; then
+            # Crash-before-summary drill seam: arm run 1 ONLY with the stuck
+            # signature AND the summary-skip, so it fails with a hard
+            # signature in its log but archives NO summary — the batch then
+            # classifies it via the log-grep fallback (branch 3), the exact
+            # crash-before-summary shape. Runs 2–6 pass normally (a step-wide
+            # env would arm every run; the CLI flag is per-run like the flake
+            # seam).
+            crash_flag=""
+            if [ "$i" -eq 1 ] && [ "${{ inputs.force_crash_no_summary }}" = "true" ]; then
+              crash_flag="--force-stuck-blob --skip-phase-c-summary"
+            fi
+            if node scripts/drive-live-voice.mjs --phase-c-only --probe-prefix mic-regression- --out "${RUNNER_TEMP}/phase-c/run-$i" $flake_flag $crash_flag 2>&1 | tee "$log"; then
               passes=$((passes + 1))
             # The structured archive is the authoritative signal: a hard
             # outcome (stuck/undrained/unverifiable/latency/drop) is NEVER
@@ -322,7 +342,7 @@ jobs:
       # inputs, so a real red week or a real escalation (manual/scheduled
       # without a drill input) keeps its open issue and artifacts.
       - name: Clean up drill residue (close issues + delete artifacts)
-        if: ${{ always() && (inputs.force_stuck_blob == 'true' || inputs.force_flake_streak == 'true') && github.repository == 'LCHEROURI/cook-with-freebuff' }}
+        if: ${{ always() && (inputs.force_stuck_blob == 'true' || inputs.force_flake_streak == 'true' || inputs.force_crash_no_summary == 'true') && github.repository == 'LCHEROURI/cook-with-freebuff' }}
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
