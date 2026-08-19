@@ -43,7 +43,14 @@ describe('scripts/guard-spare-drill.mjs · the comparator + its golden', () => {
     // lines; the analyzer walks the log, extracts both, regenerates each,
     // and diffs against the golden. This is the canonical behavior the
     // comparator must produce on every run.
-    const log = readFileSync('/tmp/vlive-32229212858.log', 'utf8');
+    //
+    // Reads the committed fixture (scripts/__golden__/spare-drill-log.txt)
+    // so the test runs on CI runners without a `/tmp/vlive-*.log` present.
+    // The fixture is the stripped shape the comparator expects after its
+    // own strip step — a future CI prefix drift would surface here before
+    // it breaks a live compare.
+    const FIXTURE = 'scripts/__golden__/spare-drill-log.txt';
+    const log = readFileSync(resolve(process.cwd(), FIXTURE), 'utf8');
     expect(log).toContain('archiving and retrying once');
     expect(log).toContain('after the archive retry');
 

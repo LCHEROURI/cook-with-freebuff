@@ -1,0 +1,12 @@
+# scripts/__golden__/spare-drill-log.txt — canonical spare-path log fixture.
+#
+# This fixture is the smallest possible capture that exercises the comparator's
+# extraction step end to end. The fixture lines have already been through the
+# comparator's own strip (2 tab-fields + ISO-8601 timestamp + leading spaces),
+# so a future CI environment can replay the unit test without downloading run
+# jobs over the gh CLI — the comparator treats this stripped shape identically
+# to a freshly-downloaded GitHub Actions log. A future edit that adds new
+# required fields to the real log (e.g. a CI prefix) but forgets to teach the
+# comparator's strip would surface here before it breaks a live compare.
+- owner has 1 ACTIVE/PAUSED session(s) blocking the UI starter — archiving and retrying once: drill-li… (COLLECTING_INGREDIENTS, chicken_rice_onion_001, 8s idle)
+✗ FAIL: owner still has 1 ACTIVE/PAUSED session(s) blocking the UI starter after the archive retry: drill-li… (COLLECTING_INGREDIENTS, chicken_rice_onion_001, 8s idle)
