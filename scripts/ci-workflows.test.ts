@@ -587,6 +587,40 @@ describe('.github/workflows/mic-regression.yml · weekly two-burst pass-rate mon
     // The drill must be self-cleaning like the other drill inputs.
     expect(MIC_REGRESSION).toContain("inputs.force_crash_no_summary == 'true'");
   });
+
+  it('keeps the crash seam INERT on scheduled runs — the summary archive can never be silently disabled', () => {
+    // The weekly monitor runs on the `schedule` trigger, where NO
+    // workflow_dispatch input exists — `inputs.force_crash_no_summary` is
+    // empty there, so the archive must stay on for every run. A future edit
+    // that makes the seam reachable on schedule (a non-false default, an env
+    // arm, or the flag outside the run-1-only guard) would silently stop
+    // archiving summaries and corrupt the trend's drops column.
+    // The schedule trigger is the canonical weekly path.
+    expect(MIC_REGRESSION).toContain('schedule:');
+    expect(MIC_REGRESSION).toMatch(/cron: '0 6 \* \* 1'/);
+    // Default false: a bare dispatch (no input) never arms the seam.
+    expect(MIC_REGRESSION).toContain('force_crash_no_summary:');
+    expect(MIC_REGRESSION).toMatch(/force_crash_no_summary:[\s\S]*?default: 'false'/);
+    // NO env arming anywhere in the workflow — the driver's
+    // PHASE_C_FORCE_SKIP_SUMMARY env check must never be reachable from the
+    // workflow, on schedule or dispatch (the flake seam's env is absent for
+    // the same reason).
+    expect(MIC_REGRESSION).not.toContain('PHASE_C_FORCE_SKIP_SUMMARY');
+    // The flag can ONLY appear inside the run-1-only guard — it must never
+    // ride in the shared driver invocation line, or any run could skip its
+    // summary. Order in the workflow: guard → assignment → invocation, with
+    // the guard BEFORE the assignment (the assignment is its then-branch).
+    const guardAt = MIC_REGRESSION.indexOf('[ "$i" -eq 1 ] && [ "${{ inputs.force_crash_no_summary }}" = "true" ]');
+    const crashFlagAt = MIC_REGRESSION.indexOf('crash_flag="--force-stuck-blob --skip-phase-c-summary"');
+    const invocationAt = MIC_REGRESSION.indexOf('--phase-c-only --probe-prefix mic-regression-');
+    expect(guardAt).toBeGreaterThanOrEqual(0);
+    expect(crashFlagAt).toBeGreaterThan(guardAt);
+    expect(invocationAt).toBeGreaterThan(crashFlagAt);
+    // On a schedule run the input is empty, so the guard is false and the
+    // driver command carries only $flake_flag + $crash_flag (both empty) —
+    // every run archives its summary. Pin the empty-default semantics.
+    expect(MIC_REGRESSION).toContain('$flake_flag $crash_flag 2>&1 | tee "$log"');
+  });
 });
 
 describe('.github/workflows/compare-live-weekly.yml · weekly stack-divergence compare', () => {
