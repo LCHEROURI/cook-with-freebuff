@@ -1,0 +1,15 @@
+# scripts/__golden__/guard-spare-drill.txt — committed golden for the
+# spare-path guard lines recorded by a real guard-spare drill run.
+#
+# Shape rules (must stay consistent with the guard's fail(...) message):
+#   – "<N>" is the OWNER's blocking session count (1 in a drill)
+#   – "<ID>…" is the doc id prefix (drill-li- for drill-live-session)
+#   – "<PHASE>" is the session's currentPhase (COLLECTING_INGREDIENTS)
+#   – "<RECIPE>" is recipeId first 30 (chicken_rice_onion_001)
+#   – "<IDLE>" is the guard's measured idle age in seconds (drift-by-int)
+#
+# Any rename of the guard's fail(...) message MUST update both the source
+# and this file in lockstep — the contract test pins the rules and the
+# mutation test below proves load-bearing phrases.
+- owner has <N> ACTIVE/PAUSED session(s) blocking the UI starter — archiving and retrying once: <ID>… (<PHASE>, <RECIPE>, <IDLE>s idle)
+✗ FAIL: owner still has <N> ACTIVE/PAUSED session(s) blocking the UI starter after the archive retry: <ID>… (<PHASE>, <RECIPE>, <IDLE>s idle)
