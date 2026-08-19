@@ -67,6 +67,14 @@ describe('app/api/status/route.ts · authenticated status route', () => {
     expect(ROUTE).toContain('toFlakeStreakRecord');
   });
 
+  it('maps the optional spared-live-session reason through to the payload', () => {
+    // The recorder can persist a reason (drill / overlap spared-live-session
+    // failure); the route must pass it through sanitized so the page can label
+    // it instead of showing a bare failure.
+    expect(ROUTE).toContain('reason: typeof d.reason === \'string\' ? d.reason : null');
+    expect(ROUTE).toContain('reason: string | null');
+  });
+
   it('degrades gracefully when the record cannot be read', () => {
     expect(ROUTE).toContain('verifyLive = null');
   });
@@ -81,6 +89,16 @@ describe('app/status/page.tsx · the glance surface', () => {
     expect(PAGE).toContain("'✗ Failing'");
     expect(PAGE).toContain("'⚠ External'");
     expect(PAGE).toContain("'No run recorded yet'");
+  });
+
+  it('labels a spared-live-session failure as intentional instead of a bare failure', () => {
+    // The guard-spare drill recorded verdict failure with reason
+    // spared-live-session — the page must label it as an intentional drill /
+    // overlapping-run collision, not claim a regression.
+    expect(PAGE).toContain('isSpared = status?.verifyLive?.reason === \'spared-live-session\'');
+    expect(PAGE).toContain("'✗ Failing — spared live session (intentional)'");
+    expect(PAGE).toContain("'Spared a live session — drill/overlap, not a regression'");
+    expect(PAGE).toContain('isSpared');
   });
 
   it('shows when the last Gemini-credits outage occurred (sticky across later green runs)', () => {
@@ -178,5 +196,14 @@ describe('scripts/record-verify-status.mjs · the recorder', () => {
     // leaves it untouched so the last credits outage survives later green runs.
     expect(RECORDER).toContain("if (verdict === 'external')");
     expect(RECORDER).toContain("collection('deploy_status').doc('last_external')");
+  });
+
+  it('accepts an optional reason and persists it only when valid', () => {
+    // --reason is OPTIONAL: an empty/absent value must not persist a stale
+    // reason field, and an unknown reason must be rejected by the schema so a
+    // typo can never label a real failure as intentional.
+    expect(RECORDER).toContain("const reason = flag('--reason', process.env.VERIFY_REASON ?? '');");
+    expect(RECORDER).toContain('...(reason ? { reason } : {})');
+    expect(RECORDER).toContain("z.enum(['spared-live-session']).optional()");
   });
 });

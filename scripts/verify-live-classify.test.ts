@@ -55,6 +55,36 @@ describe('scripts/verify-live-classify.mjs · behavior', () => {
     expect(classifyVerifyVerdict({ failures: [] }).kind).toBe('pass');
   });
 
+  it('labels a lone spared-live-session failure with the intentional-fail reason', () => {
+    // The guard-spare drill (32229212858): the guard spared a genuinely live
+    // session (inside LIVE_SESSION_GRACE_MS) and THIS run failed loudly naming
+    // it. The verdict stays 'fail' (the run did fail) but the reason marks it
+    // as intentional so the /status page can label it instead of a bare
+    // failure. The survivor names + idle age in the message must not break the
+    // classification.
+    const spared = classifyVerifyVerdict({
+      failures: [
+        'owner still has 1 ACTIVE/PAUSED session(s) blocking the UI starter after the archive retry: drill-li… (COLLECTING_INGREDIENTS, chicken_rice_onion_001, 8s idle)',
+      ],
+    });
+    expect(spared.kind).toBe('fail');
+    expect(spared.reason).toBe('spared-live-session');
+  });
+
+  it('NEVER labels a spared-live-session failure as intentional when a real regression sits next to it', () => {
+    // The reason exists to label a PURE drill/collision run. If any OTHER
+    // failure is present the run is a real regression — the reason must never
+    // mask a genuine failure next to the spare.
+    const v = classifyVerifyVerdict({
+      failures: [
+        'owner still has 1 ACTIVE/PAUSED session(s) blocking the UI starter after the archive retry: drill-li… (COLLECTING_INGREDIENTS, chicken_rice_onion_001, 8s idle)',
+        'live voice driver → exit 1. Tail: boom',
+      ],
+    });
+    expect(v.kind).toBe('fail');
+    expect(v.reason).toBeUndefined();
+  });
+
   it('NEVER swallows a real regression outside the Gemini cascade', () => {
     // A serve/API/kitchen failure next to the credits root stays FAIL.
     const v = classifyVerifyVerdict({

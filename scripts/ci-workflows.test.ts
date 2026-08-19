@@ -359,6 +359,12 @@ describe('.github/workflows/ci.yml · post-deploy verify:live needs-edge', () =>
     expect(verifyBlock).toContain('--verdict "${VERIFY_LIVE_VERDICT:-${{ steps.verify.outcome }}}"');
     expect(verifyBlock).toContain('--commit "${{ github.sha }}"');
     expect(verifyBlock).toContain('--run-url "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"');
+    // The recorder also receives the optional spared-live-session reason
+    // (VERIFY_LIVE_REASON, set by verify:live via GITHUB_ENV) so a drill /
+    // overlap failure is labeled intentional on the status page, never a bare
+    // failure. Empty-default: a normal run passes an empty reason that the
+    // recorder omits from the doc.
+    expect(verifyBlock).toContain('--reason "${VERIFY_LIVE_REASON:-}"');
     // Negative: the record step must not introduce another secret wiring.
     const recordStart = verifyBlock.indexOf('name: Record verify:live result for the status page');
     const recordBlock = verifyBlock.slice(recordStart);

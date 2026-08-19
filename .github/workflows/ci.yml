@@ -436,4 +436,4 @@ jobs:
       # paths where verify:live never got far enough to write it.
       - name: Record verify:live result for the status page
         if: ${{ always() && (steps.verify.outcome == 'success' || steps.verify.outcome == 'failure') }}
-        run: node scripts/record-verify-status.mjs --verdict "${VERIFY_LIVE_VERDICT:-${{ steps.verify.outcome }}}" --commit "${{ github.sha }}" --run-url "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+        run: node scripts/record-verify-status.mjs --verdict "${VERIFY_LIVE_VERDICT:-${{ steps.verify.outcome }}}" --commit "${{ github.sha }}" --run-url "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" --reason "${VERIFY_LIVE_REASON:-}"

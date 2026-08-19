@@ -10,6 +10,7 @@ interface VerifyLive {
   commitSha: string;
   ranAt: string;
   runUrl: string;
+  reason: string | null;
 }
 
 interface FlakeStreak {
@@ -84,11 +85,14 @@ export default function StatusPage() {
     }
   };
 
+  const isSpared = status?.verifyLive?.reason === 'spared-live-session';
   const verdictClass =
     status?.verifyLive?.verdict === 'success'
       ? styles.pass
       : status?.verifyLive?.verdict === 'failure'
-        ? styles.fail
+        ? isSpared
+          ? styles.unknown
+          : styles.fail
         : status?.verifyLive?.verdict === 'external'
           ? styles.unknown
           : styles.unknown;
@@ -97,7 +101,9 @@ export default function StatusPage() {
     status?.verifyLive?.verdict === 'success'
       ? '✓ Passing'
       : status?.verifyLive?.verdict === 'failure'
-        ? '✗ Failing'
+        ? isSpared
+          ? '✗ Failing — spared live session (intentional)'
+          : '✗ Failing'
         : status?.verifyLive?.verdict === 'external'
           ? '⚠ External'
           : 'No run recorded yet';
@@ -260,7 +266,9 @@ export default function StatusPage() {
                     ? 'Verified'
                     : status.verifyLive.verdict === 'external'
                       ? 'External issue (Gemini credits)'
-                      : 'Last failed'}{' '}
+                      : isSpared
+                        ? 'Spared a live session — drill/overlap, not a regression'
+                        : 'Last failed'}{' '}
                   <a href={commitUrl(status.verifyLive.commitSha)} className={styles.link}>
                     {shortSha(status.verifyLive.commitSha)}
                   </a>

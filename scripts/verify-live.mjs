@@ -1604,6 +1604,12 @@ try {
   const recordVerdict = verdict.kind === 'pass' ? 'success' : verdict.kind === 'external' ? 'external' : 'failure';
   if (process.env.GITHUB_ENV) {
     writeFileSync(process.env.GITHUB_ENV, `VERIFY_LIVE_VERDICT=${recordVerdict}\n`, { flag: 'a' });
+    // Distinguish an INTENTIONAL spare-path failure (a drill or an
+    // overlapping-run collision — the guard spared a genuinely live session)
+    // from a real regression, so the /status page can label it.
+    if (verdict.reason) {
+      writeFileSync(process.env.GITHUB_ENV, `VERIFY_LIVE_REASON=${verdict.reason}\n`, { flag: 'a' });
+    }
   }
   await cleanup();
 }

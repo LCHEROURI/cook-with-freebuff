@@ -56,11 +56,21 @@ export const GEMINI_CASCADE_PREFIXES = [
   'vision scan →',
 ];
 
+// The guard-spare failure (a genuinely live concurrent run's session inside
+// LIVE_SESSION_GRACE_MS survived the archive retry, so THIS run failed loudly
+// instead of yanking the other run's /cook session). It is an INTENTIONAL
+// fail — a drill or an overlapping-run collision — not a regression, so the
+// /status page can label it instead of showing a bare failure. Matched as a
+// substring of the guard's `fail(...)` message, so the survivor names and idle
+// age in the message never break the classification.
+export const SPARED_LIVE_SESSION_SIGNATURE =
+  'ACTIVE/PAUSED session(s) blocking the UI starter after the archive retry';
+
 /**
  * Classify a verify:live failure set into a verdict.
  *
  * @param {{ failures: string[] }} opts — the verify:live failure messages.
- * @returns {{ kind: 'pass' | 'external' | 'fail' }}
+ * @returns {{ kind: 'pass' | 'external' | 'fail', reason?: 'spared-live-session' }}
  */
 export function classifyVerifyVerdict({ failures }) {
   if (failures.length === 0) return { kind: 'pass' };
@@ -71,5 +81,12 @@ export function classifyVerifyVerdict({ failures }) {
     GEMINI_CASCADE_PREFIXES.some((p) => m.startsWith(p)),
   );
   if (creditsRoot && allCascades) return { kind: 'external' };
+  // A spared-live-session failure is the ONLY failure in a drill/collision
+  // run (the guard fails loudly, then the run reports it). If any OTHER
+  // failure is present the run is a real regression — the reason must never
+  // mask a genuine failure next to the spare.
+  const sparedLive =
+    failures.length === 1 && failures[0].includes(SPARED_LIVE_SESSION_SIGNATURE);
+  if (sparedLive) return { kind: 'fail', reason: 'spared-live-session' };
   return { kind: 'fail' };
 }

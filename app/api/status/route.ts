@@ -27,12 +27,16 @@ export async function GET(request: Request) {
     commitSha: string;
     ranAt: string;
     runUrl: string;
+    // Optional sub-field distinguishing an INTENTIONAL spare-path failure
+    // (drill / overlapping-run collision) from a real regression.
+    reason: string | null;
   };
   const toVerifyRecord = (d: Record<string, unknown>): VerifyRecord => ({
     verdict: typeof d.verdict === 'string' ? d.verdict : '',
     commitSha: typeof d.commitSha === 'string' ? d.commitSha : '',
     ranAt: typeof d.ranAt === 'string' ? d.ranAt : '',
     runUrl: typeof d.runUrl === 'string' ? d.runUrl : '',
+    reason: typeof d.reason === 'string' ? d.reason : null,
   });
 
   type FlakeStreakRecord = {

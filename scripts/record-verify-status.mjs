@@ -7,12 +7,16 @@
 // is recorded too — a failure must be visible, not vanish). Writes the fixed
 // doc `deploy_status/verify_live`:
 //
-//   { verdict: 'success'|'failure'|'external', commitSha, ranAt, runUrl }
+//   { verdict: 'success'|'failure'|'external', commitSha, ranAt, runUrl, reason? }
 //
 // 'external' is the Gemini prepayment-credits block (verify-live-classify):
 // the deploy check passed but recipe generation and its downstream stages
 // could not run — the /status page renders it distinctly instead of as a
-// full verification.
+// full verification. 'reason' is an OPTIONAL sub-field set only on a
+// spared-live-session failure (a drill or an overlapping-run collision — the
+// guard spared a genuinely live session): the verdict stays 'failure' (the
+// run did fail) but the /status page labels it as intentional instead of
+// showing a bare failure.
 //
 // The single-slot `verify_live` doc is overwritten on every run, so a later
 // green run would erase a billing outage. When the verdict is 'external', the
@@ -55,6 +59,7 @@ const verifyLiveStatusSchema = z.object({
   runUrl: z
     .string()
     .refine((v) => v === '' || /^https?:\/\//.test(v), 'runUrl must be empty or an http(s) URL'),
+  reason: z.enum(['spared-live-session']).optional(),
 });
 
 // ── Env loading (process.env wins; .env.local fills the gaps) ───────────────
@@ -81,6 +86,7 @@ const flag = (name, fallback) => {
 const verdict = flag('--verdict', process.env.VERIFY_VERDICT ?? '');
 const commitSha = flag('--commit', process.env.VERIFY_COMMIT_SHA ?? '');
 const runUrl = flag('--run-url', process.env.VERIFY_RUN_URL ?? '');
+const reason = flag('--reason', process.env.VERIFY_REASON ?? '');
 const SA_JSON = process.env.FIREBASE_SERVICE_ACCOUNT;
 
 const ok = (m) => console.log(`  ✓ ${m}`);
@@ -112,6 +118,9 @@ const statusDoc = {
   commitSha,
   ranAt: new Date().toISOString(),
   runUrl: runUrl || '',
+  // Optional: only a spared-live-session reason is valid; an empty/absent
+  // value stays undefined so the doc never carries a stale reason.
+  ...(reason ? { reason } : {}),
 };
 const parsed = verifyLiveStatusSchema.safeParse(statusDoc);
 if (!parsed.success) {
