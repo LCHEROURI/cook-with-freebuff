@@ -10,6 +10,16 @@ on:
     branches: [main]
   # Manual re-run of the post-deploy verification without a new push.
   workflow_dispatch:
+    inputs:
+      force_verify_live_regression:
+        description: |
+          Drill seam: inject a synthetic real-verification failure AFTER
+          the pre-stage guard so the resulting run has TWO failures — a
+          spare (the guard) and a regression (this seam) — and the
+          classifier is pinned to return reason=undefined for that shape.
+          Proves sparing NEVER masks a genuine failure run next to it.
+        type: boolean
+        default: false
 
 # One run per branch at a time: a new push to the SAME branch cancels the
 # in-progress run (cancel-in-progress). This is EXPECTED behavior, not a
@@ -421,6 +431,9 @@ jobs:
           APP_OWNER_UID: ${{ secrets.APP_OWNER_UID }}
           GOOGLE_AI_API_KEY: ${{ secrets.GOOGLE_AI_API_KEY }}
           NEXT_PUBLIC_FIREBASE_APP_ID: ${{ secrets.NEXT_PUBLIC_FIREBASE_APP_ID }}
+          # Drill seam — fail('SIMULATED regression …') injected right after
+          # the guard, so a spared + this seam → 2 failures → reason=undefined.
+          FORCE_VERIFY_LIVE_REGRESSION: ${{ inputs.force_verify_live_regression == 'true' && 'true' || '' }}
 
       # Record the verify:live verdict to Firestore for the public /status
       # page. Runs ALWAYS so a red run is recorded too — a failure must stay

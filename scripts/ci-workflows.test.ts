@@ -385,6 +385,29 @@ describe('.github/workflows/ci.yml · post-deploy verify:live needs-edge', () =>
     expect(CI).not.toContain('deployment_status');
     expect(CI).not.toContain('verify-deployed.yml');
   });
+
+  it('exposes the force_verify_live_regression drill input and threads it through to the verify:live step', () => {
+    // Third drill: combine a guard spare with a synthetic real regression.
+    // The input must be a boolean, default false (so push + scheduled runs are
+    // unaffected), and the verify:live step must read inputs.force_verify_live_regression
+    // — never a literal 'true' — so the seam stays inert by default. A future
+    // edit that drops the input or hard-codes the env would silently disarm
+    // the round-trip proof.
+    const inputsBlock = CI.slice(CI.indexOf('workflow_dispatch:'));
+    const inputsEnd = inputsBlock.indexOf('\nconcurrency:');
+    const inputs = inputsBlock.slice(0, inputsEnd);
+    expect(inputs).toContain('force_verify_live_regression:');
+    expect(inputs).toMatch(/type: boolean/);
+    expect(inputs).toMatch(/default: false/);
+
+    const verifyStepStart = CI.indexOf('name: Verify deployed app end to end (verify:live)');
+    const verifyStepEnd = CI.indexOf('\n      - name:', verifyStepStart + 1);
+    const verifyStep = CI.slice(verifyStepStart, verifyStepEnd === -1 ? CI.length : verifyStepEnd);
+    expect(verifyStep).toContain('FORCE_VERIFY_LIVE_REGRESSION');
+    expect(verifyStep).toMatch(/FORCE_VERIFY_LIVE_REGRESSION:\s*\$\{\{\s*inputs\.force_verify_live_regression/);
+    // Must default to empty string so the seam stays inert on push runs.
+    expect(verifyStep).toMatch(/==\s*'true'\s*&&\s*'true'\s*\|\|\s*''/);
+  });
 });
 
 describe('.github/workflows/mic-regression.yml · weekly two-burst pass-rate monitor', () => {

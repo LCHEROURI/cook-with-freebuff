@@ -86,6 +86,23 @@ describe('scripts/verify-live-classify.mjs · behavior', () => {
     expect(v.reason).toBeUndefined();
   });
 
+  it('NEVER labels the drill-injected simulated-regression shape as intentional', () => {
+    // The third drill combines the spare path with FORCE_VERIFY_LIVE_REGRESSION,
+    // which appends a second fail('SIMULATED regression test — voice driver
+    // exercised with FORCE_VERIFY_LIVE_REGRESSION=true to prove sparing never
+    // masks a real failure'). Classifying THIS shape with a reason would
+    // silently mask a real regression that sits next to a spare. The
+    // classifier must still return `{ kind: 'fail' }` with reason undefined.
+    const v = classifyVerifyVerdict({
+      failures: [
+        'owner still has 1 ACTIVE/PAUSED session(s) blocking the UI starter after the archive retry: drill-li… (COLLECTING_INGREDIENTS, chicken_rice_onion_001, 8s idle)',
+        'SIMULATED regression test — voice driver exercised with FORCE_VERIFY_LIVE_REGRESSION=true to prove sparing never masks a real failure',
+      ],
+    });
+    expect(v.kind).toBe('fail');
+    expect(v.reason).toBeUndefined();
+  });
+
   it('NEVER swallows a real regression outside the Gemini cascade', () => {
     // A serve/API/kitchen failure next to the credits root stays FAIL.
     const v = classifyVerifyVerdict({
@@ -259,5 +276,25 @@ describe('scripts/verify-live.mjs · wiring (the gate actually uses the classifi
     expect(LIVE).toContain("const recordVerdict = verdict.kind === 'pass' ? 'success' : verdict.kind === 'external' ? 'external' : 'failure';");
     expect(LIVE).toContain('process.env.GITHUB_ENV');
     expect(LIVE).toContain('writeFileSync(process.env.GITHUB_ENV');
+  });
+
+  it('has the FORCE_VERIFY_LIVE_REGRESSION drill seam right after the guard so spare + regression is exercisable end to end', () => {
+    // The third drill injects a simulated real failure AFTER the pre-stage
+    // guard, so the classifier receives failures.length === 2 (a spare +
+    // the SIMULATED regression fail). A future edit that lets the guard fail
+    // silently or moves the seam somewhere that wouldn't combine with the
+    // spare would break the round-trip proof.
+    const seamIdx = LIVE.indexOf('FORCE_VERIFY_LIVE_REGRESSION');
+    expect(seamIdx).toBeGreaterThan(-1);
+    // Must read the env var, branch on === 'true', and call fail() — same shape
+    // as the other guards in this file.
+    expect(LIVE).toContain("if (process.env.FORCE_VERIFY_LIVE_REGRESSION === 'true')");
+    expect(LIVE).toContain("fail('SIMULATED regression test — voice driver exercised with FORCE_VERIFY_LIVE_REGRESSION=true to prove sparing never masks a real failure')");
+    // Position: must sit AFTER the guard's `fail(\`owner still has`, so a
+    // spared live session can pair with the simulated regression. (The guard
+    // block at the archive-retry path is the only producer of a spare failure.)
+    const spareFailIdx = LIVE.indexOf('owner still has ');
+    expect(spareFailIdx).toBeGreaterThan(-1);
+    expect(seamIdx).toBeGreaterThan(spareFailIdx);
   });
 });

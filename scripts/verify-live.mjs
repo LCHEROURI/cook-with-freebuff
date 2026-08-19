@@ -1238,6 +1238,14 @@ try {
   } catch (e) {
     fail(`could not verify a clean owner before the UI starter: ${e.message}`);
   }
+  // Drill seam: FORCE_VERIFY_LIVE_REGRESSION injects a synthetic real
+  // regression so the classifier is exercised on the
+  // spare-+-regression shape. Combined with a guard spare, this yields
+  // failures.length === 2; the classifier MUST return reason=undefined
+  // in that shape — sparing NEVER masks a genuine failure next to it.
+  if (process.env.FORCE_VERIFY_LIVE_REGRESSION === 'true') {
+    fail('SIMULATED regression test — voice driver exercised with FORCE_VERIFY_LIVE_REGRESSION=true to prove sparing never masks a real failure');
+  }
   let driver = runDriver(1);
   let driverLog = `${driver.stdout ?? ''}\n${driver.stderr ?? ''}`;
   if (!(driver.status === 0 && /RESULT: PASS/.test(driverLog))) {
