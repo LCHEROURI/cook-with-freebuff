@@ -304,8 +304,17 @@ async function sweepStaleProbes() {
     // model-slug recipe the prefix check alone cannot see). Namespace-scoped:
     // a `mic-regression-` stamp never matches this script's `verify-live-`
     // prefix, so a concurrent monitor run's in-flight session is untouched.
+    //
+    // start_cooking_session fallback shape: a turn arriving without a
+    // recipeId makes the orchestrator start a BARE session (recipeId null),
+    // which carries no prefix and no stamp — the stuck COLLECTING_INGREDIENTS
+    // hijacker. Every other creation path attaches a recipeId, so on the
+    // shared owner a bare session is unambiguously a fallback-created probe:
+    // archive it HERE in the pre-run sweep instead of waiting for the 10-min
+    // idle settle.
     const isProbe = (typeof s.recipeId === 'string' && s.recipeId.startsWith(PROBE_PREFIX)) ||
-      (typeof s.probePrefix === 'string' && s.probePrefix.startsWith(PROBE_PREFIX));
+      (typeof s.probePrefix === 'string' && s.probePrefix.startsWith(PROBE_PREFIX)) ||
+      (typeof s.recipeId !== 'string' || s.recipeId.length === 0);
     return isProbe && (s.status === 'ACTIVE' || s.status === 'PAUSED');
   });
 

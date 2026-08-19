@@ -275,7 +275,16 @@ async function sweepStaleProbes() {
     // replacement (the collect-ingredients flow attaches a model-slug recipe
     // the prefix check alone cannot see). Exact-match keeps a sibling
     // namespace's stamp (same owner) from matching this run's prefix.
-    const isProbe = (typeof s.recipeId === 'string' && s.recipeId.startsWith(PROBE_PREFIX)) || s.probePrefix === PROBE_PREFIX;
+    //
+    // start_cooking_session fallback shape: a turn arriving without a
+    // recipeId makes the orchestrator start a BARE session (recipeId null),
+    // which carries no prefix and no stamp — the stuck COLLECTING_INGREDIENTS
+    // hijacker. Every other creation path attaches a recipeId, so on the
+    // shared owner a bare session is unambiguously a fallback-created probe.
+    // (Still gated by STALE_SESSION_MS below, matching the settle's idle rule
+    // for these — a fresh bare session may be a concurrent run's live turn.)
+    const isProbe = (typeof s.recipeId === 'string' && s.recipeId.startsWith(PROBE_PREFIX)) || s.probePrefix === PROBE_PREFIX ||
+      (typeof s.recipeId !== 'string' || s.recipeId.length === 0);
     return isProbe && (s.status === 'ACTIVE' || s.status === 'PAUSED');
   });
   // Archive ONLY stale sessions (idle past the cutoff) — never a fresh one

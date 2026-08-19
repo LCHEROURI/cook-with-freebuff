@@ -152,16 +152,21 @@ describe('scripts/verify-live.mjs · guaranteed cleanup', () => {
     expect(SRC).toContain("db.collection('recipes').doc(seededRecipeId).update({ orphanedAt: Date.now() })");
   });
 
-  it('sweeps ONLY probe-tagged sessions (recipeId prefix OR driver stamp) — a real session can never be archived', () => {
+  it('sweeps ONLY probe-tagged sessions (recipeId prefix OR driver stamp OR bare fallback) — a real session can never be archived', () => {
     const fnStart = SRC.indexOf('async function sweepStaleProbes');
     const fn = SRC.slice(fnStart, SRC.indexOf('\n}\n', fnStart));
-    // The ACTIVE/PAUSED filter must be AND-ed with a namespace-scoped probe
-    // tag — never a blanket status OR — so an untagged owner session is NOT a
-    // sweep target. The tag is (prefixed recipeId) OR (driver-stamped
-    // probePrefix in this namespace); a mic-regression- stamp must not match.
+    // The ACTIVE/PAUSED filter must be AND-ed with a probe tag — never a
+    // blanket status OR — so an untagged owner session is NOT a sweep target.
+    // The tag is (prefixed recipeId) OR (driver-stamped probePrefix in this
+    // namespace) OR (bare: no recipeId at all). A mic-regression- stamp must
+    // not match, and a non-prefixed recipeId session (a real launched
+    // session, or a concurrent run's) must NOT be swept — only the
+    // start_cooking_session fallback shape (recipeId null/empty) is
+    // unambiguous on the shared owner.
     expect(fn).toMatch(/isProbe\s*&&\s*\(s\.status === 'ACTIVE' \|\| s\.status === 'PAUSED'\)/);
     expect(fn).toContain("s.recipeId.startsWith(PROBE_PREFIX)");
     expect(fn).toContain("typeof s.probePrefix === 'string' && s.probePrefix.startsWith(PROBE_PREFIX)");
+    expect(fn).toContain("typeof s.recipeId !== 'string' || s.recipeId.length === 0");
     // And no blanket "archive all ACTIVE sessions" escape hatch anywhere.
     expect(fn).not.toContain('status: \'ACTIVE\'');
   });

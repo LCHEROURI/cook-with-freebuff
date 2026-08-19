@@ -135,6 +135,11 @@ describe('scripts/verify-live.mjs · live-voice gate [3e] (dictation + active-sc
     expect(DRIVER).toContain('async function sweepStaleProbes()');
     expect(DRIVER).toContain("s.recipeId.startsWith(PROBE_PREFIX)");
     expect(DRIVER).toContain("(s.status === 'ACTIVE' || s.status === 'PAUSED')");
+    // The start_cooking_session fallback shape — a BARE session (no
+    // recipeId), the stuck COLLECTING_INGREDIENTS hijacker — is also
+    // recognized as a probe (still gated by the stale-idle rule below, so a
+    // fresh bare session from a concurrent run's live turn is never yanked).
+    expect(DRIVER).toContain("typeof s.recipeId !== 'string' || s.recipeId.length === 0");
     expect(DRIVER).toContain("d.ref.update({ status: 'ABANDONED', lastActivityAt: Date.now() })");
   });
 
