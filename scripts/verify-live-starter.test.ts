@@ -303,6 +303,20 @@ describe('scripts/verify-live.mjs · starter-flow gate (create → validate → 
     expect(SRC).toContain('fail(`owner still has ${remaining.length} ACTIVE/PAUSED session(s) blocking the UI starter after the archive retry: ${survivors}`)');
   });
 
+  it('renders the spare-path failure with the loud ✗ FAIL prefix the drills record', () => {
+    // The guard-spare drill's red log reads "✗ FAIL: owner still has 1
+    // ACTIVE/PAUSED session(s) blocking the UI starter after the archive
+    // retry: drill-li… (…, 8s idle)" — the prefix comes from the shared
+    // `fail` renderer, not the guard's message. Pinning it keeps the
+    // drill-recorded shape: a future edit that drops or renames the prefix
+    // silently changes what the run history shows for a spared session.
+    expect(SRC).toContain('const fail = (m) => { failures.push(m); console.log(`  ✗ FAIL: ${m}`); };');
+    // The guard's own message (passed to fail) is the full loud-fail text
+    // with the count, the "after the archive retry" phrasing, and the
+    // named survivors.
+    expect(SRC).toContain('fail(`owner still has ${remaining.length} ACTIVE/PAUSED session(s) blocking the UI starter after the archive retry: ${survivors}`)');
+  });
+
   it('keeps the clean-owner ok line for the unblocked path', () => {
     expect(SRC).toContain('no ACTIVE/PAUSED session before the UI starter (clean owner)');
   });
