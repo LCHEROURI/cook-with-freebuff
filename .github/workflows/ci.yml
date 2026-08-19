@@ -11,6 +11,15 @@ on:
   # Manual re-run of the post-deploy verification without a new push.
   workflow_dispatch:
 
+# One run per branch at a time: a new push to the SAME branch cancels the
+# in-progress run (cancel-in-progress). This is EXPECTED behavior, not a
+# failure — e.g. pushing two commits back-to-back cancels the first commit's
+# run mid-deploy, so its CI shows `cancelled` and its deploy never finishes
+# (seen with the c2e3b2b push, superseded by fd7b379 before verify:live).
+# The run to check is therefore ALWAYS the LATEST completed run on the
+# branch (newest createdAt for that headSha / the final green run), never a
+# cancelled one — the cancelled run's gates (emulator-compare, typecheck,
+# deploy, verify:live) are re-run in full by the newer push's run.
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
