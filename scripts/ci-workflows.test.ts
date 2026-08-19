@@ -487,9 +487,13 @@ describe('.github/workflows/mic-regression.yml · weekly two-burst pass-rate mon
     expect(MIC_REGRESSION).toContain("default: '1'");
     expect(MIC_REGRESSION).toContain("flake_budget=\"${MIC_REGRESSION_FLAKE_BUDGET:-1}\"");
     expect(MIC_REGRESSION).toContain("MIC_REGRESSION_FLAKE_BUDGET: ${{ inputs.flake_budget || '1' }}");
-    // The hard-signature classifier — a failed run matching ANY of these is
-    // never a flake (the driver's own fail strings, verbatim substrings).
-    expect(MIC_REGRESSION).toContain("reports a stuck queue|transcription\\(s\\) after 90s|latency bounds exceeded|latency cannot be bounded|second reply never drained|diagnostics blob was not capturable");
+    // The hard-signature classifier — a failed run matching ANY of the
+    // driver's hard-failure strings is never a flake. The log-grep alternation
+    // is DERIVED from HARD_SIGNATURES_GREP (single source of truth), so no
+    // hardcoded list survives here either.
+    expect(MIC_REGRESSION).toContain('HARD_SIGNATURES_GREP');
+    expect(MIC_REGRESSION).toContain('${hard_signatures}');
+    expect(MIC_REGRESSION).not.toContain('reports a stuck queue|transcription');
     // The structured archive is the authoritative signal — a hard
     // phase-c-summary.json outcome is never budgeted, with the log grep kept
     // as a fallback for a crash that predates the summary write. The outcome

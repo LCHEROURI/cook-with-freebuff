@@ -90,6 +90,14 @@ export const HARD_SIGNATURES = [
   'diagnostics blob was not capturable',
 ];
 
+// ERE-escaped alternation of HARD_SIGNATURES for the batch step's log-grep
+// fallback in mic-regression.yml. Escaping every metacharacter makes grep -E
+// match each signature as a LITERAL substring — exactly what
+// `HARD_SIGNATURES.some((s) => log.includes(s))` does in JS — so the shell
+// classifier and the JS classifiers can never diverge when a signature
+// contains a regex metacharacter (e.g. the parens in `transcription(s)`).
+export const HARD_SIGNATURES_GREP = HARD_SIGNATURES.map((s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|');
+
 // A force_stuck_blob drill run INJECTS the stuck signature on purpose to
 // rehearse the red-week evidence chain — its synthetic drops must never
 // count as a real regression in the trend (or a drill would corrupt the

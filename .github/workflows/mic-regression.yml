@@ -154,6 +154,16 @@ jobs:
             echo "::error::could not derive hard outcomes from scripts/phase-c-summary.mjs — refusing to classify"
             exit 1
           fi
+          # Single source of truth for the hard signatures too: the log-grep
+          # fallback derives its ERE alternation from HARD_SIGNATURES_GREP
+          # (refresh-mic-trend.mjs, already ERE-escaped) so a signature
+          # add/rename touches only that file — and grep matches each
+          # signature literally, exactly like HARD_SIGNATURES.some(includes).
+          hard_signatures="$(node --input-type=module -e 'const { HARD_SIGNATURES_GREP } = await import("./scripts/refresh-mic-trend.mjs"); process.stdout.write(HARD_SIGNATURES_GREP);')"
+          if [ -z "$hard_signatures" ]; then
+            echo "::error::could not derive hard signatures from scripts/refresh-mic-trend.mjs — refusing to classify"
+            exit 1
+          fi
           passes=0
           hard_failed=""
           flake_failed=""
@@ -187,8 +197,9 @@ jobs:
             elif [ -f "$summary" ] && grep -qE "\"outcome\": \"(${hard_outcomes})\"" "$summary"; then
               hard_failed="$hard_failed $i"
             # Log-grep fallback: a crash before the summary write still
-            # prints its monitored-contract failure line.
-            elif grep -qE 'reports a stuck queue|transcription\(s\) after 90s|latency bounds exceeded|latency cannot be bounded|second reply never drained|diagnostics blob was not capturable' "$log"; then
+            # prints its monitored-contract failure line. The alternation is
+            # derived from HARD_SIGNATURES_GREP (single source of truth).
+            elif grep -qE "${hard_signatures}" "$log"; then
               hard_failed="$hard_failed $i"
             else
               flake_failed="$flake_failed $i"

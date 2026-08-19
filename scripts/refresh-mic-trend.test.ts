@@ -1,9 +1,10 @@
+import { execFileSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { ciWindowCoverage, classifyArtifactBatch, classifyRunVerdict, extractRootFailure, HARD_SIGNATURES } from './refresh-mic-trend.mjs';
-import { OUTCOME } from './phase-c-summary.mjs';
+import { ciWindowCoverage, classifyArtifactBatch, classifyRunVerdict, extractRootFailure, HARD_SIGNATURES, HARD_SIGNATURES_GREP } from './refresh-mic-trend.mjs';
+import { HARD_PHASE_C_OUTCOMES, OUTCOME } from './phase-c-summary.mjs';
 
 /** Build a downloaded phase-c-runs artifact dir fixture: run-N/driver.log +
  * (optional) run-N/phase-c-summary.json. Returns the base dir (caller cleans). */
@@ -16,6 +17,27 @@ function makeBatch(runs: Record<string, { log?: string; summary?: string }>) {
     if (files.summary !== undefined) writeFileSync(join(dir, 'phase-c-summary.json'), files.summary);
   }
   return base;
+}
+
+/**
+ * The driver's outcome coverage over a source string: which OUTCOME.* keys it
+ * assigns via `summary.outcome = OUTCOME.<key>`, whether any bare-string
+ * assignment survives, and how many times it writes 'pass'. Pure over the
+ * source so the mutation drill can feed a mutated copy and prove the coverage
+ * check is not vacuous (each of the five hard outcomes is genuinely covered).
+ */
+function driverOutcomeCoverage(driverSource: string) {
+  // Capture the FULL assigned identifier (letters, digits, underscore) — the
+  // old [a-zA-Z]+ truncates at `_`/digits, so a rename like `OUTCOME.stuck` →
+  // `OUTCOME.stuck_renamed` would still read back as `stuck` and slip past the
+  // coverage check (caught by the mutation drill below).
+  const keys = [...driverSource.matchAll(/summary\.outcome = OUTCOME\.([A-Za-z0-9_]+)/g)].map((a) => a[1]);
+  return {
+    bareString: /summary\.outcome = '[a-z]+'/.test(driverSource),
+    keys,
+    uniqueKeys: [...new Set(keys)].sort(),
+    passAssignments: keys.filter((k) => k === 'pass').length,
+  };
 }
 
 // ============================================================================
@@ -181,23 +203,31 @@ describe('the batch-run gather reads the structured artifact, not the workflow l
 });
 
 describe('the CLI hard signatures stay in sync with the batch step\'s grep regex', () => {
-  it('HARD_SIGNATURES equals the batch grep alternation, so the drops column cannot diverge from the batch verdict', () => {
-    // The batch step classifies a run hard/flake by grepping driver.log for
-    // this ERE alternation; the trend CLI classifies the SAME runs from the
-    // same log via HARD_SIGNATURES. A future edit that adds/removes/renames a
-    // signature in one place but not the other would make the trend's drops
-    // column disagree with the weekly batch verdict — this pins the two as one
-    // set. (The summary-outcome grep ends in "$summary", so only the
-    // "$log"-suffixed alternation matches.)
+  it('the batch signature grep derives from HARD_SIGNATURES_GREP, so the drops column cannot diverge from the batch verdict', () => {
+    // The batch step classifies a run hard/flake by grepping driver.log with
+    // an alternation DERIVED from HARD_SIGNATURES_GREP (the ERE-escaped
+    // HARD_SIGNATURES); the trend CLI + escalation classify the SAME logs via
+    // HARD_SIGNATURES.some(includes). They agree only when the export is the
+    // escaped signature set AND each signature is matched literally — pin the
+    // wiring, the literal-match round-trip, and the absence of any
+    // hand-written alternation.
     const workflow = readFileSync('.github/workflows/mic-regression.yml', 'utf8');
-    const m = workflow.match(/grep -qE '([^']+)' "\$log"/);
-    expect(m, 'batch log-grep regex not found').not.toBeNull();
-    // The grep is an ERE alternation: split on | and undo the \( \) escaping
-    // so the literals line up with the raw HARD_SIGNATURES strings.
-    const grepSignatures = m![1]
-      .split('|')
-      .map((s) => s.replace(/\\([()])/g, '$1'));
-    expect(grepSignatures.sort()).toEqual([...HARD_SIGNATURES].sort());
+    expect(workflow).toContain('HARD_SIGNATURES_GREP');
+    expect(workflow).toContain('${hard_signatures}');
+    expect(workflow).toContain('grep -qE "${hard_signatures}" "$log"');
+    // The hand-written alternation is gone — the grep reads the export, not a
+    // second list of literals.
+    expect(workflow).not.toContain('reports a stuck queue|transcription');
+
+    // Round-trip: the exported alternation un-escapes to the raw signature set.
+    const unescaped = HARD_SIGNATURES_GREP.split('|').map((s) => s.replace(/\\([.*+?^${}()|[\]\\])/g, '$1'));
+    expect(unescaped.sort()).toEqual([...HARD_SIGNATURES].sort());
+    // Each raw signature matches its own ERE literally — a metacharacter (the
+    // parens in `transcription(s)`) can never change what the grep matches.
+    const re = new RegExp(HARD_SIGNATURES_GREP);
+    for (const sig of HARD_SIGNATURES) {
+      expect(re.test(sig), `HARD_SIGNATURES_GREP must match '${sig}' literally`).toBe(true);
+    }
   });
 
   it('every HARD_SIGNATURES entry is still produced by the driver, so a renamed fail line cannot silently drift', () => {
@@ -241,11 +271,113 @@ describe('the CLI hard signatures stay in sync with the batch step\'s grep regex
     // there is no second list of literals to rename. Assert every assignment
     // references OUTCOME.* (no bare string) and the assigned keys equal the
     // OUTCOME keys exactly, with 'pass' written once at the shared exit.
+    const coverage = driverOutcomeCoverage(readFileSync('scripts/drive-live-voice.mjs', 'utf8'));
+    expect(coverage.bareString).toBe(false);
+    expect(coverage.keys.length, 'no summary.outcome = OUTCOME.* assignments found').toBeGreaterThan(0);
+    expect(coverage.uniqueKeys).toEqual(Object.keys(OUTCOME).sort());
+    expect(coverage.passAssignments).toBe(1);
+  });
+
+  it('the three coverage guards each fire on a mutation of every hard outcome (scripted drill)', () => {
+    // Previously a one-off manual drill; now scripted so CI keeps the proof.
+    // Three guards protect the OUTCOME single source: no bare-string
+    // assignment, the assigned keys equal the OUTCOME keys, and 'pass' written
+    // exactly once. Each kind below targets ONE guard and is applied to every
+    // hard outcome, so a weakened/removed guard can never slip through.
     const driver = readFileSync('scripts/drive-live-voice.mjs', 'utf8');
-    expect(driver).not.toMatch(/summary\.outcome = '[a-z]+'/);
-    const keys = [...driver.matchAll(/summary\.outcome = OUTCOME\.([a-zA-Z]+)/g)].map((a) => a[1]);
-    expect(keys.length, 'no summary.outcome = OUTCOME.* assignments found').toBeGreaterThan(0);
-    expect([...new Set(keys)].sort()).toEqual(Object.keys(OUTCOME).sort());
-    expect(keys.filter((k) => k === 'pass').length).toBe(1);
+    // The drill is non-vacuous only if it actually iterates the full hard set.
+    expect(HARD_PHASE_C_OUTCOMES.length).toBe(5);
+    const EXPECTED_KEYS = Object.keys(OUTCOME).sort();
+    type Coverage = ReturnType<typeof driverOutcomeCoverage>;
+    const kinds: Array<{
+      name: string;
+      fires: (c: Coverage) => boolean;
+      mutate: (src: string, outcome: string) => string;
+    }> = [
+      {
+        name: 'rename',
+        fires: (c) => c.uniqueKeys.join('|') !== EXPECTED_KEYS.join('|'),
+        mutate: (src, outcome) =>
+          src.split(`summary.outcome = OUTCOME.${outcome}`).join(`summary.outcome = OUTCOME.${outcome}_renamed`),
+      },
+      {
+        name: 'bare-string literal',
+        fires: (c) => c.bareString,
+        mutate: (src, outcome) =>
+          src.split(`summary.outcome = OUTCOME.${outcome}`).join(`summary.outcome = '${outcome}'`),
+      },
+      {
+        name: 'pass sentinel',
+        fires: (c) => c.passAssignments !== 1,
+        mutate: (src, outcome) =>
+          src.split(`summary.outcome = OUTCOME.${outcome}`).join(`summary.outcome = OUTCOME.pass`),
+      },
+    ];
+
+    for (const kind of kinds) {
+      for (const outcome of HARD_PHASE_C_OUTCOMES) {
+        const mutated = kind.mutate(driver, outcome);
+        expect(mutated, `no assignment to mutate for ${kind.name} of OUTCOME.${outcome}`).not.toBe(driver);
+        expect(
+          kind.fires(driverOutcomeCoverage(mutated)),
+          `${kind.name} of OUTCOME.${outcome} must fire its guard, but it did not`,
+        ).toBe(true);
+      }
+    }
+  });
+});
+
+/** Generate the batch classifier's contract from the exports — the exact
+ * shell lines the workflow must embed, plus the derivation programs that
+ * produce the exported values at runtime. Any classifier edit (rename,
+ * reorder, pattern change) breaks the verbatim embed below. */
+function batchClassifierContract() {
+  const outcomesProgram =
+    'const { HARD_PHASE_C_OUTCOMES } = await import("./scripts/phase-c-summary.mjs"); process.stdout.write(HARD_PHASE_C_OUTCOMES.join("|"));';
+  const signaturesProgram =
+    'const { HARD_SIGNATURES_GREP } = await import("./scripts/refresh-mic-trend.mjs"); process.stdout.write(HARD_SIGNATURES_GREP);';
+  return {
+    outcomesProgram,
+    signaturesProgram,
+    outcomesDerivation: `hard_outcomes="$(node --input-type=module -e '${outcomesProgram}')"`,
+    signaturesDerivation: `hard_signatures="$(node --input-type=module -e '${signaturesProgram}')"`,
+    summaryBranch: 'elif [ -f "$summary" ] && grep -qE "\\"outcome\\": \\"(${hard_outcomes})\\"" "$summary"; then',
+    signatureBranch: 'elif grep -qE "${hard_signatures}" "$log"; then',
+    flakeBranch: 'flake_failed="$flake_failed $i"',
+  };
+}
+
+describe('the batch classifier is generated from the exports (codegen contract)', () => {
+  const c = batchClassifierContract();
+  const workflow = readFileSync('.github/workflows/mic-regression.yml', 'utf8');
+
+  it('embeds the generated derivation commands verbatim', () => {
+    expect(workflow).toContain(c.outcomesDerivation);
+    expect(workflow).toContain(c.signaturesDerivation);
+  });
+
+  it('embeds the generated classification branches verbatim, in pass → outcome → signature → flake order', () => {
+    expect(workflow).toContain(c.summaryBranch);
+    expect(workflow).toContain(c.signatureBranch);
+    expect(workflow).toContain(c.flakeBranch);
+    const passAt = workflow.indexOf('passes=$((passes + 1))');
+    const summaryAt = workflow.indexOf(c.summaryBranch);
+    const signatureAt = workflow.indexOf(c.signatureBranch);
+    const flakeAt = workflow.indexOf(c.flakeBranch);
+    expect(passAt).toBeGreaterThanOrEqual(0);
+    expect(passAt).toBeLessThan(summaryAt);
+    expect(summaryAt).toBeLessThan(signatureAt);
+    expect(signatureAt).toBeLessThan(flakeAt);
+  });
+
+  it('the embedded derivation programs execute to the exported values (single source of truth)', () => {
+    // Set GITHUB_REPOSITORY so importing refresh-mic-trend.mjs skips its
+    // guarded `gh repo view` side effect — the derivation must be
+    // side-effect free in CI, exactly as it is in Actions.
+    const env = { ...process.env, GITHUB_REPOSITORY: 'LCHEROURI/cook-with-freebuff' };
+    const run = (program: string) =>
+      execFileSync('node', ['--input-type=module', '-e', program], { encoding: 'utf8', env });
+    expect(run(c.outcomesProgram)).toBe(HARD_PHASE_C_OUTCOMES.join('|'));
+    expect(run(c.signaturesProgram)).toBe(HARD_SIGNATURES_GREP);
   });
 });

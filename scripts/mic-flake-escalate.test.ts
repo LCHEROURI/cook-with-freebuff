@@ -144,7 +144,7 @@ describe('classifyRunFlake order · contract with the batch step shell block', (
     const loop = workflow.slice(workflow.indexOf('for i in 1 2 3 4 5 6'), workflow.indexOf('flake_budget='));
     const passAt = loop.indexOf('if node scripts/drive-live-voice.mjs');
     const summaryAt = loop.indexOf('elif [ -f "$summary" ]');
-    const logGrepAt = loop.indexOf("elif grep -qE 'reports a stuck queue");
+    const logGrepAt = loop.indexOf('elif grep -qE "${hard_signatures}"');
     const flakeAt = loop.indexOf('flake_failed="$flake_failed $i"');
     expect(passAt, 'pass branch missing').toBeGreaterThanOrEqual(0);
     expect(summaryAt, 'summary elif missing').toBeGreaterThanOrEqual(0);
