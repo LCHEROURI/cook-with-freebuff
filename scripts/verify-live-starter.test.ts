@@ -285,6 +285,24 @@ describe('scripts/verify-live.mjs · starter-flow gate (create → validate → 
     expect(SRC.slice(guardStart, driverSpawn)).not.toMatch(/console\.log\(`\n\[/);
   });
 
+  it('names the spared blocker with its idle age in the loud-fail line', () => {
+    // The spare path (a genuinely live session inside LIVE_SESSION_GRACE_MS)
+    // must fail LOUDLY naming the blocker with its idle age — the exact shape
+    // proven live by the guard-spare drill: "✗ FAIL: owner still has 1
+    // ACTIVE/PAUSED session(s) blocking the UI starter after the archive
+    // retry: drill-li… (COLLECTING_INGREDIENTS, chicken_rice_onion_001, 8s
+    // idle)". The describeBlocking output carries id + phase + recipe + idle
+    // age, and the fail line must embed those survivors — never a bare count.
+    expect(SRC).toContain('const describeBlocking = (d) => {');
+    expect(SRC).toContain("const idle = typeof s.lastActivityAt === 'number' ? `${Math.round((Date.now() - s.lastActivityAt) / 1000)}s idle` : 'idle unknown';");
+    expect(SRC).toContain("const recipe = typeof s.recipeId === 'string' && s.recipeId ? s.recipeId.slice(0, 30) : 'no recipe';");
+    expect(SRC).toContain('return `${d.id.slice(0, 8)}… (${phase}, ${recipe}, ${idle})`;');
+    // The survivors embedded in the fail line are describeBlocking output, so
+    // the spare line always names the session with its idle age.
+    expect(SRC).toContain("const survivors = remaining.map(describeBlocking).join('; ');");
+    expect(SRC).toContain('fail(`owner still has ${remaining.length} ACTIVE/PAUSED session(s) blocking the UI starter after the archive retry: ${survivors}`)');
+  });
+
   it('keeps the clean-owner ok line for the unblocked path', () => {
     expect(SRC).toContain('no ACTIVE/PAUSED session before the UI starter (clean owner)');
   });
