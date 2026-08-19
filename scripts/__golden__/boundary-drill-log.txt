@@ -1,0 +1,13 @@
+# scripts/__golden__/boundary-drill-log.txt — canonical boundary-path log
+# fixture (mirror of spare-drill-log.txt for the spare comparator).
+#
+# Same discipline as the spare fixture: the smallest possible capture
+# that exercises the boundary comparator's extraction step end to end.
+# The fixture lines have already been through the comparator's own
+# strip (2 tab-fields + ISO-8601 timestamp + leading spaces), so a
+# future CI environment can replay the unit test without downloading
+# run jobs. The boundary drill shape (idle just past the 60s grace →
+# archive path → owner clean) produces a NOTE line and an ARCHIVED-OK
+# line, NOT a FAIL line — the structural mirror of the spare drill.
+- owner has 1 ACTIVE/PAUSED session(s) blocking the UI starter — archiving and retrying once: drill-li… (COLLECTING_INGREDIENTS, chicken_rice_onion_001, 68s idle)
+✓ archived 1 blocking session(s) — retried, owner is clean before the UI starter

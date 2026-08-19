@@ -1,0 +1,24 @@
+# scripts/__golden__/guard-boundary-drill.txt — canonical boundary-path
+# drill comparator golden.
+#
+# Mirror of scripts/__golden__/guard-spare-drill.txt with the second
+# expected line swapping the spare-path FAIL (`✗ FAIL: owner still has`)
+# for the archive-path OK (`✓ archived N blocking session(s) —`). A
+# boundary drill seeds drill-live-session at idle > 60s so the guard
+# archives it on the retry path. The captured log always carries:
+#
+#   - the same NOTE line the guard prints unconditionally on a blocker
+#     (idle shown in <IDLE>s — past the LIVE_SESSION_GRACE_MS for the
+#     archive path)
+#   - an ARCHIVED-OK line confirming the retry ran clean (no FAIL line;
+#     the boundary drill verifies the corrective path, not the loud
+#     fail)
+#
+# The placeholders (<N>, <ID>, <PHASE>, <RECIPE>, <IDLE>) follow the
+# same convention as the spare golden: the comparator's buildExpected
+# substitutes captured groups to reproduce the exact source log line,
+# so a future surface drift (extra word, missing word, reorder) fails
+# the diff, and a renamed guard phrasing fails the regex extraction
+# step. Either way, the next morning's nightly catches it.
+- owner has <N> ACTIVE/PAUSED session(s) blocking the UI starter — archiving and retrying once: <ID>… (<PHASE>, <RECIPE>, <IDLE>s idle)
+✓ archived <N> blocking session(s) — retried, owner is clean before the UI starter
