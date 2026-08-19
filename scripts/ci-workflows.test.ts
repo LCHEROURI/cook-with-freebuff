@@ -417,6 +417,20 @@ describe('.github/workflows/mic-regression.yml · weekly two-burst pass-rate mon
     expect(CI).toContain('group: live-voice-probe');
   });
 
+  it('keeps the concurrency-cancel guidance so the latest-green run is the one to check', () => {
+    // A superseded push cancels the in-progress ci.yml run (cancel-in-progress:
+    // true) — the c2e3b2b run showed `cancelled` mid-deploy when fd7b379
+    // landed. The docs must keep telling readers to check the LATEST completed
+    // run, never a cancelled one; deleting this guidance silently turns a
+    // cancelled CI run into a confusing dead end. The note is a wrapped YAML
+    // comment, so each pin matches within a single line of it.
+    expect(CI).toContain('cancel-in-progress: true');
+    expect(CI).toContain('This is EXPECTED behavior, not a');
+    expect(CI).toContain('the LATEST completed run on the');
+    expect(CI).toContain('cancelled one — the cancelled run');
+    expect(CI).toContain('re-run in full by the newer push');
+  });
+
   it('installs Chrome and threads CHROME_PATH into the batch step (CDP driver)', () => {
     expect(MIC_REGRESSION).toContain('browser-actions/setup-chrome@v2');
     expect(MIC_REGRESSION).toContain('id: chrome');
