@@ -1196,9 +1196,17 @@ if (got2) {
 // fallback (branch 3) — the exact crash-before-summary shape it exists for.
 if (SKIP_PHASE_C_SUMMARY) {
   note('drill: phase-c-summary.json write skipped (--skip-phase-c-summary) — crash-before-summary exercise');
-} else {
-  try { writeFileSync(`${OUT}/phase-c-summary.json`, JSON.stringify(summary, null, 2)); note('structured summary archived: phase-c-summary.json'); } catch { /* non-fatal */ }
+  // LITERAL crash-before-summary: stop HERE — the hard-signature fail line
+  // above is the last trace, with NO `phase-c-outcome:` marker and NO
+  // `RESULT:` line, exactly like a real crash before the archive write.
+  // Cleanup still runs (idempotent) so the drill leaves no probe residue on
+  // the shared owner, unlike a true crash — the log shape is what the drill
+  // rehearses, not the leak.
+  c.kill(); c.dropProfile(); try { cdpC.ws.close(); } catch { /* socket already gone */ }
+  await cleanup();
+  process.exit(1);
 }
+try { writeFileSync(`${OUT}/phase-c-summary.json`, JSON.stringify(summary, null, 2)); note('structured summary archived: phase-c-summary.json'); } catch { /* non-fatal */ }
 // Structured outcome marker on stdout — the trend + escalation parsers read
 // the WORKFLOW LOG (not the uploaded summary file), so they classify a run
 // from this line; the summary file stays the artifact for the batch step.

@@ -336,7 +336,17 @@ describe('scripts/verify-live.mjs · live-voice gate [3e] (dictation + active-sc
     expect(DRIVER.match(/\$\{OUT\}\/phase-c-summary\.json/g)).toHaveLength(1);
     expect(DRIVER).toContain('if (SKIP_PHASE_C_SUMMARY) {');
     expect(DRIVER).toContain('drill: phase-c-summary.json write skipped (--skip-phase-c-summary) — crash-before-summary exercise');
+    // LITERAL crash: the seam EXITS inside the branch — the log ends at the
+    // hard-signature fail line, with NO `phase-c-outcome:` marker and NO
+    // `RESULT:` line, exactly like a real crash before the archive write.
+    // (Cleanup still runs so the drill leaves no probe residue.)
+    expect(DRIVER).toContain('await cleanup();\n  process.exit(1);');
+    const skipBlock = DRIVER.slice(DRIVER.indexOf('if (SKIP_PHASE_C_SUMMARY) {'), DRIVER.indexOf('try { writeFileSync'));
+    expect(skipBlock).not.toContain('phase-c-outcome:');
+    expect(skipBlock).not.toContain('RESULT:');
+    // The un-seamed path still writes the summary, marker, and RESULT line.
     expect(DRIVER).toContain("note('structured summary archived: phase-c-summary.json')");
+    expect(DRIVER).toContain('console.log(`${PHASE_C_OUTCOME_MARKER} ${summary.outcome}`)');
   });
 
   it('Phase C — the force-stuck drill seam injects the documented signature so the red-week evidence path can be proven', () => {
