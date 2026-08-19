@@ -29,6 +29,7 @@ const CI = readFileSync('.github/workflows/ci.yml', 'utf8');
 const MIC_REGRESSION = readFileSync('.github/workflows/mic-regression.yml', 'utf8');
 const CODEX_MONITOR = readFileSync('.github/workflows/codex-review-monitor.yml', 'utf8');
 const SPARE_DRILL_NIGHTLY = readFileSync('.github/workflows/spare-drill-nightly.yml', 'utf8');
+const GUARD_DRILLS_WEEKLY = readFileSync('.github/workflows/guard-drills-weekly.yml', 'utf8');
 const BRANCH_TIDY = readFileSync('.github/workflows/branch-tidy-weekly.yml', 'utf8');
 const COMPARE_WEEKLY = readFileSync('.github/workflows/compare-live-weekly.yml', 'utf8');
 
@@ -1000,5 +1001,76 @@ describe('.github/workflows/spare-drill-nightly.yml · nightly spare-path golden
     expect(SPARE_DRILL_NIGHTLY).toContain('spare-drill-log');
     expect(SPARE_DRILL_NIGHTLY).toContain('/tmp/vlive-guard-spare-drill.log');
     expect(SPARE_DRILL_NIGHTLY).toContain('retention-days: 14');
+  });
+});
+
+describe('.github/workflows/guard-drills-weekly.yml · Sunday-night spare + boundary comparators', () => {
+  // The daily spare-drill-nightly runs only the spare comparator — drift
+  // on the boundary (archive-path) shape would surface only via a manual
+  // dispatch. This weekly runs both comparators sequentially so a future
+  // failure on either side shows up the next Monday morning with the
+  // captured log pinned as a 90-day artifact.
+
+  it('runs Sundays at 22:00 UTC and supports manual dispatch', () => {
+    // 22:00 UTC Sunday sits clear of every existing nightly:
+    //   mon       06:00  (mic-regression + branch-tidy)
+    //   tue       06:30  (mic-trend)
+    //   thu/sat   06:30  (compare-live / marker-cleanup)
+    //   daily     07:00  (codex-review-monitor)
+    //   daily     08:00  (spare-drill-nightly)
+    // A future contributor moving the cron out of 21:00–23:00 UTC either
+    // contests an existing slot OR lands outside Sunday-night reviewer
+    // hours — fail CI here so the move is deliberate.
+    expect(GUARD_DRILLS_WEEKLY).toMatch(/cron:\s*['"`]?\s*0\s+22\s+\*\s+\*\s+0\s*['"`]?/);
+    expect(GUARD_DRILLS_WEEKLY).toContain('workflow_dispatch:');
+  });
+
+  it('keeps the queued-run discipline so weekly reruns never overwrite a fresh in-flight pair', () => {
+    expect(GUARD_DRILLS_WEEKLY).toContain('group: guard-drills-weekly');
+    expect(GUARD_DRILLS_WEEKLY).toContain('cancel-in-progress: false');
+  });
+
+  it('runs the spare comparator FIRST with the full credential set', () => {
+    // The spare job must dispatch ci.yml, seed + touch drill-live-session
+    // through the guard window, fetch the log, and diff against the
+    // spare golden. Drop the comparator script line or any secret and
+    // the first leg fails differently on each future Sunday night.
+    expect(GUARD_DRILLS_WEEKLY).toContain('node scripts/guard-spare-drill.mjs');
+    expect(GUARD_DRILLS_WEEKLY).toContain('GH_TOKEN: ${{ github.token }}');
+    expect(GUARD_DRILLS_WEEKLY).toContain('APP_OWNER_UID: ${{ secrets.APP_OWNER_UID }}');
+    expect(GUARD_DRILLS_WEEKLY).toContain('FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}');
+    expect(GUARD_DRILLS_WEEKLY).toContain('NEXT_PUBLIC_FIREBASE_API_KEY: ${{ secrets.NEXT_PUBLIC_FIREBASE_API_KEY }}');
+    expect(GUARD_DRILLS_WEEKLY).toContain('NEXT_PUBLIC_FIREBASE_APP_ID: ${{ secrets.NEXT_PUBLIC_FIREBASE_APP_ID }}');
+  });
+
+  it('runs the boundary comparator AFTER the spare via needs:', () => {
+    // Why sequential: each comparator dispatches its own ci.yml on main.
+    // If both jobs ran in parallel, ci.yml's concurrency group (cancel-
+    // in-progress: true) would cancel the first dispatch and the second
+    // comparator's seed/touch loop would land on the second ci.yml run's
+    // verify-live step. Sequencing with needs: keeps each dispatch
+    // atomic from the comparator's perspective. A future edit that drops
+    // needs: would silently introduce the cross-job collision.
+    expect(GUARD_DRILLS_WEEKLY).toContain('node scripts/guard-boundary-drill.mjs');
+    expect(GUARD_DRILLS_WEEKLY).toMatch(/boundary-drill:[\s\S]*?needs:\s*spare-drill/);
+    // spillover check: the boundaries of the spare job's steps vs the
+    // boundary job's steps must not allow the boundary script to appear
+    // before the needs: line within the boundary-drill job.
+    const boundaryJobStart = GUARD_DRILLS_WEEKLY.indexOf('boundary-drill:');
+    const needsIdx = GUARD_DRILLS_WEEKLY.indexOf('needs: spare-drill', boundaryJobStart);
+    const scriptIdx = GUARD_DRILLS_WEEKLY.indexOf('node scripts/guard-boundary-drill.mjs', boundaryJobStart);
+    expect(needsIdx).toBeGreaterThan(-1);
+    expect(scriptIdx).toBeGreaterThan(needsIdx);
+  });
+
+  it('archives both captured logs at 90 days so a quarterly review sees the full Sunday-night set', () => {
+    // The daily upload keeps 14 days; the weekly rolls them forward so
+    // the 3-month drift review has a clean capture set. Both captured
+    // log paths must be uploaded — drop one and a future drift on that
+    // side has no recoverable evidence.
+    expect(GUARD_DRILLS_WEEKLY).toContain('actions/upload-artifact@v4');
+    expect(GUARD_DRILLS_WEEKLY).toContain('/tmp/vlive-guard-spare-drill.log');
+    expect(GUARD_DRILLS_WEEKLY).toContain('/tmp/vlive-guard-boundary-drill.log');
+    expect(GUARD_DRILLS_WEEKLY).toContain('retention-days: 90');
   });
 });

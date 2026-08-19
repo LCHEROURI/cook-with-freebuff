@@ -1,0 +1,137 @@
+name: guard-drills-weekly
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Sunday-night guard-drill coverage — sequential spare + boundary comparators.
+#
+# Daily 08:00 UTC (`spare-drill-nightly.yml`) is the lightweight spare-only
+# safety net. Sunday 22:00 UTC this file runs BOTH comparators back-to-back
+# so a future drift in either shape is caught on its own schedule:
+#
+#   1. spare-drill job — seed drill-live-session FRESH, keep-alive touch
+#      through the guard window (<60s idle → GUARD spares).
+#   2. boundary-drill job — seed drill-live-session + backdate to 65s idle,
+#      keep-alive backdate through the guard window (>60s idle → GUARD
+#      archives).
+#
+# Both jobs use the same dispatch shape (ci.yml on main + verify-live log
+# fetch + golden diff), but the touch strategy and the golden differ:
+# the spare job reads `scripts/__golden__/guard-spare-drill.txt`, the
+# boundary job reads `scripts/__golden__/guard-boundary-drill.txt`. Each
+# job archives its captured log (`/tmp/vlive-guard-spare-drill.log` and
+# `/tmp/vlive-guard-boundary-drill.log`) with 90-day retention so a
+# post-hoc debug has the raw evidence for the full quarterly review.
+#
+# Schedule rationale: 22:00 Sunday UTC sits well clear of every existing
+# nightly (mon 06:00, tue 06:30, thu/sat 06:30, daily 07:00 + 08:00) and
+# gives the weekly reviewer a Monday-morning signal.
+# ─────────────────────────────────────────────────────────────────────────────
+
+on:
+  schedule:
+    # Sundays 22:00 UTC — clear of every existing nightly slot.
+    - cron: '0 22 * * 0'
+  workflow_dispatch:
+
+concurrency:
+  # Queue, don't cancel: a manual rerun during an in-flight weekly waits
+  # for the latest fresh dispatch to finish before it starts. Two weekly
+  # runs back-to-back would ladder into the 90 min dispatcher cap.
+  group: guard-drills-weekly
+  cancel-in-progress: false
+
+jobs:
+  spare-drill:
+    name: Compare live spare-path lines against scripts/__golden__/guard-spare-drill.txt
+    runs-on: ubuntu-latest
+    # Worst case: ci.yml deploy + verify:live + 24 × 15s keep-alive + 30 ×
+    # 15s completion polls ≈ ~25 min. 35 min matches the daily spare
+    # workflow's safety budget.
+    timeout-minutes: 35
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v5
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      # Spare comparator end to end: dispatch ci.yml, keep the seeded
+      # drill-live-session fresh through the guard window (<60s idle →
+      # GUARD spares), fetch the verify-live log, diff the NOTE/FAIL
+      # lines against scripts/__golden__/guard-spare-drill.txt.
+      # Exits 0 on match, 1 on drift, 2 on missing lines/infra fault.
+      - name: Run the spare-drill comparator
+        id: spare
+        run: node scripts/guard-spare-drill.mjs
+        env:
+          GH_TOKEN: ${{ github.token }}
+          APP_OWNER_UID: ${{ secrets.APP_OWNER_UID }}
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+          NEXT_PUBLIC_FIREBASE_API_KEY: ${{ secrets.NEXT_PUBLIC_FIREBASE_API_KEY }}
+          NEXT_PUBLIC_FIREBASE_APP_ID: ${{ secrets.NEXT_PUBLIC_FIREBASE_APP_ID }}
+
+      # 90-day retention: a quarterly trend review wants the raw log per
+      # week to compare against later drifts. Daily has 14 days; weekly
+      # rolls them forward.
+      - name: Upload the captured spare-drill log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: spare-drill-log
+          path: /tmp/vlive-guard-spare-drill.log
+          if-no-files-found: warn
+          retention-days: 90
+
+  # Run AFTER spare-drill finishes: a sequence of two dispatches against
+  # ci.yml on main is what we want — if both jobs ran in parallel their
+  # own ci.yml dispatches would cancel each other (ci.yml's concurrency
+  # group cancels in_progress). Sequencing plus needs:. keeps both
+  # dispatches atomic from the comparator's perspective.
+  boundary-drill:
+    name: Compare live boundary-path lines against scripts/__golden__/guard-boundary-drill.txt
+    needs: spare-drill
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v5
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      # Boundary comparator end to end: dispatch ci.yml, BACKDATE the
+      # seeded drill-live-session to 65s idle every 15s through the
+      # guard window (>60s idle → GUARD archives on the retry), fetch
+      # the verify-live log, diff the NOTE + ARCHIVED-OK lines against
+      # scripts/__golden__/guard-boundary-drill.txt.
+      - name: Run the boundary-drill comparator
+        id: boundary
+        run: node scripts/guard-boundary-drill.mjs
+        env:
+          GH_TOKEN: ${{ github.token }}
+          APP_OWNER_UID: ${{ secrets.APP_OWNER_UID }}
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+          NEXT_PUBLIC_FIREBASE_API_KEY: ${{ secrets.NEXT_PUBLIC_FIREBASE_API_KEY }}
+          NEXT_PUBLIC_FIREBASE_APP_ID: ${{ secrets.NEXT_PUBLIC_FIREBASE_APP_ID }}
+
+      - name: Upload the captured boundary-drill log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: boundary-drill-log
+          path: /tmp/vlive-guard-boundary-drill.log
+          if-no-files-found: warn
+          retention-days: 90
