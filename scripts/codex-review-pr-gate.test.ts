@@ -351,6 +351,7 @@ fs.appendFileSync(${JSON.stringify(gitLog)}, process.argv.join(' ') + '<<<GIT>>>
           delete env.GH_TOKEN;
           delete env.GITHUB_TOKEN;
           delete env.GITHUB_ACTIONS;
+          delete env.GITHUB_RUN_ATTEMPT;
           Object.assign(
             env,
             { PATH: `${stubDir}:${process.env.PATH}`, CODEX_GATE_STATUS: 'operational' },
