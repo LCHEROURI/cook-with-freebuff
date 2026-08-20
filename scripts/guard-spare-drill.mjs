@@ -228,14 +228,33 @@ function modeDiff(argv) {
 async function main() {
   if (process.argv.includes('--diff')) return modeDiff(parseArgv(process.argv));
 
-  // 1. dispatch ci.yml on main
+  // 1. dispatch ci.yml on main, then discover the workflow_dispatch run.
+  // `gh workflow run` does not reliably print a run URL/ID on stdout.
   note('dispatching ci.yml on main (--ref main)');
-  const dispatched = gh(['workflow', 'run', 'ci.yml', '--ref', 'main']);
-  // gh returns the URL of the run on the last line
-  const runId = (dispatched.match(/actions\/runs\/(\d+)/) ?? [])[1];
-  if (!runId) { fail(`could not parse run id from dispatch output: ${dispatched}`); process.exit(2); }
+  gh(['workflow', 'run', 'ci.yml', '--ref', 'main']);
+  await sleep(5_000);
+
+  let runId = null;
+  for (let i = 0; i < 12; i++) {
+    const runs = ghJson([
+      'run', 'list',
+      '--workflow', 'ci.yml',
+      '--branch', 'main',
+      '--event', 'workflow_dispatch',
+      '--limit', '1',
+      '--json', 'databaseId,status,createdAt',
+    ]);
+    if (runs?.[0]?.databaseId) {
+      runId = String(runs[0].databaseId);
+      break;
+    }
+    await sleep(5_000);
+  }
+  if (!runId) {
+    fail('workflow dispatched but the new ci.yml run could not be located');
+    process.exit(2);
+  }
   note(`dispatched run: ${runId}`);
-  await sleep(8_000);
 
   // 2. poll until verify-live is in_progress
   let jobId = null;
