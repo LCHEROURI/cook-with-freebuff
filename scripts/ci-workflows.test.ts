@@ -399,8 +399,12 @@ describe('.github/workflows/ci.yml · post-deploy verify:live needs-edge', () =>
     const inputsEnd = inputsBlock.indexOf('\nconcurrency:');
     const inputs = inputsBlock.slice(0, inputsEnd);
     expect(inputs).toContain('force_verify_live_regression:');
-    expect(inputs).toMatch(/type: boolean/);
-    expect(inputs).toMatch(/default: false/);
+    // String input (NOT type: boolean) so `inputs.force_verify_live_regression == 'true'`
+    // matches under every dispatch method — a boolean-typed input exposes a JSON
+    // boolean and `true == 'true'` is false in GitHub expressions, which left the
+    // env empty in all three dispatch attempts (32266697726/32267874575/32268919307).
+    expect(inputs).not.toMatch(/type: boolean/);
+    expect(inputs).toMatch(/default: 'false'/);
 
     const verifyStepStart = CI.indexOf('name: Verify deployed app end to end (verify:live)');
     const verifyStepEnd = CI.indexOf('\n      - name:', verifyStepStart + 1);

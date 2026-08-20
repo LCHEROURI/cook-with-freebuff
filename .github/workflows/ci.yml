@@ -18,8 +18,8 @@ on:
           spare (the guard) and a regression (this seam) — and the
           classifier is pinned to return reason=undefined for that shape.
           Proves sparing NEVER masks a genuine failure run next to it.
-        type: boolean
-        default: false
+        required: false
+        default: 'false'
 
 # One run per branch at a time: a new push to the SAME branch cancels the
 # in-progress run (cancel-in-progress). This is EXPECTED behavior, not a
