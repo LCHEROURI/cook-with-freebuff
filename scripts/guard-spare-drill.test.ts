@@ -62,6 +62,18 @@ describe('scripts/guard-spare-drill.mjs · the comparator + its golden', () => {
     expect(readFileSync(resolve(process.cwd(), GOLDEN), 'utf8').includes('archive retry')).toBe(true);
   });
 
+  it('discovers the dispatched workflow run instead of parsing workflow-run stdout', () => {
+    const src = readFileSync(resolve(process.cwd(), SCRIPT), 'utf8');
+
+    // `gh workflow run` does not guarantee a run URL on stdout. The drill
+    // must dispatch first, then query workflow_dispatch runs for ci.yml.
+    expect(src).toMatch(/gh\(\['workflow', 'run', 'ci\.yml', '--ref', 'main'\]\)/);
+    expect(src).toMatch(/'run',\s*'list'/);
+    expect(src).toContain("'--event', 'workflow_dispatch'");
+    expect(src).not.toMatch(/actions\\\/runs\\\/\(\\d\+\)/);
+    expect(src).toContain('workflow dispatched but the new ci.yml run could not be located');
+  });
+
   it('declares exit semantics so a future editor cannot silently change the contract', () => {
     // The script exports three exit codes: 0 = match, 1 = drift, 2 = missing
     // log/guard lines. Pinning the code paths that emit process.exit(...) so
