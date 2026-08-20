@@ -123,8 +123,8 @@ function extractLines(logText) {
   // driver line, then collect the note line and the fail line independently.
   const stripped = logText
     .split('\n')
-    .map((l) => l.replace(/^[^\t]*\t[^\t]*\t/, ''))    // 2 tab-fields (run+step)
-    .map((l) => l.replace(/^\d{4}-\d{2}-\d{2}T[^\s]+\s+/, '')) // ISO timestamp + 1+ spaces
+    .map((l) => l.replace(/^[^\t]*\t[^\t]*\t/, ''))
+    .map((l) => l.replace(/^\d{4}-\d{2}-\d{2}T[^\s]+\s+/, ''))
     .map((l) => l.trim());
   let noteGroups = null;
   let failGroups = null;
@@ -143,13 +143,6 @@ function normalizedLines({ noteGroups, failGroups }) {
   return out;
 }
 
-// ── Compare: diff the actual extracted lines against the golden. The
-//    golden contains placeholders for drill-run-variant fields ("<N>",
-//    "<ID>", "<PHASE>", "<RECIPE>", "<IDLE>"); substitute the captured
-//    groups to reproduce the exact raw source log line, then diff. A
-//    surface-level drift (extra word, missing word, reorder) shows up as
-//    a line mismatch; the regex itself is the deeper validator (a renamed
-//    guard phrasing fails the extraction step). ─────────────────────────
 function buildExpected(template, m) {
   const [, n, id, phase, recipe, idle] = m;
   const subs = [
@@ -161,9 +154,7 @@ function buildExpected(template, m) {
 }
 
 function compare(actual) {
-  const expectedTemplates = expectedLines()
-    .filter((l) => !l.startsWith('#'))
-    .filter(Boolean);
+  const expectedTemplates = expectedLines().filter((l) => !l.startsWith('#')).filter(Boolean);
   const failures = [];
   if (actual.length === 0) {
     failures.push({ kind: 'no-actual', expected: expectedTemplates, actual: '<missing>' });
@@ -186,20 +177,15 @@ function compare(actual) {
   return failures;
 }
 
-// ── Mode 2: --diff <run-id|log-path> — only fetch + compare. ────────────
 function fetchJobLog(jobId) {
-  const out = gh(['run', 'view', '--job', String(jobId), '--log']);
-  return out;
+  return gh(['run', 'view', '--job', String(jobId), '--log']);
 }
 function modeDiff(argv) {
   const arg = argv['--diff'];
   if (!arg) { console.error('usage: --diff <verify-live-job-id> | <path-to-log>'); process.exit(2); }
   let log;
-  if (arg.includes('/') || arg.includes('\\') || /\.log$/.test(arg)) {
-    log = readFileSync(arg, 'utf8');
-  } else {
-    log = fetchJobLog(arg);
-  }
+  if (arg.includes('/') || arg.includes('\\') || /\.log$/.test(arg)) log = readFileSync(arg, 'utf8');
+  else log = fetchJobLog(arg);
   const parsed = extractLines(log);
   if (!parsed.noteGroups && !parsed.failGroups) {
     fail('no spare-path lines found in the log');
@@ -224,12 +210,23 @@ function modeDiff(argv) {
   process.exit(1);
 }
 
-// ── Mode 1 (default): end-to-end dispatch + touch + extract + compare. ──
 async function main() {
   if (process.argv.includes('--diff')) return modeDiff(parseArgv(process.argv));
 
-  // 1. dispatch ci.yml on main, then discover the workflow_dispatch run.
-  // `gh workflow run` does not reliably print a run URL/ID on stdout.
+  // Snapshot existing dispatch runs before triggering CI. Without this guard,
+  // `gh run list --limit 1` can return a stale earlier workflow_dispatch run
+  // while GitHub is still indexing the run we just created.
+  const beforeDispatch = ghJson([
+    'run', 'list',
+    '--workflow', 'ci.yml',
+    '--branch', 'main',
+    '--event', 'workflow_dispatch',
+    '--limit', '20',
+    '--json', 'databaseId',
+  ]);
+  const existingRunIds = new Set((beforeDispatch ?? []).map((r) => String(r.databaseId)));
+  const dispatchedAfter = Date.now() - 2_000;
+
   note('dispatching ci.yml on main (--ref main)');
   gh(['workflow', 'run', 'ci.yml', '--ref', 'main']);
   await sleep(5_000);
@@ -241,11 +238,16 @@ async function main() {
       '--workflow', 'ci.yml',
       '--branch', 'main',
       '--event', 'workflow_dispatch',
-      '--limit', '1',
+      '--limit', '20',
       '--json', 'databaseId,status,createdAt',
     ]);
-    if (runs?.[0]?.databaseId) {
-      runId = String(runs[0].databaseId);
+    const fresh = (runs ?? []).find((run) => {
+      if (!run?.databaseId || existingRunIds.has(String(run.databaseId))) return false;
+      const created = Date.parse(run.createdAt ?? '');
+      return Number.isFinite(created) && created >= dispatchedAfter;
+    });
+    if (fresh?.databaseId) {
+      runId = String(fresh.databaseId);
       break;
     }
     await sleep(5_000);
@@ -256,7 +258,6 @@ async function main() {
   }
   note(`dispatched run: ${runId}`);
 
-  // 2. poll until verify-live is in_progress
   let jobId = null;
   for (let i = 0; i < 40; i++) {
     const out = ghJson(['run', 'view', String(runId), '--json', 'jobs']);
@@ -270,7 +271,6 @@ async function main() {
   }
   if (!jobId) { fail('verify:live never went IN_PROGRESS'); process.exit(2); }
 
-  // 3. seed + keep-alive touch (the spare drill shape)
   note('seeding drill-live-session (fresh, <60s idle → GUARD spares it)');
   runNodeWithEnv(resolve(ROOT, '.freebuff/drill-live-session.mjs'), ['--seed']);
   note('keep-alive touching every 15s through the guard window');
@@ -278,7 +278,6 @@ async function main() {
     await sleep(15_000);
     const out = runNodeWithEnv(resolve(ROOT, '.freebuff/drill-live-session.mjs'), ['--touch']).trim();
     console.log(out);
-    // Break early if the run has completed.
     const status = gh(['run', 'view', String(runId), '--json', 'status', '--jq', '.status']);
     if (status.includes('completed')) {
       note(`run ${runId} completed (touch cycle ${i})`);
@@ -286,18 +285,15 @@ async function main() {
     }
   }
 
-  // 4. wait for run completion (if not already)
   for (let i = 0; i < 30; i++) {
     const status = gh(['run', 'view', String(runId), '--json', 'status', '--jq', '.status']);
     if (status.includes('completed')) break;
     await sleep(15_000);
   }
 
-  // 5. fetch the verify-live log
   const log = fetchJobLog(jobId);
   writeFileSync('/tmp/vlive-guard-spare-drill.log', log);
 
-  // 6. extract + normalize + compare
   const parsed = extractLines(log);
   if (!parsed.noteGroups && !parsed.failGroups) {
     fail('no spare-path lines found in the verify-live log');
@@ -319,7 +315,6 @@ async function main() {
     process.exit(1);
   }
 
-  // 7. cleanup the session
   note('cleanup: deleting drill-live-session');
   runNodeWithEnv(resolve(ROOT, '.freebuff/drill-live-session.mjs'), ['--delete']);
 }
