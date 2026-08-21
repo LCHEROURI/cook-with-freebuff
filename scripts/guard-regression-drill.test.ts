@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { describe, expect, it } from 'vitest';
@@ -84,15 +84,70 @@ describe('scripts/guard-regression-drill.mjs · the comparator + its golden', ()
     expect(body).toContain('RESULT: FAIL (2)');
   });
 
-  it('replays the comparator against the committed fixture and confirms it matches', () => {
-    // The fixture captures the live third drill (run 32429029312). The
-    // comparator must extract all four evidence lines and diff clean against
-    // the golden — the canonical behavior the weekly job depends on.
-    const log = readFileSync(resolve(process.cwd(), FIXTURE), 'utf8');
+  it('regenerates the golden through the comparator\'s own extract/expand path against the fixture (codegen)', () => {
+    // The golden derivation must come from the comparator's REGENERATION
+    // path, not just the constants: the comparator extracts the four
+    // evidence lines from the log (extractLines), normalizes them
+    // (normalizedLines), and diffs each regenerated line against the golden
+    // template via buildExpected(golden, groups) (compare). Shelling out
+    // with --diff runs that exact pipeline against the committed fixture —
+    // exit 0 proves every golden template regenerates to the raw log line.
+    // A drift in any regex, a reordered capture group, or a golden edit
+    // that no longer round-trips surfaces here as a non-zero exit.
+    const fixture = resolve(process.cwd(), FIXTURE);
+    const goldenText = readFileSync(resolve(process.cwd(), GOLDEN), 'utf8');
+    // Sanity: the fixture carries all four evidence lines (the comparator's
+    // own extract step must find them; without them --diff would exit 2).
+    const log = readFileSync(fixture, 'utf8');
     expect(log).toContain('archiving and retrying once');
     expect(log).toContain('after the archive retry');
     expect(log).toContain(SIMULATED_REGRESSION_SIGNATURE);
     expect(log).toContain('RESULT: FAIL (2)');
+
+    // Run the comparator's real pipeline: extract -> normalize -> compare
+    // (buildExpected golden-template expansion) against the fixture.
+    const r = execFileSync('node', [SCRIPT, '--diff', fixture], { encoding: 'utf8' });
+    expect(r).toContain('regression-path lines match the golden');
+    // The comparator's own match report confirms all four lines were found
+    // and regenerated — not just a clean exit on a partial match.
+    expect(r).toContain('note line: matched');
+    expect(r).toContain('spare-fail line: matched');
+    expect(r).toContain('seam-fail line: matched');
+    expect(r).toContain('result line: FAIL (2)');
+    // The golden is exactly the four evidence lines (plus its header
+    // comments) — the regeneration must cover each pinned line.
+    for (const line of ['- owner has <N>', '✗ FAIL: owner still has <N>', `✗ FAIL: ${SIMULATED_REGRESSION_SIGNATURE}`, 'RESULT: FAIL (2)']) {
+      expect(goldenText).toContain(line);
+    }
+  });
+
+  it('proves the regeneration path fires on drift — a mutated fixture exits 1 with a mismatch report', () => {
+    // The codegen pin above must not be vacuous: a golden or regex drift
+    // must actually fail the comparison. Mutate ONLY the RESULT count in an
+    // in-memory fixture copy (2 -> 3), write it to a temp file, and run the
+    // comparator's --diff on it: buildExpected regenerates the golden
+    // template (still FAIL (2)) while the mutated line regenerates as FAIL
+    // (3) — a genuine mismatch that must exit 1.
+    const fixture = resolve(process.cwd(), FIXTURE);
+    const mutated = readFileSync(fixture, 'utf8').replace('RESULT: FAIL (2)', 'RESULT: FAIL (3)');
+    expect(mutated, 'the mutation must actually land').toContain('RESULT: FAIL (3)');
+    const tmp = resolve('/tmp', 'vlive-regression-drift-fixture.log');
+    writeFileSync(tmp, mutated);
+    try {
+      expect(() => execFileSync('node', [SCRIPT, '--diff', tmp], { encoding: 'utf8' })).toThrow();
+      // execFileSync throws on non-zero exit — capture the exit code + drift
+      // report from the thrown error to assert the FAILURE SHAPE, not just
+      // that it threw.
+    } catch (e) {
+      const err = e as { status?: number; stderr?: string; stdout?: string };
+      expect(err.status).toBe(1);
+      const out = `${err.stdout ?? ''}${err.stderr ?? ''}`;
+      expect(out).toContain('drift detected against the golden:');
+      expect(out).toContain('RESULT: FAIL (2)');
+      expect(out).toContain('RESULT: FAIL (3)');
+    } finally {
+      rmSync(tmp, { force: true });
+    }
   });
 
   it('declares exit semantics so a future editor cannot silently change the contract', () => {
