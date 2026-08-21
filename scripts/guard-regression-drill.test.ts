@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { describe, expect, it } from 'vitest';
@@ -192,6 +192,84 @@ describe('scripts/guard-regression-drill.mjs · the comparator + its golden', ()
       tmpScriptName: 'scripts/.tmp-regression-golden-drift.mjs',
       tmpGoldenName: '/tmp/regression-drift-golden.txt',
     });
+  });
+
+  it('proves compare() cannot silently stop firing — both drift directions flip under a weakened comparator (mutation)', () => {
+    // The pipeline's drift detection lives entirely in compare(): a future
+    // edit that weakens it (ignores mismatches) would silently stop BOTH
+    // drift directions (fixture-drift AND golden-drift), and one that
+    // always reports drift would break the codegen happy-path. Mirror the
+    // spare drill's temp-script pattern: apply each mutation to a copy of
+    // the REAL script and confirm it FLIPS the pinned exit codes that the
+    // drift + codegen tests assert — proving both pins go red against the
+    // mutation, i.e. neither is vacuous.
+    const src = readFileSync(resolve(process.cwd(), SCRIPT), 'utf8');
+    const fixture = resolve(process.cwd(), FIXTURE);
+    const tmpScript = resolve(process.cwd(), 'scripts/.tmp-regression-compare-mutation.mjs');
+    const tmpGolden = resolve('/tmp', 'regression-compare-mutation-golden.txt');
+    const tmpFixture = resolve('/tmp', 'regression-compare-mutation-fixture.log');
+    const goldenPath = "resolve(ROOT, 'scripts/__golden__/guard-regression-drill.txt')";
+    const pointAtTempGolden = (s: string) => s.replace(goldenPath, `'${tmpGolden}'`);
+
+    // Same anchored mutations as the fixture-drift + golden-drift tests:
+    // RESULT 2 -> 3 in the fixture, RESULT 2 -> 9 on the golden's REAL
+    // line (never the header comment).
+    const driftedFixture = readFileSync(fixture, 'utf8').replace('RESULT: FAIL (2)', 'RESULT: FAIL (3)');
+    const driftedGolden = readFileSync(resolve(process.cwd(), GOLDEN), 'utf8')
+      .replace(/^RESULT: FAIL \(2\)$/m, 'RESULT: FAIL (9)');
+
+    const run = (script: string, log: string): number | null => {
+      try {
+        execFileSync('node', [script, '--diff', log], { encoding: 'utf8' });
+        return 0;
+      } catch (e) {
+        return (e as { status?: number }).status ?? null;
+      }
+    };
+
+    try {
+      writeFileSync(tmpFixture, driftedFixture);
+      writeFileSync(tmpGolden, driftedGolden);
+
+      // Sanity — the UNMUTATED script rejects both drifted inputs (exit 1),
+      // exactly the outcomes the fixture-drift and golden-drift tests pin.
+      // Without this, Direction 1's "exit 0" below could be the status quo
+      // and the mutation would have no footprint to prove.
+      writeFileSync(tmpScript, src);
+      expect(run(tmpScript, tmpFixture), 'sanity: the unmutated script must reject the drifted fixture').toBe(1);
+      writeFileSync(tmpScript, pointAtTempGolden(src));
+      expect(run(tmpScript, fixture), 'sanity: the unmutated script must reject the drifted golden').toBe(1);
+
+      // Direction 1 — compare() ignores mismatches (never reports drift):
+      // both drifted inputs are now ACCEPTED (exit 0, "match the golden"),
+      // flipping BOTH drift tests' pinned exit-1 -> both go red.
+      const ignoreMismatches = src.replace(
+        /function compare\(actual\) \{[\s\S]*?\n\}/,
+        'function compare() {\n  return [];\n}',
+      );
+      expect(ignoreMismatches, 'the ignore-mismatches mutation must actually land').not.toBe(src);
+      writeFileSync(tmpScript, ignoreMismatches);
+      const laxFixtureOut = execFileSync('node', [tmpScript, '--diff', tmpFixture], { encoding: 'utf8' });
+      expect(laxFixtureOut).toContain('regression-path lines match the golden');
+      writeFileSync(tmpScript, pointAtTempGolden(ignoreMismatches));
+      const laxGoldenOut = execFileSync('node', [tmpScript, '--diff', fixture], { encoding: 'utf8' });
+      expect(laxGoldenOut).toContain('regression-path lines match the golden');
+
+      // Direction 2 — compare() reports a mismatch unconditionally: the
+      // GOOD fixture is now REJECTED (exit 1), flipping the codegen test's
+      // pinned exit-0 -> the codegen test goes red.
+      const alwaysFail = src.replace(
+        /function compare\(actual\) \{[\s\S]*?\n\}/,
+        "function compare() {\n  return [{ kind: 'mismatch', expected: 'x', actual: 'y' }];\n}",
+      );
+      expect(alwaysFail, 'the always-fail mutation must actually land').not.toBe(src);
+      writeFileSync(tmpScript, alwaysFail);
+      expect(run(tmpScript, fixture), 'the good fixture must be rejected under always-fail').toBe(1);
+    } finally {
+      rmSync(tmpScript, { force: true });
+      rmSync(tmpGolden, { force: true });
+      rmSync(tmpFixture, { force: true });
+    }
   });
 
   it('declares exit semantics so a future editor cannot silently change the contract', () => {
