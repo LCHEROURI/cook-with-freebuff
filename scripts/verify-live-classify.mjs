@@ -91,6 +91,18 @@ export const BLOCKING_SESSION_PREFIX = SPARED_LIVE_SESSION_SIGNATURE.replace(
   '',
 );
 
+// The persisted verdict vocabulary — the SINGLE source of truth for the
+// success/failure/external values shared across the whole chain: the
+// classifier returns them as `kind`, verify-live.mjs forwards `verdict.kind`
+// straight into GITHUB_ENV (no pass→success / fail→failure translation
+// anymore), the recorder's Zod schema validates them, and the /status page
+// labels against them. A renamed verdict value updates one constant and every
+// producer/consumer tracks it (the cross-file codegen contract in
+// verify-live-classify.test.ts proves all four reference these constants).
+export const VERDICT_SUCCESS = 'success';
+export const VERDICT_FAILURE = 'failure';
+export const VERDICT_EXTERNAL = 'external';
+
 // The seam's SIMULATED regression message — verify-live.mjs passes THIS
 // constant to fail() when FORCE_VERIFY_LIVE_REGRESSION=true. It is the
 // single source of truth for the drill's evidence shape: the seam
@@ -107,23 +119,23 @@ export const SIMULATED_REGRESSION_SIGNATURE =
  * Classify a verify:live failure set into a verdict.
  *
  * @param {{ failures: string[] }} opts — the verify:live failure messages.
- * @returns {{ kind: 'pass' | 'external' | 'fail', reason?: 'spared-live-session' }}
+ * @returns {{ kind: 'success' | 'failure' | 'external', reason?: 'spared-live-session' }}
  */
 export function classifyVerifyVerdict({ failures }) {
-  if (failures.length === 0) return { kind: 'pass' };
+  if (failures.length === 0) return { kind: VERDICT_SUCCESS };
   const creditsRoot = failures.some(
     (m) => m.startsWith('create_recipe →') && GEMINI_CREDITS_RE.test(m),
   );
   const allCascades = failures.every((m) =>
     GEMINI_CASCADE_PREFIXES.some((p) => m.startsWith(p)),
   );
-  if (creditsRoot && allCascades) return { kind: 'external' };
+  if (creditsRoot && allCascades) return { kind: VERDICT_EXTERNAL };
   // A spared-live-session failure is the ONLY failure in a drill/collision
   // run (the guard fails loudly, then the run reports it). If any OTHER
   // failure is present the run is a real regression — the reason must never
   // mask a genuine failure next to the spare.
   const sparedLive =
     failures.length === 1 && failures[0].includes(SPARED_LIVE_SESSION_SIGNATURE);
-  if (sparedLive) return { kind: 'fail', reason: SPARED_LIVE_REASON };
-  return { kind: 'fail' };
+  if (sparedLive) return { kind: VERDICT_FAILURE, reason: SPARED_LIVE_REASON };
+  return { kind: VERDICT_FAILURE };
 }

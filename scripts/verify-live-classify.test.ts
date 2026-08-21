@@ -8,6 +8,9 @@ import {
   SIMULATED_REGRESSION_SIGNATURE,
   SPARED_LIVE_REASON,
   SPARED_LIVE_SESSION_SIGNATURE,
+  VERDICT_EXTERNAL,
+  VERDICT_FAILURE,
+  VERDICT_SUCCESS,
 } from './verify-live-classify.mjs';
 
 // ============================================================================
@@ -52,11 +55,11 @@ const cascadeFailures = [
 
 describe('scripts/verify-live-classify.mjs · behavior', () => {
   it('classifies a credits-blocked run as EXTERNAL (root + every failure a Gemini cascade)', () => {
-    expect(classifyVerifyVerdict({ failures: cascadeFailures }).kind).toBe('external');
+    expect(classifyVerifyVerdict({ failures: cascadeFailures }).kind).toBe(VERDICT_EXTERNAL);
   });
 
   it('passes an empty failure set', () => {
-    expect(classifyVerifyVerdict({ failures: [] }).kind).toBe('pass');
+    expect(classifyVerifyVerdict({ failures: [] }).kind).toBe(VERDICT_SUCCESS);
   });
 
   it('labels a lone spared-live-session failure with the intentional-fail reason', () => {
@@ -71,7 +74,7 @@ describe('scripts/verify-live-classify.mjs · behavior', () => {
         'owner still has 1 ACTIVE/PAUSED session(s) blocking the UI starter after the archive retry: drill-li… (COLLECTING_INGREDIENTS, chicken_rice_onion_001, 8s idle)',
       ],
     });
-    expect(spared.kind).toBe('fail');
+    expect(spared.kind).toBe(VERDICT_FAILURE);
     expect(spared.reason).toBe('spared-live-session');
   });
 
@@ -85,7 +88,7 @@ describe('scripts/verify-live-classify.mjs · behavior', () => {
         'live voice driver → exit 1. Tail: boom',
       ],
     });
-    expect(v.kind).toBe('fail');
+    expect(v.kind).toBe(VERDICT_FAILURE);
     expect(v.reason).toBeUndefined();
   });
 
@@ -102,7 +105,7 @@ describe('scripts/verify-live-classify.mjs · behavior', () => {
         SIMULATED_REGRESSION_SIGNATURE,
       ],
     });
-    expect(v.kind).toBe('fail');
+    expect(v.kind).toBe(VERDICT_FAILURE);
     expect(v.reason).toBeUndefined();
   });
 
@@ -111,7 +114,7 @@ describe('scripts/verify-live-classify.mjs · behavior', () => {
     const v = classifyVerifyVerdict({
       failures: [creditsRoot, 'serve stage → HTTP 502 on /api/build-info'],
     });
-    expect(v.kind).toBe('fail');
+    expect(v.kind).toBe(VERDICT_FAILURE);
   });
 
   it('fails when the create_recipe root carries no credits signature (a real engine error)', () => {
@@ -121,14 +124,14 @@ describe('scripts/verify-live-classify.mjs · behavior', () => {
         'constraints view: missing “details expanded” in the driver log',
       ],
     });
-    expect(v.kind).toBe('fail');
+    expect(v.kind).toBe(VERDICT_FAILURE);
   });
 
   it('fails on cascade-only failures without the create_recipe credits root', () => {
     const v = classifyVerifyVerdict({
       failures: ['voice driver: missing “spoken prompt filled the input” in the driver log'],
     });
-    expect(v.kind).toBe('fail');
+    expect(v.kind).toBe(VERDICT_FAILURE);
   });
 
   it('keeps the credits phrase intact end to end even when it sits past the old 800-char cut', () => {
@@ -151,7 +154,7 @@ describe('scripts/verify-live-classify.mjs · behavior', () => {
     const root = `create_recipe → 400 ${serialized}`;
     expect(
       classifyVerifyVerdict({ failures: [root, 'voice driver: missing “x” in the driver log'] }).kind,
-    ).toBe('external');
+    ).toBe(VERDICT_EXTERNAL);
   });
 });
 
@@ -176,7 +179,7 @@ describe('scripts/verify-live-classify.mjs · mutation-proof allowlists', () => 
       expect(
         classifyVerifyVerdict({ failures: [root, 'voice driver: missing “x” in the driver log'] }).kind,
         `signature “${sig}” must classify external`,
-      ).toBe('external');
+      ).toBe(VERDICT_EXTERNAL);
     }
   });
 
@@ -189,7 +192,7 @@ describe('scripts/verify-live-classify.mjs · mutation-proof allowlists', () => 
     const v = classifyVerifyVerdict({
       failures: [genericQuotaRoot, 'voice driver: missing “x” in the driver log'],
     });
-    expect(v.kind).toBe('fail');
+    expect(v.kind).toBe(VERDICT_FAILURE);
   });
 
   it('pins the cascade prefix allowlist — a failure outside it stays FAIL', () => {
@@ -242,7 +245,7 @@ describe('scripts/verify-live-classify.mjs · spared signature is mutation-proof
     ];
     for (const m of mutations) {
       const v = classifyVerifyVerdict({ failures: [m.mutated] });
-      expect(v.kind, `${m.name}: kind must stay plain fail`).toBe('fail');
+      expect(v.kind, `${m.name}: kind must stay plain fail`).toBe(VERDICT_FAILURE);
       expect(v.reason, `${m.name}: reason must NOT be spared-live-session`).toBeUndefined();
     }
   });
@@ -272,7 +275,7 @@ describe('scripts/verify-live.mjs · wiring (the gate actually uses the classifi
     expect(LIVE).toContain('BLOCKING_SESSION_PREFIX,');
     expect(LIVE).toContain('SIMULATED_REGRESSION_SIGNATURE,');
     expect(LIVE).toContain('SPARED_LIVE_SESSION_SIGNATURE,');
-    expect(LIVE).toContain('verdict = runExit === 0 ? classifyVerifyVerdict({ failures }) : { kind: \'fail\' };');
+    expect(LIVE).toContain('verdict = runExit === 0 ? classifyVerifyVerdict({ failures }) : { kind: VERDICT_FAILURE };');
   });
 
   it('the [3b] create_recipe failure carries the FULL untruncated body, not any slice', () => {
@@ -287,7 +290,7 @@ describe('scripts/verify-live.mjs · wiring (the gate actually uses the classifi
   });
 
   it('exits 0 on the external verdict and prints the distinct EXTERNAL report', () => {
-    expect(LIVE).toContain('process.exit(verdict.kind === \'fail\' ? 1 : 0);');
+    expect(LIVE).toContain('process.exit(verdict.kind === VERDICT_FAILURE ? 1 : 0);');
     expect(LIVE).toContain('RESULT: EXTERNAL (Gemini credits — deploy check passes)');
     expect(LIVE).toContain('⚠ EXTERNAL: Gemini API prepayment credits are depleted (429)');
   });
@@ -297,7 +300,9 @@ describe('scripts/verify-live.mjs · wiring (the gate actually uses the classifi
     // recorder would persist 'success' and /status would claim full
     // verification. verify-live must forward the mapped verdict (external /
     // success / failure) through GITHUB_ENV for the record step to read.
-    expect(LIVE).toContain("const recordVerdict = verdict.kind === 'pass' ? 'success' : verdict.kind === 'external' ? 'external' : 'failure';");
+    // verdict.kind IS the persisted verdict vocabulary now — the classifier
+    // returns the VERDICT_* constants, so no translation is needed.
+    expect(LIVE).toContain('const recordVerdict = verdict.kind;');
     expect(LIVE).toContain('process.env.GITHUB_ENV');
     expect(LIVE).toContain('writeFileSync(process.env.GITHUB_ENV');
   });
@@ -362,7 +367,7 @@ describe('scripts/verify-live.mjs · wiring (the gate actually uses the classifi
     //    failure. (Live drill 32429029312 recorded exactly this: RESULT:
     //    FAIL (2) → verdict failure, reason null.)
     const v = classifyVerifyVerdict({ failures: [spareLine, SIMULATED_REGRESSION_SIGNATURE] });
-    expect(v.kind).toBe('fail');
+    expect(v.kind).toBe(VERDICT_FAILURE);
     expect(v.reason).toBeUndefined();
   });
 
@@ -626,7 +631,7 @@ describe('scripts/verify-live-classify.mjs · the reason value is one source of 
   it('the classifier returns the constant — never a hard-coded literal', () => {
     // The module source must reference the constant in the spared branch.
     expect(readFileSync('scripts/verify-live-classify.mjs', 'utf8')).toContain(
-      "if (sparedLive) return { kind: 'fail', reason: SPARED_LIVE_REASON };",
+      'if (sparedLive) return { kind: VERDICT_FAILURE, reason: SPARED_LIVE_REASON };',
     );
   });
 
@@ -647,13 +652,15 @@ describe('scripts/verify-live-classify.mjs · the reason value is one source of 
   });
 
   it('the recorder validates the reason against the constant — never a local literal', () => {
-    expect(RECORDER).toContain("import { SPARED_LIVE_REASON } from './verify-live-classify.mjs'");
+    expect(RECORDER).toContain("from './verify-live-classify.mjs'");
+    expect(RECORDER).toContain('  SPARED_LIVE_REASON,');
     expect(RECORDER).toContain('z.enum([SPARED_LIVE_REASON]).optional()');
     expect(RECORDER).not.toContain("z.enum(['spared-live-session'])");
   });
 
   it('the /status page checks the reason against the constant — never a page-local literal', () => {
-    expect(PAGE).toContain("import { SPARED_LIVE_REASON } from '../../scripts/verify-live-classify.mjs'");
+    expect(PAGE).toContain("from '../../scripts/verify-live-classify.mjs'");
+    expect(PAGE).toContain('  SPARED_LIVE_REASON,');
     expect(PAGE).toContain('isSpared = status?.verifyLive?.reason === SPARED_LIVE_REASON');
     expect(PAGE).not.toContain("reason === 'spared-live-session'");
   });
@@ -720,5 +727,125 @@ describe('scripts/verify-live-classify.mjs · the reason value is one source of 
     expect(producerInlined).not.toContain('`VERIFY_LIVE_REASON=${SPARED_LIVE_REASON}\\n`');
     expect(producerInlined).toContain('VERIFY_LIVE_REASON=spared-live-session');
     expect(SPARED_LIVE_REASON).toBe('spared-live-session');
+  });
+});
+
+describe('scripts/verify-live-classify.mjs · the verdict vocabulary is one source of truth (cross-file)', () => {
+  // The success/failure/external values used to live as two disconnected
+  // vocabularies: the classifier's internal kind was 'pass'/'external'/'fail'
+  // and the persisted verdict was 'success'/'failure'/'external', bridged by a
+  // hand-written mapping in verify-live.mjs. VERDICT_SUCCESS / VERDICT_FAILURE /
+  // VERDICT_EXTERNAL are now the single vocabulary: the classifier returns
+  // them as kind, verify-live.mjs forwards verdict.kind as-is (no mapping),
+  // the recorder validates them, and the status page labels against them.
+  // These pins prove every consumer derives from the constants and the
+  // translation layer is gone.
+
+  const CLASSIFIER = readFileSync('scripts/verify-live-classify.mjs', 'utf8');
+  const RECORDER = readFileSync('scripts/record-verify-status.mjs', 'utf8');
+  const PAGE = readFileSync('app/status/page.tsx', 'utf8');
+  const LIVE = readFileSync('scripts/verify-live.mjs', 'utf8');
+
+  it('exports the exact verdict values as the constants', () => {
+    expect(VERDICT_SUCCESS).toBe('success');
+    expect(VERDICT_FAILURE).toBe('failure');
+    expect(VERDICT_EXTERNAL).toBe('external');
+  });
+
+  it('the classifier returns the constants — never the old pass/fail kind vocabulary', () => {
+    expect(CLASSIFIER).toContain('return { kind: VERDICT_SUCCESS };');
+    expect(CLASSIFIER).toContain('return { kind: VERDICT_EXTERNAL };');
+    expect(CLASSIFIER).toContain('return { kind: VERDICT_FAILURE, reason: SPARED_LIVE_REASON };');
+    expect(CLASSIFIER).toContain('return { kind: VERDICT_FAILURE };');
+    // The old vocabulary is gone from the classifier's returns.
+    expect(CLASSIFIER).not.toContain("return { kind: 'pass' };");
+    expect(CLASSIFIER).not.toContain("return { kind: 'fail' };");
+    expect(CLASSIFIER).not.toContain("return { kind: 'external' };");
+  });
+
+  it('verify-live.mjs forwards verdict.kind as-is — no pass→success / fail→failure mapping', () => {
+    expect(LIVE).toContain('const recordVerdict = verdict.kind;');
+    expect(LIVE).not.toContain("verdict.kind === 'pass' ? 'success'");
+    expect(LIVE).not.toContain("? 'external' : 'failure'");
+    expect(LIVE).toContain('verdict.kind === VERDICT_SUCCESS');
+    expect(LIVE).toContain('verdict.kind === VERDICT_EXTERNAL');
+    expect(LIVE).toContain('process.exit(verdict.kind === VERDICT_FAILURE ? 1 : 0);');
+  });
+
+  it('the recorder validates against the constants — never local literals', () => {
+    expect(RECORDER).toContain("from './verify-live-classify.mjs'");
+    expect(RECORDER).toContain('  VERDICT_EXTERNAL,');
+    expect(RECORDER).toContain('z.enum([VERDICT_SUCCESS, VERDICT_FAILURE, VERDICT_EXTERNAL])');
+    expect(RECORDER).toContain('verdict !== VERDICT_SUCCESS && verdict !== VERDICT_FAILURE && verdict !== VERDICT_EXTERNAL');
+    expect(RECORDER).toContain('if (verdict === VERDICT_EXTERNAL)');
+    expect(RECORDER).not.toContain("z.enum(['success', 'failure', 'external'])");
+    expect(RECORDER).not.toContain("if (verdict === 'external')");
+  });
+
+  it('the /status page labels against the constants — never page-local literals', () => {
+    expect(PAGE).toContain("from '../../scripts/verify-live-classify.mjs'");
+    expect(PAGE).toContain('  VERDICT_EXTERNAL,');
+    expect(PAGE).toContain('status?.verifyLive?.verdict === VERDICT_SUCCESS');
+    expect(PAGE).toContain('status?.verifyLive?.verdict === VERDICT_FAILURE');
+    expect(PAGE).toContain('status?.verifyLive?.verdict === VERDICT_EXTERNAL');
+    expect(PAGE).not.toContain("=== 'success'");
+    expect(PAGE).not.toContain("=== 'failure'");
+    expect(PAGE).not.toContain("=== 'external'");
+  });
+
+  it('a renamed verdict desyncs loudly: exact-value pin + literal-free pins fire together (mutation)', () => {
+    // Direction 1 — rename one constant value in an in-memory copy of the
+    // classifier: the exact-value pin above is what catches it (all consumers
+    // reference the constant, so only a deliberate value change surfaces).
+    const reworded = CLASSIFIER.replace(
+      "export const VERDICT_FAILURE = 'failure';",
+      "export const VERDICT_FAILURE = 'failed';",
+    );
+    expect(reworded, 'the reword mutation must actually land').not.toContain(
+      "export const VERDICT_FAILURE = 'failure';",
+    );
+    expect(reworded).toContain("export const VERDICT_FAILURE = 'failed';");
+
+    // Direction 2 — revert the recorder to a local literal: the literal-free
+    // pin must fail.
+    const recorderInlined = RECORDER.replace(
+      'z.enum([VERDICT_SUCCESS, VERDICT_FAILURE, VERDICT_EXTERNAL])',
+      "z.enum(['success', 'failure', 'external'])",
+    );
+    expect(recorderInlined, 'the recorder inline mutation must actually land').not.toContain(
+      'z.enum([VERDICT_SUCCESS, VERDICT_FAILURE, VERDICT_EXTERNAL])',
+    );
+    expect(recorderInlined).toContain("z.enum(['success', 'failure', 'external'])");
+
+    // Direction 3 — revert the page to a local literal: the page pin must fail.
+    // (replaceAll: the page compares VERDICT_FAILURE in both the class and the
+    // label ternaries, so a single replace would leave one literal behind.)
+    const pageInlined = PAGE.replaceAll('=== VERDICT_FAILURE', "=== 'failure'");
+    expect(pageInlined, 'the page inline mutation must actually land').not.toContain('=== VERDICT_FAILURE');
+    expect(pageInlined).toContain("=== 'failure'");
+
+    // Direction 4 — restore the hand-written mapping in verify-live.mjs: the
+    // no-mapping pin must fail.
+    const mappingRestored = LIVE.replace(
+      'const recordVerdict = verdict.kind;',
+      "const recordVerdict = verdict.kind === 'pass' ? 'success' : verdict.kind === 'external' ? 'external' : 'failure';",
+    );
+    expect(mappingRestored, 'the mapping-restore mutation must actually land').not.toContain(
+      'const recordVerdict = verdict.kind;',
+    );
+    expect(mappingRestored).toContain("verdict.kind === 'pass' ? 'success'");
+
+    // The pins are the guards — same discipline as the reason-value drills.
+    expect(reworded).not.toContain("export const VERDICT_FAILURE = 'failure';");
+    expect(reworded).toContain("export const VERDICT_FAILURE = 'failed';");
+    expect(recorderInlined).not.toContain('z.enum([VERDICT_SUCCESS, VERDICT_FAILURE, VERDICT_EXTERNAL])');
+    expect(recorderInlined).toContain("z.enum(['success', 'failure', 'external'])");
+    expect(pageInlined).not.toContain('=== VERDICT_FAILURE');
+    expect(pageInlined).toContain("=== 'failure'");
+    expect(mappingRestored).not.toContain('const recordVerdict = verdict.kind;');
+    expect(mappingRestored).toContain("verdict.kind === 'pass' ? 'success'");
+    expect(VERDICT_SUCCESS).toBe('success');
+    expect(VERDICT_FAILURE).toBe('failure');
+    expect(VERDICT_EXTERNAL).toBe('external');
   });
 });

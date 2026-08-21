@@ -43,7 +43,12 @@ import { resolve as resolvePath } from 'node:path';
 import { z } from 'zod';
 import { initializeApp, cert, getApps } from 'firebase-admin/app';
 import { getFirestore } from 'firebase-admin/firestore';
-import { SPARED_LIVE_REASON } from './verify-live-classify.mjs';
+import {
+  SPARED_LIVE_REASON,
+  VERDICT_EXTERNAL,
+  VERDICT_FAILURE,
+  VERDICT_SUCCESS,
+} from './verify-live-classify.mjs';
 
 // ── Status document schema ──────────────────────────────────────────────────
 // The doc is trusted by the /api/status route, so it is validated here BEFORE
@@ -51,7 +56,7 @@ import { SPARED_LIVE_REASON } from './verify-live-classify.mjs';
 // trusted. Same contract the repository layer enforces for every Firestore
 // write (AGENTS.md: all writes are schema validated).
 const verifyLiveStatusSchema = z.object({
-  verdict: z.enum(['success', 'failure', 'external']),
+  verdict: z.enum([VERDICT_SUCCESS, VERDICT_FAILURE, VERDICT_EXTERNAL]),
   commitSha: z
     .string()
     .regex(/^[0-9a-f]{40}$/i, 'commitSha must be a 40-hex git sha')
@@ -94,7 +99,7 @@ const ok = (m) => console.log(`  ✓ ${m}`);
 const fail = (m) => { console.error(`  ✗ FAIL: ${m}`); process.exit(1); };
 
 if (!SA_JSON) { fail('FIREBASE_SERVICE_ACCOUNT required (already wired in the verify-live job env)'); }
-if (verdict !== 'success' && verdict !== 'failure' && verdict !== 'external') {
+if (verdict !== VERDICT_SUCCESS && verdict !== VERDICT_FAILURE && verdict !== VERDICT_EXTERNAL) {
   fail(`verdict must be success|failure|external, got "${verdict}"`);
 }
 if (!commitSha) { fail('--commit <sha> required'); }
@@ -139,7 +144,7 @@ try {
   // is overwritten by every run, so a later green run would erase the outage.
   // Pin the last 'external' run to its own doc, written ONLY here — a
   // success/failure run never touches it, so the last credits outage survives.
-  if (verdict === 'external') {
+  if (verdict === VERDICT_EXTERNAL) {
     await db.collection('deploy_status').doc('last_external').set(parsed.data);
     ok(`pinned last Gemini-credits outage → deploy_status/last_external`);
   }

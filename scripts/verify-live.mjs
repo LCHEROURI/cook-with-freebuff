@@ -92,6 +92,9 @@ import {
   SIMULATED_REGRESSION_SIGNATURE,
   SPARED_LIVE_REASON,
   SPARED_LIVE_SESSION_SIGNATURE,
+  VERDICT_EXTERNAL,
+  VERDICT_FAILURE,
+  VERDICT_SUCCESS,
 } from './verify-live-classify.mjs';
 
 // ── Env loading (process.env wins; .env.local fills the gaps) ───────────────
@@ -433,7 +436,7 @@ process.on('uncaughtException', (e) => {
 // ── Main flow (try/finally so cleanup ALWAYS runs) ──────────────────────────
 let runExit = 0;
 // The final verdict (computed in `finally`; read by the exit line below).
-let verdict = { kind: 'fail' };
+let verdict = { kind: VERDICT_FAILURE };
 try {
   // Pre-run sweep FIRST — before seeding anything of our own.
   await sweepStaleProbes();
@@ -1602,10 +1605,10 @@ try {
   // set is classified. The Gemini prepayment-credits block is EXTERNAL: the
   // deployed app is healthy, the billing is not, so the deploy check passes
   // with a distinct report instead of a misleading red.
-  verdict = runExit === 0 ? classifyVerifyVerdict({ failures }) : { kind: 'fail' };
-  if (verdict.kind === 'pass') {
+  verdict = runExit === 0 ? classifyVerifyVerdict({ failures }) : { kind: VERDICT_FAILURE };
+  if (verdict.kind === VERDICT_SUCCESS) {
     console.error(`\nRESULT: PASS`);
-  } else if (verdict.kind === 'external') {
+  } else if (verdict.kind === VERDICT_EXTERNAL) {
     console.error(
       `\n⚠ EXTERNAL: Gemini API prepayment credits are depleted (429) — recipe generation and its ` +
         `downstream stages cannot run. The deployed app itself is healthy; this is a billing issue, not a ` +
@@ -1619,7 +1622,10 @@ try {
   // would otherwise make steps.verify.outcome == 'success' and the /status
   // page would claim full verification. GITHUB_ENV is set on Actions runners
   // only; locally this is a no-op.
-  const recordVerdict = verdict.kind === 'pass' ? 'success' : verdict.kind === 'external' ? 'external' : 'failure';
+  // verdict.kind IS the persisted verdict vocabulary now (the classifier
+  // returns the VERDICT_* constants, so no pass→success / fail→failure
+  // translation is needed). Forward it as-is.
+  const recordVerdict = verdict.kind;
   if (process.env.GITHUB_ENV) {
     writeFileSync(process.env.GITHUB_ENV, `VERIFY_LIVE_VERDICT=${recordVerdict}\n`, { flag: 'a' });
     // Distinguish an INTENTIONAL spare-path failure (a drill or an
@@ -1636,4 +1642,4 @@ try {
   }
   await cleanup();
 }
-process.exit(verdict.kind === 'fail' ? 1 : 0);
+process.exit(verdict.kind === VERDICT_FAILURE ? 1 : 0);

@@ -176,8 +176,8 @@ describe('scripts/verify-live.mjs · guaranteed cleanup', () => {
     // runExit/failures test with a classified verdict: PASS and the external
     // Gemini-credits verdict exit 0, a real FAIL exits 1. A crash (runExit
     // non-zero) is never external, so it still exits 1.
-    expect(SRC).toContain("process.exit(verdict.kind === 'fail' ? 1 : 0);");
-    expect(SRC).toContain("verdict = runExit === 0 ? classifyVerifyVerdict({ failures }) : { kind: 'fail' };");
+    expect(SRC).toContain('process.exit(verdict.kind === VERDICT_FAILURE ? 1 : 0);');
+    expect(SRC).toContain('verdict = runExit === 0 ? classifyVerifyVerdict({ failures }) : { kind: VERDICT_FAILURE };');
   });
 });
 
