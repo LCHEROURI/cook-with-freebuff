@@ -86,7 +86,7 @@ import { getAuth } from 'firebase-admin/auth';
 import { getFirestore } from 'firebase-admin/firestore';
 import { getAppCheck } from 'firebase-admin/app-check';
 import { getRemoteConfig } from 'firebase-admin/remote-config';
-import { classifyVerifyVerdict } from './verify-live-classify.mjs';
+import { classifyVerifyVerdict, SIMULATED_REGRESSION_SIGNATURE } from './verify-live-classify.mjs';
 
 // ── Env loading (process.env wins; .env.local fills the gaps) ───────────────
 function loadEnv() {
@@ -1244,7 +1244,11 @@ try {
   // failures.length === 2; the classifier MUST return reason=undefined
   // in that shape — sparing NEVER masks a genuine failure next to it.
   if (process.env.FORCE_VERIFY_LIVE_REGRESSION === 'true') {
-    fail('SIMULATED regression test — voice driver exercised with FORCE_VERIFY_LIVE_REGRESSION=true to prove sparing never masks a real failure');
+    // Single source of truth: the message is the exported
+    // SIMULATED_REGRESSION_SIGNATURE (verify-live-classify.mjs), shared with
+    // the regression-drill comparator and the classifier tests — a reworded
+    // message updates one constant, never this literal.
+    fail(SIMULATED_REGRESSION_SIGNATURE);
   }
   let driver = runDriver(1);
   let driverLog = `${driver.stdout ?? ''}\n${driver.stderr ?? ''}`;

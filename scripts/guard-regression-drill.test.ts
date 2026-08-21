@@ -2,6 +2,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { describe, expect, it } from 'vitest';
+import { SIMULATED_REGRESSION_SIGNATURE } from './verify-live-classify.mjs';
 
 // ============================================================================
 // scripts/guard-regression-drill.test.ts — pin the end-to-end spare +
@@ -16,7 +17,10 @@ import { describe, expect, it } from 'vitest';
 const SCRIPT = 'scripts/guard-regression-drill.mjs';
 const GOLDEN = 'scripts/__golden__/guard-regression-drill.txt';
 const FIXTURE = 'scripts/__golden__/regression-drill-log.txt';
-const SEAM_LINE = '✗ FAIL: SIMULATED regression test — voice driver exercised with FORCE_VERIFY_LIVE_REGRESSION=true to prove sparing never masks a real failure';
+// The seam line is derived from the exported constant (single source of
+// truth shared with verify-live.mjs's seam and the comparator's regex), so a
+// reworded message updates the constant and this golden pin tracks it.
+const SEAM_LINE = `✗ FAIL: ${SIMULATED_REGRESSION_SIGNATURE}`;
 
 describe('scripts/guard-regression-drill.mjs · the comparator + its golden', () => {
   it('exists as committed tooling (script + golden + fixture all on disk)', () => {
@@ -51,7 +55,7 @@ describe('scripts/guard-regression-drill.mjs · the comparator + its golden', ()
     for (const tok of ['<N>', '<ID>', '<PHASE>', '<RECIPE>', '<IDLE>']) {
       expect(body, `golden missing placeholder ${tok}`).toContain(tok);
     }
-    expect(body).toContain('SIMULATED regression test');
+    expect(body).toContain(SIMULATED_REGRESSION_SIGNATURE);
     expect(body).toContain('RESULT: FAIL (2)');
   });
 
@@ -62,7 +66,7 @@ describe('scripts/guard-regression-drill.mjs · the comparator + its golden', ()
     const log = readFileSync(resolve(process.cwd(), FIXTURE), 'utf8');
     expect(log).toContain('archiving and retrying once');
     expect(log).toContain('after the archive retry');
-    expect(log).toContain('SIMULATED regression test');
+    expect(log).toContain(SIMULATED_REGRESSION_SIGNATURE);
     expect(log).toContain('RESULT: FAIL (2)');
   });
 

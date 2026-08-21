@@ -4,6 +4,7 @@ import {
   classifyVerifyVerdict,
   GEMINI_CASCADE_PREFIXES,
   GEMINI_CREDITS_SIGNATURES,
+  SIMULATED_REGRESSION_SIGNATURE,
   SPARED_LIVE_SESSION_SIGNATURE,
 } from './verify-live-classify.mjs';
 
@@ -96,7 +97,7 @@ describe('scripts/verify-live-classify.mjs · behavior', () => {
     const v = classifyVerifyVerdict({
       failures: [
         'owner still has 1 ACTIVE/PAUSED session(s) blocking the UI starter after the archive retry: drill-li… (COLLECTING_INGREDIENTS, chicken_rice_onion_001, 8s idle)',
-        'SIMULATED regression test — voice driver exercised with FORCE_VERIFY_LIVE_REGRESSION=true to prove sparing never masks a real failure',
+        SIMULATED_REGRESSION_SIGNATURE,
       ],
     });
     expect(v.kind).toBe('fail');
@@ -247,7 +248,7 @@ describe('scripts/verify-live-classify.mjs · spared signature is mutation-proof
 
 describe('scripts/verify-live.mjs · wiring (the gate actually uses the classification)', () => {
   it('imports classifyVerifyVerdict and computes the verdict in the finally block', () => {
-    expect(LIVE).toContain("import { classifyVerifyVerdict } from './verify-live-classify.mjs';");
+    expect(LIVE).toContain("import { classifyVerifyVerdict, SIMULATED_REGRESSION_SIGNATURE } from './verify-live-classify.mjs';");
     expect(LIVE).toContain('verdict = runExit === 0 ? classifyVerifyVerdict({ failures }) : { kind: \'fail\' };');
   });
 
@@ -286,10 +287,12 @@ describe('scripts/verify-live.mjs · wiring (the gate actually uses the classifi
     // spare would break the round-trip proof.
     const seamIdx = LIVE.indexOf('FORCE_VERIFY_LIVE_REGRESSION');
     expect(seamIdx).toBeGreaterThan(-1);
-    // Must read the env var, branch on === 'true', and call fail() — same shape
-    // as the other guards in this file.
+    // Must read the env var, branch on === 'true', and call fail() with the
+    // SHARED constant — never a hard-coded literal (single source of truth;
+    // the codegen contract below pins golden === constant).
     expect(LIVE).toContain("if (process.env.FORCE_VERIFY_LIVE_REGRESSION === 'true')");
-    expect(LIVE).toContain("fail('SIMULATED regression test — voice driver exercised with FORCE_VERIFY_LIVE_REGRESSION=true to prove sparing never masks a real failure')");
+    expect(LIVE).toContain('fail(SIMULATED_REGRESSION_SIGNATURE)');
+    expect(LIVE).toContain("import { classifyVerifyVerdict, SIMULATED_REGRESSION_SIGNATURE } from './verify-live-classify.mjs';");
     // Position: must sit AFTER the guard's `fail(\`owner still has`, so a
     // spared live session can pair with the simulated regression. (The guard
     // block at the archive-retry path is the only producer of a spare failure.)
@@ -300,21 +303,13 @@ describe('scripts/verify-live.mjs · wiring (the gate actually uses the classifi
 
   it('pins the third drill evidence shape — the source-produced spare + seam pair must record reason=null', () => {
     // The no-mask guarantee is a CONTRACT between the drill seam
-    // (verify-live.mjs) and the classifier (verify-live-classify.mjs). Rather
-    // than hard-coding the failure strings in two places that can silently
-    // diverge, derive the evidence shape FROM the source: the seam's fail()
-    // message and the guard's spare-fail template are extracted here, so a
-    // future edit that renames either is caught by the extraction itself AND
-    // the no-mask assertion still runs against the new shape.
+    // (verify-live.mjs) and the classifier (verify-live-classify.mjs). The
+    // seam message is the exported SIMULATED_REGRESSION_SIGNATURE (single
+    // source of truth — the wiring pin above proves the seam passes THIS
+    // constant to fail()); the guard's spare-fail template is extracted from
+    // the source so a rename there is caught by the extraction itself.
 
-    // 1. The seam message — whatever string the seam's fail('SIMULATED …')
-    //    emits after the guard.
-    const seamMatch = LIVE.match(/fail\('(SIMULATED regression test[^']*)'\)/);
-    expect(
-      seamMatch,
-      'the FORCE_VERIFY_LIVE_REGRESSION seam must emit a SIMULATED regression fail message',
-    ).not.toBeNull();
-    const seamMessage = seamMatch![1];
+    // 1. The seam message — the shared constant, by construction.
 
     // 2. The guard's spare-fail template — extracted verbatim and rendered
     //    with the real drill payload (run 32429029312: one live blocker at
@@ -341,8 +336,54 @@ describe('scripts/verify-live.mjs · wiring (the gate actually uses the classifi
     //    and the reason must be undefined — sparing NEVER masks a real
     //    failure. (Live drill 32429029312 recorded exactly this: RESULT:
     //    FAIL (2) → verdict failure, reason null.)
-    const v = classifyVerifyVerdict({ failures: [spareLine, seamMessage] });
+    const v = classifyVerifyVerdict({ failures: [spareLine, SIMULATED_REGRESSION_SIGNATURE] });
     expect(v.kind).toBe('fail');
     expect(v.reason).toBeUndefined();
+  });
+});
+
+describe('scripts/verify-live-classify.mjs · the seam message is one source of truth (codegen)', () => {
+  // The seam's SIMULATED message used to live as separate literals in
+  // verify-live.mjs (the fail() call), guard-regression-drill.mjs (the
+  // SEAM_FAIL_RE), the golden, and the tests — four copies that could
+  // silently diverge. Now the exported constant is the single source of
+  // truth; these pins prove every consumer derives from it and nothing
+  // hard-codes a second copy.
+
+  it('exports the exact SIMULATED regression message as the constant', () => {
+    expect(SIMULATED_REGRESSION_SIGNATURE).toBe(
+      'SIMULATED regression test — voice driver exercised with FORCE_VERIFY_LIVE_REGRESSION=true to prove sparing never masks a real failure',
+    );
+  });
+
+  it('verify-live.mjs emits the constant — never a hard-coded literal', () => {
+    // The seam must pass the exported constant to fail(). A future edit that
+    // inlines the literal again (or rewords it here without updating the
+    // constant) breaks this pin.
+    expect(LIVE).toContain('fail(SIMULATED_REGRESSION_SIGNATURE)');
+    expect(LIVE).toContain("import { classifyVerifyVerdict, SIMULATED_REGRESSION_SIGNATURE } from './verify-live-classify.mjs';");
+    expect(LIVE).not.toContain("fail('SIMULATED regression test");
+  });
+
+  it('the regression comparator derives its seam regex from the constant', () => {
+    const DRILL = readFileSync('scripts/guard-regression-drill.mjs', 'utf8');
+    expect(DRILL).toContain("import { SIMULATED_REGRESSION_SIGNATURE } from './verify-live-classify.mjs';");
+    // The regex must be built from the constant — not a hard-coded alternation
+    // of the message. escapeRegExp + template literal is the canonical shape.
+    expect(DRILL).toMatch(/escapeRegExp\(SIMULATED_REGRESSION_SIGNATURE\)/);
+    expect(DRILL).not.toContain('SIMULATED regression test — voice driver exercised');
+  });
+
+  it('the committed golden seam line equals ✗ FAIL: + the constant', () => {
+    const golden = readFileSync('scripts/__golden__/guard-regression-drill.txt', 'utf8');
+    const seamLine = golden.split('\n').find((l) => l.includes('SIMULATED regression test'));
+    expect(seamLine).toBe(`✗ FAIL: ${SIMULATED_REGRESSION_SIGNATURE}`);
+  });
+
+  it('the classifier no-mask rule and the seam constant live in the same module (one home for the drill shape)', () => {
+    const CLASSIFY = readFileSync('scripts/verify-live-classify.mjs', 'utf8');
+    expect(CLASSIFY).toContain('export const SIMULATED_REGRESSION_SIGNATURE');
+    expect(CLASSIFY).toContain('failures.length === 1 && failures[0].includes(SPARED_LIVE_SESSION_SIGNATURE)');
+    expect(CLASSIFY.indexOf('SIMULATED_REGRESSION_SIGNATURE')).toBeLessThan(CLASSIFY.indexOf('classifyVerifyVerdict'));
   });
 });

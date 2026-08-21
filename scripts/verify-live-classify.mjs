@@ -66,6 +66,18 @@ export const GEMINI_CASCADE_PREFIXES = [
 export const SPARED_LIVE_SESSION_SIGNATURE =
   'ACTIVE/PAUSED session(s) blocking the UI starter after the archive retry';
 
+// The seam's SIMULATED regression message — verify-live.mjs passes THIS
+// constant to fail() when FORCE_VERIFY_LIVE_REGRESSION=true. It is the
+// single source of truth for the drill's evidence shape: the seam
+// (producer), the regression-drill comparator's SEAM_FAIL_RE (verifier), the
+// classifier's no-mask tests, and the committed golden all derive from this
+// one constant, so a reworded message can no longer silently diverge across
+// files. The classifier's no-mask rule (`failures.length === 1`) sits next
+// to it in the same module: a run carrying this message PLUS a spare is
+// exactly the two-failure shape that must record reason=null.
+export const SIMULATED_REGRESSION_SIGNATURE =
+  'SIMULATED regression test — voice driver exercised with FORCE_VERIFY_LIVE_REGRESSION=true to prove sparing never masks a real failure';
+
 /**
  * Classify a verify:live failure set into a verdict.
  *

@@ -32,6 +32,12 @@
 import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+// Single source of truth for the seam's message: the classifier module
+// exports SIMULATED_REGRESSION_SIGNATURE, and verify-live.mjs passes THAT
+// constant to fail(). This comparator's SEAM_FAIL_RE is built from the same
+// constant, so a reworded seam message updates one place and the regex
+// tracks it automatically — no hard-coded literal to drift.
+import { SIMULATED_REGRESSION_SIGNATURE } from './verify-live-classify.mjs';
 
 const ROOT = resolve(process.cwd());
 const GOLDEN = resolve(ROOT, 'scripts/__golden__/guard-regression-drill.txt');
@@ -104,10 +110,14 @@ function expectedLines() {
 //    and normalize the drill-run-variant fields to the FIXED_TOKENS. ─────
 const NOTE_RE = /^\s*-\s+owner has (\d+) ACTIVE\/PAUSED session\(s\) blocking the UI starter — archiving and retrying once: ([A-Za-z0-9-]+)… \(([^,]+), ([^,]+), (\d+)s idle\)/;
 const SPARE_FAIL_RE = /^\s*✗ FAIL:\s+owner still has (\d+) ACTIVE\/PAUSED session\(s\) blocking the UI starter after the archive retry: ([A-Za-z0-9-]+)… \(([^,]+), ([^,]+), (\d+)s idle\)/;
-// The seam's fail() message is fully static — no drill-run variants. Pinned
-// here AND in the golden; a reworded seam message breaks this regex (fail-
-// fast) before the diff could silently pass on a stale shape.
-const SEAM_FAIL_RE = /^\s*✗ FAIL:\s+SIMULATED regression test — voice driver exercised with FORCE_VERIFY_LIVE_REGRESSION=true to prove sparing never masks a real failure$/;
+// The seam's fail() message is fully static — no drill-run variants. The
+// regex is DERIVED from the exported SIMULATED_REGRESSION_SIGNATURE (single
+// source of truth shared with verify-live.mjs's seam), so a reworded seam
+// message updates one constant and this regex tracks it automatically. The
+// golden still carries the literal and the codegen contract pins golden ===
+// the constant, so the human-readable file can't drift either.
+const escapeRegExp = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+const SEAM_FAIL_RE = new RegExp(`^\\s*✗ FAIL:\\s+${escapeRegExp(SIMULATED_REGRESSION_SIGNATURE)}$`);
 // The RESULT count line proves exactly TWO failures (spare + seam). A third
 // unexpected failure changes the count and breaks the diff — the no-mask
 // shape must stay exactly two.
