@@ -76,6 +76,28 @@ describe('scripts/guard-regression-drill.mjs · the comparator + its golden', ()
     expect(nonComment[3]).toBe(RESULT_LINE);
   });
 
+  it('keeps the regression-drill-log.txt fixture lines equal to the source-derived renderer templates', () => {
+    // The fixture is the comparator's --diff input, so it must equal EXACTLY
+    // what verify-live.mjs's producers emit (through the shared renderer
+    // module) — never a hand-edited copy that drifted from the guard's
+    // messages. Each non-comment fixture line is re-derived from
+    // renderNoteLine/renderSpareFailLine/renderSeamFailLine/renderResultLine
+    // with the concrete drill values captured from live run 32429029312, so
+    // a reworded guard message (or a stale fixture) fails here in lockstep
+    // with the golden and the comparator's regex extraction.
+    const fixture = readFileSync(resolve(process.cwd(), FIXTURE), 'utf8');
+    const lines = fixture.split('\n').filter((l) => !l.startsWith('#')).map((l) => l.trim()).filter(Boolean);
+    expect(lines).toHaveLength(4);
+    expect(lines[0]).toBe(renderNoteLine({
+      n: '1', id: 'drill-li', phase: 'COLLECTING_INGREDIENTS', recipe: 'chicken_rice_onion_001', idle: '12',
+    }));
+    expect(lines[1]).toBe(renderSpareFailLine({
+      n: '1', id: 'drill-li', phase: 'COLLECTING_INGREDIENTS', recipe: 'chicken_rice_onion_001', idle: '13',
+    }));
+    expect(lines[2]).toBe(SEAM_LINE);
+    expect(lines[3]).toBe(RESULT_LINE);
+  });
+
   it('keeps the five load-bearing placeholders AND the fully-static seam + count lines', () => {
     // The first two lines carry the drill-run-variant placeholders (same
     // convention as the spare golden). The seam line and the RESULT count
