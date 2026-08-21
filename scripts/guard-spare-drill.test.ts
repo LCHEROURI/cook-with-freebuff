@@ -350,7 +350,7 @@ describe('scripts/guard-spare-drill.mjs · the live /api/status reason assertion
   it('calls the assertion only after the golden matched, before cleanup', () => {
     const src = SRC();
     const goldenIdx = src.indexOf('spare-path lines match the golden');
-    const assertIdx = src.indexOf('await assertLiveStatusReason(runId);');
+    const assertIdx = src.indexOf('await assertLiveStatusReason(runId, failureCountFromLog(log));');
     // Anchor to the delete AFTER the assertion: the seed section now runs a
     // delete-first (idempotent seed), so a bare indexOf("'--delete'") would
     // match that earlier occurrence and vacuously pass.
@@ -360,12 +360,70 @@ describe('scripts/guard-spare-drill.mjs · the live /api/status reason assertion
     expect(cleanupIdx).toBeGreaterThan(assertIdx);
   });
 
+  it('derives the failure count from the log\'s RESULT line to tell spare-only from mixed runs', () => {
+    // The nightly 32481063037 failure: the golden diff passed (spare
+    // evidence perfect) but the run carried a CO-OCCURRING voice-driver
+    // flake, so the classifier's no-mask rule recorded reason=null and the
+    // drill red on the reason assertion. The failure count is knowable from
+    // the log: verify-live.mjs prints `RESULT: FAIL (N)` (failures.length)
+    // or `RESULT: FAIL (crash)` in its finally block — the LAST match.
+    const src = SRC();
+    expect(src).toContain('function failureCountFromLog(logText) {');
+    // The RESULT-count regex literal as it appears in the source (escaped
+    // parens + \\d): pinning the exact literal means a rename of the count
+    // syntax (e.g. dropping the crash branch) reddens here.
+    expect(src).toContain('/RESULT: FAIL \\((\\d+|crash)\\)/g');
+    // The count must be passed into the assertion — dropping it would make
+    // the mixed-run exemption unreachable and re-red the co-occurring-flake
+    // case.
+    expect(src).toContain('await assertLiveStatusReason(runId, failureCountFromLog(log));');
+    expect(src).toContain('async function assertLiveStatusReason(runId, failureCount) {');
+  });
+
+  it('spare-only runs still require the spared reason — a missing reason is a real guard regression', () => {
+    // failures.length === 1: the classifier MUST record the spared reason.
+    // A missing/foreign reason there means the classifier or recorder broke
+    // (a genuine regression), so the strict throw stays for count 1.
+    const src = SRC();
+    expect(src).toContain('if (failureCount === 1) {');
+    expect(src).toContain('v.reason !== SPARED_LIVE_REASON');
+    expect(src).toContain('expected the exported SPARED_LIVE_REASON constant');
+  });
+
+  it('mixed-failure runs require NO reason (no-mask) and report the spare evidence separately', () => {
+    // failures.length >= 2: the no-mask rule forbids the spared reason next
+    // to a real failure. The spare evidence was already proven by the golden
+    // diff; the drill must NOT red on the reason — it notes the co-occurring
+    // failure and passes. A reason present on a mixed run is a no-mask
+    // violation (sparing masked a real failure).
+    const src = SRC();
+    expect(src).toContain("typeof failureCount === 'number' && failureCount >= 2");
+    expect(src).toContain('no-mask violation: mixed-failure run');
+    expect(src).toContain('spare evidence proven separately');
+    expect(src).toContain('reason correctly null per the no-mask rule');
+    // The mixed branch returns (does not throw) — a co-occurring flake must
+    // not red the drill. Pin the return-side ok() line verbatim.
+    expect(src).toContain("ok(`live /api/status: mixed-failure run (${failureCount} failures) — spare evidence proven separately (reason=${v.reason ?? 'null'}) for run ${runId}`);");
+  });
+
+  it('keeps the crash/unknown path conservative — only a proven mixed count earns the exemption', () => {
+    // failureCount 'crash' or null (unparseable): the run did not complete a
+    // clean failure set, so the mixed-path exemption cannot be claimed. Stay
+    // conservative — require the spared reason exactly as a spare-only run.
+    const src = SRC();
+    expect(src).toContain("failureCount is 'crash' or null (unparseable)");
+    expect(src).toContain('the mixed-path exemption cannot be');
+  });
+
   it('proves the reason-comparison pin catches a literal or a dropped guard (mutation)', () => {
     const src = SRC();
 
     // Direction 1 — revert the comparison to the raw literal: the
-    // literal-free pin must fail.
-    const inlined = src.replace('v.reason !== SPARED_LIVE_REASON', "v.reason !== 'spared-live-session'");
+    // literal-free pin must fail. The comparison now appears in BOTH the
+    // spare-only branch (count 1) and the crash/unknown path, so the
+    // mutation must replace ALL occurrences — a bare replace would leave
+    // one and the pin would miss it.
+    const inlined = src.split('v.reason !== SPARED_LIVE_REASON').join("v.reason !== 'spared-live-session'");
     expect(inlined, 'the inline mutation must actually land').not.toBe(src);
     expect(inlined).toContain("v.reason !== 'spared-live-session'");
     expect(inlined).not.toContain('v.reason !== SPARED_LIVE_REASON');
@@ -377,15 +435,53 @@ describe('scripts/guard-spare-drill.mjs · the live /api/status reason assertion
     expect(droppedRunUrl).not.toContain('v.runUrl.includes(`/runs/${runId}`)');
 
     // Direction 3 — drop the whole assertion call: the ordering pin must fail.
-    const droppedCall = src.replace('await assertLiveStatusReason(runId);', '');
+    const droppedCall = src.replace('await assertLiveStatusReason(runId, failureCountFromLog(log));', '');
     expect(droppedCall, 'the dropped-call mutation must actually land').not.toBe(src);
-    expect(droppedCall).not.toContain('await assertLiveStatusReason(runId);');
+    expect(droppedCall).not.toContain('await assertLiveStatusReason(runId, failureCountFromLog(log));');
 
     // The pins are the guards — same discipline as the dispatch drills.
     expect(src).toContain('v.reason !== SPARED_LIVE_REASON');
     expect(src).not.toContain("v.reason !== 'spared-live-session'");
     expect(src).toContain('v.runUrl.includes(`/runs/${runId}`)');
-    expect(src).toContain('await assertLiveStatusReason(runId);');
+    expect(src).toContain('await assertLiveStatusReason(runId, failureCountFromLog(log));');
     expect(SPARED_LIVE_REASON).toBe('spared-live-session');
+  });
+
+  it('proves the mixed-run distinction is load-bearing — a revert to strict-only reddens the new pins (mutation)', () => {
+    const src = SRC();
+
+    // Direction 1 — collapse the count check so every run is treated as
+    // spare-only (the mixed branch becomes unreachable): the mixed-run pins
+    // above (>= 2 branch, no-mask throw, separate-report) must fail.
+    const collapsed = src.replace(
+      "if (typeof failureCount === 'number' && failureCount >= 2) {",
+      'if (false) {',
+    );
+    expect(collapsed, 'the collapse mutation must actually land').not.toBe(src);
+    expect(collapsed).not.toContain("typeof failureCount === 'number' && failureCount >= 2");
+
+    // Direction 2 — drop the no-mask throw inside the mixed branch: a mixed
+    // run with a wrongly-present reason would now pass silently instead of
+    // reddening as a no-mask violation.
+    const droppedNoMask = src.replace(
+      "throw new Error(`no-mask violation: mixed-failure run (${failureCount} failures) recorded reason ${JSON.stringify(v.reason)} — sparing masked a real failure`);",
+      '',
+    );
+    expect(droppedNoMask, 'the dropped-no-mask mutation must actually land').not.toBe(src);
+    expect(droppedNoMask).not.toContain('no-mask violation: mixed-failure run');
+
+    // Direction 3 — revert the call site to the old bare signature (no
+    // failure count): the mixed branch can never be reached from main.
+    const bareCall = src.replace(
+      'await assertLiveStatusReason(runId, failureCountFromLog(log));',
+      'await assertLiveStatusReason(runId);',
+    );
+    expect(bareCall, 'the bare-call mutation must actually land').not.toBe(src);
+    expect(bareCall).not.toContain('failureCountFromLog(log)');
+
+    // The pins are the guards.
+    expect(src).toContain("typeof failureCount === 'number' && failureCount >= 2");
+    expect(src).toContain('no-mask violation: mixed-failure run');
+    expect(src).toContain('await assertLiveStatusReason(runId, failureCountFromLog(log));');
   });
 });

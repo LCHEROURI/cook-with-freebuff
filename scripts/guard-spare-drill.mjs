@@ -200,17 +200,36 @@ function fetchJobLog(jobId) {
   return gh(['run', 'view', '--job', String(jobId), '--log']);
 }
 
+// The verify-live driver prints its final RESULT line LAST (in the finally
+// block after every stage, so any sub-driver RESULT output appears earlier).
+// The LAST `RESULT: FAIL (N)` match is therefore the run's OWN failure
+// count: 1 for a spare-only run, >= 2 for a MIXED run (spare + a
+// co-occurring failure like a voice-driver flake), or 'crash' when the
+// driver itself crashed. The count drives the reason assertion below:
+// a spare-only failure MUST record the spared reason (a missing reason
+// there is a real guard regression — the classifier/recorder broke), while
+// a mixed run MUST record NO reason (the no-mask rule — the classifier
+// refuses to label a run that also carries a real failure). The spare
+// evidence itself was already proven by the golden diff; the mixed case is
+// reported separately instead of reddening the drill.
+function failureCountFromLog(logText) {
+  const matches = [...logText.matchAll(/RESULT: FAIL \((\d+|crash)\)/g)];
+  if (matches.length === 0) return null;
+  const last = matches[matches.length - 1][1];
+  return last === 'crash' ? 'crash' : Number(last);
+}
+
 // ── Live-reason assertion: the drill's reason must reach the DEPLOYED
 //    endpoint, not just the log. After the golden match, mint a real owner
 //    token (custom token → identitytoolkit, the same exchange verify-live.mjs
 //    uses), GET the public /api/status route, and assert the recorded
-//    verifyLive.reason EQUALS the exported SPARED_LIVE_REASON constant. The
+//    verifyLive.reason against the failure count derived from the log. The
 //    runUrl cross-check is load-bearing: /api/status reads the single-slot
 //    deploy_status/verify_live doc, and a CONCURRENT ci.yml run (e.g. the
 //    weekly boundary drill, or a push) can overwrite it after our drill
 //    finished — asserting the runUrl belongs to THIS run first means a stale
 //    or foreign record fails the drill instead of falsely passing it. ────────
-async function assertLiveStatusReason(runId) {
+async function assertLiveStatusReason(runId, failureCount) {
   const { initializeApp, cert, getApps } = await import('firebase-admin/app');
   const { getAuth } = await import('firebase-admin/auth');
   const SA_JSON = process.env.FIREBASE_SERVICE_ACCOUNT;
@@ -248,6 +267,33 @@ async function assertLiveStatusReason(runId) {
   if (typeof v.runUrl !== 'string' || !v.runUrl.includes(`/runs/${runId}`)) {
     throw new Error(`recorded runUrl ${v.runUrl ?? '<none>'} is not the drill run ${runId} — a concurrent run overwrote the record; cannot assert the live reason`);
   }
+  if (failureCount === 1) {
+    // Spare-ONLY failure: the classifier must have recorded the spared
+    // reason. A missing/foreign reason here is a REAL guard regression —
+    // red the drill exactly as before.
+    if (v.reason !== SPARED_LIVE_REASON) {
+      throw new Error(`/api/status reason is ${JSON.stringify(v.reason)}, expected the exported SPARED_LIVE_REASON constant (${SPARED_LIVE_REASON})`);
+    }
+    ok(`live /api/status: verifyLive.reason === SPARED_LIVE_REASON (${v.reason}) for run ${runId}`);
+    return;
+  }
+  if (typeof failureCount === 'number' && failureCount >= 2) {
+    // MIXED run: the spare sits next to a co-occurring failure (e.g. a
+    // voice-driver flake). The no-mask rule REQUIRES reason to be null
+    // here — a spared reason next to a real failure would mask it. The
+    // spare evidence was already proven by the golden diff; report it
+    // separately instead of reddening the drill.
+    if (v.reason !== undefined && v.reason !== null) {
+      throw new Error(`no-mask violation: mixed-failure run (${failureCount} failures) recorded reason ${JSON.stringify(v.reason)} — sparing masked a real failure`);
+    }
+    note(`run carried ${failureCount} failures (spare + ${failureCount - 1} co-occurring) — reason correctly null per the no-mask rule`);
+    ok(`live /api/status: mixed-failure run (${failureCount} failures) — spare evidence proven separately (reason=${v.reason ?? 'null'}) for run ${runId}`);
+    return;
+  }
+  // failureCount is 'crash' or null (unparseable): the run did not
+  // complete a clean failure set, so the mixed-path exemption cannot be
+  // claimed. Stay conservative — require the spared reason exactly as a
+  // spare-only run would.
   if (v.reason !== SPARED_LIVE_REASON) {
     throw new Error(`/api/status reason is ${JSON.stringify(v.reason)}, expected the exported SPARED_LIVE_REASON constant (${SPARED_LIVE_REASON})`);
   }
@@ -396,8 +442,11 @@ async function main() {
 
   // The drill is not complete until the DEPLOYED endpoint reports the reason
   // it just produced. Run the live assertion only after the log golden
-  // matched, so a log-shaped failure exits 1/2 before this step.
-  await assertLiveStatusReason(runId);
+  // matched, so a log-shaped failure exits 1/2 before this step. The failure
+  // count derived from the log's RESULT line tells the assertion whether the
+  // run was spare-only (reason MUST be the spared constant) or mixed with a
+  // co-occurring failure (reason MUST be null per the no-mask rule).
+  await assertLiveStatusReason(runId, failureCountFromLog(log));
 
   note('cleanup: deleting drill-live-session');
   runNodeWithEnv(resolve(ROOT, 'scripts/drill-live-session.mjs'), ['--delete']);
