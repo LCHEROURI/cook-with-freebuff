@@ -4,16 +4,16 @@
   "type": "refactor",
   "status": "in_progress",
   "created": "2026-08-21T23:07:44Z",
-  "updated": "2026-08-21T23:27:51Z",
+  "updated": "2026-08-21T23:31:23Z",
   "current_phase": 2,
-  "current_task": "2.1",
+  "current_task": "2.2",
   "phases": {
     "total": 4,
     "completed": 1
   },
   "tasks": {
     "total": 25,
-    "completed": 6
+    "completed": 7
   },
   "commits": [
     "34d0979: docs(security): inventory persistence write contracts",
@@ -22,6 +22,7 @@
     "a0ac044: fix(security): enforce repository immutability contracts",
     "eebcac6: refactor(security): centralize validated patch writes",
     "6b7b297: test(security): preserve immutable timer metadata",
-    "a5647d8: docs(security): record phase 1 verification"
+    "a5647d8: docs(security): record phase 1 verification",
+    "4ba8a4e: test(security): add Firestore rules harness"
   ]
 }
