@@ -36,6 +36,15 @@ jobs:
   compare-against-golden:
     name: Compare live spare-path lines against scripts/__golden__/guard-spare-drill.txt
     runs-on: ubuntu-latest
+    # The comparator dispatches ci.yml (`gh workflow run`) and uploads the
+    # captured log, so the token needs actions:write (dispatch + artifacts).
+    # Without it, `gh workflow run` fails silently and the comparator exits
+    # 2 with "workflow dispatched but the new ci.yml run could not be
+    # located" — the root cause of every scheduled nightly failure so far
+    # (verified in nightly runs 32464195233 / 32349774634).
+    permissions:
+      contents: read
+      actions: write
     # Worst case: ci.yml deploy + verify:live + 24 × 15s keep-alive + 30 × 15s
     # completion polls ≈ ~25 min. 35 min gives headroom for queue time.
     timeout-minutes: 35

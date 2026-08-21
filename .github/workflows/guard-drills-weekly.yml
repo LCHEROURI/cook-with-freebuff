@@ -54,6 +54,16 @@ jobs:
   spare-drill:
     name: Compare live spare-path lines against scripts/__golden__/guard-spare-drill.txt
     runs-on: ubuntu-latest
+    # The comparator dispatches ci.yml (`gh workflow run`) and uploads the
+    # captured log, so the token needs actions:write (dispatch + artifacts).
+    # Without it, `gh workflow run` fails silently and the comparator exits
+    # 2 with "workflow dispatched but the new ci.yml run could not be
+    # located" — the root cause of every scheduled drill failure before
+    # this block was added (verified in nightly 32464195233 / weekly
+    # 32477234630).
+    permissions:
+      contents: read
+      actions: write
     # Worst case: ci.yml deploy + verify:live + 24 × 15s keep-alive + 30 ×
     # 15s completion polls ≈ ~25 min. 35 min matches the daily spare
     # workflow's safety budget.
@@ -117,6 +127,10 @@ jobs:
     name: Compare live boundary-path lines against scripts/__golden__/guard-boundary-drill.txt
     needs: spare-drill
     runs-on: ubuntu-latest
+    # Same token requirement as the spare job: dispatch + artifact upload.
+    permissions:
+      contents: read
+      actions: write
     timeout-minutes: 35
 
     steps:
@@ -177,6 +191,10 @@ jobs:
     name: Compare live spare+regression lines against scripts/__golden__/guard-regression-drill.txt
     needs: boundary-drill
     runs-on: ubuntu-latest
+    # Same token requirement as the spare/boundary jobs: dispatch + upload.
+    permissions:
+      contents: read
+      actions: write
     timeout-minutes: 35
 
     steps:

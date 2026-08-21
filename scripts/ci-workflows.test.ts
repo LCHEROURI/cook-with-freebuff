@@ -1098,6 +1098,19 @@ describe('.github/workflows/spare-drill-nightly.yml · nightly spare-path golden
     expect(SPARE_DRILL_NIGHTLY).toContain('/tmp/vlive-guard-spare-drill.log');
     expect(SPARE_DRILL_NIGHTLY).toContain('retention-days: 14');
   });
+
+  it('grants actions:write so the comparator can actually dispatch ci.yml', () => {
+    // The comparator dispatches ci.yml via `gh workflow run`, which needs
+    // actions:write on the token. Before this block existed the job's
+    // GITHUB_TOKEN was silently read-only (repo default), so EVERY
+    // scheduled nightly failed with "workflow dispatched but the new
+    // ci.yml run could not be located" (runs 32464195233 / 32349774634)
+    // — the 403 from gh workflow run is swallowed by the comparator's
+    // gh() helper, leaving the run-discovery loop empty. A future edit
+    // that removes or narrows this block re-breaks the dispatch on the
+    // first overnight run — fail CI here instead.
+    expect(SPARE_DRILL_NIGHTLY).toMatch(/permissions:\n\s+contents: read\n\s+actions: write/);
+  });
 });
 
 describe('.github/workflows/guard-drills-weekly.yml · Sunday-night spare + boundary + regression comparators', () => {
@@ -1137,6 +1150,24 @@ describe('.github/workflows/guard-drills-weekly.yml · Sunday-night spare + boun
     expect(GUARD_DRILLS_WEEKLY).toContain('FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}');
     expect(GUARD_DRILLS_WEEKLY).toContain('NEXT_PUBLIC_FIREBASE_API_KEY: ${{ secrets.NEXT_PUBLIC_FIREBASE_API_KEY }}');
     expect(GUARD_DRILLS_WEEKLY).toContain('NEXT_PUBLIC_FIREBASE_APP_ID: ${{ secrets.NEXT_PUBLIC_FIREBASE_APP_ID }}');
+  });
+
+  it('grants actions:write on EVERY job so each comparator can dispatch ci.yml', () => {
+    // Same root cause as the nightly (see the spare-drill-nightly
+    // describe): each comparator dispatches ci.yml via `gh workflow run`,
+    // which needs actions:write. The jobs' GITHUB_TOKEN was silently
+    // read-only (repo default) until these blocks existed — the first
+    // manual weekly dispatch (32477234630) failed in the spare leg with
+    // "workflow dispatched but the new ci.yml run could not be located",
+    // cascading skips to the boundary and regression legs. All three
+    // jobs must carry the block — a drop on any one leg re-breaks that
+    // leg's dispatch on the next Sunday night.
+    for (const job of ['spare-drill', 'boundary-drill', 'regression-drill']) {
+      const jobStart = GUARD_DRILLS_WEEKLY.indexOf(`${job}:`);
+      expect(jobStart, `job ${job} must exist`).toBeGreaterThan(-1);
+      const jobSection = GUARD_DRILLS_WEEKLY.slice(jobStart);
+      expect(jobSection).toMatch(/permissions:\n\s+contents: read\n\s+actions: write/);
+    }
   });
 
   it('runs the boundary comparator AFTER the spare via needs:', () => {
