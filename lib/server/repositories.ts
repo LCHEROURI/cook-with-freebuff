@@ -67,14 +67,14 @@ function assertImmutableFields<T extends object>(
   current: T,
   proposed: Partial<T>,
   fields: readonly (keyof T)[],
+  completeDocument = false,
 ): void {
   const currentRecord = current as Record<keyof T, unknown>;
   const proposedRecord = proposed as Record<keyof T, unknown>;
   for (const field of fields) {
-    if (
-      Object.prototype.hasOwnProperty.call(proposed, field)
-      && !Object.is(proposedRecord[field], currentRecord[field])
-    ) {
+    const fieldIsProposed = Object.prototype.hasOwnProperty.call(proposed, field);
+    if ((completeDocument || fieldIsProposed)
+      && !Object.is(proposedRecord[field], currentRecord[field])) {
       throw new Error(`Cannot change immutable field ${String(field)}`);
     }
   }
@@ -108,6 +108,7 @@ async function writeValidatedDocument<T extends object>(
         snap.data() as T,
         parsed,
         options.immutableFields,
+        true,
       );
     }
   }
