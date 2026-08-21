@@ -4,8 +4,8 @@
 
 - [x] Task 1.1: Inventory every Cook With Freebuff Firestore write and classify its schema, immutable fields, concurrency, and audit requirements
 - [x] Task 1.2: Add failing repository tests proving invalid full writes and invalid partial updates are rejected before Firestore mutation
-- [~] Task 1.3: Implement schema-backed full-document and patch validation for recipes, sessions, events, timers, pantry items, leftovers, grocery items, dietary profiles, tool logs, and correlation markers
-- [ ] Task 1.4: Enforce immutable IDs, user ownership, creation timestamps, and existing optimistic-concurrency/correlation-marker invariants
+- [x] Task 1.3: Implement schema-backed full-document and patch validation for recipes, sessions, events, timers, pantry items, leftovers, grocery items, dietary profiles, tool logs, and correlation markers
+- [~] Task 1.4: Enforce immutable IDs, user ownership, creation timestamps, and existing optimistic-concurrency/correlation-marker invariants
 - [ ] Task 1.5: Refactor shared validation helpers while keeping focused repository and service suites green
 - [ ] Task 1.6: Conductor - User Manual Verification 'Repository write contracts'
 
