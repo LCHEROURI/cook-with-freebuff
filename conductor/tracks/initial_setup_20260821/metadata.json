@@ -9,5 +9,7 @@
   "current_task": null,
   "phases": { "total": 2, "completed": 2 },
   "tasks": { "total": 5, "completed": 5 },
-  "commits": []
+  "commits": [
+    "606e216: chore(conductor): initialize cook-with-freebuff context"
+  ]
 }

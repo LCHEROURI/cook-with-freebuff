@@ -1,0 +1,19 @@
+{
+  "id": "secure_real_data_20260821",
+  "title": "Phase 3A secure real-data hardening",
+  "type": "refactor",
+  "status": "pending",
+  "created": "2026-08-21T23:07:44Z",
+  "updated": "2026-08-21T23:07:44Z",
+  "current_phase": 1,
+  "current_task": null,
+  "phases": {
+    "total": 4,
+    "completed": 0
+  },
+  "tasks": {
+    "total": 25,
+    "completed": 0
+  },
+  "commits": []
+}
