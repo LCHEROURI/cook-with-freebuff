@@ -20,8 +20,8 @@
 - [x] Task 2.1: Add a Cook With Freebuff emulator-rules harness with deterministic owner, second-user, and unauthenticated fixtures
 - [x] Task 2.2: Add failing rules tests for cross-user access, ownership transfer, and forbidden operations across every Cook With Freebuff collection
 - [x] Task 2.3: Tighten only the Cook With Freebuff clauses in the union ruleset while preserving non-Cook clauses byte-for-byte
-- [~] Task 2.4: Add a contract check that detects unintended edits outside the Cook With Freebuff rules section and documents the sibling-rules synchronization release prerequisite
-- [ ] Task 2.5: Run repository and emulator tests against representative existing document shapes to prove backward compatibility
+- [x] Task 2.4: Add a contract check that detects unintended edits outside the Cook With Freebuff rules section and documents the sibling-rules synchronization release prerequisite
+- [~] Task 2.5: Run repository and emulator tests against representative existing document shapes to prove backward compatibility
 - [ ] Task 2.6: Conductor - User Manual Verification 'Firestore authorization contract'
 
 ### Phase 2 verification

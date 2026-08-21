@@ -4,16 +4,16 @@
   "type": "refactor",
   "status": "in_progress",
   "created": "2026-08-21T23:07:44Z",
-  "updated": "2026-08-21T23:33:56Z",
+  "updated": "2026-08-21T23:36:51Z",
   "current_phase": 2,
-  "current_task": "2.4",
+  "current_task": "2.5",
   "phases": {
     "total": 4,
     "completed": 1
   },
   "tasks": {
     "total": 25,
-    "completed": 9
+    "completed": 10
   },
   "commits": [
     "34d0979: docs(security): inventory persistence write contracts",
@@ -25,6 +25,7 @@
     "a5647d8: docs(security): record phase 1 verification",
     "4ba8a4e: test(security): add Firestore rules harness",
     "2294706: test(security): pin Cook rules ownership gaps",
-    "838caf3: fix(security): preserve Cook document ownership"
+    "838caf3: fix(security): preserve Cook document ownership",
+    "14337d3: test(security): lock union rules scope"
   ]
 }
