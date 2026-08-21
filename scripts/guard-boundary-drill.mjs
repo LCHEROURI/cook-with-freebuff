@@ -28,6 +28,12 @@
 import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+// Single source of truth for the NOTE line's shared prefix: the classifier
+// module derives BLOCKING_SESSION_PREFIX from SPARED_LIVE_SESSION_SIGNATURE
+// (which verify-live.mjs embeds in both the guard's note(...) and fail(...)).
+// This comparator's NOTE_RE is built from that constant so a reworded
+// signature updates the extraction automatically.
+import { BLOCKING_SESSION_PREFIX } from './verify-live-classify.mjs';
 
 const ROOT = resolve(process.cwd());
 const GOLDEN = resolve(ROOT, 'scripts/__golden__/guard-boundary-drill.txt');
@@ -112,7 +118,11 @@ function expectedLines() {
 //    it unconditionally on a blocker. The second regex matches the
 //    archive-path OK line; a FAIL line is NOT expected here, the absence
 //    is what proves the corrective path took the retry. ───────────────
-const NOTE_RE = /^\s*-\s+owner has (\d+) ACTIVE\/PAUSED session\(s\) blocking the UI starter — archiving and retrying once: ([A-Za-z0-9-]+)… \(([^,]+), ([^,]+), (\d+)s idle\)/;
+const escapeRegExp = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+const NOTE_RE = new RegExp(`^\\s*-\\s+owner has (\\d+) ${escapeRegExp(BLOCKING_SESSION_PREFIX)} — archiving and retrying once: ([A-Za-z0-9-]+)… \\(([^,]+), ([^,]+), (\\d+)s idle\\)`);
+// The archive-OK line carries no spare signature text ("archived N blocking
+// session(s) — retried, owner is clean") — a distinct corrective-path message,
+// kept literal.
 const OK_RE = /^\s*✓\s+archived (\d+) blocking session\(s\) — retried, owner is clean before the UI starter/;
 
 function normalize(line, re) {
@@ -129,7 +139,7 @@ function normalize(line, re) {
 // the golden is the canonical shape.
 function expandNote(m) {
   const [, n, id, phase, recipe, idle] = m;
-  return `- owner has ${n} ACTIVE/PAUSED session(s) blocking the UI starter — archiving and retrying once: ${id}… (${phase}, ${recipe}, ${idle}s idle)`;
+  return `- owner has ${n} ${BLOCKING_SESSION_PREFIX} — archiving and retrying once: ${id}… (${phase}, ${recipe}, ${idle}s idle)`;
 }
 function expandOk(m) {
   const [, n] = m;

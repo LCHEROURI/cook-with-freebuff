@@ -2,7 +2,11 @@ import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { describe, expect, it } from 'vitest';
-import { SIMULATED_REGRESSION_SIGNATURE } from './verify-live-classify.mjs';
+import {
+  BLOCKING_SESSION_PREFIX,
+  SIMULATED_REGRESSION_SIGNATURE,
+  SPARED_LIVE_SESSION_SIGNATURE,
+} from './verify-live-classify.mjs';
 
 // ============================================================================
 // scripts/guard-regression-drill.test.ts — pin the end-to-end spare +
@@ -61,8 +65,8 @@ describe('scripts/guard-regression-drill.mjs · the comparator + its golden', ()
     const body = readFileSync(resolve(process.cwd(), GOLDEN), 'utf8');
     const nonComment = body.split('\n').filter((l) => !l.startsWith('#')).map((l) => l.trim()).filter(Boolean);
     expect(nonComment).toHaveLength(4);
-    expect(nonComment[0]).toBe('- owner has <N> ACTIVE/PAUSED session(s) blocking the UI starter — archiving and retrying once: <ID>… (<PHASE>, <RECIPE>, <IDLE>s idle)');
-    expect(nonComment[1]).toBe('✗ FAIL: owner still has <N> ACTIVE/PAUSED session(s) blocking the UI starter after the archive retry: <ID>… (<PHASE>, <RECIPE>, <IDLE>s idle)');
+    expect(nonComment[0]).toBe(`- owner has <N> ${BLOCKING_SESSION_PREFIX} — archiving and retrying once: <ID>… (<PHASE>, <RECIPE>, <IDLE>s idle)`);
+    expect(nonComment[1]).toBe(`✗ FAIL: owner still has <N> ${SPARED_LIVE_SESSION_SIGNATURE}: <ID>… (<PHASE>, <RECIPE>, <IDLE>s idle)`);
     expect(nonComment[2]).toBe(SEAM_LINE);
     expect(nonComment[3]).toBe('RESULT: FAIL (2)');
   });

@@ -86,7 +86,12 @@ import { getAuth } from 'firebase-admin/auth';
 import { getFirestore } from 'firebase-admin/firestore';
 import { getAppCheck } from 'firebase-admin/app-check';
 import { getRemoteConfig } from 'firebase-admin/remote-config';
-import { classifyVerifyVerdict, SIMULATED_REGRESSION_SIGNATURE } from './verify-live-classify.mjs';
+import {
+  BLOCKING_SESSION_PREFIX,
+  classifyVerifyVerdict,
+  SIMULATED_REGRESSION_SIGNATURE,
+  SPARED_LIVE_SESSION_SIGNATURE,
+} from './verify-live-classify.mjs';
 
 // ── Env loading (process.env wins; .env.local fills the gaps) ───────────────
 function loadEnv() {
@@ -1204,7 +1209,7 @@ try {
       ok('no ACTIVE/PAUSED session before the UI starter (clean owner)');
     } else {
       const names = blocking.map(describeBlocking).join('; ');
-      note(`owner has ${blocking.length} ACTIVE/PAUSED session(s) blocking the UI starter — archiving and retrying once: ${names}`);
+      note(`owner has ${blocking.length} ${BLOCKING_SESSION_PREFIX} — archiving and retrying once: ${names}`);
       let archived = 0;
       for (const d of blocking) {
         const archivedOne = await db.runTransaction(async (tx) => {
@@ -1232,7 +1237,7 @@ try {
         ok(`archived ${archived} blocking session(s) — retried, owner is clean before the UI starter`);
       } else {
         const survivors = remaining.map(describeBlocking).join('; ');
-        fail(`owner still has ${remaining.length} ACTIVE/PAUSED session(s) blocking the UI starter after the archive retry: ${survivors}`);
+        fail(`owner still has ${remaining.length} ${SPARED_LIVE_SESSION_SIGNATURE}: ${survivors}`);
       }
     }
   } catch (e) {

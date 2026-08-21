@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import {
+  BLOCKING_SESSION_PREFIX,
   classifyVerifyVerdict,
   GEMINI_CASCADE_PREFIXES,
   GEMINI_CREDITS_SIGNATURES,
@@ -248,7 +249,13 @@ describe('scripts/verify-live-classify.mjs · spared signature is mutation-proof
 
 describe('scripts/verify-live.mjs · wiring (the gate actually uses the classification)', () => {
   it('imports classifyVerifyVerdict and computes the verdict in the finally block', () => {
-    expect(LIVE).toContain("import { classifyVerifyVerdict, SIMULATED_REGRESSION_SIGNATURE } from './verify-live-classify.mjs';");
+    // The import carries every shared constant (classifier, seam message,
+    // and both spare-path message pieces) — verify-live.mjs embeds them in
+    // its fail(...)/note(...) calls rather than hard-coding the literals.
+    expect(LIVE).toContain("} from './verify-live-classify.mjs';");
+    expect(LIVE).toContain('BLOCKING_SESSION_PREFIX,');
+    expect(LIVE).toContain('SIMULATED_REGRESSION_SIGNATURE,');
+    expect(LIVE).toContain('SPARED_LIVE_SESSION_SIGNATURE,');
     expect(LIVE).toContain('verdict = runExit === 0 ? classifyVerifyVerdict({ failures }) : { kind: \'fail\' };');
   });
 
@@ -292,7 +299,8 @@ describe('scripts/verify-live.mjs · wiring (the gate actually uses the classifi
     // the codegen contract below pins golden === constant).
     expect(LIVE).toContain("if (process.env.FORCE_VERIFY_LIVE_REGRESSION === 'true')");
     expect(LIVE).toContain('fail(SIMULATED_REGRESSION_SIGNATURE)');
-    expect(LIVE).toContain("import { classifyVerifyVerdict, SIMULATED_REGRESSION_SIGNATURE } from './verify-live-classify.mjs';");
+    expect(LIVE).toContain("} from './verify-live-classify.mjs';");
+    expect(LIVE).toContain('SIMULATED_REGRESSION_SIGNATURE,');
     // Position: must sit AFTER the guard's `fail(\`owner still has`, so a
     // spared live session can pair with the simulated regression. (The guard
     // block at the archive-retry path is the only producer of a spare failure.)
@@ -317,13 +325,16 @@ describe('scripts/verify-live.mjs · wiring (the gate actually uses the classifi
     //    signature, or the pair would be unlabeled for the WRONG reason (a
     //    missed match instead of the no-mask rule).
     const guardMatch = LIVE.match(
-      /fail\(`owner still has \$\{remaining\.length\} ACTIVE\/PAUSED session\(s\) blocking the UI starter after the archive retry: \$\{survivors\}`\)/,
+      /fail\(`owner still has \$\{remaining\.length\} \$\{SPARED_LIVE_SESSION_SIGNATURE\}: \$\{survivors\}`\)/,
     );
     expect(guardMatch, 'the guard spare-fail template must be present in verify-live.mjs').not.toBeNull();
     const spareLine = guardMatch![0]
       .replace('fail(`', '')
       .replace('`)', '')
       .replace('${remaining.length}', '1')
+      // The guard template now embeds the exported constant — expand it so
+      // the rendered line carries the signature's actual text.
+      .replace('${SPARED_LIVE_SESSION_SIGNATURE}', SPARED_LIVE_SESSION_SIGNATURE)
       .replace('${survivors}', 'drill-li… (COLLECTING_INGREDIENTS, chicken_rice_onion_001, 13s idle)');
     expect(spareLine).toContain(SPARED_LIVE_SESSION_SIGNATURE);
 
@@ -361,13 +372,17 @@ describe('scripts/verify-live-classify.mjs · the seam message is one source of 
     // inlines the literal again (or rewords it here without updating the
     // constant) breaks this pin.
     expect(LIVE).toContain('fail(SIMULATED_REGRESSION_SIGNATURE)');
-    expect(LIVE).toContain("import { classifyVerifyVerdict, SIMULATED_REGRESSION_SIGNATURE } from './verify-live-classify.mjs';");
+    expect(LIVE).toContain("} from './verify-live-classify.mjs';");
+    expect(LIVE).toContain('SIMULATED_REGRESSION_SIGNATURE,');
     expect(LIVE).not.toContain("fail('SIMULATED regression test");
   });
 
   it('the regression comparator derives its seam regex from the constant', () => {
     const DRILL = readFileSync('scripts/guard-regression-drill.mjs', 'utf8');
-    expect(DRILL).toContain("import { SIMULATED_REGRESSION_SIGNATURE } from './verify-live-classify.mjs';");
+    expect(DRILL).toContain("import {\n  BLOCKING_SESSION_PREFIX,");
+    expect(DRILL).toContain('SIMULATED_REGRESSION_SIGNATURE,');
+    expect(DRILL).toContain('SPARED_LIVE_SESSION_SIGNATURE,');
+    expect(DRILL).toContain("} from './verify-live-classify.mjs';");
     // The regex must be built from the constant — not a hard-coded alternation
     // of the message. escapeRegExp + template literal is the canonical shape.
     expect(DRILL).toMatch(/escapeRegExp\(SIMULATED_REGRESSION_SIGNATURE\)/);
@@ -385,5 +400,65 @@ describe('scripts/verify-live-classify.mjs · the seam message is one source of 
     expect(CLASSIFY).toContain('export const SIMULATED_REGRESSION_SIGNATURE');
     expect(CLASSIFY).toContain('failures.length === 1 && failures[0].includes(SPARED_LIVE_SESSION_SIGNATURE)');
     expect(CLASSIFY.indexOf('SIMULATED_REGRESSION_SIGNATURE')).toBeLessThan(CLASSIFY.indexOf('classifyVerifyVerdict'));
+  });
+});
+
+describe('scripts/verify-live-classify.mjs · the spare path is one source of truth (codegen)', () => {
+  // Mirror of the seam-message consolidation: the spare signature used to
+  // live as separate literals in verify-live.mjs's fail(...)/note(...), the
+  // comparators' NOTE_RE/FAIL_RE regexes, the goldens, and the tests. Now
+  // SPARED_LIVE_SESSION_SIGNATURE (and its derived BLOCKING_SESSION_PREFIX
+  // head) are the single source of truth — these pins prove every consumer
+  // derives from them and the goldens embed them.
+
+  it('derives BLOCKING_SESSION_PREFIX from the signature (the note shares only its head)', () => {
+    expect(BLOCKING_SESSION_PREFIX).toBe(
+      'ACTIVE/PAUSED session(s) blocking the UI starter',
+    );
+    expect(BLOCKING_SESSION_PREFIX).not.toContain('after the archive retry');
+    expect(`${BLOCKING_SESSION_PREFIX} after the archive retry`).toBe(SPARED_LIVE_SESSION_SIGNATURE);
+  });
+
+  it('verify-live.mjs embeds the constants in note(...) and fail(...) — no hard-coded literals', () => {
+    expect(LIVE).toContain('note(`owner has ${blocking.length} ${BLOCKING_SESSION_PREFIX} — archiving and retrying once: ${names}`)');
+    expect(LIVE).toContain('fail(`owner still has ${remaining.length} ${SPARED_LIVE_SESSION_SIGNATURE}: ${survivors}`)');
+    expect(LIVE).not.toContain('owner has ${blocking.length} ACTIVE/PAUSED session(s) blocking the UI starter — archiving');
+    expect(LIVE).not.toContain('fail(`owner still has ${remaining.length} ACTIVE/PAUSED session(s) blocking the UI starter after the archive retry');
+  });
+
+  it('the spare/regression comparators derive their regexes from the constants', () => {
+    // The FAIL/SPARE_FAIL regexes must be built from the exported signature
+    // and the NOTE regexes from the derived prefix — via new RegExp + a
+    // template literal + escapeRegExp(constant), never a hard-coded literal.
+    // (The exact `\s` spellings are exercised by the comparator tests' --diff
+    // replays, which prove the derived regexes still extract the fixtures.)
+    for (const f of ['guard-spare-drill.mjs', 'guard-regression-drill.mjs']) {
+      const src = readFileSync(`scripts/${f}`, 'utf8');
+      expect(src).toContain('new RegExp(`^');
+      expect(src).toContain('escapeRegExp(SPARED_LIVE_SESSION_SIGNATURE)');
+      expect(src).not.toContain('ACTIVE/PAUSED session(s) blocking the UI starter after the archive retry');
+    }
+    for (const f of ['guard-spare-drill.mjs', 'guard-boundary-drill.mjs', 'guard-regression-drill.mjs']) {
+      const src = readFileSync(`scripts/${f}`, 'utf8');
+      expect(src).toContain('new RegExp(`^');
+      expect(src).toContain('escapeRegExp(BLOCKING_SESSION_PREFIX)');
+      expect(src).not.toContain('ACTIVE/PAUSED session(s) blocking the UI starter');
+    }
+  });
+
+  it('the goldens embed the constants — a reworded signature fails the lockstep', () => {
+    for (const g of ['guard-spare-drill.txt', 'guard-boundary-drill.txt', 'guard-regression-drill.txt']) {
+      const golden = readFileSync(`scripts/__golden__/${g}`, 'utf8');
+      const noteLine = golden.split('\n').find((l) => l.startsWith('- owner has'));
+      expect(noteLine).toBe(`- owner has <N> ${BLOCKING_SESSION_PREFIX} — archiving and retrying once: <ID>… (<PHASE>, <RECIPE>, <IDLE>s idle)`);
+    }
+    for (const g of ['guard-spare-drill.txt', 'guard-regression-drill.txt']) {
+      const golden = readFileSync(`scripts/__golden__/${g}`, 'utf8');
+      // Match the actual fail line (starts with ✗ FAIL:) — the goldens' header
+      // comments also mention 'owner still has' and would be picked up by a
+      // plain includes() scan.
+      const failLine = golden.split('\n').find((l) => l.startsWith('✗ FAIL:'));
+      expect(failLine).toBe(`✗ FAIL: owner still has <N> ${SPARED_LIVE_SESSION_SIGNATURE}: <ID>… (<PHASE>, <RECIPE>, <IDLE>s idle)`);
+    }
   });
 });

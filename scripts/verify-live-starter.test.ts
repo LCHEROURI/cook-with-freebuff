@@ -271,7 +271,7 @@ describe('scripts/verify-live.mjs · starter-flow gate (create → validate → 
     // Retry once: re-query after the archive; clean owner proceeds, a
     // survivor fails loudly named.
     expect(SRC).toContain('archived ${archived} blocking session(s) — retried, owner is clean before the UI starter');
-    expect(SRC).toContain('owner still has ${remaining.length} ACTIVE/PAUSED session(s) blocking the UI starter after the archive retry');
+    expect(SRC).toContain('owner still has ${remaining.length} ${SPARED_LIVE_SESSION_SIGNATURE}');
     expect(SRC).toContain('could not verify a clean owner before the UI starter');
     // The guard must fire AFTER the [3c] settle and IMMEDIATELY before the
     // [3d] driver spawn — nothing (no new stage label) may sit between the
@@ -300,7 +300,7 @@ describe('scripts/verify-live.mjs · starter-flow gate (create → validate → 
     // The survivors embedded in the fail line are describeBlocking output, so
     // the spare line always names the session with its idle age.
     expect(SRC).toContain("const survivors = remaining.map(describeBlocking).join('; ');");
-    expect(SRC).toContain('fail(`owner still has ${remaining.length} ACTIVE/PAUSED session(s) blocking the UI starter after the archive retry: ${survivors}`)');
+    expect(SRC).toContain('fail(`owner still has ${remaining.length} ${SPARED_LIVE_SESSION_SIGNATURE}: ${survivors}`)');
   });
 
   it('renders the spare-path failure with the loud ✗ FAIL prefix the drills record', () => {
@@ -314,7 +314,7 @@ describe('scripts/verify-live.mjs · starter-flow gate (create → validate → 
     // The guard's own message (passed to fail) is the full loud-fail text
     // with the count, the "after the archive retry" phrasing, and the
     // named survivors.
-    expect(SRC).toContain('fail(`owner still has ${remaining.length} ACTIVE/PAUSED session(s) blocking the UI starter after the archive retry: ${survivors}`)');
+    expect(SRC).toContain('fail(`owner still has ${remaining.length} ${SPARED_LIVE_SESSION_SIGNATURE}: ${survivors}`)');
   });
 
   it('keeps the clean-owner ok line for the unblocked path', () => {

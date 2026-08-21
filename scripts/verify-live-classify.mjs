@@ -63,8 +63,25 @@ export const GEMINI_CASCADE_PREFIXES = [
 // /status page can label it instead of showing a bare failure. Matched as a
 // substring of the guard's `fail(...)` message, so the survivor names and idle
 // age in the message never break the classification.
+//
+// This constant is the single source of truth for the spare path (mirror of
+// SIMULATED_REGRESSION_SIGNATURE): verify-live.mjs embeds it in the guard's
+// fail(...) message, the spare/regression comparators derive their FAIL_RE
+// regexes from it via escapeRegExp, and the goldens embed it — so a reworded
+// signature updates one constant and every producer/consumer tracks it.
 export const SPARED_LIVE_SESSION_SIGNATURE =
   'ACTIVE/PAUSED session(s) blocking the UI starter after the archive retry';
+
+// The guard's NOTE line phrases the same blocker differently — it says
+// "blocking the UI starter — archiving and retrying once" (the retry is
+// upcoming), while the fail line says "after the archive retry" (the retry
+// already failed). The shared prefix is the signature minus its " after the
+// archive retry" tail, derived here so a reworded signature updates the note
+// prefix in lockstep too.
+export const BLOCKING_SESSION_PREFIX = SPARED_LIVE_SESSION_SIGNATURE.replace(
+  ' after the archive retry',
+  '',
+);
 
 // The seam's SIMULATED regression message — verify-live.mjs passes THIS
 // constant to fail() when FORCE_VERIFY_LIVE_REGRESSION=true. It is the

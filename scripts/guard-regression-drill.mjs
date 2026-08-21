@@ -32,12 +32,18 @@
 import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-// Single source of truth for the seam's message: the classifier module
-// exports SIMULATED_REGRESSION_SIGNATURE, and verify-live.mjs passes THAT
-// constant to fail(). This comparator's SEAM_FAIL_RE is built from the same
-// constant, so a reworded seam message updates one place and the regex
-// tracks it automatically — no hard-coded literal to drift.
-import { SIMULATED_REGRESSION_SIGNATURE } from './verify-live-classify.mjs';
+// Single source of truth for the drill's evidence shape: the classifier
+// module exports SIMULATED_REGRESSION_SIGNATURE (the seam's fail(...) message),
+// SPARED_LIVE_SESSION_SIGNATURE (embedded in the guard's fail(...)), and
+// BLOCKING_SESSION_PREFIX (the guard's note(...) head). This comparator's
+// regexes are DERIVED from those constants, so a reworded message updates
+// one place and the extraction tracks it automatically — no hard-coded
+// literals to drift.
+import {
+  BLOCKING_SESSION_PREFIX,
+  SIMULATED_REGRESSION_SIGNATURE,
+  SPARED_LIVE_SESSION_SIGNATURE,
+} from './verify-live-classify.mjs';
 
 const ROOT = resolve(process.cwd());
 const GOLDEN = resolve(ROOT, 'scripts/__golden__/guard-regression-drill.txt');
@@ -108,15 +114,15 @@ function expectedLines() {
 
 // ── Log parser: extract the four evidence lines from the verify:live log
 //    and normalize the drill-run-variant fields to the FIXED_TOKENS. ─────
-const NOTE_RE = /^\s*-\s+owner has (\d+) ACTIVE\/PAUSED session\(s\) blocking the UI starter — archiving and retrying once: ([A-Za-z0-9-]+)… \(([^,]+), ([^,]+), (\d+)s idle\)/;
-const SPARE_FAIL_RE = /^\s*✗ FAIL:\s+owner still has (\d+) ACTIVE\/PAUSED session\(s\) blocking the UI starter after the archive retry: ([A-Za-z0-9-]+)… \(([^,]+), ([^,]+), (\d+)s idle\)/;
+const escapeRegExp = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+const NOTE_RE = new RegExp(`^\\s*-\\s+owner has (\\d+) ${escapeRegExp(BLOCKING_SESSION_PREFIX)} — archiving and retrying once: ([A-Za-z0-9-]+)… \\(([^,]+), ([^,]+), (\\d+)s idle\\)`);
+const SPARE_FAIL_RE = new RegExp(`^\\s*✗ FAIL:\\s+owner still has (\\d+) ${escapeRegExp(SPARED_LIVE_SESSION_SIGNATURE)}: ([A-Za-z0-9-]+)… \\(([^,]+), ([^,]+), (\\d+)s idle\\)`);
 // The seam's fail() message is fully static — no drill-run variants. The
 // regex is DERIVED from the exported SIMULATED_REGRESSION_SIGNATURE (single
 // source of truth shared with verify-live.mjs's seam), so a reworded seam
 // message updates one constant and this regex tracks it automatically. The
 // golden still carries the literal and the codegen contract pins golden ===
 // the constant, so the human-readable file can't drift either.
-const escapeRegExp = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 const SEAM_FAIL_RE = new RegExp(`^\\s*✗ FAIL:\\s+${escapeRegExp(SIMULATED_REGRESSION_SIGNATURE)}$`);
 // The RESULT count line proves exactly TWO failures (spare + seam). A third
 // unexpected failure changes the count and breaks the diff — the no-mask

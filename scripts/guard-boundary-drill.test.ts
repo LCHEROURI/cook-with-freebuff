@@ -2,6 +2,11 @@ import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { describe, expect, it } from 'vitest';
+// The golden NOTE line embeds the shared BLOCKING_SESSION_PREFIX (single
+// source of truth — verify-live.mjs's note(...) and the comparator regexes
+// derive from the same export), so a reworded signature updates the constant
+// and this pin tracks it while the codegen contract flags the golden drift.
+import { BLOCKING_SESSION_PREFIX } from './verify-live-classify.mjs';
 
 // ============================================================================
 // scripts/guard-boundary-drill.test.ts — pin the end-to-end boundary-path
@@ -36,7 +41,7 @@ describe('scripts/guard-boundary-drill.mjs · the comparator + its golden', () =
     const body = readFileSync(resolve(process.cwd(), GOLDEN), 'utf8');
     const nonComment = body.split('\n').filter((l) => !l.startsWith('#')).map((l) => l.trim()).filter(Boolean);
     expect(nonComment).toHaveLength(2);
-    expect(nonComment[0]).toBe('- owner has <N> ACTIVE/PAUSED session(s) blocking the UI starter — archiving and retrying once: <ID>… (<PHASE>, <RECIPE>, <IDLE>s idle)');
+    expect(nonComment[0]).toBe(`- owner has <N> ${BLOCKING_SESSION_PREFIX} — archiving and retrying once: <ID>… (<PHASE>, <RECIPE>, <IDLE>s idle)`);
     expect(nonComment[1]).toBe('✓ archived <N> blocking session(s) — retried, owner is clean before the UI starter');
   });
 
