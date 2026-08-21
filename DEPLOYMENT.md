@@ -19,8 +19,10 @@ push/PR ──► GitHub Actions (validate: typecheck · lint · test · build
 
 - **Hosting** — Firebase App Hosting (Cloud Run, SSR). Production branch `main`.
   Canonical URL: `https://cook-with-freebuff--portfolio-app-freebuff2.us-central1.hosted.app`.
-- **Auth / Data** — Firebase Auth + Firestore, shared with the portfolio app under **one union ruleset**
-  (see `firestore.rules`). Both apps deploy the same rules file; keep them in sync in one commit.
+- **Auth / Data** — Firebase Auth + Firestore use **one shared union ruleset**
+  (see `firestore.rules`). A rules release is blocked until the separately
+  maintained sibling rules file is verified byte-identical. This repository's
+  implementation work does not access or modify that sibling application.
 - **Admin SDK** — server-side only, service-account credentials from `FIREBASE_SERVICE_ACCOUNT`
   (inline JSON in `.env.local` / GitHub secret).
 
@@ -185,9 +187,17 @@ npm run verify:live -- --app http://localhost:3100   # local dev server
 
 ## Firestore rules & indexes
 
-- `firestore.rules` — the **union** ruleset shared with the portfolio app
-  (9 portfolio + 8 kitchen collections, owner-isolated, catch-all deny last).
-  Deploy with `npm run deploy:rules` from the **portfolio** repo (both projects).
+- `firestore.rules` — the shared **union** ruleset. The Cook clauses are
+  owner-isolated, append-only collections stay append-only, server-managed
+  collections remain client-denied, and the catch-all deny stays last.
+- `scripts/firestore-rules-scope.test.ts` pins the non-Cook prefix and catch-all
+  suffix byte-for-byte. Run `npm run test:rules` for the emulator owner matrix
+  and `npm test -- scripts/firestore-rules-scope.test.ts` for the scope lock.
+- **Release prerequisite:** before any rules deployment, use a separately
+  authorized release workflow to copy the final union file to the sibling
+  rules repository and verify the two files are byte-identical. Do not deploy
+  this changed union ruleset while that synchronization is pending. This is a
+  release coordination gate, not permission for this track to edit another app.
 - `firestore.indexes.json` — composite indexes; deploy alongside rules.
 
 ## Rollback
@@ -204,7 +214,7 @@ rollback surface.
 | verify:live fails at seed | `FIREBASE_SERVICE_ACCOUNT` stale/missing | Re-sync all three stores |
 | verify:live fails at Gemini turn | `GOOGLE_AI_API_KEY` missing | Add to GitHub secrets (and `apphosting.yaml` for runtime), redeploy |
 | `/api/*` returns 401 | ID token rejected | Check `NEXT_PUBLIC_FIREBASE_API_KEY` matches project |
-| Firestore reads/writes fail client-side | Rules not deployed / drifted | Re-deploy union ruleset from portfolio repo |
+| Firestore reads/writes fail client-side | Rules not deployed / drifted | Verify the sibling synchronization prerequisite, then deploy the canonical union ruleset through the authorized release workflow |
 | CI validate fails at lint | ESLint config drift | `npm run lint` locally first |
 
 ## Docs
