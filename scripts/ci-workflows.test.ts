@@ -1132,6 +1132,32 @@ describe('.github/workflows/spare-drill-nightly.yml · nightly spare-path golden
     const comparatorIdx = SPARE_DRILL_NIGHTLY.indexOf('node scripts/guard-spare-drill.mjs', npmCiIdx);
     expect(comparatorIdx).toBeGreaterThan(npmCiIdx);
   });
+
+  it('runs the spare-drill fixture once in a top-level preflight before the comparator job', () => {
+    // Mirror of the weekly's preflight (guard-drills-weekly.yml): the
+    // earliest SHARED signal for this nightly's single gate. One job
+    // replays the spare fixture before the comparator's npm ci + ~25 min
+    // dispatch, so a golden or regex drift fails in seconds instead of
+    // after the full dispatch+seed+touch+fetch cycle. The comparator job
+    // must start from it (needs: preflight), and the preflight must run
+    // plain node only — no npm ci and no actions:write, because it never
+    // dispatches or uploads. The per-job gate stays as belt-and-suspenders.
+    const preflightStart = SPARE_DRILL_NIGHTLY.indexOf('preflight:');
+    expect(preflightStart).toBeGreaterThan(-1);
+    const comparatorStart = SPARE_DRILL_NIGHTLY.indexOf('compare-against-golden:', preflightStart);
+    expect(comparatorStart).toBeGreaterThan(preflightStart);
+    const preflightSection = SPARE_DRILL_NIGHTLY.slice(preflightStart, comparatorStart);
+    expect(preflightSection).toContain(
+      'node scripts/guard-spare-drill.mjs --diff scripts/__golden__/spare-drill-log.txt',
+    );
+    // Plain node only — no dependency install in the preflight.
+    expect(preflightSection).not.toContain('run: npm ci');
+    // Only contents: read — the preflight never dispatches or uploads.
+    expect(preflightSection).toMatch(/permissions:\n\s+contents: read/);
+    expect(preflightSection).not.toContain('actions: write');
+    // The comparator job must start from the preflight.
+    expect(SPARE_DRILL_NIGHTLY).toMatch(/compare-against-golden:[\s\S]*?needs:\s*preflight/);
+  });
 });
 
 describe('.github/workflows/guard-drills-weekly.yml · Sunday-night spare + boundary + regression comparators', () => {
