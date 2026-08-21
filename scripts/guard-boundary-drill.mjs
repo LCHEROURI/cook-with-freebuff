@@ -290,12 +290,12 @@ async function main() {
   // 3. seed + backdate loop (the boundary drill shape: idle just past 60s
   //    so the guard's archive path accepts the session immediately).
   note(`seeding drill-live-session + backdating to ${TARGET_IDLE_SECONDS}s idle (boundary: GUARD archives)`);
-  runNodeWithEnv(resolve(ROOT, '.freebuff/drill-live-session.mjs'), ['--seed']);
-  runNodeWithEnv(resolve(ROOT, '.freebuff/drill-live-session.mjs'), ['--backdate', String(TARGET_IDLE_SECONDS)]);
+  runNodeWithEnv(resolve(ROOT, 'scripts/drill-live-session.mjs'), ['--seed']);
+  runNodeWithEnv(resolve(ROOT, 'scripts/drill-live-session.mjs'), ['--backdate', String(TARGET_IDLE_SECONDS)]);
   note(`keep-alive backdating every 15s through the guard window (target idle ≈ ${TARGET_IDLE_SECONDS}s)`);
   for (let i = 1; i <= 24; i++) {
     await sleep(15_000);
-    const out = runNodeWithEnv(resolve(ROOT, '.freebuff/drill-live-session.mjs'), ['--backdate', String(TARGET_IDLE_SECONDS)]).trim();
+    const out = runNodeWithEnv(resolve(ROOT, 'scripts/drill-live-session.mjs'), ['--backdate', String(TARGET_IDLE_SECONDS)]).trim();
     console.log(out);
     // Break early if the run has completed.
     const status = gh(['run', 'view', String(runId), '--json', 'status', '--jq', '.status']);
@@ -342,7 +342,7 @@ async function main() {
   //    moves it to ABANDONED — the helper's --delete handles that).
   note('cleanup: deleting drill-live-session');
   try {
-    runNodeWithEnv(resolve(ROOT, '.freebuff/drill-live-session.mjs'), ['--delete']);
+    runNodeWithEnv(resolve(ROOT, 'scripts/drill-live-session.mjs'), ['--delete']);
   } catch (e) { note(`cleanup: ${e.message?.slice(0, 80) ?? e}`); }
 }
 

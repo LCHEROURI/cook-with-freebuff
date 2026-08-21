@@ -345,11 +345,11 @@ async function main() {
   if (!jobId) { fail('verify:live never went IN_PROGRESS'); process.exit(2); }
 
   note('seeding drill-live-session (fresh, <60s idle → GUARD spares it)');
-  runNodeWithEnv(resolve(ROOT, '.freebuff/drill-live-session.mjs'), ['--seed']);
+  runNodeWithEnv(resolve(ROOT, 'scripts/drill-live-session.mjs'), ['--seed']);
   note('keep-alive touching every 15s through the guard window');
   for (let i = 1; i <= 24; i++) {
     await sleep(15_000);
-    const out = runNodeWithEnv(resolve(ROOT, '.freebuff/drill-live-session.mjs'), ['--touch']).trim();
+    const out = runNodeWithEnv(resolve(ROOT, 'scripts/drill-live-session.mjs'), ['--touch']).trim();
     console.log(out);
     const status = gh(['run', 'view', String(runId), '--json', 'status', '--jq', '.status']);
     if (status.includes('completed')) {
@@ -394,7 +394,7 @@ async function main() {
   await assertLiveStatusReason(runId);
 
   note('cleanup: deleting drill-live-session');
-  runNodeWithEnv(resolve(ROOT, '.freebuff/drill-live-session.mjs'), ['--delete']);
+  runNodeWithEnv(resolve(ROOT, 'scripts/drill-live-session.mjs'), ['--delete']);
 }
 
 function parseArgv(argv) {

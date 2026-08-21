@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
 // ============================================================================
@@ -1167,6 +1167,24 @@ describe('.github/workflows/guard-drills-weekly.yml · Sunday-night spare + boun
       expect(jobStart, `job ${job} must exist`).toBeGreaterThan(-1);
       const jobSection = GUARD_DRILLS_WEEKLY.slice(jobStart);
       expect(jobSection).toMatch(/permissions:\n\s+contents: read\n\s+actions: write/);
+    }
+  });
+
+  it('keeps drill-live-session.mjs TRACKED so the comparators can seed in CI checkouts', () => {
+    // The comparators seed/touch/delete the drill session by shelling out
+    // to scripts/drill-live-session.mjs. It used to live in the gitignored
+    // .freebuff/ scratch dir — absent from every CI checkout — so after the
+    // dispatch-permission fix, the weekly failed again at the seed step
+    // with "Cannot find module .freebuff/drill-live-session.mjs" (weekly
+    // 32477679149). The helper must stay tracked in scripts/ AND all three
+    // comparators must reference that path — a move back to a gitignored
+    // path silently breaks every scheduled drill.
+    expect(existsSync('scripts/drill-live-session.mjs')).toBe(true);
+    expect(readFileSync('.gitignore', 'utf8')).toMatch(/^\.freebuff\/$/m);
+    for (const script of ['guard-spare-drill.mjs', 'guard-boundary-drill.mjs', 'guard-regression-drill.mjs']) {
+      const src = readFileSync(`scripts/${script}`, 'utf8');
+      expect(src).toContain("resolve(ROOT, 'scripts/drill-live-session.mjs')");
+      expect(src).not.toContain('.freebuff/drill-live-session');
     }
   });
 
