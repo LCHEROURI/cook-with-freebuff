@@ -7,7 +7,7 @@
 // is recorded too — a failure must be visible, not vanish). Writes the fixed
 // doc `deploy_status/verify_live`:
 //
-//   { verdict: 'success'|'failure'|'external', commitSha, ranAt, runUrl, reason? }
+//   { verdict: 'success'|'failure'|'external', commitSha, ranAt, runUrl, reason?, source? }
 //
 // 'external' is the Gemini prepayment-credits block (verify-live-classify):
 // the deploy check passed but recipe generation and its downstream stages
@@ -66,6 +66,7 @@ const verifyLiveStatusSchema = z.object({
     .string()
     .refine((v) => v === '' || /^https?:\/\//.test(v), 'runUrl must be empty or an http(s) URL'),
   reason: z.enum([SPARED_LIVE_REASON]).optional(),
+  source: z.string().min(1).optional(),
 });
 
 // ── Env loading (process.env wins; .env.local fills the gaps) ───────────────
@@ -93,6 +94,7 @@ const verdict = flag('--verdict', process.env.VERIFY_VERDICT ?? '');
 const commitSha = flag('--commit', process.env.VERIFY_COMMIT_SHA ?? '');
 const runUrl = flag('--run-url', process.env.VERIFY_RUN_URL ?? '');
 const reason = flag('--reason', process.env.VERIFY_REASON ?? '');
+const source = flag('--source', 'ci');
 const SA_JSON = process.env.FIREBASE_SERVICE_ACCOUNT;
 
 const ok = (m) => console.log(`  ✓ ${m}`);
@@ -127,6 +129,10 @@ const statusDoc = {
   // Optional: only a spared-live-session reason is valid; an empty/absent
   // value stays undefined so the doc never carries a stale reason.
   ...(reason ? { reason } : {}),
+  // Dispatch source tag (ci, spare-drill, boundary-drill, regression-drill)
+  // so the status page can distinguish drill no-mask proofs from genuine
+  // regressions when verdict=failure and reason=null.
+  ...(source && source !== 'ci' ? { source } : {}),
 };
 const parsed = verifyLiveStatusSchema.safeParse(statusDoc);
 if (!parsed.success) {

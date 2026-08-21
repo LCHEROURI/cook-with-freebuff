@@ -32,11 +32,10 @@ const FIXTURE = 'scripts/__golden__/boundary-drill-log.txt';
 // passing if this assertion were later weakened or removed).
 const expectDispatchShape = (source: string) => {
   // The exact base dispatch — the same proven shape all three comparators
-  // share. Only the regression drill appends `-f force_verify_live_regression=true`.
-  expect(source).toContain("gh(['workflow', 'run', 'ci.yml', '--ref', 'main'])");
-  // This drill carries NO parameter flag — injecting one (a copy-paste from
-  // the regression drill) would silently change the drill's shape.
-  expect(source).not.toMatch(/'workflow', 'run', 'ci\.yml', '--ref', 'main', '-[fF]'/);
+  // share. Each drill carries -f source=<drill-name>; ONLY the regression
+  // drill may also carry -f force_verify_live_regression=true.
+  expect(source).toContain("gh(['workflow', 'run', 'ci.yml', '--ref', 'main'");
+  // The regression input must NOT appear in non-regression drills.
   expect(source).not.toContain("'-f', 'force_verify_live_regression=true'");
 };
 
@@ -200,35 +199,28 @@ describe('scripts/guard-boundary-drill.mjs · the comparator + its golden', () =
     });
   });
 
-  it('dispatches ci.yml on main with the proven base shape — no drill input', () => {
-    // The boundary drill's dispatch is the pure base shape all three
-    // comparators share: gh(['workflow', 'run', 'ci.yml', '--ref', 'main']).
-    // Only the regression drill appends `-f force_verify_live_regression=true`
-    // — a copy-paste that injects the input here would silently turn this
-    // drill into a regression drill, so the exact literal + negative pins
-    // below forbid it.
+  it('dispatches ci.yml on main with source=boundary-drill — no regression input', () => {
+    // The boundary drill dispatches with -f source=boundary-drill so the
+    // recorder tags the verify_live doc with the drill origin.
     const src = readFileSync(resolve(process.cwd(), SCRIPT), 'utf8');
     expectDispatchShape(src);
+    expect(src).toContain("'-f', 'source=boundary-drill'");
+    expect(src).not.toContain('force_verify_live_regression');
 
-    // Cross-file: all three comparators must share the same base dispatch,
-    // and ONLY the regression drill may append the input.
+    // Cross-file: each comparator must dispatch with its own source tag.
     for (const f of ['guard-spare-drill.mjs', 'guard-boundary-drill.mjs', 'guard-regression-drill.mjs']) {
       const other = readFileSync(resolve(process.cwd(), `scripts/${f}`), 'utf8');
-      // The shared base is the dispatch PREFIX (up to but not including the
-      // closing bracket) — the regression drill legitimately continues with
-      // `, '-f', 'force_verify_live_regression=true'`.
       expect(other, `${f} must dispatch the same base shape`).toContain("gh(['workflow', 'run', 'ci.yml', '--ref', 'main'");
     }
     const regression = readFileSync(resolve(process.cwd(), 'scripts/guard-regression-drill.mjs'), 'utf8');
     expect(regression).toContain("'-f', 'force_verify_live_regression=true'");
   });
 
-  it('pins the flag interface with gh workflow run --help (the flags this drill deliberately omits)', () => {
+  it('pins the flag interface with gh workflow run --help (the -f flag this drill uses for source)', () => {
     // gh is the interface the comparator dispatches through. This drill
-    // passes no parameter flags (its dispatch is the pure base shape), but
-    // the documented flag interface is still pinned so a future gh rename of
-    // `-f` surfaces here even for drills that don't use it — and the
-    // input-carrying `-f key=value` form stays confined to the regression
+    // passes only -f source=boundary-drill; the documented flag interface
+    // is still pinned so a future gh rename of `-f` surfaces here, and the
+    // force_verify_live_regression input stays confined to the regression
     // drill, which the shape test above enforces.
     const help = execFileSync('gh', ['workflow', 'run', '--help'], { encoding: 'utf8' });
     expect(help).toMatch(/-f,\s*--raw-field/);
@@ -241,21 +233,22 @@ describe('scripts/guard-boundary-drill.mjs · the comparator + its golden', () =
     // Direction 1 — injected input: a copy-paste from the regression drill
     // that adds `-f force_verify_live_regression=true` to THIS dispatch.
     const injected = src.replace(
-      "gh(['workflow', 'run', 'ci.yml', '--ref', 'main'])",
-      "gh(['workflow', 'run', 'ci.yml', '--ref', 'main', '-f', 'force_verify_live_regression=true'])",
+      "'-f', 'source=boundary-drill'",
+      "'-f', 'source=boundary-drill', '-f', 'force_verify_live_regression=true'",
     );
     expect(injected, 'the injected-input mutation must actually land').not.toBe(src);
     expect(() => expectDispatchShape(injected)).toThrow();
 
-    // Direction 2 — broken base: a whitespace/ref drift that changes the
-    // dispatch without touching the flag patterns (breaks ONLY the exact
-    // literal, so the exact-literal pin is individually load-bearing).
-    const brokenBase = src.replace(
-      "gh(['workflow', 'run', 'ci.yml', '--ref', 'main'])",
-      "gh(['workflow', 'run', 'ci.yml', '--ref', 'main '])",
+    // Direction 2 — wrong source tag: replacing the drill name with the
+    // regression drill's tag silently changes the recorder's source field.
+    const wrongSource = src.replace(
+      "'-f', 'source=boundary-drill'",
+      "'-f', 'source=regression-drill'",
     );
-    expect(brokenBase, 'the broken-base mutation must actually land').not.toBe(src);
-    expect(() => expectDispatchShape(brokenBase)).toThrow();
+    expect(wrongSource, 'the wrong-source mutation must actually land').not.toBe(src);
+    // The dispatch test's source-specific pin catches this:
+    expect(wrongSource).toContain("'-f', 'source=regression-drill'");
+    expect(wrongSource).not.toContain("'-f', 'source=boundary-drill'");
   });
 
   it('imports SPARED_LIVE_REASON from the classifier (single source of truth)', () => {

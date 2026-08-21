@@ -45,7 +45,8 @@ const expectDispatchSpelling = (source: string) => {
   // and the input rides as ONE `-f key=value` token. The live third drill
   // (32429029312) proved this exact spelling propagates
   // FORCE_VERIFY_LIVE_REGRESSION=true end to end.
-  expect(source).toContain("gh(['workflow', 'run', 'ci.yml', '--ref', 'main', '-f', 'force_verify_live_regression=true'])");
+  expect(source).toContain("'-f', 'force_verify_live_regression=true'");
+  expect(source).toContain("'-f', 'source=regression-drill'");
   // Wrong spellings that would silently change dispatch semantics:
   expect(source).not.toContain("'-F', 'force_verify_live_regression=true'");
   expect(source).not.toMatch(/'--field',\s*'force_verify_live_regression/);

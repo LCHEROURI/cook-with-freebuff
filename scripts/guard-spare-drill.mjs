@@ -347,7 +347,7 @@ async function main() {
   const dispatchedAfter = Date.now() - 2_000;
 
   note('dispatching ci.yml on main (--ref main)');
-  gh(['workflow', 'run', 'ci.yml', '--ref', 'main']);
+  gh(['workflow', 'run', 'ci.yml', '--ref', 'main', '-f', 'source=spare-drill']);
   await sleep(5_000);
 
   let runId = null;
