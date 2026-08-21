@@ -215,12 +215,10 @@ function fetchJobLog(jobId) {
 // ── Live-reason assertion: the drill's reason must reach the DEPLOYED
 //    endpoint, not just the log. After the golden match, mint a real owner
 //    token (custom token → identitytoolkit, the same exchange verify-live.mjs
-//    uses), GET the public /api/status route, and assert the recorded
-//    verifyLive.reason EQUALS the exported SPARED_LIVE_REASON constant for a
-//    pure spare run. If verify:live also has an unrelated failure, the
-//    classifier intentionally leaves reason unset so the spare cannot mask the
-//    regression; in that mixed case the drill accepts null only after proving
-//    both the spare evidence and the additional failure from this exact job log.
+//    uses), GET the public /api/status route, and cross-check the recorded
+//    verifyLive.reason against the exact failures from this verify:live job.
+//    A pure spare run must carry SPARED_LIVE_REASON; a mixed run must leave it
+//    unset so the spare-path condition cannot mask a second regression.
 //    The runUrl cross-check is load-bearing: /api/status reads the single-slot
 //    deploy_status/verify_live doc, and a CONCURRENT ci.yml run (e.g. the
 //    weekly boundary drill, or a push) can overwrite it after our drill
@@ -264,20 +262,25 @@ async function assertLiveStatusReason(runId) {
   if (typeof v.runUrl !== 'string' || !v.runUrl.includes(`/runs/${runId}`)) {
     throw new Error(`recorded runUrl ${v.runUrl ?? '<none>'} is not the drill run ${runId} — a concurrent run overwrote the record; cannot assert the live reason`);
   }
-  if (v.reason !== SPARED_LIVE_REASON) {
-    const failureMessages = extractFailureMessages(readFileSync(VERIFY_LOG, 'utf8'));
-    const assessment = assessSpareStatusReason(v.reason, failureMessages);
-    if (assessment.kind === 'mixed') {
-      note(
-        `live /api/status: reason omitted as expected because verify:live also had ` +
-          `${assessment.otherFailures.length} non-spare failure(s); spare-path evidence still matched the golden`,
-      );
-      note(`non-spare verify failure: ${assessment.otherFailures[0]}`);
-      return;
-    }
-    throw new Error(`/api/status reason is ${JSON.stringify(v.reason)}, expected the exported SPARED_LIVE_REASON constant (${SPARED_LIVE_REASON})`);
+
+  const failureMessages = extractFailureMessages(readFileSync(VERIFY_LOG, 'utf8'));
+  const assessment = assessSpareStatusReason(v.reason, failureMessages);
+  if (assessment.kind === 'spare-only') {
+    ok(`live /api/status: verifyLive.reason === SPARED_LIVE_REASON (${v.reason}) for run ${runId}`);
+    return;
   }
-  ok(`live /api/status: verifyLive.reason === SPARED_LIVE_REASON (${v.reason}) for run ${runId}`);
+  if (assessment.kind === 'mixed') {
+    note(
+      `live /api/status: reason omitted as expected because verify:live also had ` +
+        `${assessment.otherFailures.length} non-spare failure(s); spare-path evidence still matched the golden`,
+    );
+    note(`non-spare verify failure: ${assessment.otherFailures[0]}`);
+    return;
+  }
+  throw new Error(
+    `/api/status reason ${JSON.stringify(v.reason)} is inconsistent with the exact verify:live failures; ` +
+      `expected pure spare → ${SPARED_LIVE_REASON}, or mixed spare + regression → null`,
+  );
 }
 function modeDiff(argv) {
   const arg = argv['--diff'];
