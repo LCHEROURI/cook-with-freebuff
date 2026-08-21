@@ -33,7 +33,7 @@ import { resolve } from 'node:path';
 // (which verify-live.mjs embeds in both the guard's note(...) and fail(...)).
 // This comparator's NOTE_RE is built from that constant so a reworded
 // signature updates the extraction automatically.
-import { BLOCKING_SESSION_PREFIX } from './verify-live-classify.mjs';
+import { BLOCKING_SESSION_PREFIX, SPARED_LIVE_REASON } from './verify-live-classify.mjs';
 import { renderArchiveOkLine, renderNoteLine } from './drill-evidence-render.mjs';
 
 const ROOT = resolve(process.cwd());
@@ -222,6 +222,99 @@ function compare(actual) {
   return failures;
 }
 
+// ── Failure count: the boundary path expects RESULT: PASS (clean run,
+//    verdict=success). A co-occurring flake produces RESULT: FAIL (N).
+//    The count tells the live assertion whether this was a clean boundary
+//    run (verdict MUST be success) or a mixed run (boundary evidence was
+//    perfect but an unrelated failure reddened the run). ──────────────────
+function failureCountFromLog(logText) {
+  const matches = [...logText.matchAll(/RESULT: FAIL \((\d+|crash)\)/g)];
+  if (matches.length === 0) return 0;
+  const last = matches[matches.length - 1][1];
+  return last === 'crash' ? 'crash' : Number(last);
+}
+
+// ── Live-verdict assertion: the boundary drill's evidence is the
+//    ARCHIVED-OK line (guard archived and retried). After the golden
+//    match, read the deployed /api/status endpoint and assert:
+//    - Clean run (failureCount === 0): verdict MUST be success, reason null.
+//    - Mixed run (failureCount >= 1): verdict failure, reason null — the
+//      boundary evidence was proven by the golden; report separately.
+//    - Crash / unparseable: stay conservative, require success.
+//    The runUrl cross-check is load-bearing (same as spare drill): a
+//    concurrent ci.yml run can overwrite the doc after our drill finishes. ─
+async function assertLiveStatusVerdict(runId, failureCount) {
+  const { initializeApp, cert, getApps } = await import('firebase-admin/app');
+  const { getAuth } = await import('firebase-admin/auth');
+  const SA_JSON = process.env.FIREBASE_SERVICE_ACCOUNT;
+  const API_KEY = process.env.NEXT_PUBLIC_FIREBASE_API_KEY;
+  const OWNER_UID = process.env.APP_OWNER_UID;
+  if (!SA_JSON || !API_KEY || !OWNER_UID) {
+    throw new Error('FIREBASE_SERVICE_ACCOUNT + NEXT_PUBLIC_FIREBASE_API_KEY + APP_OWNER_UID required for the /api/status verdict assertion');
+  }
+  const sa = JSON.parse(SA_JSON);
+  const app = getApps()[0] ?? initializeApp({
+    credential: cert({
+      projectId: sa.project_id,
+      clientEmail: sa.client_email,
+      privateKey: sa.private_key.replace(/\\n/g, '\n'),
+    }),
+  });
+  const customToken = await getAuth(app).createCustomToken(OWNER_UID);
+  const exchange = await fetch(
+    `https://identitytoolkit.googleapis.com/v1/accounts:signInWithCustomToken?key=${API_KEY}`,
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ token: customToken, returnSecureToken: true }),
+    },
+  );
+  const idToken = (await exchange.json().catch(() => ({})))?.idToken;
+  if (!idToken) throw new Error(`owner token exchange failed (HTTP ${exchange.status})`);
+  const APP = (process.env.VERIFY_BASE_URL ?? 'https://cook-with-freebuff--portfolio-app-freebuff2.us-central1.hosted.app').replace(/\/$/, '');
+  const res = await fetch(`${APP}/api/status`, {
+    headers: { authorization: `Bearer ${idToken}` },
+  });
+  const body = await res.json().catch(() => ({}));
+  const v = body?.verifyLive;
+  if (!v) throw new Error(`/api/status returned no verifyLive record (HTTP ${res.status})`);
+  if (typeof v.runUrl !== 'string' || !v.runUrl.includes(`/runs/${runId}`)) {
+    throw new Error(`recorded runUrl ${v.runUrl ?? '<none>'} is not the drill run ${runId} — a concurrent run overwrote the record; cannot assert the live verdict`);
+  }
+  if (failureCount === 0) {
+    // Clean boundary run: the archive path worked, verify:live went green.
+    // The verdict MUST be success with reason null.
+    if (v.verdict !== 'success') {
+      throw new Error(`/api/status verdict is '${v.verdict}', expected 'success' for a clean boundary run`);
+    }
+    if (v.reason !== undefined && v.reason !== null) {
+      throw new Error(`/api/status reason is ${JSON.stringify(v.reason)}, expected null for a clean boundary run`);
+    }
+    ok(`live /api/status: verdict=success, reason=null for run ${runId}`);
+    return;
+  }
+  if (typeof failureCount === 'number' && failureCount >= 1) {
+    // Mixed run: the boundary evidence was proven by the golden diff, but
+    // an unrelated co-occurring failure made verify:live red. The verdict
+    // MUST be failure with reason null (no-mask rule).
+    if (v.verdict !== 'failure') {
+      throw new Error(`/api/status verdict is '${v.verdict}', expected 'failure' for a mixed-failure boundary run`);
+    }
+    if (v.reason !== undefined && v.reason !== null) {
+      throw new Error(`no-mask violation: mixed-failure run (${failureCount} failures) recorded reason ${JSON.stringify(v.reason)} — a real failure was masked`);
+    }
+    note(`run carried ${failureCount} co-occurring failure(s) — boundary evidence proven separately`);
+    ok(`live /api/status: mixed-failure run (${failureCount} failures) — boundary evidence separate (verdict=${v.verdict}, reason=${v.reason ?? 'null'}) for run ${runId}`);
+    return;
+  }
+  // failureCount is 'crash' or unparseable: stay conservative — require
+  // the clean-run verdict exactly.
+  if (v.verdict !== 'success') {
+    throw new Error(`/api/status verdict is '${v.verdict}', expected 'success' for a boundary run (unparseable failure count)`);
+  }
+  ok(`live /api/status: verdict=success for run ${runId} (unparseable failure count treated as clean)`);
+}
+
 // ── Mode 2: --diff <run-id|log-path> — only fetch + compare. ────────────
 function fetchJobLog(jobId) {
   const out = gh(['run', 'view', '--job', String(jobId), '--log']);
@@ -333,6 +426,14 @@ async function main() {
     if (dr.length === 0) {
       const idle = parsed.noteGroups?.[5] ?? '?';
       ok(`boundary-path lines match the golden (note=${parsed.noteGroups ? 'present' : 'absent'}, archive-ok=${parsed.okGroups ? 'present' : 'absent'}, idle=${idle}s)`);
+
+      // The drill is not complete until the DEPLOYED endpoint reports the
+      // verdict it just produced. A clean boundary run (RESULT: PASS, no
+      // failures) MUST show verdict=success. A co-occurring flake (RESULT:
+      // FAIL (N)) MUST show verdict=failure with reason=null — the boundary
+      // evidence was already proven by the golden; the drill passes and
+      // reports it separately instead of reddening.
+      await assertLiveStatusVerdict(runId, failureCountFromLog(log));
     } else {
       fail('drift detected against the golden:');
       for (const f of dr) {

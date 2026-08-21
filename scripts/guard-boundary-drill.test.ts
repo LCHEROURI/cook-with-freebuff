@@ -257,4 +257,44 @@ describe('scripts/guard-boundary-drill.mjs · the comparator + its golden', () =
     expect(brokenBase, 'the broken-base mutation must actually land').not.toBe(src);
     expect(() => expectDispatchShape(brokenBase)).toThrow();
   });
+
+  it('imports SPARED_LIVE_REASON from the classifier (single source of truth)', () => {
+    const src = readFileSync(resolve(process.cwd(), SCRIPT), 'utf8');
+    expect(src).toContain("import { BLOCKING_SESSION_PREFIX, SPARED_LIVE_REASON } from './verify-live-classify.mjs'");
+  });
+
+  it('has failureCountFromLog that parses RESULT: FAIL lines from the log', () => {
+    const src = readFileSync(resolve(process.cwd(), SCRIPT), 'utf8');
+    expect(src).toContain('function failureCountFromLog(logText)');
+    expect(src).toContain('/RESULT: FAIL \\((\\d+|crash)\\)/g');
+  });
+
+  it('has assertLiveStatusVerdict that reads /api/status and asserts the verdict', () => {
+    const src = readFileSync(resolve(process.cwd(), SCRIPT), 'utf8');
+    expect(src).toContain('async function assertLiveStatusVerdict(runId, failureCount)');
+    expect(src).toContain('/api/status returned no verifyLive record');
+  });
+
+  it('calls assertLiveStatusVerdict only when golden matched, not on drift', () => {
+    // The assertion must be inside the if (dr.length === 0) branch, not
+    // after it — a golden drift must exit 1 before touching the live endpoint.
+    const src = readFileSync(resolve(process.cwd(), SCRIPT), 'utf8');
+    const goldenMatchIdx = src.indexOf('boundary-path lines match the golden', src.indexOf('async function main'));
+    const assertIdx = src.indexOf('await assertLiveStatusVerdict(runId, failureCountFromLog(log))');
+    // The drift check in main() (not modeDiff) must come AFTER the assertion.
+    const driftIdx = src.indexOf('drift detected against the golden', assertIdx);
+    expect(goldenMatchIdx).toBeGreaterThan(-1);
+    expect(assertIdx).toBeGreaterThan(goldenMatchIdx);
+    expect(driftIdx).toBeGreaterThan(assertIdx);
+  });
+
+  it('asserts verdict=success for clean runs and verdict=failure with reason=null for mixed runs', () => {
+    const src = readFileSync(resolve(process.cwd(), SCRIPT), 'utf8');
+    // Clean run (failureCount === 0): verdict must be success
+    expect(src).toContain("v.verdict !== 'success'");
+    // Mixed run (failureCount >= 1): verdict must be failure
+    expect(src).toContain("v.verdict !== 'failure'");
+    // No-mask: mixed run must have null reason
+    expect(src).toContain('no-mask violation');
+  });
 });
