@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { describe, expect, it } from 'vitest';
@@ -9,6 +9,9 @@ import {
   renderSeamFailLine,
   renderSpareFailLine,
 } from './drill-evidence-render.mjs';
+// The --diff codegen + drift drill discipline is shared with the spare and
+// boundary comparator tests (see drill-codegen-helpers.mjs).
+import { assertCodegenReplay, assertFixtureDrift, assertGoldenDrift } from './drill-codegen-helpers.mjs';
 
 // ============================================================================
 // scripts/guard-regression-drill.test.ts — pin the end-to-end spare +
@@ -120,32 +123,18 @@ describe('scripts/guard-regression-drill.mjs · the comparator + its golden', ()
     // with --diff runs that exact pipeline against the committed fixture —
     // exit 0 proves every golden template regenerates to the raw log line.
     // A drift in any regex, a reordered capture group, or a golden edit
-    // that no longer round-trips surfaces here as a non-zero exit.
-    const fixture = resolve(process.cwd(), FIXTURE);
-    const goldenText = readFileSync(resolve(process.cwd(), GOLDEN), 'utf8');
-    // Sanity: the fixture carries all four evidence lines (the comparator's
-    // own extract step must find them; without them --diff would exit 2).
-    const log = readFileSync(fixture, 'utf8');
-    expect(log).toContain('archiving and retrying once');
-    expect(log).toContain('after the archive retry');
-    expect(log).toContain(SEAM_LINE);
-    expect(log).toContain(RESULT_LINE);
-
-    // Run the comparator's real pipeline: extract -> normalize -> compare
-    // (buildExpected golden-template expansion) against the fixture.
-    const r = execFileSync('node', [SCRIPT, '--diff', fixture], { encoding: 'utf8' });
-    expect(r).toContain('regression-path lines match the golden');
-    // The comparator's own match report confirms all four lines were found
-    // and regenerated — not just a clean exit on a partial match.
-    expect(r).toContain('note line: matched');
-    expect(r).toContain('spare-fail line: matched');
-    expect(r).toContain('seam-fail line: matched');
-    expect(r).toContain('result line: FAIL (2)');
-    // The golden is exactly the four evidence lines (plus its header
-    // comments) — the regeneration must cover each pinned line.
-    for (const line of ['- owner has <N>', '✗ FAIL: owner still has <N>', SEAM_LINE, RESULT_LINE]) {
-      expect(goldenText).toContain(line);
-    }
+    // that no longer round-trips surfaces here as a non-zero exit. The
+    // drill discipline is shared with the spare/boundary comparators via
+    // drill-codegen-helpers.mjs.
+    assertCodegenReplay({
+      script: SCRIPT,
+      fixture: FIXTURE,
+      goldenPath: GOLDEN,
+      matchLine: 'regression-path lines match the golden',
+      reportLines: ['note line: matched', 'spare-fail line: matched', 'seam-fail line: matched', 'result line: FAIL (2)'],
+      fixtureSanity: ['archiving and retrying once', 'after the archive retry', SEAM_LINE, RESULT_LINE],
+      goldenPrefixes: ['- owner has <N>', '✗ FAIL: owner still has <N>', SEAM_LINE, RESULT_LINE],
+    });
   });
 
   it('proves the regeneration path fires on drift — a mutated fixture exits 1 with a mismatch report', () => {
@@ -154,33 +143,17 @@ describe('scripts/guard-regression-drill.mjs · the comparator + its golden', ()
     // in-memory fixture copy (2 -> 3), write it to a temp file, and run the
     // comparator's --diff on it: buildExpected regenerates the golden
     // template (still FAIL (2)) while the mutated line regenerates as FAIL
-    // (3) — a genuine mismatch that must exit 1.
-    const fixture = resolve(process.cwd(), FIXTURE);
-    const mutated = readFileSync(fixture, 'utf8').replace('RESULT: FAIL (2)', 'RESULT: FAIL (3)');
-    expect(mutated, 'the mutation must actually land').toContain('RESULT: FAIL (3)');
-    const tmp = resolve('/tmp', 'vlive-regression-drift-fixture.log');
-    writeFileSync(tmp, mutated);
-    // execFileSync throws on non-zero exit — capture the error OUTSIDE the
-    // toThrow wrapper: a `catch` around `expect(...).toThrow()` only runs
-    // when the command does NOT throw (exit 0), so the drift report
-    // assertions below would never execute in the drift case — only the
-    // exit code would be pinned, never the failure shape.
-    try {
-      let err: { status?: number; stderr?: string; stdout?: string } | null = null;
-      try {
-        execFileSync('node', [SCRIPT, '--diff', tmp], { encoding: 'utf8' });
-      } catch (e) {
-        err = e as { status?: number; stderr?: string; stdout?: string };
-      }
-      expect(err, 'expected the drifted fixture to exit non-zero').not.toBeNull();
-      expect(err!.status).toBe(1);
-      const out = `${err!.stdout ?? ''}${err!.stderr ?? ''}`;
-      expect(out).toContain('drift detected against the golden:');
-      expect(out).toContain('RESULT: FAIL (2)');
-      expect(out).toContain('RESULT: FAIL (3)');
-    } finally {
-      rmSync(tmp, { force: true });
-    }
+    // (3) — a genuine mismatch that must exit 1 with the verbatim drift
+    // lines. The drill (dead-catch-free error capture + verbatim shape
+    // pins) is shared via drill-codegen-helpers.mjs.
+    assertFixtureDrift({
+      script: SCRIPT,
+      fixture: FIXTURE,
+      mutateFixture: (content: string) => content.replace('RESULT: FAIL (2)', 'RESULT: FAIL (3)'),
+      mutationLand: 'RESULT: FAIL (3)',
+      tmpFixtureName: '/tmp/vlive-regression-drift-fixture.log',
+      driftLines: ['RESULT: FAIL (2)', 'RESULT: FAIL (3)'],
+    });
   });
 
   it('proves the regeneration path fires on GOLDEN drift — a golden edit exits 1 against the unchanged fixture', () => {
@@ -197,43 +170,26 @@ describe('scripts/guard-regression-drill.mjs · the comparator + its golden', ()
     // header comment also contains "RESULT: FAIL (2)", so a bare replace
     // would edit the comment and leave the real line untouched — the drill
     // would pass vacuously.
-    const src = readFileSync(resolve(process.cwd(), SCRIPT), 'utf8');
+    // The anchored golden mutation + its land-checks stay here (they are
+    // regression-specific: the header comment also contains "RESULT: FAIL
+    // (2)", so the replace must be anchored to the real line or the drill
+    // passes vacuously). The run + verbatim shape assertions are shared via
+    // drill-codegen-helpers.mjs.
     const goldenSrc = readFileSync(resolve(process.cwd(), GOLDEN), 'utf8');
     const driftedGolden = goldenSrc.replace(/^RESULT: FAIL \(2\)$/m, 'RESULT: FAIL (9)');
     expect(driftedGolden, 'the golden mutation must land on the real line').not.toBe(goldenSrc);
     expect(driftedGolden.split('\n').filter((l) => l.startsWith('RESULT:'))).toEqual(['RESULT: FAIL (9)']);
 
-    const tmpScript = resolve(process.cwd(), 'scripts/.tmp-regression-golden-drift.mjs');
-    const tmpGolden = resolve('/tmp', 'regression-drift-golden.txt');
-    const driftedScript = src.replace(
-      "resolve(ROOT, 'scripts/__golden__/guard-regression-drill.txt')",
-      `'${tmpGolden}'`,
-    );
-    expect(driftedScript, 'the golden-path mutation must actually land').not.toContain(
-      "resolve(ROOT, 'scripts/__golden__/guard-regression-drill.txt')",
-    );
-    writeFileSync(tmpScript, driftedScript);
-    writeFileSync(tmpGolden, driftedGolden);
-    // Capture the error OUTSIDE the toThrow wrapper so the verbatim
-    // expected/actual lines are asserted in the drift case (a `catch`
-    // around `expect(...).toThrow()` only runs on exit 0, never here).
-    try {
-      let err: { status?: number; stderr?: string; stdout?: string } | null = null;
-      try {
-        execFileSync('node', [tmpScript, '--diff', resolve(process.cwd(), FIXTURE)], { encoding: 'utf8' });
-      } catch (e) {
-        err = e as { status?: number; stderr?: string; stdout?: string };
-      }
-      expect(err, 'expected the drifted golden to exit non-zero').not.toBeNull();
-      expect(err!.status).toBe(1);
-      const out = `${err!.stdout ?? ''}${err!.stderr ?? ''}`;
-      expect(out).toContain('drift detected against the golden:');
-      expect(out).toContain('expected: RESULT: FAIL (9)');
-      expect(out).toContain('actual:   RESULT: FAIL (2)');
-    } finally {
-      rmSync(tmpScript, { force: true });
-      rmSync(tmpGolden, { force: true });
-    }
+    assertGoldenDrift({
+      script: SCRIPT,
+      fixture: FIXTURE,
+      goldenPathLiteral: "resolve(ROOT, 'scripts/__golden__/guard-regression-drill.txt')",
+      driftedGoldenContent: driftedGolden,
+      expectedLine: 'expected: RESULT: FAIL (9)',
+      actualLine: 'actual:   RESULT: FAIL (2)',
+      tmpScriptName: 'scripts/.tmp-regression-golden-drift.mjs',
+      tmpGoldenName: '/tmp/regression-drift-golden.txt',
+    });
   });
 
   it('declares exit semantics so a future editor cannot silently change the contract', () => {

@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { describe, expect, it } from 'vitest';
@@ -8,6 +8,9 @@ import { describe, expect, it } from 'vitest';
 // use — so a reworded signature updates the renderer and these pins track it
 // in lockstep.
 import { renderArchiveOkLine, renderNoteLine } from './drill-evidence-render.mjs';
+// The --diff codegen + drift drill discipline is shared with the spare and
+// regression comparator tests (see drill-codegen-helpers.mjs).
+import { assertCodegenReplay, assertGoldenDrift } from './drill-codegen-helpers.mjs';
 
 // ============================================================================
 // scripts/guard-boundary-drill.test.ts — pin the end-to-end boundary-path
@@ -117,20 +120,17 @@ describe('scripts/guard-boundary-drill.mjs · the comparator + its golden', () =
     // template expansion) pipeline via --diff against the committed fixture.
     // Exit 0 proves every golden template regenerates to the raw log line;
     // the comparator's own match report confirms BOTH lines were found and
-    // regenerated, not just a clean exit on a partial match.
-    const fixture = resolve(process.cwd(), FIXTURE);
-    const goldenText = readFileSync(resolve(process.cwd(), GOLDEN), 'utf8');
-    const log = readFileSync(fixture, 'utf8');
-    expect(log).toContain('archiving and retrying once');
-    expect(log).toContain('owner is clean before the UI starter');
-
-    const r = execFileSync('node', [SCRIPT, '--diff', fixture], { encoding: 'utf8' });
-    expect(r).toContain('boundary-path lines match the golden');
-    expect(r).toContain('note line: matched');
-    expect(r).toContain('archive-ok line: matched');
-    for (const line of ['- owner has <N>', '✓ archived <N>']) {
-      expect(goldenText).toContain(line);
-    }
+    // regenerated, not just a clean exit on a partial match. The drill
+    // discipline is shared via drill-codegen-helpers.mjs.
+    assertCodegenReplay({
+      script: SCRIPT,
+      fixture: FIXTURE,
+      goldenPath: GOLDEN,
+      matchLine: 'boundary-path lines match the golden',
+      reportLines: ['note line: matched', 'archive-ok line: matched'],
+      fixtureSanity: ['archiving and retrying once', 'owner is clean before the UI starter'],
+      goldenPrefixes: ['- owner has <N>', '✓ archived <N>'],
+    });
   });
 
   it('proves the regeneration path fires on drift — a golden edit that no longer round-trips exits 1', () => {
@@ -140,53 +140,25 @@ describe('scripts/guard-boundary-drill.mjs · the comparator + its golden', () =
     // and still matches. The genuine drift direction is the GOLDEN: inject
     // an extra word into the NOTE template, copy the script to a temp path
     // with the golden constant pointed at the drifted file, and run --diff
-    // against the UNCHANGED fixture — a genuine mismatch that must exit 1.
-    const src = readFileSync(resolve(process.cwd(), SCRIPT), 'utf8');
-    const tmpScript = resolve(process.cwd(), 'scripts/.tmp-boundary-drift.mjs');
-    const tmpGolden = resolve('/tmp', 'boundary-drift-golden.txt');
-    const drifted = src.replace(
-      "resolve(ROOT, 'scripts/__golden__/guard-boundary-drill.txt')",
-      `'${tmpGolden}'`,
-    );
-    expect(drifted, 'the golden-path mutation must actually land').not.toContain(
-      "resolve(ROOT, 'scripts/__golden__/guard-boundary-drill.txt')",
-    );
-    writeFileSync(tmpScript, drifted);
-    writeFileSync(tmpGolden, [
-      '# drift golden',
-      '- owner has <N> ACTIVE/PAUSED session(s) blocking the UI starter — archiving and retrying once EXTRA: <ID>… (<PHASE>, <RECIPE>, <IDLE>s idle)',
-      '✓ archived <N> blocking session(s) — retried, owner is clean before the UI starter',
-      '',
-    ].join('\n'));
-    // The drift must exit 1 AND print the exact mismatch shape. The error
-    // is captured OUTSIDE the toThrow wrapper: a `catch` around
-    // `expect(...).toThrow()` only runs when the command does NOT throw
-    // (exit 0), so assertions placed there never execute in the drift case
-    // — the exit code alone would be pinned, never the failure shape.
-    try {
-      let err: { status?: number; stderr?: string; stdout?: string } | null = null;
-      try {
-        execFileSync('node', [tmpScript, '--diff', resolve(process.cwd(), FIXTURE)], { encoding: 'utf8' });
-      } catch (e) {
-        err = e as { status?: number; stderr?: string; stdout?: string };
-      }
-      expect(err, 'expected the drifted golden to exit non-zero').not.toBeNull();
-      expect(err!.status).toBe(1);
-      const out = `${err!.stdout ?? ''}${err!.stderr ?? ''}`;
-      expect(out).toContain('drift detected against the golden:');
-      expect(out).toContain('archiving and retrying once EXTRA:');
-      // Pin the failure shape verbatim (mirrors the regression drift test):
-      // the NOTE template carries EXTRA, so buildExpected regenerates the
-      // drifted expected line while the fixture's regenerated line (without
-      // EXTRA) is the actual — a drift in the renderer, the placeholder
-      // order, or the mismatch printer fails here, not just via exit code.
-      // Concrete values are the boundary fixture's captured groups (68s idle).
-      expect(out).toContain('expected: - owner has 1 ACTIVE/PAUSED session(s) blocking the UI starter — archiving and retrying once EXTRA: drill-li… (COLLECTING_INGREDIENTS, chicken_rice_onion_001, 68s idle)');
-      expect(out).toContain('actual:   - owner has 1 ACTIVE/PAUSED session(s) blocking the UI starter — archiving and retrying once: drill-li… (COLLECTING_INGREDIENTS, chicken_rice_onion_001, 68s idle)');
-    } finally {
-      rmSync(tmpScript, { force: true });
-      rmSync(tmpGolden, { force: true });
-    }
+    // against the UNCHANGED fixture — a genuine mismatch that must exit 1
+    // with the verbatim expected/actual lines. The drill (temp script +
+    // drifted golden + dead-catch-free error capture + verbatim shape pins)
+    // is shared via drill-codegen-helpers.mjs.
+    assertGoldenDrift({
+      script: SCRIPT,
+      fixture: FIXTURE,
+      goldenPathLiteral: "resolve(ROOT, 'scripts/__golden__/guard-boundary-drill.txt')",
+      driftedGoldenContent: [
+        '# drift golden',
+        '- owner has <N> ACTIVE/PAUSED session(s) blocking the UI starter — archiving and retrying once EXTRA: <ID>… (<PHASE>, <RECIPE>, <IDLE>s idle)',
+        '✓ archived <N> blocking session(s) — retried, owner is clean before the UI starter',
+        '',
+      ].join('\n'),
+      expectedLine: 'expected: - owner has 1 ACTIVE/PAUSED session(s) blocking the UI starter — archiving and retrying once EXTRA: drill-li… (COLLECTING_INGREDIENTS, chicken_rice_onion_001, 68s idle)',
+      actualLine: 'actual:   - owner has 1 ACTIVE/PAUSED session(s) blocking the UI starter — archiving and retrying once: drill-li… (COLLECTING_INGREDIENTS, chicken_rice_onion_001, 68s idle)',
+      tmpScriptName: 'scripts/.tmp-boundary-drift.mjs',
+      tmpGoldenName: '/tmp/boundary-drift-golden.txt',
+    });
   });
 
   it('dispatches ci.yml on main with the proven base shape — no drill input', () => {
