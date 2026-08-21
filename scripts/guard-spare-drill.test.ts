@@ -2,15 +2,13 @@ import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
-// The golden's expected lines embed the shared constants (single source of
-// truth — verify-live.mjs and the comparator regexes derive from the same
-// exports), so a reworded signature updates the constant and these pins
-// track it while the codegen contract flags the golden drift.
-import {
-  BLOCKING_SESSION_PREFIX,
-  SPARED_LIVE_REASON,
-  SPARED_LIVE_SESSION_SIGNATURE,
-} from './verify-live-classify.mjs';
+// The golden's expected lines derive from the SHARED renderer module
+// (drill-evidence-render.mjs) — the same code path the comparator's
+// expandNote/expandFail calls and the verify-live-classify codegen contract
+// use — so a reworded signature updates the renderer and these pins track it
+// in lockstep.
+import { SPARED_LIVE_REASON } from './verify-live-classify.mjs';
+import { renderNoteLine, renderSpareFailLine } from './drill-evidence-render.mjs';
 
 // ============================================================================
 // scripts/guard-spare-drill.test.ts — pin the end-to-end spare-drill
@@ -47,8 +45,8 @@ describe('scripts/guard-spare-drill.mjs · the comparator + its golden', () => {
     const body = readFileSync(resolve(process.cwd(), GOLDEN), 'utf8');
     const nonComment = body.split('\n').filter((l) => !l.startsWith('#')).map((l) => l.trim()).filter(Boolean);
     expect(nonComment).toHaveLength(2);
-    expect(nonComment[0]).toBe(`- owner has <N> ${BLOCKING_SESSION_PREFIX} — archiving and retrying once: <ID>… (<PHASE>, <RECIPE>, <IDLE>s idle)`);
-    expect(nonComment[1]).toBe(`✗ FAIL: owner still has <N> ${SPARED_LIVE_SESSION_SIGNATURE}: <ID>… (<PHASE>, <RECIPE>, <IDLE>s idle)`);
+    expect(nonComment[0]).toBe(renderNoteLine({ n: '<N>', id: '<ID>', phase: '<PHASE>', recipe: '<RECIPE>', idle: '<IDLE>' }));
+    expect(nonComment[1]).toBe(renderSpareFailLine({ n: '<N>', id: '<ID>', phase: '<PHASE>', recipe: '<RECIPE>', idle: '<IDLE>' }));
   });
 
   it('keeps the five load-bearing placeholders so a renamed drill variable is caught', () => {

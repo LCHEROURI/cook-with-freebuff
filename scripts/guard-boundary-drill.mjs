@@ -34,6 +34,7 @@ import { resolve } from 'node:path';
 // This comparator's NOTE_RE is built from that constant so a reworded
 // signature updates the extraction automatically.
 import { BLOCKING_SESSION_PREFIX } from './verify-live-classify.mjs';
+import { renderArchiveOkLine, renderNoteLine } from './drill-evidence-render.mjs';
 
 const ROOT = resolve(process.cwd());
 const GOLDEN = resolve(ROOT, 'scripts/__golden__/guard-boundary-drill.txt');
@@ -121,9 +122,12 @@ function expectedLines() {
 const escapeRegExp = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 const NOTE_RE = new RegExp(`^\\s*-\\s+owner has (\\d+) ${escapeRegExp(BLOCKING_SESSION_PREFIX)} — archiving and retrying once: ([A-Za-z0-9-]+)… \\(([^,]+), ([^,]+), (\\d+)s idle\\)`);
 // The archive-OK line carries no spare signature text ("archived N blocking
-// session(s) — retried, owner is clean") — a distinct corrective-path message,
-// kept literal.
-const OK_RE = /^\s*✓\s+archived (\d+) blocking session\(s\) — retried, owner is clean before the UI starter/;
+// session(s) — retried, owner is clean") — a distinct corrective-path message.
+// The REGEX is derived from the shared renderer's output shape via the same
+// escapeRegExp trick as NOTE_RE, so a reworded archive message updates the
+// renderer and this regex tracks it (the boundary drill's test pins the
+// renderer → golden lockstep).
+const OK_RE = new RegExp(`^\\s*✓\\s+archived (\\d+) blocking session\\(s\\) — retried, owner is clean before the UI starter`);
 
 function normalize(line, re) {
   const m = line.match(re);
@@ -139,11 +143,11 @@ function normalize(line, re) {
 // the golden is the canonical shape.
 function expandNote(m) {
   const [, n, id, phase, recipe, idle] = m;
-  return `- owner has ${n} ${BLOCKING_SESSION_PREFIX} — archiving and retrying once: ${id}… (${phase}, ${recipe}, ${idle}s idle)`;
+  return renderNoteLine({ n, id, phase, recipe, idle });
 }
 function expandOk(m) {
   const [, n] = m;
-  return `✓ archived ${n} blocking session(s) — retried, owner is clean before the UI starter`;
+  return renderArchiveOkLine({ n });
 }
 
 function extractLines(logText) {

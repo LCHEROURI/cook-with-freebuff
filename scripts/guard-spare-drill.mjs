@@ -35,6 +35,7 @@ import {
   SPARED_LIVE_REASON,
   SPARED_LIVE_SESSION_SIGNATURE,
 } from './verify-live-classify.mjs';
+import { renderNoteLine, renderSpareFailLine } from './drill-evidence-render.mjs';
 
 const ROOT = resolve(process.cwd());
 const GOLDEN = resolve(ROOT, 'scripts/__golden__/guard-spare-drill.txt');
@@ -118,19 +119,21 @@ function normalize(line, re) {
   return m;
 }
 
-// Substitute the captured groups into the golden template so it reproduces
-// the exact raw source log line. Drift detection: if the source fail(...)
+// Regenerate the exact raw source log line from the captured groups through
+// the SHARED renderer module (drill-evidence-render.mjs) — the same code path
+// the goldens' source-template derivation uses, so the comparator and the
+// golden can never drift apart. Drift detection: if the source fail(...)
 // message changes wording, the regex breaks the extraction step above (so we
 // fail-fast). If whitespace or order shifts, the substituted line differs
 // from the raw log line and `compare` reports it. Either way, the golden is
 // the canonical shape.
 function expandNote(m) {
   const [, n, id, phase, recipe, idle] = m;
-  return `- owner has ${n} ${BLOCKING_SESSION_PREFIX} — archiving and retrying once: ${id}… (${phase}, ${recipe}, ${idle}s idle)`;
+  return renderNoteLine({ n, id, phase, recipe, idle });
 }
 function expandFail(m) {
   const [, n, id, phase, recipe, idle] = m;
-  return `✗ FAIL: owner still has ${n} ${SPARED_LIVE_SESSION_SIGNATURE}: ${id}… (${phase}, ${recipe}, ${idle}s idle)`;
+  return renderSpareFailLine({ n, id, phase, recipe, idle });
 }
 
 function extractLines(logText) {

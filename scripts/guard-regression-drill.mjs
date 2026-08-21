@@ -44,6 +44,12 @@ import {
   SIMULATED_REGRESSION_SIGNATURE,
   SPARED_LIVE_SESSION_SIGNATURE,
 } from './verify-live-classify.mjs';
+import {
+  renderNoteLine,
+  renderResultLine,
+  renderSeamFailLine,
+  renderSpareFailLine,
+} from './drill-evidence-render.mjs';
 
 const ROOT = resolve(process.cwd());
 const GOLDEN = resolve(ROOT, 'scripts/__golden__/guard-regression-drill.txt');
@@ -150,11 +156,28 @@ function extractLines(logText) {
 }
 
 function normalizedLines(groups) {
+  // Regenerate every evidence line through the SHARED renderer module
+  // (drill-evidence-render.mjs) — the same code path the goldens' source-
+  // template derivation uses. Regenerating (rather than echoing the raw
+  // line) proves the captured groups re-render to the canonical shape, so
+  // a regex-group drift or a renderer/golden divergence fails here instead
+  // of only surfacing as a raw-line diff.
   const out = [];
-  if (groups.note) out.push({ kind: 'note', groups: groups.note, raw: groups.note[0], regenerated: groups.note[0] });
-  if (groups.spareFail) out.push({ kind: 'spareFail', groups: groups.spareFail, raw: groups.spareFail[0], regenerated: groups.spareFail[0] });
-  if (groups.seamFail) out.push({ kind: 'seamFail', groups: groups.seamFail, raw: groups.seamFail[0], regenerated: groups.seamFail[0] });
-  if (groups.result) out.push({ kind: 'result', groups: groups.result, raw: groups.result[0], regenerated: groups.result[0] });
+  if (groups.note) {
+    const [, n, id, phase, recipe, idle] = groups.note;
+    out.push({ kind: 'note', groups: groups.note, raw: groups.note[0], regenerated: renderNoteLine({ n, id, phase, recipe, idle }) });
+  }
+  if (groups.spareFail) {
+    const [, n, id, phase, recipe, idle] = groups.spareFail;
+    out.push({ kind: 'spareFail', groups: groups.spareFail, raw: groups.spareFail[0], regenerated: renderSpareFailLine({ n, id, phase, recipe, idle }) });
+  }
+  if (groups.seamFail) {
+    out.push({ kind: 'seamFail', groups: groups.seamFail, raw: groups.seamFail[0], regenerated: renderSeamFailLine() });
+  }
+  if (groups.result) {
+    const [, count] = groups.result;
+    out.push({ kind: 'result', groups: groups.result, raw: groups.result[0], regenerated: renderResultLine(count) });
+  }
   return out;
 }
 

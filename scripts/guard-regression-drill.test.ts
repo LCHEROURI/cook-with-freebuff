@@ -2,11 +2,13 @@ import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { describe, expect, it } from 'vitest';
+import { BLOCKING_SESSION_PREFIX, SPARED_LIVE_SESSION_SIGNATURE } from './verify-live-classify.mjs';
 import {
-  BLOCKING_SESSION_PREFIX,
-  SIMULATED_REGRESSION_SIGNATURE,
-  SPARED_LIVE_SESSION_SIGNATURE,
-} from './verify-live-classify.mjs';
+  renderNoteLine,
+  renderResultLine,
+  renderSeamFailLine,
+  renderSpareFailLine,
+} from './drill-evidence-render.mjs';
 
 // ============================================================================
 // scripts/guard-regression-drill.test.ts — pin the end-to-end spare +
@@ -21,10 +23,13 @@ import {
 const SCRIPT = 'scripts/guard-regression-drill.mjs';
 const GOLDEN = 'scripts/__golden__/guard-regression-drill.txt';
 const FIXTURE = 'scripts/__golden__/regression-drill-log.txt';
-// The seam line is derived from the exported constant (single source of
-// truth shared with verify-live.mjs's seam and the comparator's regex), so a
-// reworded message updates the constant and this golden pin tracks it.
-const SEAM_LINE = `✗ FAIL: ${SIMULATED_REGRESSION_SIGNATURE}`;
+// The seam + RESULT lines derive from the SHARED renderer module
+// (drill-evidence-render.mjs) — the same code path the regression
+// comparator's regenerate step calls and the verify-live-classify codegen
+// contract uses — so a reworded message updates the renderer and this golden
+// pin tracks it in lockstep.
+const SEAM_LINE = renderSeamFailLine();
+const RESULT_LINE = renderResultLine(2);
 
 // The dispatch-spelling contract for the regression drill, factored out so
 // the mutation drill below can prove it FAILS on a dropped input or swapped
@@ -65,10 +70,10 @@ describe('scripts/guard-regression-drill.mjs · the comparator + its golden', ()
     const body = readFileSync(resolve(process.cwd(), GOLDEN), 'utf8');
     const nonComment = body.split('\n').filter((l) => !l.startsWith('#')).map((l) => l.trim()).filter(Boolean);
     expect(nonComment).toHaveLength(4);
-    expect(nonComment[0]).toBe(`- owner has <N> ${BLOCKING_SESSION_PREFIX} — archiving and retrying once: <ID>… (<PHASE>, <RECIPE>, <IDLE>s idle)`);
-    expect(nonComment[1]).toBe(`✗ FAIL: owner still has <N> ${SPARED_LIVE_SESSION_SIGNATURE}: <ID>… (<PHASE>, <RECIPE>, <IDLE>s idle)`);
+    expect(nonComment[0]).toBe(renderNoteLine({ n: '<N>', id: '<ID>', phase: '<PHASE>', recipe: '<RECIPE>', idle: '<IDLE>' }));
+    expect(nonComment[1]).toBe(renderSpareFailLine({ n: '<N>', id: '<ID>', phase: '<PHASE>', recipe: '<RECIPE>', idle: '<IDLE>' }));
     expect(nonComment[2]).toBe(SEAM_LINE);
-    expect(nonComment[3]).toBe('RESULT: FAIL (2)');
+    expect(nonComment[3]).toBe(RESULT_LINE);
   });
 
   it('keeps the five load-bearing placeholders AND the fully-static seam + count lines', () => {
@@ -80,8 +85,8 @@ describe('scripts/guard-regression-drill.mjs · the comparator + its golden', ()
     for (const tok of ['<N>', '<ID>', '<PHASE>', '<RECIPE>', '<IDLE>']) {
       expect(body, `golden missing placeholder ${tok}`).toContain(tok);
     }
-    expect(body).toContain(SIMULATED_REGRESSION_SIGNATURE);
-    expect(body).toContain('RESULT: FAIL (2)');
+    expect(body).toContain(SEAM_LINE);
+    expect(body).toContain(RESULT_LINE);
   });
 
   it('regenerates the golden through the comparator\'s own extract/expand path against the fixture (codegen)', () => {
@@ -101,8 +106,8 @@ describe('scripts/guard-regression-drill.mjs · the comparator + its golden', ()
     const log = readFileSync(fixture, 'utf8');
     expect(log).toContain('archiving and retrying once');
     expect(log).toContain('after the archive retry');
-    expect(log).toContain(SIMULATED_REGRESSION_SIGNATURE);
-    expect(log).toContain('RESULT: FAIL (2)');
+    expect(log).toContain(SEAM_LINE);
+    expect(log).toContain(RESULT_LINE);
 
     // Run the comparator's real pipeline: extract -> normalize -> compare
     // (buildExpected golden-template expansion) against the fixture.
@@ -116,7 +121,7 @@ describe('scripts/guard-regression-drill.mjs · the comparator + its golden', ()
     expect(r).toContain('result line: FAIL (2)');
     // The golden is exactly the four evidence lines (plus its header
     // comments) — the regeneration must cover each pinned line.
-    for (const line of ['- owner has <N>', '✗ FAIL: owner still has <N>', `✗ FAIL: ${SIMULATED_REGRESSION_SIGNATURE}`, 'RESULT: FAIL (2)']) {
+    for (const line of ['- owner has <N>', '✗ FAIL: owner still has <N>', SEAM_LINE, RESULT_LINE]) {
       expect(goldenText).toContain(line);
     }
   });

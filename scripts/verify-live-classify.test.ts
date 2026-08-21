@@ -12,6 +12,13 @@ import {
   VERDICT_FAILURE,
   VERDICT_SUCCESS,
 } from './verify-live-classify.mjs';
+import {
+  renderArchiveOkLine,
+  renderNoteLine,
+  renderResultLine,
+  renderSeamFailLine,
+  renderSpareFailLine,
+} from './drill-evidence-render.mjs';
 
 // ============================================================================
 // scripts/verify-live-classify.test.ts — lock the Gemini-credits EXTERNAL
@@ -510,15 +517,15 @@ describe('scripts/verify-live-classify.mjs · the spare path is one source of tr
     }
   });
 
-  it('the golden NOTE/FAIL lines derive from the source templates the comparators extract', () => {
-    // The comparators extract the note/fail lines from logs that verify-live.mjs
-    // PRODUCES — so the goldens must equal the source's own note(...)/fail(...)
-    // templates, rendered through the same renderers (`- ` and `✗ FAIL: `
-    // prefixes) with the drill-run-variant fields substituted for the golden
-    // placeholders and the embedded constants expanded to their literal text.
-    // If the source template wording changes (e.g. "owner still has" renamed),
-    // the extraction below fails AND the committed golden must be updated in
-    // lockstep — the golden can never silently drift from what the guard emits.
+  it('the golden NOTE/FAIL lines derive from the shared renderer module — with source-template lockstep', () => {
+    // The goldens' NOTE/FAIL lines now derive from drill-evidence-render.mjs
+    // (the ONE code path: the comparators' expand/regenerate steps AND the
+    // goldens' derivation both call renderNoteLine/renderSpareFailLine). The
+    // source templates in verify-live.mjs are still extracted below as a
+    // LOCKSTEP check — the guard's own note(...)/fail(...) templates, rendered
+    // through the same prefixes, must equal the renderer's output, so a
+    // reworded producer (e.g. "owner still has" renamed) fails here AND in
+    // the comparator's regex extraction.
     const noteTemplateMatch = LIVE.match(
       /note\(`owner has \$\{blocking\.length\} \$\{BLOCKING_SESSION_PREFIX\} — archiving and retrying once: \$\{names\}`\)/,
     );
@@ -528,29 +535,42 @@ describe('scripts/verify-live-classify.mjs · the spare path is one source of tr
     // exercise), so a renamed guard message is caught everywhere at once.
     const failTemplate = extractGuardSpareFailTemplate(LIVE);
 
-    const goldenNote = `- ${noteTemplateMatch![0]
+    // Derive the golden placeholders through the SHARED renderers.
+    const goldenNote = renderNoteLine({
+      n: '<N>', id: '<ID>', phase: '<PHASE>', recipe: '<RECIPE>', idle: '<IDLE>',
+    });
+    const goldenFail = renderSpareFailLine({
+      n: '<N>', id: '<ID>', phase: '<PHASE>', recipe: '<RECIPE>', idle: '<IDLE>',
+    });
+
+    // Lockstep: the guard's own templates must render to exactly the
+    // renderer's lines (the renderer is the canonical shape, the producer
+    // must match it).
+    const sourceNote = `- ${noteTemplateMatch![0]
       .replace('note(`', '')
       .replace('`)', '')
       .replace('${blocking.length}', '<N>')
       .replace('${BLOCKING_SESSION_PREFIX}', BLOCKING_SESSION_PREFIX)
       .replace('${names}', '<ID>… (<PHASE>, <RECIPE>, <IDLE>s idle)')}`;
-    const goldenFail = `✗ FAIL: ${failTemplate
+    const sourceFail = `✗ FAIL: ${failTemplate
       .replace('fail(`', '')
       .replace('`)', '')
       .replace('${remaining.length}', '<N>')
       .replace('${SPARED_LIVE_SESSION_SIGNATURE}', SPARED_LIVE_SESSION_SIGNATURE)
       .replace('${survivors}', '<ID>… (<PHASE>, <RECIPE>, <IDLE>s idle)')}`;
+    expect(sourceNote, 'verify-live.mjs note template must match the shared renderer').toBe(goldenNote);
+    expect(sourceFail, 'verify-live.mjs fail template must match the shared renderer').toBe(goldenFail);
 
-    // The committed goldens must equal the source-derived lines.
+    // The committed goldens must equal the renderer-derived lines.
     for (const g of ['guard-spare-drill.txt', 'guard-boundary-drill.txt', 'guard-regression-drill.txt']) {
       const golden = readFileSync(`scripts/__golden__/${g}`, 'utf8');
       const noteLine = golden.split('\n').find((l) => l.startsWith('- owner has'));
-      expect(noteLine, `${g}: NOTE line must equal the source template`).toBe(goldenNote);
+      expect(noteLine, `${g}: NOTE line must equal the renderer output`).toBe(goldenNote);
     }
     for (const g of ['guard-spare-drill.txt', 'guard-regression-drill.txt']) {
       const golden = readFileSync(`scripts/__golden__/${g}`, 'utf8');
       const failLine = golden.split('\n').find((l) => l.startsWith('✗ FAIL:'));
-      expect(failLine, `${g}: FAIL line must equal the source template`).toBe(goldenFail);
+      expect(failLine, `${g}: FAIL line must equal the renderer output`).toBe(goldenFail);
     }
   });
 
@@ -575,16 +595,22 @@ describe('scripts/verify-live-classify.mjs · the spare path is one source of tr
     expect(okRendererMatch, 'the ok() renderer must be present in verify-live.mjs').not.toBeNull();
     const checkMark = (okRendererMatch![0].match(/✓/) ?? ['✓'])[0];
 
-    // 2. The archive-OK message = the guard's ok(...) template rendered
-    //    through the renderer prefix, with ${archived} → <N>.
+    // 2. The archive-OK message derives from the SHARED renderer module
+    //    (the same renderArchiveOkLine the boundary comparator's expandOk
+    //    calls) with ${archived} → <N>.
+    const archiveOkGolden = renderArchiveOkLine({ n: '<N>' });
+
+    //    Lockstep: the guard's own ok(...) template, rendered through the
+    //    ok() renderer prefix, must equal the shared renderer's line.
     const archiveTemplateMatch = LIVE.match(
       /ok\(`archived \$\{archived\} blocking session\(s\) — retried, owner is clean before the UI starter`\)/,
     );
     expect(archiveTemplateMatch, 'the guard archive ok() template must be present in verify-live.mjs').not.toBeNull();
-    const archiveOkGolden = `${checkMark} ${archiveTemplateMatch![0]
+    const sourceArchiveOk = `${checkMark} ${archiveTemplateMatch![0]
       .replace('ok(`', '')
       .replace('`)', '')
       .replace('${archived}', '<N>')}`;
+    expect(sourceArchiveOk, 'verify-live.mjs archive ok() template must match the shared renderer').toBe(archiveOkGolden);
 
     // The committed boundary golden's archive-OK line must equal the
     // source-derived line (the comparator strips leading spaces, so the
@@ -638,44 +664,46 @@ describe('scripts/verify-live-classify.mjs · the spare path is one source of tr
     expect(okLine).toBe(archiveOkGolden);
   });
 
-  it('the golden seam + RESULT lines derive from the source seam fail() and RESULT print', () => {
+  it('the golden seam + RESULT lines derive from the shared renderer module — with source-template lockstep', () => {
     // The regression golden's last two evidence lines are fully static (no
-    // drill-run variants): the seam's SIMULATED regression FAIL (produced by
-    // `fail(SIMULATED_REGRESSION_SIGNATURE)` rendered through the fail()
-    // prefix — the comparator trims the leading spaces) and the RESULT count
-    // line proving exactly TWO failures. Both must derive from
-    // verify-live.mjs's own producers — a reworded seam message or a renamed
-    // RESULT phrasing updates the constant/template here and the golden must
-    // follow in lockstep, exactly like the NOTE/FAIL lines above.
+    // drill-run variants): the seam's SIMULATED regression FAIL and the
+    // RESULT count line proving exactly TWO failures. Both now derive from
+    // drill-evidence-render.mjs (renderSeamFailLine / renderResultLine — the
+    // same code path the regression comparator's regenerate step calls), and
+    // verify-live.mjs's own producers are extracted below as a LOCKSTEP
+    // check: a reworded seam message or a renamed RESULT phrasing fails the
+    // extraction AND the golden must follow in lockstep.
 
     // 1. The seam FAIL line = the fail() renderer prefix (`✗ FAIL: ` after
     //    the comparator trims) + the exported constant. The seam call itself
     //    passes the SHARED constant — the wiring pins above already assert
     //    `fail(SIMULATED_REGRESSION_SIGNATURE)`.
-    const seamGolden = `✗ FAIL: ${SIMULATED_REGRESSION_SIGNATURE}`;
+    const seamGolden = renderSeamFailLine();
 
     // 2. The RESULT line = the console.error template rendered for the
     //    drill's two-failure shape: runExit === 0 (no crash) and
     //    failures.length === 2 (spare + seam). Extract the source template
     //    verbatim so a renamed RESULT phrasing is caught by the extraction
-    //    itself.
+    //    itself, then assert the extracted line equals the shared renderer's.
     const resultTemplateMatch = LIVE.match(
       /console\.error\(`\\nRESULT: FAIL \(\$\{runExit !== 0 \? 'crash' : failures\.length\}\)`\)/,
     );
     expect(resultTemplateMatch, 'the RESULT print template must be present in verify-live.mjs').not.toBeNull();
-    const resultGolden = resultTemplateMatch![0]
+    const resultGolden = renderResultLine(2);
+    const sourceResult = resultTemplateMatch![0]
       .replace('console.error(`', '')
       .replace('`)', '')
       .replace('\\n', '')
       .replace("${runExit !== 0 ? 'crash' : failures.length}", '2');
+    expect(sourceResult, 'verify-live.mjs RESULT template must match the shared renderer').toBe(resultGolden);
 
-    // The committed regression golden must equal both source-derived lines.
+    // The committed regression golden must equal both renderer-derived lines.
     const golden = readFileSync('scripts/__golden__/guard-regression-drill.txt', 'utf8');
     const goldenLines = golden.split('\n');
     const seamLine = goldenLines.find((l) => l.startsWith('✗ FAIL: SIMULATED'));
-    expect(seamLine, 'regression golden: seam line must equal the source-derived line').toBe(seamGolden);
+    expect(seamLine, 'regression golden: seam line must equal the renderer output').toBe(seamGolden);
     const resultLine = goldenLines.find((l) => l.startsWith('RESULT: FAIL'));
-    expect(resultLine, 'regression golden: RESULT line must equal the source-derived line').toBe(resultGolden);
+    expect(resultLine, 'regression golden: RESULT line must equal the renderer output').toBe(resultGolden);
 
     // Load-bearing check — rename the RESULT template in an in-memory copy:
     // the extraction must fail (the derivation would produce the old golden
