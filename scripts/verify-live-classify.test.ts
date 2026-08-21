@@ -548,6 +548,62 @@ describe('scripts/verify-live-classify.mjs · the spare path is one source of tr
       expect(failLine, `${g}: FAIL line must equal the source template`).toBe(goldenFail);
     }
   });
+
+  it('the golden seam + RESULT lines derive from the source seam fail() and RESULT print', () => {
+    // The regression golden's last two evidence lines are fully static (no
+    // drill-run variants): the seam's SIMULATED regression FAIL (produced by
+    // `fail(SIMULATED_REGRESSION_SIGNATURE)` rendered through the fail()
+    // prefix — the comparator trims the leading spaces) and the RESULT count
+    // line proving exactly TWO failures. Both must derive from
+    // verify-live.mjs's own producers — a reworded seam message or a renamed
+    // RESULT phrasing updates the constant/template here and the golden must
+    // follow in lockstep, exactly like the NOTE/FAIL lines above.
+
+    // 1. The seam FAIL line = the fail() renderer prefix (`✗ FAIL: ` after
+    //    the comparator trims) + the exported constant. The seam call itself
+    //    passes the SHARED constant — the wiring pins above already assert
+    //    `fail(SIMULATED_REGRESSION_SIGNATURE)`.
+    const seamGolden = `✗ FAIL: ${SIMULATED_REGRESSION_SIGNATURE}`;
+
+    // 2. The RESULT line = the console.error template rendered for the
+    //    drill's two-failure shape: runExit === 0 (no crash) and
+    //    failures.length === 2 (spare + seam). Extract the source template
+    //    verbatim so a renamed RESULT phrasing is caught by the extraction
+    //    itself.
+    const resultTemplateMatch = LIVE.match(
+      /console\.error\(`\\nRESULT: FAIL \(\$\{runExit !== 0 \? 'crash' : failures\.length\}\)`\)/,
+    );
+    expect(resultTemplateMatch, 'the RESULT print template must be present in verify-live.mjs').not.toBeNull();
+    const resultGolden = resultTemplateMatch![0]
+      .replace('console.error(`', '')
+      .replace('`)', '')
+      .replace('\\n', '')
+      .replace("${runExit !== 0 ? 'crash' : failures.length}", '2');
+
+    // The committed regression golden must equal both source-derived lines.
+    const golden = readFileSync('scripts/__golden__/guard-regression-drill.txt', 'utf8');
+    const goldenLines = golden.split('\n');
+    const seamLine = goldenLines.find((l) => l.startsWith('✗ FAIL: SIMULATED'));
+    expect(seamLine, 'regression golden: seam line must equal the source-derived line').toBe(seamGolden);
+    const resultLine = goldenLines.find((l) => l.startsWith('RESULT: FAIL'));
+    expect(resultLine, 'regression golden: RESULT line must equal the source-derived line').toBe(resultGolden);
+
+    // Load-bearing check — rename the RESULT template in an in-memory copy:
+    // the extraction must fail (the derivation would produce the old golden
+    // text and the committed golden would drift silently).
+    const renamedResult = LIVE.replace('RESULT: FAIL', 'RESULT: FLAKE');
+    expect(renamedResult, 'the RESULT rename mutation must actually land').not.toContain('RESULT: FAIL');
+    expect(renamedResult).toContain('RESULT: FLAKE');
+    expect(renamedResult.match(
+      /console\.error\(`\\nRESULT: FAIL \(\$\{runExit !== 0 \? 'crash' : failures\.length\}\)`\)/,
+    )).toBeNull();
+
+    // And the seam direction — inline the seam message literal instead of the
+    // constant: the wiring pin above (fail(SIMULATED_REGRESSION_SIGNATURE))
+    // is what catches that; assert it here too so the derivation is proven
+    // load-bearing in both directions.
+    expect(LIVE).toContain('fail(SIMULATED_REGRESSION_SIGNATURE)');
+  });
 });
 
 describe('scripts/verify-live-classify.mjs · the reason value is one source of truth (cross-file)', () => {
