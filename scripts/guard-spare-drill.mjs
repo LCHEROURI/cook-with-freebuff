@@ -36,9 +36,11 @@ import {
   SPARED_LIVE_SESSION_SIGNATURE,
 } from './verify-live-classify.mjs';
 import { renderNoteLine, renderSpareFailLine } from './drill-evidence-render.mjs';
+import { assessSpareStatusReason } from './guard-spare-status.mjs';
 
 const ROOT = resolve(process.cwd());
 const GOLDEN = resolve(ROOT, 'scripts/__golden__/guard-spare-drill.txt');
+const VERIFY_LOG = resolve('/tmp', 'vlive-guard-spare-drill.log');
 // Node-time check: the <N> count, idle, and other drill-run variants must not
 // rewrite the golden's static shape. Any drift below is a script bug, not a
 // guard regression.
@@ -119,6 +121,20 @@ function normalize(line, re) {
   return m;
 }
 
+function stripLogLines(logText) {
+  return logText
+    .split('\n')
+    .map((l) => l.replace(/^[^\t]*\t[^\t]*\t/, ''))
+    .map((l) => l.replace(/^\d{4}-\d{2}-\d{2}T[^\s]+\s+/, ''))
+    .map((l) => l.trim());
+}
+
+function extractFailureMessages(logText) {
+  return stripLogLines(logText)
+    .filter((l) => l.startsWith('✗ FAIL:'))
+    .map((l) => l.slice('✗ FAIL:'.length).trim());
+}
+
 // Regenerate the exact raw source log line from the captured groups through
 // the SHARED renderer module (drill-evidence-render.mjs) — the same code path
 // the goldens' source-template derivation uses, so the comparator and the
@@ -140,11 +156,7 @@ function extractLines(logText) {
   // CI logs are two tab-delimited fields + ISO-8601 timestamp + the actual
   // driver line. Strip the fields and the timestamp so we land at the raw
   // driver line, then collect the note line and the fail line independently.
-  const stripped = logText
-    .split('\n')
-    .map((l) => l.replace(/^[^\t]*\t[^\t]*\t/, ''))
-    .map((l) => l.replace(/^\d{4}-\d{2}-\d{2}T[^\s]+\s+/, ''))
-    .map((l) => l.trim());
+  const stripped = stripLogLines(logText);
   let noteGroups = null;
   let failGroups = null;
   for (const l of stripped) {
@@ -204,8 +216,12 @@ function fetchJobLog(jobId) {
 //    endpoint, not just the log. After the golden match, mint a real owner
 //    token (custom token → identitytoolkit, the same exchange verify-live.mjs
 //    uses), GET the public /api/status route, and assert the recorded
-//    verifyLive.reason EQUALS the exported SPARED_LIVE_REASON constant. The
-//    runUrl cross-check is load-bearing: /api/status reads the single-slot
+//    verifyLive.reason EQUALS the exported SPARED_LIVE_REASON constant for a
+//    pure spare run. If verify:live also has an unrelated failure, the
+//    classifier intentionally leaves reason unset so the spare cannot mask the
+//    regression; in that mixed case the drill accepts null only after proving
+//    both the spare evidence and the additional failure from this exact job log.
+//    The runUrl cross-check is load-bearing: /api/status reads the single-slot
 //    deploy_status/verify_live doc, and a CONCURRENT ci.yml run (e.g. the
 //    weekly boundary drill, or a push) can overwrite it after our drill
 //    finished — asserting the runUrl belongs to THIS run first means a stale
@@ -249,6 +265,16 @@ async function assertLiveStatusReason(runId) {
     throw new Error(`recorded runUrl ${v.runUrl ?? '<none>'} is not the drill run ${runId} — a concurrent run overwrote the record; cannot assert the live reason`);
   }
   if (v.reason !== SPARED_LIVE_REASON) {
+    const failureMessages = extractFailureMessages(readFileSync(VERIFY_LOG, 'utf8'));
+    const assessment = assessSpareStatusReason(v.reason, failureMessages);
+    if (assessment.kind === 'mixed') {
+      note(
+        `live /api/status: reason omitted as expected because verify:live also had ` +
+          `${assessment.otherFailures.length} non-spare failure(s); spare-path evidence still matched the golden`,
+      );
+      note(`non-spare verify failure: ${assessment.otherFailures[0]}`);
+      return;
+    }
     throw new Error(`/api/status reason is ${JSON.stringify(v.reason)}, expected the exported SPARED_LIVE_REASON constant (${SPARED_LIVE_REASON})`);
   }
   ok(`live /api/status: verifyLive.reason === SPARED_LIVE_REASON (${v.reason}) for run ${runId}`);
@@ -371,7 +397,7 @@ async function main() {
   }
 
   const log = fetchJobLog(jobId);
-  writeFileSync('/tmp/vlive-guard-spare-drill.log', log);
+  writeFileSync(VERIFY_LOG, log);
 
   const parsed = extractLines(log);
   if (!parsed.noteGroups && !parsed.failGroups) {
