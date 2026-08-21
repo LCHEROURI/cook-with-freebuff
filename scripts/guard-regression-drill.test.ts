@@ -160,15 +160,21 @@ describe('scripts/guard-regression-drill.mjs · the comparator + its golden', ()
     expect(mutated, 'the mutation must actually land').toContain('RESULT: FAIL (3)');
     const tmp = resolve('/tmp', 'vlive-regression-drift-fixture.log');
     writeFileSync(tmp, mutated);
+    // execFileSync throws on non-zero exit — capture the error OUTSIDE the
+    // toThrow wrapper: a `catch` around `expect(...).toThrow()` only runs
+    // when the command does NOT throw (exit 0), so the drift report
+    // assertions below would never execute in the drift case — only the
+    // exit code would be pinned, never the failure shape.
     try {
-      expect(() => execFileSync('node', [SCRIPT, '--diff', tmp], { encoding: 'utf8' })).toThrow();
-      // execFileSync throws on non-zero exit — capture the exit code + drift
-      // report from the thrown error to assert the FAILURE SHAPE, not just
-      // that it threw.
-    } catch (e) {
-      const err = e as { status?: number; stderr?: string; stdout?: string };
-      expect(err.status).toBe(1);
-      const out = `${err.stdout ?? ''}${err.stderr ?? ''}`;
+      let err: { status?: number; stderr?: string; stdout?: string } | null = null;
+      try {
+        execFileSync('node', [SCRIPT, '--diff', tmp], { encoding: 'utf8' });
+      } catch (e) {
+        err = e as { status?: number; stderr?: string; stdout?: string };
+      }
+      expect(err, 'expected the drifted fixture to exit non-zero').not.toBeNull();
+      expect(err!.status).toBe(1);
+      const out = `${err!.stdout ?? ''}${err!.stderr ?? ''}`;
       expect(out).toContain('drift detected against the golden:');
       expect(out).toContain('RESULT: FAIL (2)');
       expect(out).toContain('RESULT: FAIL (3)');
@@ -208,12 +214,19 @@ describe('scripts/guard-regression-drill.mjs · the comparator + its golden', ()
     );
     writeFileSync(tmpScript, driftedScript);
     writeFileSync(tmpGolden, driftedGolden);
+    // Capture the error OUTSIDE the toThrow wrapper so the verbatim
+    // expected/actual lines are asserted in the drift case (a `catch`
+    // around `expect(...).toThrow()` only runs on exit 0, never here).
     try {
-      expect(() => execFileSync('node', [tmpScript, '--diff', resolve(process.cwd(), FIXTURE)], { encoding: 'utf8' })).toThrow();
-    } catch (e) {
-      const err = e as { status?: number; stderr?: string; stdout?: string };
-      expect(err.status).toBe(1);
-      const out = `${err.stdout ?? ''}${err.stderr ?? ''}`;
+      let err: { status?: number; stderr?: string; stdout?: string } | null = null;
+      try {
+        execFileSync('node', [tmpScript, '--diff', resolve(process.cwd(), FIXTURE)], { encoding: 'utf8' });
+      } catch (e) {
+        err = e as { status?: number; stderr?: string; stdout?: string };
+      }
+      expect(err, 'expected the drifted golden to exit non-zero').not.toBeNull();
+      expect(err!.status).toBe(1);
+      const out = `${err!.stdout ?? ''}${err!.stderr ?? ''}`;
       expect(out).toContain('drift detected against the golden:');
       expect(out).toContain('expected: RESULT: FAIL (9)');
       expect(out).toContain('actual:   RESULT: FAIL (2)');

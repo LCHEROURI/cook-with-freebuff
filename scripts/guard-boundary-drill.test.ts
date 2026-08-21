@@ -158,14 +158,31 @@ describe('scripts/guard-boundary-drill.mjs · the comparator + its golden', () =
       '✓ archived <N> blocking session(s) — retried, owner is clean before the UI starter',
       '',
     ].join('\n'));
+    // The drift must exit 1 AND print the exact mismatch shape. The error
+    // is captured OUTSIDE the toThrow wrapper: a `catch` around
+    // `expect(...).toThrow()` only runs when the command does NOT throw
+    // (exit 0), so assertions placed there never execute in the drift case
+    // — the exit code alone would be pinned, never the failure shape.
     try {
-      expect(() => execFileSync('node', [tmpScript, '--diff', resolve(process.cwd(), FIXTURE)], { encoding: 'utf8' })).toThrow();
-    } catch (e) {
-      const err = e as { status?: number; stderr?: string; stdout?: string };
-      expect(err.status).toBe(1);
-      const out = `${err.stdout ?? ''}${err.stderr ?? ''}`;
+      let err: { status?: number; stderr?: string; stdout?: string } | null = null;
+      try {
+        execFileSync('node', [tmpScript, '--diff', resolve(process.cwd(), FIXTURE)], { encoding: 'utf8' });
+      } catch (e) {
+        err = e as { status?: number; stderr?: string; stdout?: string };
+      }
+      expect(err, 'expected the drifted golden to exit non-zero').not.toBeNull();
+      expect(err!.status).toBe(1);
+      const out = `${err!.stdout ?? ''}${err!.stderr ?? ''}`;
       expect(out).toContain('drift detected against the golden:');
       expect(out).toContain('archiving and retrying once EXTRA:');
+      // Pin the failure shape verbatim (mirrors the regression drift test):
+      // the NOTE template carries EXTRA, so buildExpected regenerates the
+      // drifted expected line while the fixture's regenerated line (without
+      // EXTRA) is the actual — a drift in the renderer, the placeholder
+      // order, or the mismatch printer fails here, not just via exit code.
+      // Concrete values are the boundary fixture's captured groups (68s idle).
+      expect(out).toContain('expected: - owner has 1 ACTIVE/PAUSED session(s) blocking the UI starter — archiving and retrying once EXTRA: drill-li… (COLLECTING_INGREDIENTS, chicken_rice_onion_001, 68s idle)');
+      expect(out).toContain('actual:   - owner has 1 ACTIVE/PAUSED session(s) blocking the UI starter — archiving and retrying once: drill-li… (COLLECTING_INGREDIENTS, chicken_rice_onion_001, 68s idle)');
     } finally {
       rmSync(tmpScript, { force: true });
       rmSync(tmpGolden, { force: true });
