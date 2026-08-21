@@ -170,21 +170,23 @@ describe('scripts/guard-regression-drill.mjs · the comparator + its golden', ()
     // header comment also contains "RESULT: FAIL (2)", so a bare replace
     // would edit the comment and leave the real line untouched — the drill
     // would pass vacuously.
-    // The anchored golden mutation + its land-checks stay here (they are
-    // regression-specific: the header comment also contains "RESULT: FAIL
-    // (2)", so the replace must be anchored to the real line or the drill
-    // passes vacuously). The run + verbatim shape assertions are shared via
-    // drill-codegen-helpers.mjs.
-    const goldenSrc = readFileSync(resolve(process.cwd(), GOLDEN), 'utf8');
-    const driftedGolden = goldenSrc.replace(/^RESULT: FAIL \(2\)$/m, 'RESULT: FAIL (9)');
-    expect(driftedGolden, 'the golden mutation must land on the real line').not.toBe(goldenSrc);
-    expect(driftedGolden.split('\n').filter((l) => l.startsWith('RESULT:'))).toEqual(['RESULT: FAIL (9)']);
-
+    // The anchored golden mutation now lives in assertGoldenDrift's shared
+    // mutateGolden/mutationLand discipline (drill-codegen-helpers.mjs): the
+    // golden's header comment ALSO contains "RESULT: FAIL (2)", so the
+    // replace must be anchored to the real line — the mutationLand check
+    // proves the edit landed on that line, never the comment, or the drill
+    // passes vacuously.
     assertGoldenDrift({
       script: SCRIPT,
       fixture: FIXTURE,
+      goldenPath: GOLDEN,
       goldenPathLiteral: "resolve(ROOT, 'scripts/__golden__/guard-regression-drill.txt')",
-      driftedGoldenContent: driftedGolden,
+      mutateGolden: (goldenText: string) =>
+        goldenText.replace(/^RESULT: FAIL \(2\)$/m, 'RESULT: FAIL (9)'),
+      mutationLand: (drifted: string, original: string) => {
+        expect(drifted, 'the golden mutation must land on the real line').not.toBe(original);
+        expect(drifted.split('\n').filter((l) => l.startsWith('RESULT:'))).toEqual(['RESULT: FAIL (9)']);
+      },
       expectedLine: 'expected: RESULT: FAIL (9)',
       actualLine: 'actual:   RESULT: FAIL (2)',
       tmpScriptName: 'scripts/.tmp-regression-golden-drift.mjs',

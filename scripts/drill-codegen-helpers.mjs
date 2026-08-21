@@ -46,11 +46,20 @@ export function assertCodegenReplay({ script, fixture, goldenPath, matchLine, re
   }
 }
 
-// Golden drift: inject an extra word into the NOTE template of a temp COPY of
-// the golden, point a temp script copy at that golden, and run --diff against
-// the UNCHANGED fixture. buildExpected regenerates the drifted template (with
-// EXTRA) as the expected line while the actual line regenerates without it —
-// a genuine mismatch that must exit 1 with the verbatim expected/actual lines.
+// Golden drift: mutate the COMMITTED golden with an ANCHORED edit (a real
+// template line — not a header comment), point a temp script copy at that
+// drifted golden, and run --diff against the UNCHANGED fixture. buildExpected
+// regenerates the drifted template (with the mutation) as the expected line
+// while the actual line regenerates without it — a genuine mismatch that must
+// exit 1 with the verbatim expected/actual lines.
+//
+// The ANCHORED-MUTATION DISCIPLINE lives here in ONE place: `mutateGolden`
+// must edit a real template line, and `mutationLand` asserts the edit landed
+// on that line (a bare replace that only touched a header comment would pass
+// vacuously). This is the discipline each drill's golden edit used to hand-
+// roll — regression's anchored RESULT replace, spare/boundary's hand-written
+// drifted golden — now shared by all three.
+//
 // The error is captured OUTSIDE the toThrow wrapper: a `catch` around
 // `expect(...).toThrow()` only runs when the command does NOT throw (exit 0),
 // so assertions placed there never execute in the drift case — only the exit
@@ -58,13 +67,19 @@ export function assertCodegenReplay({ script, fixture, goldenPath, matchLine, re
 export function assertGoldenDrift({
   script,
   fixture,
+  goldenPath, // committed golden to read + mutate
   goldenPathLiteral, // the exact golden-path expression in the script source
-  driftedGoldenContent, // full content of the drifted temp golden (string)
+  mutateGolden, // (goldenText: string) => driftedGoldenText — ANCHORED to a real line
+  mutationLand, // (drifted: string, original: string) => void — asserts the edit landed on the real line
   expectedLine, // verbatim "expected: ..." line the comparator must print
   actualLine, // verbatim "actual:   ..." line the comparator must print
   tmpScriptName,
   tmpGoldenName,
 }) {
+  const goldenText = readFileSync(resolve(process.cwd(), goldenPath), 'utf8');
+  const driftedGoldenContent = mutateGolden(goldenText);
+  if (mutationLand) mutationLand(driftedGoldenContent, goldenText);
+
   const src = readFileSync(resolve(process.cwd(), script), 'utf8');
   const tmpScript = resolve(process.cwd(), tmpScriptName);
   const tmpGolden = resolve(tmpGoldenName);

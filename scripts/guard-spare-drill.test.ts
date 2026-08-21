@@ -105,13 +105,21 @@ describe('scripts/guard-spare-drill.mjs · the comparator + its golden', () => {
     assertGoldenDrift({
       script: SCRIPT,
       fixture: 'scripts/__golden__/spare-drill-log.txt',
+      goldenPath: GOLDEN,
       goldenPathLiteral: "resolve(ROOT, 'scripts/__golden__/guard-spare-drill.txt')",
-      driftedGoldenContent: [
-        '# drift golden',
-        '- owner has <N> ACTIVE/PAUSED session(s) blocking the UI starter — archiving and retrying once EXTRA: <ID>… (<PHASE>, <RECIPE>, <IDLE>s idle)',
-        '✗ FAIL: owner still has <N> ACTIVE/PAUSED session(s) blocking the UI starter after the archive retry: <ID>… (<PHASE>, <RECIPE>, <IDLE>s idle)',
-        '',
-      ].join('\n'),
+      // The NOTE template line appears exactly once in the golden (outside
+      // its header comments), so this anchored replace edits the REAL line
+      // — the mutationLand check below proves it landed there, not in a
+      // comment.
+      mutateGolden: (goldenText: string) =>
+        goldenText.replace(
+          '- owner has <N> ACTIVE/PAUSED session(s) blocking the UI starter — archiving and retrying once: <ID>',
+          '- owner has <N> ACTIVE/PAUSED session(s) blocking the UI starter — archiving and retrying once EXTRA: <ID>',
+        ),
+      mutationLand: (drifted: string, original: string) => {
+        expect(drifted, 'the golden mutation must actually land').not.toBe(original);
+        expect(drifted).toContain('archiving and retrying once EXTRA:');
+      },
       expectedLine: 'expected: - owner has 1 ACTIVE/PAUSED session(s) blocking the UI starter — archiving and retrying once EXTRA: drill-li… (COLLECTING_INGREDIENTS, chicken_rice_onion_001, 8s idle)',
       actualLine: 'actual:   - owner has 1 ACTIVE/PAUSED session(s) blocking the UI starter — archiving and retrying once: drill-li… (COLLECTING_INGREDIENTS, chicken_rice_onion_001, 8s idle)',
       tmpScriptName: 'scripts/.tmp-spare-drift.mjs',
