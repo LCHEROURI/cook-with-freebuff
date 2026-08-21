@@ -90,6 +90,7 @@ import {
   BLOCKING_SESSION_PREFIX,
   classifyVerifyVerdict,
   SIMULATED_REGRESSION_SIGNATURE,
+  SPARED_LIVE_REASON,
   SPARED_LIVE_SESSION_SIGNATURE,
 } from './verify-live-classify.mjs';
 
@@ -1623,9 +1624,14 @@ try {
     writeFileSync(process.env.GITHUB_ENV, `VERIFY_LIVE_VERDICT=${recordVerdict}\n`, { flag: 'a' });
     // Distinguish an INTENTIONAL spare-path failure (a drill or an
     // overlapping-run collision — the guard spared a genuinely live session)
-    // from a real regression, so the /status page can label it.
-    if (verdict.reason) {
-      writeFileSync(process.env.GITHUB_ENV, `VERIFY_LIVE_REASON=${verdict.reason}\n`, { flag: 'a' });
+    // from a real regression, so the /status page can label it. The written
+    // value derives from SPARED_LIVE_REASON (the single source of truth), and
+    // the guard requires the classifier's reason to EQUAL that constant — a
+    // future reason literal added to the classifier can never silently flow
+    // into GITHUB_ENV; it would be dropped here and fail the recorder's Zod
+    // enum instead.
+    if (verdict.reason === SPARED_LIVE_REASON) {
+      writeFileSync(process.env.GITHUB_ENV, `VERIFY_LIVE_REASON=${SPARED_LIVE_REASON}\n`, { flag: 'a' });
     }
   }
   await cleanup();

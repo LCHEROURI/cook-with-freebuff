@@ -617,6 +617,7 @@ describe('scripts/verify-live-classify.mjs · the reason value is one source of 
 
   const RECORDER = readFileSync('scripts/record-verify-status.mjs', 'utf8');
   const PAGE = readFileSync('app/status/page.tsx', 'utf8');
+  const LIVE = readFileSync('scripts/verify-live.mjs', 'utf8');
 
   it('exports the exact reason value as the constant', () => {
     expect(SPARED_LIVE_REASON).toBe('spared-live-session');
@@ -627,6 +628,22 @@ describe('scripts/verify-live-classify.mjs · the reason value is one source of 
     expect(readFileSync('scripts/verify-live-classify.mjs', 'utf8')).toContain(
       "if (sparedLive) return { kind: 'fail', reason: SPARED_LIVE_REASON };",
     );
+  });
+
+  it('verify-live.mjs writes GITHUB_ENV from the constant — never a producer-side literal', () => {
+    // The producer is the LAST unpinned consumer: it wrote `verdict.reason`
+    // through without ever referencing the constant, so a future classifier
+    // edit could have shipped a new reason literal straight into GITHUB_ENV.
+    // Now it must import the constant, guard on equality with it (a reason
+    // value the classifier does not derive from the constant is DROPPED, and
+    // the recorder's Zod enum rejects it downstream), and write the constant's
+    // exact text.
+    expect(LIVE).toContain("from './verify-live-classify.mjs'");
+    expect(LIVE).toContain('  SPARED_LIVE_REASON,');
+    expect(LIVE).toContain('if (verdict.reason === SPARED_LIVE_REASON) {');
+    expect(LIVE).toContain('`VERIFY_LIVE_REASON=${SPARED_LIVE_REASON}\\n`');
+    expect(LIVE).not.toContain('VERIFY_LIVE_REASON=spared-live-session');
+    expect(LIVE).not.toContain('`VERIFY_LIVE_REASON=${verdict.reason}\\n`');
   });
 
   it('the recorder validates the reason against the constant — never a local literal', () => {
@@ -669,6 +686,27 @@ describe('scripts/verify-live-classify.mjs · the reason value is one source of 
     );
     expect(pageInlined).toContain("reason === 'spared-live-session'");
 
+    // Direction 4 — revert the producer's GITHUB_ENV write to pass the raw
+    // verdict reason through (the pre-consolidation shape): the producer pin
+    // must fail even though the classifier still returns the constant, because
+    // the write no longer derives from SPARED_LIVE_REASON.
+    const producerPassed = LIVE.replace(
+      'if (verdict.reason === SPARED_LIVE_REASON) {',
+      'if (verdict.reason) {',
+    ).replace('`VERIFY_LIVE_REASON=${SPARED_LIVE_REASON}\\n`', '`VERIFY_LIVE_REASON=${verdict.reason}\\n`');
+    expect(producerPassed, 'the producer revert mutation must actually land').not.toContain(
+      'if (verdict.reason === SPARED_LIVE_REASON) {',
+    );
+    expect(producerPassed).toContain('`VERIFY_LIVE_REASON=${verdict.reason}\\n`');
+
+    // Direction 5 — inline the literal in the producer's write: the
+    // literal-free pin must fail.
+    const producerInlined = LIVE.replace('`VERIFY_LIVE_REASON=${SPARED_LIVE_REASON}\\n`', '`VERIFY_LIVE_REASON=spared-live-session\\n`');
+    expect(producerInlined, 'the producer inline mutation must actually land').not.toContain(
+      '`VERIFY_LIVE_REASON=${SPARED_LIVE_REASON}\\n`',
+    );
+    expect(producerInlined).toContain('VERIFY_LIVE_REASON=spared-live-session');
+
     // The pins are the guards: assert each mutation breaks its corresponding
     // literal-free contract. (These are the same assertions the tests above
     // run against the unmutated sources, so weakening them here would also
@@ -677,6 +715,10 @@ describe('scripts/verify-live-classify.mjs · the reason value is one source of 
     expect(recorderInlined).toContain("z.enum(['spared-live-session']).optional()");
     expect(pageInlined).not.toContain('reason === SPARED_LIVE_REASON');
     expect(pageInlined).toContain("reason === 'spared-live-session'");
+    expect(producerPassed).not.toContain('if (verdict.reason === SPARED_LIVE_REASON) {');
+    expect(producerPassed).toContain('`VERIFY_LIVE_REASON=${verdict.reason}\\n`');
+    expect(producerInlined).not.toContain('`VERIFY_LIVE_REASON=${SPARED_LIVE_REASON}\\n`');
+    expect(producerInlined).toContain('VERIFY_LIVE_REASON=spared-live-session');
     expect(SPARED_LIVE_REASON).toBe('spared-live-session');
   });
 });
