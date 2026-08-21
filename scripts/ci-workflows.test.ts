@@ -245,6 +245,22 @@ const expectStringDrillInput = (workflowSource: string) => {
   expect(inputs).toMatch(/default: 'false'/);
 };
 
+// The env-threading contract for the FORCE_VERIFY_LIVE_REGRESSION drill env,
+// factored out so the mutation drill below can prove it FAILS on a hard-coded
+// or dropped-input mutation by invoking this exact assertion (same discipline
+// as expectStringDrillInput — an independent check would keep passing if this
+// assertion were later weakened or removed).
+const expectDrillEnvThreading = (workflowSource: string) => {
+  const verifyStepStart = workflowSource.indexOf('name: Verify deployed app end to end (verify:live)');
+  const verifyStepEnd = workflowSource.indexOf('\n      - name:', verifyStepStart + 1);
+  const verifyStep = workflowSource.slice(verifyStepStart, verifyStepEnd === -1 ? workflowSource.length : verifyStepEnd);
+  expect(verifyStep).toContain('FORCE_VERIFY_LIVE_REGRESSION');
+  // The env must READ inputs.force_verify_live_regression — never a literal.
+  expect(verifyStep).toMatch(/FORCE_VERIFY_LIVE_REGRESSION:\s*\$\{\{\s*inputs\.force_verify_live_regression/);
+  // Must default to empty string so the seam stays inert on push runs.
+  expect(verifyStep).toMatch(/==\s*'true'\s*&&\s*'true'\s*\|\|\s*''/);
+};
+
 describe('.github/workflows/ci.yml · post-deploy verify:live needs-edge', () => {
   // verify:live moved INTO ci.yml as a needs-edge of deploy-apphosting (the
   // App Hosting primary migration). Because `firebase deploy --only
@@ -416,14 +432,7 @@ describe('.github/workflows/ci.yml · post-deploy verify:live needs-edge', () =>
     // reverts it to type: boolean, or hard-codes the env would silently
     // disarm the round-trip proof.
     expectStringDrillInput(CI);
-
-    const verifyStepStart = CI.indexOf('name: Verify deployed app end to end (verify:live)');
-    const verifyStepEnd = CI.indexOf('\n      - name:', verifyStepStart + 1);
-    const verifyStep = CI.slice(verifyStepStart, verifyStepEnd === -1 ? CI.length : verifyStepEnd);
-    expect(verifyStep).toContain('FORCE_VERIFY_LIVE_REGRESSION');
-    expect(verifyStep).toMatch(/FORCE_VERIFY_LIVE_REGRESSION:\s*\$\{\{\s*inputs\.force_verify_live_regression/);
-    // Must default to empty string so the seam stays inert on push runs.
-    expect(verifyStep).toMatch(/==\s*'true'\s*&&\s*'true'\s*\|\|\s*''/);
+    expectDrillEnvThreading(CI);
   });
 
   it('proves the string-input pin catches a reverted boolean input (mutation)', () => {
@@ -456,6 +465,46 @@ describe('.github/workflows/ci.yml · post-deploy verify:live needs-edge', () =>
     );
     expect(reintroduced, 'the boolean reintroduction must actually land').not.toBe(CI);
     expect(() => expectStringDrillInput(reintroduced)).toThrow();
+  });
+
+  it('proves the env-threading pin catches a hard-coded or dropped-input mutation', () => {
+    // The env expression must read inputs.force_verify_live_regression AND
+    // keep the `== 'true' && 'true' || ''` shape — a hard-coded 'true' would
+    // make the seam fire on EVERY push (breaking the push-run inertness),
+    // and a dropped input would silently disarm the drill. Mutate ONLY the
+    // env line in in-memory copies of the REAL workflow source (never on
+    // disk) and invoke the ACTUAL contract assertion (expectDrillEnvThreading)
+    // on each: it must throw. Each direction breaks exactly one pin so a
+    // future edit that deletes a single assertion flips the corresponding
+    // leg green and this mutation test goes red with it.
+
+    // Direction 1 — hard-coded 'true': the env no longer reads the input at
+    // all and the seam would fire on every run. Breaks both pins.
+    const hardcoded = CI.replace(
+      "FORCE_VERIFY_LIVE_REGRESSION: ${{ inputs.force_verify_live_regression == 'true' && 'true' || '' }}",
+      "FORCE_VERIFY_LIVE_REGRESSION: 'true'",
+    );
+    expect(hardcoded, 'the hard-coded mutation must actually land').not.toBe(CI);
+    expect(() => expectDrillEnvThreading(hardcoded)).toThrow();
+
+    // Direction 2 — dropped input: the expression reads a DIFFERENT input,
+    // keeping the `== 'true' && 'true' || ''` shape. Breaks ONLY the
+    // inputs-reference pin.
+    const droppedInput = CI.replace(
+      "inputs.force_verify_live_regression == 'true'",
+      "inputs.force_crash_no_summary == 'true'",
+    );
+    expect(droppedInput, 'the dropped-input mutation must actually land').not.toBe(CI);
+    expect(() => expectDrillEnvThreading(droppedInput)).toThrow();
+
+    // Direction 3 — truthy shape: drops the `== 'true'` comparison while
+    // still reading the input. Breaks ONLY the expression-shape pin.
+    const truthy = CI.replace(
+      "FORCE_VERIFY_LIVE_REGRESSION: ${{ inputs.force_verify_live_regression == 'true' && 'true' || '' }}",
+      "FORCE_VERIFY_LIVE_REGRESSION: ${{ inputs.force_verify_live_regression && 'true' || '' }}",
+    );
+    expect(truthy, 'the truthy-shape mutation must actually land').not.toBe(CI);
+    expect(() => expectDrillEnvThreading(truthy)).toThrow();
   });
 });
 
