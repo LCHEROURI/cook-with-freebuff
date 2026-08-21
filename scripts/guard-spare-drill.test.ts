@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 // The golden's expected lines derive from the SHARED renderer module
@@ -59,29 +59,81 @@ describe('scripts/guard-spare-drill.mjs · the comparator + its golden', () => {
     }
   });
 
-  it('replays the comparator against a known-good spare-drill log and confirms it matches', () => {
-    // The captured log must contain both the NOTE (archiving and retrying
-    // once) and the FAIL (owner still has … after the archive retry)
-    // lines; the analyzer walks the log, extracts both, regenerates each,
-    // and diffs against the golden. This is the canonical behavior the
-    // comparator must produce on every run.
-    //
-    // Reads the committed fixture (scripts/__golden__/spare-drill-log.txt)
-    // so the test runs on CI runners without a `/tmp/vlive-*.log` present.
-    // The fixture is the stripped shape the comparator expects after its
-    // own strip step — a future CI prefix drift would surface here before
-    // it breaks a live compare.
-    const FIXTURE = 'scripts/__golden__/spare-drill-log.txt';
-    const log = readFileSync(resolve(process.cwd(), FIXTURE), 'utf8');
+  it('regenerates the golden through the comparator\'s own extract/expand path against the fixture (codegen)', () => {
+    // The golden derivation must come from the comparator's REGENERATION
+    // path, not just the constants: the comparator extracts the NOTE + FAIL
+    // lines from the log (extractLines), normalizes them (normalizedLines),
+    // and diffs each regenerated line against the golden template via
+    // buildExpected(golden, groups) (compare). Shelling out with --diff runs
+    // that exact pipeline against the committed fixture — exit 0 proves
+    // every golden template regenerates to the raw log line. A drift in any
+    // regex, a reordered capture group, or a golden edit that no longer
+    // round-trips surfaces here as a non-zero exit. (The regression
+    // comparator's test does the same against its four-line fixture.)
+    const fixture = resolve(process.cwd(), 'scripts/__golden__/spare-drill-log.txt');
+    const goldenText = readFileSync(resolve(process.cwd(), GOLDEN), 'utf8');
+    // Sanity: the fixture carries both evidence lines (the comparator's own
+    // extract step must find them; without them --diff would exit 2).
+    const log = readFileSync(fixture, 'utf8');
     expect(log).toContain('archiving and retrying once');
     expect(log).toContain('after the archive retry');
 
-    // Wire the live re-run: invoke the script via --diff against this log.
-    // A drift in the comparator or the golden would surface as non-zero
-    // exit code here. We can't shell out within vitest cleanly, so this
-    // is checked by hand in the dispatch flow; the contract above pins
-    // the inputs the comparator depends on.
-    expect(readFileSync(resolve(process.cwd(), GOLDEN), 'utf8').includes('archive retry')).toBe(true);
+    // Run the comparator's real pipeline: extract -> normalize -> compare
+    // (buildExpected golden-template expansion) against the fixture.
+    const r = execFileSync('node', [SCRIPT, '--diff', fixture], { encoding: 'utf8' });
+    expect(r).toContain('spare-path lines match the golden');
+    // The comparator's own match report confirms both lines were found and
+    // regenerated — not just a clean exit on a partial match.
+    expect(r).toContain('note line: matched');
+    expect(r).toContain('fail line: matched');
+    // The golden is exactly the two evidence lines (plus its header
+    // comments) — the regeneration must cover each pinned line.
+    for (const line of ['- owner has <N>', '✗ FAIL: owner still has <N>']) {
+      expect(goldenText).toContain(line);
+    }
+  });
+
+  it('proves the regeneration path fires on drift — a golden edit that no longer round-trips exits 1', () => {
+    // The codegen pin above must not be vacuous: a golden edit must actually
+    // fail the comparison. Unlike the regression fixture's static RESULT
+    // line (where mutating the FIXTURE fires), the spare golden's lines ALL
+    // carry placeholders — a fixture-variant change (idle 8s → 9s) is
+    // absorbed by the buildExpected substitution and still matches. The
+    // genuine drift direction here is the GOLDEN: inject an extra word into
+    // the NOTE template, copy the script to a temp path with the golden
+    // constant pointed at the drifted file, and run --diff against the
+    // UNCHANGED fixture: buildExpected regenerates the drifted template
+    // (with EXTRA) while the actual line regenerates without it — a genuine
+    // mismatch that must exit 1.
+    const src = readFileSync(resolve(process.cwd(), SCRIPT), 'utf8');
+    const tmpScript = resolve(process.cwd(), 'scripts/.tmp-spare-drift.mjs');
+    const tmpGolden = resolve('/tmp', 'spare-drift-golden.txt');
+    const drifted = src.replace(
+      "resolve(ROOT, 'scripts/__golden__/guard-spare-drill.txt')",
+      `'${tmpGolden}'`,
+    );
+    expect(drifted, 'the golden-path mutation must actually land').not.toContain(
+      "resolve(ROOT, 'scripts/__golden__/guard-spare-drill.txt')",
+    );
+    writeFileSync(tmpScript, drifted);
+    writeFileSync(tmpGolden, [
+      '# drift golden',
+      '- owner has <N> ACTIVE/PAUSED session(s) blocking the UI starter — archiving and retrying once EXTRA: <ID>… (<PHASE>, <RECIPE>, <IDLE>s idle)',
+      '✗ FAIL: owner still has <N> ACTIVE/PAUSED session(s) blocking the UI starter after the archive retry: <ID>… (<PHASE>, <RECIPE>, <IDLE>s idle)',
+      '',
+    ].join('\n'));
+    try {
+      expect(() => execFileSync('node', [tmpScript, '--diff', resolve(process.cwd(), 'scripts/__golden__/spare-drill-log.txt')], { encoding: 'utf8' })).toThrow();
+    } catch (e) {
+      const err = e as { status?: number; stderr?: string; stdout?: string };
+      expect(err.status).toBe(1);
+      const out = `${err.stdout ?? ''}${err.stderr ?? ''}`;
+      expect(out).toContain('drift detected against the golden:');
+      expect(out).toContain('archiving and retrying once EXTRA:');
+    } finally {
+      rmSync(tmpScript, { force: true });
+      rmSync(tmpGolden, { force: true });
+    }
   });
 
   it('discovers the dispatched workflow run instead of parsing workflow-run stdout', () => {

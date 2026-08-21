@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { describe, expect, it } from 'vitest';
@@ -111,13 +111,65 @@ describe('scripts/guard-boundary-drill.mjs · the comparator + its golden', () =
     expect(text).not.toContain("writeFileSync('/tmp/vlive-guard-spare-drill.log', log)");
   });
 
-  it('exercises the /--diff <path> path end to end (returns 0 on the boundary fixture)', () => {
-    // Same discipline as the spare comparator's exit-semantics test: shell
-    // out and read the actual exit code so a future edit that swaps the
-    // regex can't go unnoticed. The spare comparator's test does this same
-    // external-call pattern against its own fixture.
-    const r = execFileSync('node', [SCRIPT, '--diff', FIXTURE], { encoding: 'utf8' });
+  it('regenerates the golden through the comparator\'s own extract/expand path against the fixture (codegen)', () => {
+    // Same discipline as the spare/regression comparators' codegen tests:
+    // run the real extract -> normalize -> compare (buildExpected golden-
+    // template expansion) pipeline via --diff against the committed fixture.
+    // Exit 0 proves every golden template regenerates to the raw log line;
+    // the comparator's own match report confirms BOTH lines were found and
+    // regenerated, not just a clean exit on a partial match.
+    const fixture = resolve(process.cwd(), FIXTURE);
+    const goldenText = readFileSync(resolve(process.cwd(), GOLDEN), 'utf8');
+    const log = readFileSync(fixture, 'utf8');
+    expect(log).toContain('archiving and retrying once');
+    expect(log).toContain('owner is clean before the UI starter');
+
+    const r = execFileSync('node', [SCRIPT, '--diff', fixture], { encoding: 'utf8' });
     expect(r).toContain('boundary-path lines match the golden');
+    expect(r).toContain('note line: matched');
+    expect(r).toContain('archive-ok line: matched');
+    for (const line of ['- owner has <N>', '✓ archived <N>']) {
+      expect(goldenText).toContain(line);
+    }
+  });
+
+  it('proves the regeneration path fires on drift — a golden edit that no longer round-trips exits 1', () => {
+    // The codegen pin above must not be vacuous. Like the spare golden, the
+    // boundary golden's lines ALL carry placeholders — a fixture-variant
+    // change (idle 68s → 69s) is absorbed by the buildExpected substitution
+    // and still matches. The genuine drift direction is the GOLDEN: inject
+    // an extra word into the NOTE template, copy the script to a temp path
+    // with the golden constant pointed at the drifted file, and run --diff
+    // against the UNCHANGED fixture — a genuine mismatch that must exit 1.
+    const src = readFileSync(resolve(process.cwd(), SCRIPT), 'utf8');
+    const tmpScript = resolve(process.cwd(), 'scripts/.tmp-boundary-drift.mjs');
+    const tmpGolden = resolve('/tmp', 'boundary-drift-golden.txt');
+    const drifted = src.replace(
+      "resolve(ROOT, 'scripts/__golden__/guard-boundary-drill.txt')",
+      `'${tmpGolden}'`,
+    );
+    expect(drifted, 'the golden-path mutation must actually land').not.toContain(
+      "resolve(ROOT, 'scripts/__golden__/guard-boundary-drill.txt')",
+    );
+    writeFileSync(tmpScript, drifted);
+    writeFileSync(tmpGolden, [
+      '# drift golden',
+      '- owner has <N> ACTIVE/PAUSED session(s) blocking the UI starter — archiving and retrying once EXTRA: <ID>… (<PHASE>, <RECIPE>, <IDLE>s idle)',
+      '✓ archived <N> blocking session(s) — retried, owner is clean before the UI starter',
+      '',
+    ].join('\n'));
+    try {
+      expect(() => execFileSync('node', [tmpScript, '--diff', resolve(process.cwd(), FIXTURE)], { encoding: 'utf8' })).toThrow();
+    } catch (e) {
+      const err = e as { status?: number; stderr?: string; stdout?: string };
+      expect(err.status).toBe(1);
+      const out = `${err.stdout ?? ''}${err.stderr ?? ''}`;
+      expect(out).toContain('drift detected against the golden:');
+      expect(out).toContain('archiving and retrying once EXTRA:');
+    } finally {
+      rmSync(tmpScript, { force: true });
+      rmSync(tmpGolden, { force: true });
+    }
   });
 
   it('dispatches ci.yml on main with the proven base shape — no drill input', () => {
