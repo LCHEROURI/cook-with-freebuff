@@ -227,6 +227,24 @@ describe('.github/workflows/ci.yml · deploy-apphosting job', () => {
   });
 });
 
+// The string-input contract for the force_verify_live_regression drill
+// input, factored out so the mutation drill below can prove it FAILS on a
+// reverted boolean input by invoking this exact assertion (same discipline
+// as the verify-live-cleanup mutation proofs — an independent check would
+// keep passing if this assertion were later weakened or removed).
+const expectStringDrillInput = (workflowSource: string) => {
+  const inputsBlock = workflowSource.slice(workflowSource.indexOf('workflow_dispatch:'));
+  const inputsEnd = inputsBlock.indexOf('\nconcurrency:');
+  const inputs = inputsBlock.slice(0, inputsEnd);
+  expect(inputs).toContain('force_verify_live_regression:');
+  // String input (NOT type: boolean) so `inputs.force_verify_live_regression == 'true'`
+  // matches under every dispatch method — a boolean-typed input exposes a JSON
+  // boolean and `true == 'true'` is false in GitHub expressions, which left the
+  // env empty in all three dispatch attempts (32266697726/32267874575/32268919307).
+  expect(inputs).not.toMatch(/type: boolean/);
+  expect(inputs).toMatch(/default: 'false'/);
+};
+
 describe('.github/workflows/ci.yml · post-deploy verify:live needs-edge', () => {
   // verify:live moved INTO ci.yml as a needs-edge of deploy-apphosting (the
   // App Hosting primary migration). Because `firebase deploy --only
@@ -390,21 +408,14 @@ describe('.github/workflows/ci.yml · post-deploy verify:live needs-edge', () =>
 
   it('exposes the force_verify_live_regression drill input and threads it through to the verify:live step', () => {
     // Third drill: combine a guard spare with a synthetic real regression.
-    // The input must be a boolean, default false (so push + scheduled runs are
-    // unaffected), and the verify:live step must read inputs.force_verify_live_regression
-    // — never a literal 'true' — so the seam stays inert by default. A future
-    // edit that drops the input or hard-codes the env would silently disarm
-    // the round-trip proof.
-    const inputsBlock = CI.slice(CI.indexOf('workflow_dispatch:'));
-    const inputsEnd = inputsBlock.indexOf('\nconcurrency:');
-    const inputs = inputsBlock.slice(0, inputsEnd);
-    expect(inputs).toContain('force_verify_live_regression:');
-    // String input (NOT type: boolean) so `inputs.force_verify_live_regression == 'true'`
-    // matches under every dispatch method — a boolean-typed input exposes a JSON
-    // boolean and `true == 'true'` is false in GitHub expressions, which left the
-    // env empty in all three dispatch attempts (32266697726/32267874575/32268919307).
-    expect(inputs).not.toMatch(/type: boolean/);
-    expect(inputs).toMatch(/default: 'false'/);
+    // The input must be a STRING defaulting to 'false' (so push + scheduled
+    // runs are unaffected AND `inputs.force_verify_live_regression == 'true'`
+    // matches under every dispatch method), and the verify:live step must
+    // read inputs.force_verify_live_regression — never a literal 'true' — so
+    // the seam stays inert by default. A future edit that drops the input,
+    // reverts it to type: boolean, or hard-codes the env would silently
+    // disarm the round-trip proof.
+    expectStringDrillInput(CI);
 
     const verifyStepStart = CI.indexOf('name: Verify deployed app end to end (verify:live)');
     const verifyStepEnd = CI.indexOf('\n      - name:', verifyStepStart + 1);
@@ -413,6 +424,38 @@ describe('.github/workflows/ci.yml · post-deploy verify:live needs-edge', () =>
     expect(verifyStep).toMatch(/FORCE_VERIFY_LIVE_REGRESSION:\s*\$\{\{\s*inputs\.force_verify_live_regression/);
     // Must default to empty string so the seam stays inert on push runs.
     expect(verifyStep).toMatch(/==\s*'true'\s*&&\s*'true'\s*\|\|\s*''/);
+  });
+
+  it('proves the string-input pin catches a reverted boolean input (mutation)', () => {
+    // The string-input pin must have discriminating power, not pass
+    // vacuously. Mutate ONLY the input declaration in an in-memory copy of
+    // the REAL workflow source (never on disk) — revert it to the old
+    // type: boolean shape that left FORCE_VERIFY_LIVE_REGRESSION empty under
+    // every dispatch method (32266697726/32267874575/32268919307) — and
+    // invoke the ACTUAL contract assertion (expectStringDrillInput) on the
+    // mutated copy: it must throw, i.e. fail. If a future edit weakens or
+    // removes the pin, this mutation test goes red with it instead of
+    // passing on an independent check.
+    // Direction 1 — the full historical revert (type: boolean + default:
+    // false, the exact shape that left the env empty in every dispatch).
+    const reverted = CI.replace(
+      "        required: false\n        default: 'false'",
+      '        type: boolean\n        default: false',
+    );
+    expect(reverted, 'the boolean revert must actually land').not.toBe(CI);
+    expect(() => expectStringDrillInput(reverted)).toThrow();
+
+    // Direction 2 — reintroduce ONLY type: boolean while keeping the string
+    // default. This breaks just the `not.toMatch(/type: boolean/)` pin, so a
+    // future edit that deletes THAT single assertion flips this leg green
+    // and the mutation test goes red with it — each pin is individually
+    // load-bearing, not just the pair.
+    const reintroduced = CI.replace(
+      "        required: false\n        default: 'false'",
+      "        type: boolean\n        default: 'false'",
+    );
+    expect(reintroduced, 'the boolean reintroduction must actually land').not.toBe(CI);
+    expect(() => expectStringDrillInput(reintroduced)).toThrow();
   });
 });
 
