@@ -12,7 +12,8 @@
     "test": "vitest run",
     "check": "npm run typecheck && npm run lint && npm run test && npm run build",
     "test:watch": "vitest",
-    "test:emulator": "RUN_EMULATOR_TESTS=1 vitest run --no-file-parallelism lib/server/rollback-resume.emulator.test.ts scripts/cleanup-correlation-markers.emulator.test.ts",
+    "test:emulator": "RUN_EMULATOR_TESTS=1 vitest run --no-file-parallelism lib/server/rollback-resume.emulator.test.ts scripts/cleanup-correlation-markers.emulator.test.ts scripts/firestore-rules-harness.emulator.test.ts",
+    "test:rules": "RUN_EMULATOR_TESTS=1 vitest run --no-file-parallelism scripts/firestore-rules*.emulator.test.ts",
     "cleanup:markers": "node --import ./scripts/stub-server-only.mjs --import tsx scripts/cleanup-correlation-markers.ts",
     "tidy:branches": "node scripts/tidy-branches.mjs",
     "refresh:mic-trend": "node scripts/refresh-mic-trend.mjs",
@@ -46,6 +47,7 @@
     "zod": "^3.24.0"
   },
   "devDependencies": {
+    "@firebase/rules-unit-testing": "^4.0.1",
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/react": "^16.3.2",
     "@testing-library/user-event": "^14.6.4",
