@@ -247,6 +247,21 @@ describe('scripts/verify-live-classify.mjs · spared signature is mutation-proof
   });
 });
 
+// The guard spare-fail template extraction, factored out so the mutation
+// drill below can prove it FAILS on a renamed guard message by invoking this
+// exact assertion (same discipline as the string-input / env-threading
+// factored helpers — an independent check would keep passing if this
+// extraction were later weakened or removed). Returns the raw template
+// (e.g. `fail(\`owner still has …\`)`) for callers that render it; on a
+// non-match the assertion throws, and callers can rely on the non-null return.
+const extractGuardSpareFailTemplate = (source: string): string => {
+  const m = source.match(
+    /fail\(`owner still has \$\{remaining\.length\} \$\{SPARED_LIVE_SESSION_SIGNATURE\}: \$\{survivors\}`\)/,
+  );
+  expect(m, 'the guard spare-fail template must be present in verify-live.mjs').not.toBeNull();
+  return m?.[0] ?? '';
+};
+
 describe('scripts/verify-live.mjs · wiring (the gate actually uses the classification)', () => {
   it('imports classifyVerifyVerdict and computes the verdict in the finally block', () => {
     // The import carries every shared constant (classifier, seam message,
@@ -319,16 +334,14 @@ describe('scripts/verify-live.mjs · wiring (the gate actually uses the classifi
 
     // 1. The seam message — the shared constant, by construction.
 
-    // 2. The guard's spare-fail template — extracted verbatim and rendered
-    //    with the real drill payload (run 32429029312: one live blocker at
-    //    13s idle). The rendered line must still carry the load-bearing
-    //    signature, or the pair would be unlabeled for the WRONG reason (a
-    //    missed match instead of the no-mask rule).
-    const guardMatch = LIVE.match(
-      /fail\(`owner still has \$\{remaining\.length\} \$\{SPARED_LIVE_SESSION_SIGNATURE\}: \$\{survivors\}`\)/,
-    );
-    expect(guardMatch, 'the guard spare-fail template must be present in verify-live.mjs').not.toBeNull();
-    const spareLine = guardMatch![0]
+    // 2. The guard's spare-fail template — extracted verbatim via the shared
+    //    helper (whose mutation drill proves a renamed guard message is
+    //    caught) and rendered with the real drill payload (run 32429029312:
+    //    one live blocker at 13s idle). The rendered line must still carry
+    //    the load-bearing signature, or the pair would be unlabeled for the
+    //    WRONG reason (a missed match instead of the no-mask rule).
+    const guardTemplate = extractGuardSpareFailTemplate(LIVE);
+    const spareLine = guardTemplate
       .replace('fail(`', '')
       .replace('`)', '')
       .replace('${remaining.length}', '1')
@@ -350,6 +363,35 @@ describe('scripts/verify-live.mjs · wiring (the gate actually uses the classifi
     const v = classifyVerifyVerdict({ failures: [spareLine, SIMULATED_REGRESSION_SIGNATURE] });
     expect(v.kind).toBe('fail');
     expect(v.reason).toBeUndefined();
+  });
+
+  it('proves the guard spare-fail extraction catches a renamed guard message (mutation)', () => {
+    // The extraction must have discriminating power, not pass vacuously.
+    // Mutate ONLY the guard's fail(...) template in an in-memory copy of the
+    // REAL verify-live.mjs source (never on disk) and invoke the ACTUAL
+    // extraction (extractGuardSpareFailTemplate) on it: it must throw. If a
+    // future edit weakens or removes the extraction, this mutation test goes
+    // red with it instead of passing on an independent check.
+
+    // Direction 1 — reword the action verb: a renamed guard message must be
+    // caught by the extraction itself.
+    const reworded = LIVE.replace(
+      "fail(`owner still has ${remaining.length} ${SPARED_LIVE_SESSION_SIGNATURE}: ${survivors}`)",
+      "fail(`owner keeps ${remaining.length} ${SPARED_LIVE_SESSION_SIGNATURE}: ${survivors}`)",
+    );
+    expect(reworded, 'the reword mutation must actually land').not.toBe(LIVE);
+    expect(() => extractGuardSpareFailTemplate(reworded)).toThrow();
+
+    // Direction 2 — inline the literal instead of the constant reference
+    // (reverting to the pre-consolidation shape): the extraction must
+    // REQUIRE the constant reference, so a single-source-of-truth break is
+    // caught even though the produced message text is identical.
+    const inlined = LIVE.replace(
+      "fail(`owner still has ${remaining.length} ${SPARED_LIVE_SESSION_SIGNATURE}: ${survivors}`)",
+      'fail(`owner still has ${remaining.length} ACTIVE/PAUSED session(s) blocking the UI starter after the archive retry: ${survivors}`)',
+    );
+    expect(inlined, 'the inline mutation must actually land').not.toBe(LIVE);
+    expect(() => extractGuardSpareFailTemplate(inlined)).toThrow();
   });
 });
 
@@ -475,10 +517,10 @@ describe('scripts/verify-live-classify.mjs · the spare path is one source of tr
       /note\(`owner has \$\{blocking\.length\} \$\{BLOCKING_SESSION_PREFIX\} — archiving and retrying once: \$\{names\}`\)/,
     );
     expect(noteTemplateMatch, 'the guard note template must be present in verify-live.mjs').not.toBeNull();
-    const failTemplateMatch = LIVE.match(
-      /fail\(`owner still has \$\{remaining\.length\} \$\{SPARED_LIVE_SESSION_SIGNATURE\}: \$\{survivors\}`\)/,
-    );
-    expect(failTemplateMatch, 'the guard fail template must be present in verify-live.mjs').not.toBeNull();
+    // The fail template comes from the shared extractGuardSpareFailTemplate
+    // helper (same code path the evidence-shape test and the mutation drill
+    // exercise), so a renamed guard message is caught everywhere at once.
+    const failTemplate = extractGuardSpareFailTemplate(LIVE);
 
     const goldenNote = `- ${noteTemplateMatch![0]
       .replace('note(`', '')
@@ -486,7 +528,7 @@ describe('scripts/verify-live-classify.mjs · the spare path is one source of tr
       .replace('${blocking.length}', '<N>')
       .replace('${BLOCKING_SESSION_PREFIX}', BLOCKING_SESSION_PREFIX)
       .replace('${names}', '<ID>… (<PHASE>, <RECIPE>, <IDLE>s idle)')}`;
-    const goldenFail = `✗ FAIL: ${failTemplateMatch![0]
+    const goldenFail = `✗ FAIL: ${failTemplate
       .replace('fail(`', '')
       .replace('`)', '')
       .replace('${remaining.length}', '<N>')
