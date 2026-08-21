@@ -4,16 +4,16 @@
   "type": "refactor",
   "status": "in_progress",
   "created": "2026-08-21T23:07:44Z",
-  "updated": "2026-08-21T23:31:23Z",
+  "updated": "2026-08-21T23:32:59Z",
   "current_phase": 2,
-  "current_task": "2.2",
+  "current_task": "2.3",
   "phases": {
     "total": 4,
     "completed": 1
   },
   "tasks": {
     "total": 25,
-    "completed": 7
+    "completed": 8
   },
   "commits": [
     "34d0979: docs(security): inventory persistence write contracts",
@@ -23,6 +23,7 @@
     "eebcac6: refactor(security): centralize validated patch writes",
     "6b7b297: test(security): preserve immutable timer metadata",
     "a5647d8: docs(security): record phase 1 verification",
-    "4ba8a4e: test(security): add Firestore rules harness"
+    "4ba8a4e: test(security): add Firestore rules harness",
+    "2294706: test(security): pin Cook rules ownership gaps"
   ]
 }
