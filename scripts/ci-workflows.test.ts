@@ -1209,6 +1209,21 @@ describe('.github/workflows/guard-drills-weekly.yml · Sunday-night spare + boun
     }
   });
 
+  it('seeds delete-first so a leaked session never blocks the next drill run', () => {
+    // The --seed helper refuses when the drill-live-session doc already
+    // exists ("already exists — delete first"). A failed drill run used to
+    // leak the doc — cleanup ran only on the happy path — and the NEXT run's
+    // seed died with exit 1 (nightly re-run 32482323556). Each comparator
+    // must therefore --delete (tolerates absence) immediately before
+    // --seed, making the seed idempotent and the leak self-healing. A
+    // future edit that drops the delete-first line re-breaks the next run
+    // after any drill failure.
+    for (const script of ['guard-spare-drill.mjs', 'guard-boundary-drill.mjs', 'guard-regression-drill.mjs']) {
+      const src = readFileSync(`scripts/${script}`, 'utf8');
+      expect(src).toContain("['--delete']);\n  runNodeWithEnv(resolve(ROOT, 'scripts/drill-live-session.mjs'), ['--seed']);");
+    }
+  });
+
   it('runs the boundary comparator AFTER the spare via needs:', () => {
     // Why sequential: each comparator dispatches its own ci.yml on main.
     // If both jobs ran in parallel, ci.yml's concurrency group (cancel-

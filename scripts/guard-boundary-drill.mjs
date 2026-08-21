@@ -290,6 +290,11 @@ async function main() {
   // 3. seed + backdate loop (the boundary drill shape: idle just past 60s
   //    so the guard's archive path accepts the session immediately).
   note(`seeding drill-live-session + backdating to ${TARGET_IDLE_SECONDS}s idle (boundary: GUARD archives)`);
+  // Delete-first (idempotent): a leaked session from a failed run must never
+  // block the next seed — --delete tolerates absence, so a stale drill
+  // session self-heals here instead of dying with "already exists — delete
+  // first" (nightly re-run 32482323556).
+  runNodeWithEnv(resolve(ROOT, 'scripts/drill-live-session.mjs'), ['--delete']);
   runNodeWithEnv(resolve(ROOT, 'scripts/drill-live-session.mjs'), ['--seed']);
   runNodeWithEnv(resolve(ROOT, 'scripts/drill-live-session.mjs'), ['--backdate', String(TARGET_IDLE_SECONDS)]);
   note(`keep-alive backdating every 15s through the guard window (target idle ≈ ${TARGET_IDLE_SECONDS}s)`);

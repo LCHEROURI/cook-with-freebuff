@@ -345,6 +345,12 @@ async function main() {
   if (!jobId) { fail('verify:live never went IN_PROGRESS'); process.exit(2); }
 
   note('seeding drill-live-session (fresh, <60s idle → GUARD spares it)');
+  // Delete-first (idempotent): a leaked session from a failed run — cleanup
+  // previously ran only on the happy path, so a reason-assertion failure
+  // left the doc ACTIVE and the next seed died with "already exists — delete
+  // first" (nightly re-run 32482323556). --delete tolerates absence, so a
+  // stale drill session self-heals here instead of blocking the dispatch.
+  runNodeWithEnv(resolve(ROOT, 'scripts/drill-live-session.mjs'), ['--delete']);
   runNodeWithEnv(resolve(ROOT, 'scripts/drill-live-session.mjs'), ['--seed']);
   note('keep-alive touching every 15s through the guard window');
   for (let i = 1; i <= 24; i++) {

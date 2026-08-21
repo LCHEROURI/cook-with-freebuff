@@ -351,7 +351,10 @@ describe('scripts/guard-spare-drill.mjs · the live /api/status reason assertion
     const src = SRC();
     const goldenIdx = src.indexOf('spare-path lines match the golden');
     const assertIdx = src.indexOf('await assertLiveStatusReason(runId);');
-    const cleanupIdx = src.indexOf("'--delete'");
+    // Anchor to the delete AFTER the assertion: the seed section now runs a
+    // delete-first (idempotent seed), so a bare indexOf("'--delete'") would
+    // match that earlier occurrence and vacuously pass.
+    const cleanupIdx = src.indexOf("'--delete'", assertIdx);
     expect(goldenIdx).toBeGreaterThan(-1);
     expect(assertIdx).toBeGreaterThan(goldenIdx);
     expect(cleanupIdx).toBeGreaterThan(assertIdx);
