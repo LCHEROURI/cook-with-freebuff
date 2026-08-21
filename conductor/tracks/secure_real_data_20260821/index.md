@@ -3,7 +3,7 @@
 - App: `cook-with-freebuff`
 - Track ID: `secure_real_data_20260821`
 - Type: refactor
-- Status: pending
+- Status: in progress
 - [Specification](spec.md)
 - [Implementation plan](plan.md)
 - [Metadata](metadata.json)

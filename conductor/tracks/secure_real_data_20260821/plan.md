@@ -1,8 +1,8 @@
-# Plan: secure_real_data_20260821 — [ ] Pending
+# Plan: secure_real_data_20260821 — [~] In Progress
 
 ## Phase 1: Repository write contracts
 
-- [ ] Task 1.1: Inventory every Cook With Freebuff Firestore write and classify its schema, immutable fields, concurrency, and audit requirements
+- [~] Task 1.1: Inventory every Cook With Freebuff Firestore write and classify its schema, immutable fields, concurrency, and audit requirements
 - [ ] Task 1.2: Add failing repository tests proving invalid full writes and invalid partial updates are rejected before Firestore mutation
 - [ ] Task 1.3: Implement schema-backed full-document and patch validation for recipes, sessions, events, timers, pantry items, leftovers, grocery items, dietary profiles, tool logs, and correlation markers
 - [ ] Task 1.4: Enforce immutable IDs, user ownership, creation timestamps, and existing optimistic-concurrency/correlation-marker invariants
