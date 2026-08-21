@@ -22,6 +22,27 @@ const FIXTURE = 'scripts/__golden__/regression-drill-log.txt';
 // reworded message updates the constant and this golden pin tracks it.
 const SEAM_LINE = `✗ FAIL: ${SIMULATED_REGRESSION_SIGNATURE}`;
 
+// The dispatch-spelling contract for the regression drill, factored out so
+// the mutation drill below can prove it FAILS on a dropped input or swapped
+// flag by invoking this exact assertion (same discipline as the string-input
+// and env-threading drills — an independent check would keep passing if this
+// assertion were later weakened or removed).
+const expectDispatchSpelling = (source: string) => {
+  // The EXACT dispatch array. `-f` is the short flag gh documents for
+  // `workflow run` key=value parameters (help: `-f, --raw-field key=value`),
+  // and the input rides as ONE `-f key=value` token. The live third drill
+  // (32429029312) proved this exact spelling propagates
+  // FORCE_VERIFY_LIVE_REGRESSION=true end to end.
+  expect(source).toContain("gh(['workflow', 'run', 'ci.yml', '--ref', 'main', '-f', 'force_verify_live_regression=true'])");
+  // Wrong spellings that would silently change dispatch semantics:
+  expect(source).not.toContain("'-F', 'force_verify_live_regression=true'");
+  expect(source).not.toMatch(/'--field',\s*'force_verify_live_regression/);
+  expect(source).not.toMatch(/'--raw-field',\s*'force_verify_live_regression/);
+  // The value must ride in the same token — a split would make `true` a
+  // positional arg instead of the input's value.
+  expect(source).not.toContain("'-f', 'force_verify_live_regression', 'true'");
+};
+
 describe('scripts/guard-regression-drill.mjs · the comparator + its golden', () => {
   it('exists as committed tooling (script + golden + fixture all on disk)', () => {
     // The third comparator must live next to the spare and boundary ones —
@@ -86,9 +107,58 @@ describe('scripts/guard-regression-drill.mjs · the comparator + its golden', ()
     // spare comparator already covers). Also mirrors the spare comparator's
     // run-discovery fix (list, don't parse stdout).
     const src = readFileSync(resolve(process.cwd(), SCRIPT), 'utf8');
-    expect(src).toMatch(/'workflow', 'run', 'ci\.yml', '--ref', 'main', '-f', 'force_verify_live_regression=true'/);
+    expectDispatchSpelling(src);
     expect(src).toContain('workflow dispatched but the new ci.yml run could not be located');
     expect(src).toContain("'--event', 'workflow_dispatch'");
+  });
+
+  it('pins the `-f` spelling against gh workflow run --help (the interface gh documents)', () => {
+    // gh is the interface the comparator dispatches through. `workflow run`
+    // documents `-f, --raw-field key=value` as a parameter-passing flag —
+    // the comparator must keep using exactly this spelling, and a future gh
+    // release that renames or drops the short flag surfaces here before it
+    // silently breaks the drill's dispatch. (Live proof: run 32429029312
+    // recorded FORCE_VERIFY_LIVE_REGRESSION: true with this spelling.)
+    const help = execFileSync('gh', ['workflow', 'run', '--help'], { encoding: 'utf8' });
+    expect(help).toMatch(/-f,\s*--raw-field/);
+    expect(help).toContain('key=value');
+  });
+
+  it('proves the dispatch pin catches a dropped input or swapped flag (mutation)', () => {
+    // The pin must have discriminating power, not pass vacuously. Mutate
+    // ONLY the dispatch array in in-memory copies of the REAL script source
+    // (never on disk) and invoke the ACTUAL assertion (expectDispatchSpelling)
+    // on each: it must throw. If a future edit weakens or removes the pin,
+    // this mutation test goes red with it instead of passing on an
+    // independent check.
+    const src = readFileSync(resolve(process.cwd(), SCRIPT), 'utf8');
+
+    // Direction 1 — dropped input: the `-f force_verify_live_regression=true`
+    // pair is removed, so the seam would never fire.
+    const dropped = src.replace(
+      ", '-f', 'force_verify_live_regression=true'",
+      '',
+    );
+    expect(dropped, 'the drop mutation must actually land').not.toBe(src);
+    expect(() => expectDispatchSpelling(dropped)).toThrow();
+
+    // Direction 2 — swapped flag: `-f` becomes `-F` (the other documented
+    // parameter flag with different quoting semantics).
+    const swapped = src.replace(
+      "'-f', 'force_verify_live_regression=true'",
+      "'-F', 'force_verify_live_regression=true'",
+    );
+    expect(swapped, 'the flag-swap mutation must actually land').not.toBe(src);
+    expect(() => expectDispatchSpelling(swapped)).toThrow();
+
+    // Direction 3 — split tokens: the value split into its own token, which
+    // gh would read as a positional arg instead of the input's value.
+    const split = src.replace(
+      "'-f', 'force_verify_live_regression=true'",
+      "'-f', 'force_verify_live_regression', 'true'",
+    );
+    expect(split, 'the split-token mutation must actually land').not.toBe(src);
+    expect(() => expectDispatchSpelling(split)).toThrow();
   });
 
   it('asserts the no-mask record end to end: recorded verdict=failure with NO reason', () => {
