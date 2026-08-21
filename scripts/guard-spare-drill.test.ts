@@ -13,7 +13,7 @@ import { renderNoteLine, renderSpareFailLine } from './drill-evidence-render.mjs
 // and regression comparator tests — exit-0 replay, drift exit-1 with
 // verbatim expected/actual shape, and the dead-catch-free error capture all
 // live in this one module.
-import { assertCodegenReplay, assertGoldenDrift } from './drill-codegen-helpers.mjs';
+import { assertCodegenReplay, assertFixtureDrift, assertGoldenDrift } from './drill-codegen-helpers.mjs';
 
 // ============================================================================
 // scripts/guard-spare-drill.test.ts — pin the end-to-end spare-drill
@@ -116,6 +116,36 @@ describe('scripts/guard-spare-drill.mjs · the comparator + its golden', () => {
       actualLine: 'actual:   - owner has 1 ACTIVE/PAUSED session(s) blocking the UI starter — archiving and retrying once: drill-li… (COLLECTING_INGREDIENTS, chicken_rice_onion_001, 8s idle)',
       tmpScriptName: 'scripts/.tmp-spare-drift.mjs',
       tmpGoldenName: '/tmp/spare-drift-golden.txt',
+    });
+  });
+
+  it('proves the regeneration path fires on FIXTURE drift — a fail line that no longer extracts exits 1', () => {
+    // The golden-drift test above mutates the GOLDEN; this direction mutates
+    // the FIXTURE so ALL THREE comparators pin both sides of the round-trip.
+    // The spare golden's lines ALL carry placeholders, so a fixture-VALUE
+    // change (idle 8s → 9s, or a different recipe id) is absorbed by the
+    // buildExpected substitution and correctly still matches (exit 0) — the
+    // placeholder contract. The genuine fixture-side drift is STRUCTURAL:
+    // inject a word into the fail line so FAIL_RE can no longer extract it,
+    // and the comparator must report the golden fail template as a missing
+    // expected line (exit 1). Mirrors the regression drill's fixture-drift
+    // test — the shared assertFixtureDrift helper runs the real script
+    // against the mutated fixture and asserts exit 1 + the drift report.
+    assertFixtureDrift({
+      script: SCRIPT,
+      fixture: 'scripts/__golden__/spare-drill-log.txt',
+      mutateFixture: (content: string) =>
+        content.replace(
+          '✗ FAIL: owner still has 1 ACTIVE/PAUSED session(s) blocking the UI starter after the archive retry: drill-li',
+          '✗ FAIL: owner still has 1 ACTIVE/PAUSED session(s) blocking the UI starter after the archive retry EXTRA: drill-li',
+        ),
+      mutationLand: 'after the archive retry EXTRA:',
+      tmpFixtureName: '/tmp/spare-fixture-drift.log',
+      // The comparator prints the golden TEMPLATE as the missing expected
+      // line — the renderer-derived template is the canonical shape.
+      driftLines: [
+        `missing expected line: ${renderSpareFailLine({ n: '<N>', id: '<ID>', phase: '<PHASE>', recipe: '<RECIPE>', idle: '<IDLE>' })}`,
+      ],
     });
   });
 

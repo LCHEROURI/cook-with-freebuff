@@ -10,7 +10,7 @@ import { describe, expect, it } from 'vitest';
 import { renderArchiveOkLine, renderNoteLine } from './drill-evidence-render.mjs';
 // The --diff codegen + drift drill discipline is shared with the spare and
 // regression comparator tests (see drill-codegen-helpers.mjs).
-import { assertCodegenReplay, assertGoldenDrift } from './drill-codegen-helpers.mjs';
+import { assertCodegenReplay, assertFixtureDrift, assertGoldenDrift } from './drill-codegen-helpers.mjs';
 
 // ============================================================================
 // scripts/guard-boundary-drill.test.ts — pin the end-to-end boundary-path
@@ -158,6 +158,30 @@ describe('scripts/guard-boundary-drill.mjs · the comparator + its golden', () =
       actualLine: 'actual:   - owner has 1 ACTIVE/PAUSED session(s) blocking the UI starter — archiving and retrying once: drill-li… (COLLECTING_INGREDIENTS, chicken_rice_onion_001, 68s idle)',
       tmpScriptName: 'scripts/.tmp-boundary-drift.mjs',
       tmpGoldenName: '/tmp/boundary-drift-golden.txt',
+    });
+  });
+
+  it('proves the regeneration path fires on FIXTURE drift — an archive-OK line that no longer extracts exits 1', () => {
+    // Mirror of the spare drill's fixture-drift direction: mutates the
+    // FIXTURE so the boundary comparator also pins both sides of the
+    // round-trip (golden edit AND fixture edit both exit 1). The boundary
+    // golden's lines all carry placeholders, so a value change (idle
+    // 68s → 69s) is absorbed and correctly matches; the structural drift is
+    // injecting a word into the ARCHIVED-OK line so OK_RE can no longer
+    // extract it — the golden template surfaces as a missing expected line.
+    assertFixtureDrift({
+      script: SCRIPT,
+      fixture: FIXTURE,
+      mutateFixture: (content: string) =>
+        content.replace(
+          '✓ archived 1 blocking session(s) — retried, owner is clean before the UI starter',
+          '✓ archived 1 EXTRA blocking session(s) — retried, owner is clean before the UI starter',
+        ),
+      mutationLand: 'archived 1 EXTRA blocking session(s)',
+      tmpFixtureName: '/tmp/boundary-fixture-drift.log',
+      // The comparator prints the golden TEMPLATE as the missing expected
+      // line — the renderer-derived template is the canonical shape.
+      driftLines: [`missing expected line: ${renderArchiveOkLine({ n: '<N>' })}`],
     });
   });
 
