@@ -36,9 +36,11 @@ import {
   SPARED_LIVE_SESSION_SIGNATURE,
 } from './verify-live-classify.mjs';
 import { renderNoteLine, renderSpareFailLine } from './drill-evidence-render.mjs';
+import { assessSpareStatusReason } from './guard-spare-status.mjs';
 
 const ROOT = resolve(process.cwd());
 const GOLDEN = resolve(ROOT, 'scripts/__golden__/guard-spare-drill.txt');
+const VERIFY_LOG = resolve('/tmp', 'vlive-guard-spare-drill.log');
 // Node-time check: the <N> count, idle, and other drill-run variants must not
 // rewrite the golden's static shape. Any drift below is a script bug, not a
 // guard regression.
@@ -119,6 +121,20 @@ function normalize(line, re) {
   return m;
 }
 
+function stripLogLines(logText) {
+  return logText
+    .split('\n')
+    .map((l) => l.replace(/^[^\t]*\t[^\t]*\t/, ''))
+    .map((l) => l.replace(/^\d{4}-\d{2}-\d{2}T[^\s]+\s+/, ''))
+    .map((l) => l.trim());
+}
+
+function extractFailureMessages(logText) {
+  return stripLogLines(logText)
+    .filter((l) => l.startsWith('✗ FAIL:'))
+    .map((l) => l.slice('✗ FAIL:'.length).trim());
+}
+
 // Regenerate the exact raw source log line from the captured groups through
 // the SHARED renderer module (drill-evidence-render.mjs) — the same code path
 // the goldens' source-template derivation uses, so the comparator and the
@@ -140,11 +156,7 @@ function extractLines(logText) {
   // CI logs are two tab-delimited fields + ISO-8601 timestamp + the actual
   // driver line. Strip the fields and the timestamp so we land at the raw
   // driver line, then collect the note line and the fail line independently.
-  const stripped = logText
-    .split('\n')
-    .map((l) => l.replace(/^[^\t]*\t[^\t]*\t/, ''))
-    .map((l) => l.replace(/^\d{4}-\d{2}-\d{2}T[^\s]+\s+/, ''))
-    .map((l) => l.trim());
+  const stripped = stripLogLines(logText);
   let noteGroups = null;
   let failGroups = null;
   for (const l of stripped) {
@@ -203,9 +215,11 @@ function fetchJobLog(jobId) {
 // ── Live-reason assertion: the drill's reason must reach the DEPLOYED
 //    endpoint, not just the log. After the golden match, mint a real owner
 //    token (custom token → identitytoolkit, the same exchange verify-live.mjs
-//    uses), GET the public /api/status route, and assert the recorded
-//    verifyLive.reason EQUALS the exported SPARED_LIVE_REASON constant. The
-//    runUrl cross-check is load-bearing: /api/status reads the single-slot
+//    uses), GET the public /api/status route, and cross-check the recorded
+//    verifyLive.reason against the exact failures from this verify:live job.
+//    A pure spare run must carry SPARED_LIVE_REASON; a mixed run must leave it
+//    unset so the spare-path condition cannot mask a second regression.
+//    The runUrl cross-check is load-bearing: /api/status reads the single-slot
 //    deploy_status/verify_live doc, and a CONCURRENT ci.yml run (e.g. the
 //    weekly boundary drill, or a push) can overwrite it after our drill
 //    finished — asserting the runUrl belongs to THIS run first means a stale
@@ -248,10 +262,25 @@ async function assertLiveStatusReason(runId) {
   if (typeof v.runUrl !== 'string' || !v.runUrl.includes(`/runs/${runId}`)) {
     throw new Error(`recorded runUrl ${v.runUrl ?? '<none>'} is not the drill run ${runId} — a concurrent run overwrote the record; cannot assert the live reason`);
   }
-  if (v.reason !== SPARED_LIVE_REASON) {
-    throw new Error(`/api/status reason is ${JSON.stringify(v.reason)}, expected the exported SPARED_LIVE_REASON constant (${SPARED_LIVE_REASON})`);
+
+  const failureMessages = extractFailureMessages(readFileSync(VERIFY_LOG, 'utf8'));
+  const assessment = assessSpareStatusReason(v.reason, failureMessages);
+  if (assessment.kind === 'spare-only') {
+    ok(`live /api/status: verifyLive.reason === SPARED_LIVE_REASON (${v.reason}) for run ${runId}`);
+    return;
   }
-  ok(`live /api/status: verifyLive.reason === SPARED_LIVE_REASON (${v.reason}) for run ${runId}`);
+  if (assessment.kind === 'mixed') {
+    note(
+      `live /api/status: reason omitted as expected because verify:live also had ` +
+        `${assessment.otherFailures.length} non-spare failure(s); spare-path evidence still matched the golden`,
+    );
+    note(`non-spare verify failure: ${assessment.otherFailures[0]}`);
+    return;
+  }
+  throw new Error(
+    `/api/status reason ${JSON.stringify(v.reason)} is inconsistent with the exact verify:live failures; ` +
+      `expected pure spare → ${SPARED_LIVE_REASON}, or mixed spare + regression → null`,
+  );
 }
 function modeDiff(argv) {
   const arg = argv['--diff'];
@@ -371,7 +400,7 @@ async function main() {
   }
 
   const log = fetchJobLog(jobId);
-  writeFileSync('/tmp/vlive-guard-spare-drill.log', log);
+  writeFileSync(VERIFY_LOG, log);
 
   const parsed = extractLines(log);
   if (!parsed.noteGroups && !parsed.failGroups) {
