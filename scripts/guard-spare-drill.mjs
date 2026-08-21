@@ -25,8 +25,16 @@ import { resolve } from 'node:path';
 // fail(...)) and BLOCKING_SESSION_PREFIX (its "blocking the UI starter" head,
 // embedded in the guard's note(...)). This comparator's regexes are DERIVED
 // from those constants, so a reworded signature updates one place and the
-// extraction tracks it automatically — no hard-coded literal to drift.
-import { BLOCKING_SESSION_PREFIX, SPARED_LIVE_SESSION_SIGNATURE } from './verify-live-classify.mjs';
+// extraction tracks it automatically — no hard-coded literal to drift. The
+// post-drill /api/status assertion below compares the recorded reason field
+// against SPARED_LIVE_REASON (the same constant the recorder's Zod enum and
+// the /status page derive from), so the live endpoint can never claim a
+// reason value the rest of the chain does not recognize.
+import {
+  BLOCKING_SESSION_PREFIX,
+  SPARED_LIVE_REASON,
+  SPARED_LIVE_SESSION_SIGNATURE,
+} from './verify-live-classify.mjs';
 
 const ROOT = resolve(process.cwd());
 const GOLDEN = resolve(ROOT, 'scripts/__golden__/guard-spare-drill.txt');
@@ -188,6 +196,60 @@ function compare(actual) {
 function fetchJobLog(jobId) {
   return gh(['run', 'view', '--job', String(jobId), '--log']);
 }
+
+// ── Live-reason assertion: the drill's reason must reach the DEPLOYED
+//    endpoint, not just the log. After the golden match, mint a real owner
+//    token (custom token → identitytoolkit, the same exchange verify-live.mjs
+//    uses), GET the public /api/status route, and assert the recorded
+//    verifyLive.reason EQUALS the exported SPARED_LIVE_REASON constant. The
+//    runUrl cross-check is load-bearing: /api/status reads the single-slot
+//    deploy_status/verify_live doc, and a CONCURRENT ci.yml run (e.g. the
+//    weekly boundary drill, or a push) can overwrite it after our drill
+//    finished — asserting the runUrl belongs to THIS run first means a stale
+//    or foreign record fails the drill instead of falsely passing it. ────────
+async function assertLiveStatusReason(runId) {
+  const { initializeApp, cert, getApps } = await import('firebase-admin/app');
+  const { getAuth } = await import('firebase-admin/auth');
+  const SA_JSON = process.env.FIREBASE_SERVICE_ACCOUNT;
+  const API_KEY = process.env.NEXT_PUBLIC_FIREBASE_API_KEY;
+  const OWNER_UID = process.env.APP_OWNER_UID;
+  if (!SA_JSON || !API_KEY || !OWNER_UID) {
+    throw new Error('FIREBASE_SERVICE_ACCOUNT + NEXT_PUBLIC_FIREBASE_API_KEY + APP_OWNER_UID required for the /api/status reason assertion');
+  }
+  const sa = JSON.parse(SA_JSON);
+  const app = getApps()[0] ?? initializeApp({
+    credential: cert({
+      projectId: sa.project_id,
+      clientEmail: sa.client_email,
+      privateKey: sa.private_key.replace(/\\n/g, '\n'),
+    }),
+  });
+  const customToken = await getAuth(app).createCustomToken(OWNER_UID);
+  const exchange = await fetch(
+    `https://identitytoolkit.googleapis.com/v1/accounts:signInWithCustomToken?key=${API_KEY}`,
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ token: customToken, returnSecureToken: true }),
+    },
+  );
+  const idToken = (await exchange.json().catch(() => ({})))?.idToken;
+  if (!idToken) throw new Error(`owner token exchange failed (HTTP ${exchange.status})`);
+  const APP = (process.env.VERIFY_BASE_URL ?? 'https://cook-with-freebuff--portfolio-app-freebuff2.us-central1.hosted.app').replace(/\/$/, '');
+  const res = await fetch(`${APP}/api/status`, {
+    headers: { authorization: `Bearer ${idToken}` },
+  });
+  const body = await res.json().catch(() => ({}));
+  const v = body?.verifyLive;
+  if (!v) throw new Error(`/api/status returned no verifyLive record (HTTP ${res.status})`);
+  if (typeof v.runUrl !== 'string' || !v.runUrl.includes(`/runs/${runId}`)) {
+    throw new Error(`recorded runUrl ${v.runUrl ?? '<none>'} is not the drill run ${runId} — a concurrent run overwrote the record; cannot assert the live reason`);
+  }
+  if (v.reason !== SPARED_LIVE_REASON) {
+    throw new Error(`/api/status reason is ${JSON.stringify(v.reason)}, expected the exported SPARED_LIVE_REASON constant (${SPARED_LIVE_REASON})`);
+  }
+  ok(`live /api/status: verifyLive.reason === SPARED_LIVE_REASON (${v.reason}) for run ${runId}`);
+}
 function modeDiff(argv) {
   const arg = argv['--diff'];
   if (!arg) { console.error('usage: --diff <verify-live-job-id> | <path-to-log>'); process.exit(2); }
@@ -322,6 +384,11 @@ async function main() {
     }
     process.exit(1);
   }
+
+  // The drill is not complete until the DEPLOYED endpoint reports the reason
+  // it just produced. Run the live assertion only after the log golden
+  // matched, so a log-shaped failure exits 1/2 before this step.
+  await assertLiveStatusReason(runId);
 
   note('cleanup: deleting drill-live-session');
   runNodeWithEnv(resolve(ROOT, '.freebuff/drill-live-session.mjs'), ['--delete']);

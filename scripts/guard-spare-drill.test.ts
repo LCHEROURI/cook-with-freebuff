@@ -6,7 +6,11 @@ import { describe, expect, it } from 'vitest';
 // truth — verify-live.mjs and the comparator regexes derive from the same
 // exports), so a reworded signature updates the constant and these pins
 // track it while the codegen contract flags the golden drift.
-import { BLOCKING_SESSION_PREFIX, SPARED_LIVE_SESSION_SIGNATURE } from './verify-live-classify.mjs';
+import {
+  BLOCKING_SESSION_PREFIX,
+  SPARED_LIVE_REASON,
+  SPARED_LIVE_SESSION_SIGNATURE,
+} from './verify-live-classify.mjs';
 
 // ============================================================================
 // scripts/guard-spare-drill.test.ts — pin the end-to-end spare-drill
@@ -162,5 +166,82 @@ describe('scripts/guard-spare-drill.mjs · the comparator + its golden', () => {
     );
     expect(brokenBase, 'the broken-base mutation must actually land').not.toBe(src);
     expect(() => expectDispatchShape(brokenBase)).toThrow();
+  });
+});
+
+describe('scripts/guard-spare-drill.mjs · the live /api/status reason assertion', () => {
+  // After the log golden matches, the drill must ALSO prove the recorded
+  // reason reached the DEPLOYED endpoint: it mints a real owner token, GETs
+  // /api/status, and asserts verifyLive.reason equals the exported
+  // SPARED_LIVE_REASON constant. These pins keep that assertion deriving
+  // from the constant (never a second literal) and load-bearing (dropping
+  // or weakening it fails the mutation drill).
+  const SRC = () => readFileSync(resolve(process.cwd(), SCRIPT), 'utf8');
+
+  it('imports SPARED_LIVE_REASON from the classifier module', () => {
+    const src = SRC();
+    expect(src).toContain("from './verify-live-classify.mjs'");
+    expect(src).toContain('  SPARED_LIVE_REASON,');
+    // The assertion must compare against the constant — a page-style literal
+    // would reintroduce a second copy of the reason value.
+    expect(src).toContain('v.reason !== SPARED_LIVE_REASON');
+    expect(src).not.toContain("v.reason !== 'spared-live-session'");
+  });
+
+  it('reads the deployed /api/status route with a real owner bearer token', () => {
+    const src = SRC();
+    expect(src).toContain('${APP}/api/status');
+    expect(src).toContain("headers: { authorization: `Bearer ${idToken}` }");
+    // The token mint mirrors verify-live.mjs: custom token → identitytoolkit.
+    expect(src).toContain('signInWithCustomToken');
+    expect(src).toContain('getAuth(app).createCustomToken(OWNER_UID)');
+  });
+
+  it('cross-checks runUrl against the drill run before trusting the reason', () => {
+    // /api/status reads the single-slot deploy_status/verify_live doc, which
+    // a concurrent ci.yml run can overwrite. Without this guard the drill
+    // could assert against a FOREIGN record and falsely pass.
+    const src = SRC();
+    expect(src).toContain('v.runUrl.includes(`/runs/${runId}`)');
+    expect(src).toContain('a concurrent run overwrote the record; cannot assert the live reason');
+  });
+
+  it('calls the assertion only after the golden matched, before cleanup', () => {
+    const src = SRC();
+    const goldenIdx = src.indexOf('spare-path lines match the golden');
+    const assertIdx = src.indexOf('await assertLiveStatusReason(runId);');
+    const cleanupIdx = src.indexOf("'--delete'");
+    expect(goldenIdx).toBeGreaterThan(-1);
+    expect(assertIdx).toBeGreaterThan(goldenIdx);
+    expect(cleanupIdx).toBeGreaterThan(assertIdx);
+  });
+
+  it('proves the reason-comparison pin catches a literal or a dropped guard (mutation)', () => {
+    const src = SRC();
+
+    // Direction 1 — revert the comparison to the raw literal: the
+    // literal-free pin must fail.
+    const inlined = src.replace('v.reason !== SPARED_LIVE_REASON', "v.reason !== 'spared-live-session'");
+    expect(inlined, 'the inline mutation must actually land').not.toBe(src);
+    expect(inlined).toContain("v.reason !== 'spared-live-session'");
+    expect(inlined).not.toContain('v.reason !== SPARED_LIVE_REASON');
+
+    // Direction 2 — drop the runUrl cross-check (the concurrent-run guard):
+    // the runUrl pin must fail.
+    const droppedRunUrl = src.replace('if (typeof v.runUrl !== \'string\' || !v.runUrl.includes(`/runs/${runId}`)) {', 'if (false) {');
+    expect(droppedRunUrl, 'the runUrl-drop mutation must actually land').not.toBe(src);
+    expect(droppedRunUrl).not.toContain('v.runUrl.includes(`/runs/${runId}`)');
+
+    // Direction 3 — drop the whole assertion call: the ordering pin must fail.
+    const droppedCall = src.replace('await assertLiveStatusReason(runId);', '');
+    expect(droppedCall, 'the dropped-call mutation must actually land').not.toBe(src);
+    expect(droppedCall).not.toContain('await assertLiveStatusReason(runId);');
+
+    // The pins are the guards — same discipline as the dispatch drills.
+    expect(src).toContain('v.reason !== SPARED_LIVE_REASON');
+    expect(src).not.toContain("v.reason !== 'spared-live-session'");
+    expect(src).toContain('v.runUrl.includes(`/runs/${runId}`)');
+    expect(src).toContain('await assertLiveStatusReason(runId);');
+    expect(SPARED_LIVE_REASON).toBe('spared-live-session');
   });
 });
