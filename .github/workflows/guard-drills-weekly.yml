@@ -69,6 +69,15 @@ jobs:
           node-version: 22
           cache: npm
 
+      # Fast pre-dispatch gate: replay the comparator's --diff mode against
+      # the committed fixture log BEFORE burning a ~25 min ci.yml dispatch.
+      # --diff needs only plain node (stdlib + local modules — no gh, no
+      # Firestore, no node_modules), so this runs before npm ci. A golden
+      # or regex drift fails here in seconds; without the gate it would
+      # surface only after the full dispatch+seed+touch+fetch cycle.
+      - name: Replay the spare-drill fixture (fast pre-dispatch gate)
+        run: node scripts/guard-spare-drill.mjs --diff scripts/__golden__/spare-drill-log.txt
+
       - name: Install dependencies
         run: npm ci
 
@@ -119,6 +128,13 @@ jobs:
         with:
           node-version: 22
           cache: npm
+
+      # Fast pre-dispatch gate (mirror of the spare job's): replay the
+      # boundary comparator's --diff mode against the committed fixture
+      # before the ~25 min dispatch. Plain node only, so it sits before
+      # npm ci — a golden/regex drift on the archive-OK shape fails here.
+      - name: Replay the boundary-drill fixture (fast pre-dispatch gate)
+        run: node scripts/guard-boundary-drill.mjs --diff scripts/__golden__/boundary-drill-log.txt
 
       - name: Install dependencies
         run: npm ci
@@ -172,6 +188,13 @@ jobs:
         with:
           node-version: 22
           cache: npm
+
+      # Fast pre-dispatch gate (mirror of the other two jobs'): replay the
+      # regression comparator's --diff mode against the committed fixture
+      # before the ~25 min dispatch. Plain node only — a golden/regex drift
+      # on the no-mask evidence shape fails here without a dispatch.
+      - name: Replay the regression-drill fixture (fast pre-dispatch gate)
+        run: node scripts/guard-regression-drill.mjs --diff scripts/__golden__/regression-drill-log.txt
 
       - name: Install dependencies
         run: npm ci

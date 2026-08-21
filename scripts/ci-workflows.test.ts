@@ -1194,4 +1194,34 @@ describe('.github/workflows/guard-drills-weekly.yml · Sunday-night spare + boun
     expect(regressionJob).toContain('NEXT_PUBLIC_FIREBASE_API_KEY: ${{ secrets.NEXT_PUBLIC_FIREBASE_API_KEY }}');
     expect(regressionJob).toContain('NEXT_PUBLIC_FIREBASE_APP_ID: ${{ secrets.NEXT_PUBLIC_FIREBASE_APP_ID }}');
   });
+
+  it('replays each comparator fixture as a fast pre-dispatch gate before npm ci', () => {
+    // The gates burn seconds (plain node --diff against the committed
+    // fixture log — no gh, no Firestore, no node_modules) instead of a
+    // ~25 min ci.yml dispatch: a golden or regex drift fails here before
+    // the comparator ever dispatches. Each job must run its OWN fixture
+    // (the spare golden's placeholder lines are absorbed by buildExpected,
+    // so a cross-wired fixture would pass vacuously), the gate must sit
+    // BEFORE `npm ci` (that's what makes it fast — no dependency install),
+    // and the fixture path must point at the log fixture, not the golden.
+    const gates = [
+      ['spare-drill', 'node scripts/guard-spare-drill.mjs --diff scripts/__golden__/spare-drill-log.txt'],
+      ['boundary-drill', 'node scripts/guard-boundary-drill.mjs --diff scripts/__golden__/boundary-drill-log.txt'],
+      ['regression-drill', 'node scripts/guard-regression-drill.mjs --diff scripts/__golden__/regression-drill-log.txt'],
+    ];
+    for (const [job, gate] of gates) {
+      const jobStart = GUARD_DRILLS_WEEKLY.indexOf(`${job}:`);
+      const jobSection = GUARD_DRILLS_WEEKLY.slice(jobStart);
+      expect(jobSection).toContain(gate);
+      const gateIdx = jobSection.indexOf(gate);
+      const npmCiIdx = jobSection.indexOf('run: npm ci');
+      const comparatorIdx = jobSection.indexOf(`node scripts/guard-${job === 'spare-drill' ? 'spare' : job === 'boundary-drill' ? 'boundary' : 'regression'}-drill.mjs`, npmCiIdx);
+      expect(gateIdx).toBeGreaterThan(-1);
+      expect(npmCiIdx).toBeGreaterThan(gateIdx);
+      // Search for the comparator AFTER npm ci — the gate line embeds the
+      // same script path (plus --diff), so a bare indexOf would match the
+      // gate itself and pass vacuously.
+      expect(comparatorIdx).toBeGreaterThan(npmCiIdx);
+    }
+  });
 });
