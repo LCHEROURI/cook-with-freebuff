@@ -461,4 +461,48 @@ describe('scripts/verify-live-classify.mjs · the spare path is one source of tr
       expect(failLine).toBe(`✗ FAIL: owner still has <N> ${SPARED_LIVE_SESSION_SIGNATURE}: <ID>… (<PHASE>, <RECIPE>, <IDLE>s idle)`);
     }
   });
+
+  it('the golden NOTE/FAIL lines derive from the source templates the comparators extract', () => {
+    // The comparators extract the note/fail lines from logs that verify-live.mjs
+    // PRODUCES — so the goldens must equal the source's own note(...)/fail(...)
+    // templates, rendered through the same renderers (`- ` and `✗ FAIL: `
+    // prefixes) with the drill-run-variant fields substituted for the golden
+    // placeholders and the embedded constants expanded to their literal text.
+    // If the source template wording changes (e.g. "owner still has" renamed),
+    // the extraction below fails AND the committed golden must be updated in
+    // lockstep — the golden can never silently drift from what the guard emits.
+    const noteTemplateMatch = LIVE.match(
+      /note\(`owner has \$\{blocking\.length\} \$\{BLOCKING_SESSION_PREFIX\} — archiving and retrying once: \$\{names\}`\)/,
+    );
+    expect(noteTemplateMatch, 'the guard note template must be present in verify-live.mjs').not.toBeNull();
+    const failTemplateMatch = LIVE.match(
+      /fail\(`owner still has \$\{remaining\.length\} \$\{SPARED_LIVE_SESSION_SIGNATURE\}: \$\{survivors\}`\)/,
+    );
+    expect(failTemplateMatch, 'the guard fail template must be present in verify-live.mjs').not.toBeNull();
+
+    const goldenNote = `- ${noteTemplateMatch![0]
+      .replace('note(`', '')
+      .replace('`)', '')
+      .replace('${blocking.length}', '<N>')
+      .replace('${BLOCKING_SESSION_PREFIX}', BLOCKING_SESSION_PREFIX)
+      .replace('${names}', '<ID>… (<PHASE>, <RECIPE>, <IDLE>s idle)')}`;
+    const goldenFail = `✗ FAIL: ${failTemplateMatch![0]
+      .replace('fail(`', '')
+      .replace('`)', '')
+      .replace('${remaining.length}', '<N>')
+      .replace('${SPARED_LIVE_SESSION_SIGNATURE}', SPARED_LIVE_SESSION_SIGNATURE)
+      .replace('${survivors}', '<ID>… (<PHASE>, <RECIPE>, <IDLE>s idle)')}`;
+
+    // The committed goldens must equal the source-derived lines.
+    for (const g of ['guard-spare-drill.txt', 'guard-boundary-drill.txt', 'guard-regression-drill.txt']) {
+      const golden = readFileSync(`scripts/__golden__/${g}`, 'utf8');
+      const noteLine = golden.split('\n').find((l) => l.startsWith('- owner has'));
+      expect(noteLine, `${g}: NOTE line must equal the source template`).toBe(goldenNote);
+    }
+    for (const g of ['guard-spare-drill.txt', 'guard-regression-drill.txt']) {
+      const golden = readFileSync(`scripts/__golden__/${g}`, 'utf8');
+      const failLine = golden.split('\n').find((l) => l.startsWith('✗ FAIL:'));
+      expect(failLine, `${g}: FAIL line must equal the source template`).toBe(goldenFail);
+    }
+  });
 });
