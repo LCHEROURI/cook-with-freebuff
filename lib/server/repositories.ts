@@ -7,6 +7,7 @@
 
 import 'server-only';
 import type { DocumentSnapshot } from 'firebase-admin/firestore';
+import type { AnyZodObject } from 'zod';
 import { getAdminDb } from './admin';
 import type {
   UserId,
@@ -58,6 +59,79 @@ function randomId(): string {
 interface Doc<T> {
   id: string;
   data: T;
+}
+
+type AdminDb = NonNullable<ReturnType<typeof getAdminDb>>;
+
+function assertImmutableFields<T extends object>(
+  current: T,
+  proposed: Partial<T>,
+  fields: readonly (keyof T)[],
+): void {
+  const currentRecord = current as Record<keyof T, unknown>;
+  const proposedRecord = proposed as Record<keyof T, unknown>;
+  for (const field of fields) {
+    if (
+      Object.prototype.hasOwnProperty.call(proposed, field)
+      && !Object.is(proposedRecord[field], currentRecord[field])
+    ) {
+      throw new Error(`Cannot change immutable field ${String(field)}`);
+    }
+  }
+}
+
+async function writeValidatedDocument<T extends object>(
+  collectionPath: string,
+  id: string,
+  data: T,
+  schema: AnyZodObject,
+  options: {
+    keyField?: keyof T;
+    immutableFields?: readonly (keyof T)[];
+  } = {},
+): Promise<void> {
+  const parsed = schema.strict().parse(data) as T;
+  if (options.keyField !== undefined) {
+    const keyed = parsed as Record<keyof T, unknown>;
+    if (keyed[options.keyField] !== id) {
+      throw new Error(`${String(options.keyField)} must match document id`);
+    }
+  }
+
+  const db = getAdminDb();
+  if (!db) throw new Error('Firestore not initialized');
+  const ref = db.collection(collectionPath).doc(id);
+  if (options.immutableFields?.length) {
+    const snap = await ref.get();
+    if (snap.exists) {
+      assertImmutableFields(
+        snap.data() as T,
+        parsed,
+        options.immutableFields,
+      );
+    }
+  }
+  await ref.set(parsed as unknown as Record<string, unknown>);
+}
+
+async function prepareValidatedPatch<T extends object>(
+  db: AdminDb,
+  collectionPath: string,
+  id: string,
+  patch: Partial<T>,
+  schema: AnyZodObject,
+  immutableFields: readonly (keyof T)[],
+): Promise<Partial<T>> {
+  // Parse before any Firestore I/O. Besides failing fast, strict partial
+  // parsing prevents unknown keys from being smuggled through update().
+  const parsedPatch = schema.partial().strict().parse(patch) as Partial<T>;
+  const ref = db.collection(collectionPath).doc(id);
+  const snap = await ref.get();
+  if (!snap.exists) throw new Error(`${collectionPath}/${id} not found`);
+  const current = snap.data() as T;
+  assertImmutableFields(current, parsedPatch, immutableFields);
+  schema.parse({ ...current, ...parsedPatch });
+  return parsedPatch;
 }
 
 /**
@@ -295,8 +369,10 @@ export async function deleteStaleCorrelationMarkers(
 const RECIPES = 'recipes';
 
 export async function createRecipe(recipe: Recipe): Promise<void> {
-  recipeSchema.parse(recipe);
-  await writeDoc(RECIPES, recipe.id, recipe);
+  await writeValidatedDocument(RECIPES, recipe.id, recipe, recipeSchema, {
+    keyField: 'id',
+    immutableFields: ['id', 'userId', 'generatedAt'],
+  });
 }
 
 export async function getRecipe(id: string): Promise<Recipe | null> {
@@ -305,8 +381,10 @@ export async function getRecipe(id: string): Promise<Recipe | null> {
 }
 
 export async function updateRecipe(recipe: Recipe): Promise<void> {
-  recipeSchema.parse(recipe);
-  await writeDoc(RECIPES, recipe.id, recipe);
+  await writeValidatedDocument(RECIPES, recipe.id, recipe, recipeSchema, {
+    keyField: 'id',
+    immutableFields: ['id', 'userId', 'generatedAt'],
+  });
 }
 
 export async function listRecipes(userId: UserId): Promise<Recipe[]> {
@@ -323,8 +401,10 @@ export async function deleteRecipe(id: string): Promise<void> {
 const SESSIONS = 'cooking_sessions';
 
 export async function createSession(session: CookingSession): Promise<void> {
-  cookingSessionSchema.parse(session);
-  await writeDoc(SESSIONS, session.id, session);
+  await writeValidatedDocument(SESSIONS, session.id, session, cookingSessionSchema, {
+    keyField: 'id',
+    immutableFields: ['id', 'userId', 'startedAt'],
+  });
 }
 
 export async function getSession(id: string): Promise<CookingSession | null> {
@@ -357,6 +437,7 @@ export async function updateSession(
   expectedVersion: number,
   marker?: { mark?: string | string[]; clear?: string },
 ): Promise<CookingSession> {
+  const validatedPartial = cookingSessionSchema.partial().strict().parse(partial);
   const db = getAdminDb();
   if (!db) throw new Error('Firestore not initialized');
 
@@ -373,6 +454,11 @@ export async function updateSession(
         `Session ${id} version conflict: expected ${expectedVersion}, got ${current.version}`,
       );
     }
+    assertImmutableFields(
+      current,
+      validatedPartial,
+      ['id', 'userId', 'startedAt', 'version'],
+    );
 
     // Read the legacy raw marker BEFORE queuing any writes: Firestore
     // transactions require every read to precede every write, and the rollback
@@ -387,7 +473,7 @@ export async function updateSession(
 
     const updated: CookingSession = {
       ...current,
-      ...partial,
+      ...validatedPartial,
       version: current.version + 1,
       lastActivityAt: now(),
     };
@@ -426,8 +512,10 @@ export async function listSessions(userId: UserId): Promise<CookingSession[]> {
 const EVENTS = 'cooking_session_events';
 
 export async function createEvent(event: CookingSessionEvent): Promise<void> {
-  cookingSessionEventSchema.parse(event);
-  await writeDoc(EVENTS, event.id, event);
+  await writeValidatedDocument(EVENTS, event.id, event, cookingSessionEventSchema, {
+    keyField: 'id',
+    immutableFields: ['id', 'sessionId', 'userId', 'type', 'at'],
+  });
 }
 
 export async function listSessionEvents(sessionId: string): Promise<CookingSessionEvent[]> {
@@ -440,8 +528,10 @@ export async function listSessionEvents(sessionId: string): Promise<CookingSessi
 const TIMERS = 'timers';
 
 export async function createTimer(timer: CookingTimer): Promise<void> {
-  cookingTimerSchema.parse(timer);
-  await writeDoc(TIMERS, timer.id, timer);
+  await writeValidatedDocument(TIMERS, timer.id, timer, cookingTimerSchema, {
+    keyField: 'id',
+    immutableFields: ['id', 'userId', 'sessionId', 'startedAt', 'durationSeconds'],
+  });
 }
 
 export async function getTimer(id: string): Promise<CookingTimer | null> {
@@ -453,14 +543,17 @@ export async function updateTimer(
   id: string,
   partial: Partial<CookingTimer>,
 ): Promise<void> {
-  // Validate the update at the write boundary (repo rule) BEFORE any I/O: a
-  // malformed legacy value propagated into a partial (e.g. a string endsAt
-  // concatenated during a rebase) must fail here instead of reaching
-  // Firestore. Partial parse also strips unknown keys, so the write only
-  // ever carries known fields.
-  const validated = cookingTimerSchema.partial().parse(partial);
+  const parsedPartial = cookingTimerSchema.partial().strict().parse(partial);
   const db = getAdminDb();
   if (!db) throw new Error('Firestore not initialized');
+  const validated = await prepareValidatedPatch<CookingTimer>(
+    db,
+    TIMERS,
+    id,
+    parsedPartial,
+    cookingTimerSchema,
+    ['id', 'userId', 'sessionId', 'startedAt', 'durationSeconds'],
+  );
   await db
     .collection(TIMERS)
     .doc(id)
@@ -502,10 +595,11 @@ export async function rebaseActiveTimers(
   const batch = db.batch();
   for (const doc of snap.docs) {
     const current = doc.data() as CookingTimer;
-    // Validate the shifted value at the write boundary (repo rule) — a
-    // malformed legacy endsAt must fail the whole batch, not reach Firestore.
-    const shifted = cookingTimerSchema.partial().parse({ endsAt: current.endsAt + elapsedMs });
-    batch.update(doc.ref, shifted as unknown as Record<string, unknown>);
+    const shifted = cookingTimerSchema.parse({
+      ...current,
+      endsAt: current.endsAt + elapsedMs,
+    });
+    batch.update(doc.ref, { endsAt: shifted.endsAt });
   }
   await batch.commit();
 }
@@ -515,8 +609,10 @@ export async function rebaseActiveTimers(
 const PANTRY = 'pantry_items';
 
 export async function createPantryItem(item: PantryItem): Promise<void> {
-  pantryItemSchema.parse(item);
-  await writeDoc(PANTRY, item.id, item);
+  await writeValidatedDocument(PANTRY, item.id, item, pantryItemSchema, {
+    keyField: 'id',
+    immutableFields: ['id', 'userId', 'source'],
+  });
 }
 
 export async function getPantryItem(id: string): Promise<PantryItem | null> {
@@ -535,7 +631,15 @@ export async function updatePantryItem(
 ): Promise<void> {
   const db = getAdminDb();
   if (!db) throw new Error('Firestore not initialized');
-  await db.collection(PANTRY).doc(id).update(partial as unknown as Record<string, unknown>);
+  const validated = await prepareValidatedPatch<PantryItem>(
+    db,
+    PANTRY,
+    id,
+    partial,
+    pantryItemSchema,
+    ['id', 'userId', 'source'],
+  );
+  await db.collection(PANTRY).doc(id).update(validated as unknown as Record<string, unknown>);
 }
 
 export async function deletePantryItem(id: string): Promise<void> {
@@ -547,8 +651,10 @@ export async function deletePantryItem(id: string): Promise<void> {
 const LEFTOVERS = 'leftovers';
 
 export async function createLeftover(leftover: Leftover): Promise<void> {
-  leftoverSchema.parse(leftover);
-  await writeDoc(LEFTOVERS, leftover.id, leftover);
+  await writeValidatedDocument(LEFTOVERS, leftover.id, leftover, leftoverSchema, {
+    keyField: 'id',
+    immutableFields: ['id', 'userId', 'recipeId', 'completedAt', 'storedAt'],
+  });
 }
 
 export async function getLeftover(id: string): Promise<Leftover | null> {
@@ -564,7 +670,15 @@ export async function listLeftovers(userId: UserId): Promise<Leftover[]> {
 export async function updateLeftover(id: string, partial: Partial<Leftover>): Promise<void> {
   const db = getAdminDb();
   if (!db) throw new Error('Firestore not initialized');
-  await db.collection(LEFTOVERS).doc(id).update(partial as unknown as Record<string, unknown>);
+  const validated = await prepareValidatedPatch<Leftover>(
+    db,
+    LEFTOVERS,
+    id,
+    partial,
+    leftoverSchema,
+    ['id', 'userId', 'recipeId', 'completedAt', 'storedAt'],
+  );
+  await db.collection(LEFTOVERS).doc(id).update(validated as unknown as Record<string, unknown>);
 }
 
 // ── Grocery list repository (K10) ────────────────────────────────────────────
@@ -572,8 +686,10 @@ export async function updateLeftover(id: string, partial: Partial<Leftover>): Pr
 const GROCERY = 'grocery_list';
 
 export async function createGroceryItem(item: GroceryItem): Promise<void> {
-  groceryItemSchema.parse(item);
-  await writeDoc(GROCERY, item.id, item);
+  await writeValidatedDocument(GROCERY, item.id, item, groceryItemSchema, {
+    keyField: 'id',
+    immutableFields: ['id', 'userId', 'source', 'pantryItemId', 'createdAt'],
+  });
 }
 
 export async function getGroceryItem(id: string): Promise<GroceryItem | null> {
@@ -589,7 +705,15 @@ export async function listGroceryItems(userId: UserId): Promise<GroceryItem[]> {
 export async function updateGroceryItem(id: string, partial: Partial<GroceryItem>): Promise<void> {
   const db = getAdminDb();
   if (!db) throw new Error('Firestore not initialized');
-  await db.collection(GROCERY).doc(id).update(partial as unknown as Record<string, unknown>);
+  const validated = await prepareValidatedPatch<GroceryItem>(
+    db,
+    GROCERY,
+    id,
+    partial,
+    groceryItemSchema,
+    ['id', 'userId', 'source', 'pantryItemId', 'createdAt'],
+  );
+  await db.collection(GROCERY).doc(id).update(validated as unknown as Record<string, unknown>);
 }
 
 export async function deleteGroceryItem(id: string): Promise<void> {
@@ -601,8 +725,10 @@ export async function deleteGroceryItem(id: string): Promise<void> {
 const PROFILES = 'dietary_profiles';
 
 export async function upsertDietaryProfile(profile: DietaryProfile): Promise<void> {
-  dietaryProfileSchema.parse(profile);
-  await writeDoc(PROFILES, profile.userId, profile);
+  await writeValidatedDocument(PROFILES, profile.userId, profile, dietaryProfileSchema, {
+    keyField: 'userId',
+    immutableFields: ['userId'],
+  });
 }
 
 export async function getDietaryProfile(userId: UserId): Promise<DietaryProfile | null> {
@@ -615,8 +741,10 @@ export async function getDietaryProfile(userId: UserId): Promise<DietaryProfile 
 const TOOL_LOGS = 'agent_tool_logs';
 
 export async function createToolLog(log: AgentToolLog): Promise<void> {
-  agentToolLogSchema.parse(log);
-  await writeDoc(TOOL_LOGS, log.id, log);
+  await writeValidatedDocument(TOOL_LOGS, log.id, log, agentToolLogSchema, {
+    keyField: 'id',
+    immutableFields: ['id', 'userId', 'sessionId', 'tool', 'at', 'correlationId'],
+  });
 }
 
 // ── Idempotency / event sourcing helpers ─────────────────────────────────────
