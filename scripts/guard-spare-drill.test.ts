@@ -136,6 +136,76 @@ describe('scripts/guard-spare-drill.mjs · the comparator + its golden', () => {
     }
   });
 
+  it('proves compare() cannot silently stop firing — both pinned outcomes flip under a weakened comparator (mutation)', () => {
+    // The pipeline's drift detection lives entirely in compare(): a future
+    // edit that weakens it (ignores mismatches, or always matches) would
+    // silently stop the guard. Mirror the golden-drift test's temp-script
+    // pattern: apply each mutation to a copy of the REAL script and confirm
+    // it FLIPS the pinned exit code that the codegen/drift tests assert —
+    // proving both pins go red against the mutation, i.e. neither is vacuous.
+    const src = readFileSync(resolve(process.cwd(), SCRIPT), 'utf8');
+    const fixture = resolve(process.cwd(), 'scripts/__golden__/spare-drill-log.txt');
+    const tmpScript = resolve(process.cwd(), 'scripts/.tmp-compare-mutation.mjs');
+    const tmpGolden = resolve('/tmp', 'spare-compare-mutation-golden.txt');
+    const goldenPath = "resolve(ROOT, 'scripts/__golden__/guard-spare-drill.txt')";
+    const pointAtTempGolden = (s: string) => s.replace(goldenPath, `'${tmpGolden}'`);
+    const driftedGolden = [
+      '# drift golden',
+      '- owner has <N> ACTIVE/PAUSED session(s) blocking the UI starter — archiving and retrying once EXTRA: <ID>… (<PHASE>, <RECIPE>, <IDLE>s idle)',
+      '✗ FAIL: owner still has <N> ACTIVE/PAUSED session(s) blocking the UI starter after the archive retry: <ID>… (<PHASE>, <RECIPE>, <IDLE>s idle)',
+      '',
+    ].join('\n');
+
+    try {
+      writeFileSync(tmpGolden, driftedGolden);
+
+      // Sanity — the UNMUTATED script rejects the drifted golden (exit 1),
+      // the exact outcome the drift test pins. Without this check, Direction
+      // 1's "exit 0" below could be the status quo and the mutation would
+      // have no footprint to prove.
+      writeFileSync(tmpScript, pointAtTempGolden(src));
+      let saneStatus: number | null = null;
+      try {
+        execFileSync('node', [tmpScript, '--diff', fixture], { encoding: 'utf8' });
+      } catch (e) {
+        saneStatus = (e as { status?: number }).status ?? null;
+      }
+      expect(saneStatus, 'sanity: the unmutated script must still reject the drifted golden').toBe(1);
+
+      // Direction 1 — compare() ignores mismatches (never reports drift):
+      // the drifted golden is now ACCEPTED (exit 0, "match the golden"),
+      // flipping the drift test's pinned exit-1 → the drift test goes red.
+      const ignoreMismatches = src.replace(
+        /function compare\(actual\) \{[\s\S]*?\n\}/,
+        'function compare() {\n  return [];\n}',
+      );
+      expect(ignoreMismatches, 'the ignore-mismatches mutation must actually land').not.toBe(src);
+      writeFileSync(tmpScript, pointAtTempGolden(ignoreMismatches));
+      const laxOut = execFileSync('node', [tmpScript, '--diff', fixture], { encoding: 'utf8' });
+      expect(laxOut).toContain('spare-path lines match the golden');
+
+      // Direction 2 — compare() reports a mismatch unconditionally: the
+      // GOOD fixture is now REJECTED (exit 1), flipping the codegen test's
+      // pinned exit-0 → the codegen test goes red.
+      const alwaysFail = src.replace(
+        /function compare\(actual\) \{[\s\S]*?\n\}/,
+        "function compare() {\n  return [{ kind: 'mismatch', expected: 'x', actual: 'y' }];\n}",
+      );
+      expect(alwaysFail, 'the always-fail mutation must actually land').not.toBe(src);
+      writeFileSync(tmpScript, pointAtTempGolden(alwaysFail));
+      let strictStatus: number | null = null;
+      try {
+        execFileSync('node', [tmpScript, '--diff', fixture], { encoding: 'utf8' });
+      } catch (e) {
+        strictStatus = (e as { status?: number }).status ?? null;
+      }
+      expect(strictStatus).toBe(1);
+    } finally {
+      rmSync(tmpScript, { force: true });
+      rmSync(tmpGolden, { force: true });
+    }
+  });
+
   it('discovers the dispatched workflow run instead of parsing workflow-run stdout', () => {
     const src = readFileSync(resolve(process.cwd(), SCRIPT), 'utf8');
 
