@@ -297,4 +297,52 @@ describe('scripts/verify-live.mjs · wiring (the gate actually uses the classifi
     expect(spareFailIdx).toBeGreaterThan(-1);
     expect(seamIdx).toBeGreaterThan(spareFailIdx);
   });
+
+  it('pins the third drill evidence shape — the source-produced spare + seam pair must record reason=null', () => {
+    // The no-mask guarantee is a CONTRACT between the drill seam
+    // (verify-live.mjs) and the classifier (verify-live-classify.mjs). Rather
+    // than hard-coding the failure strings in two places that can silently
+    // diverge, derive the evidence shape FROM the source: the seam's fail()
+    // message and the guard's spare-fail template are extracted here, so a
+    // future edit that renames either is caught by the extraction itself AND
+    // the no-mask assertion still runs against the new shape.
+
+    // 1. The seam message — whatever string the seam's fail('SIMULATED …')
+    //    emits after the guard.
+    const seamMatch = LIVE.match(/fail\('(SIMULATED regression test[^']*)'\)/);
+    expect(
+      seamMatch,
+      'the FORCE_VERIFY_LIVE_REGRESSION seam must emit a SIMULATED regression fail message',
+    ).not.toBeNull();
+    const seamMessage = seamMatch![1];
+
+    // 2. The guard's spare-fail template — extracted verbatim and rendered
+    //    with the real drill payload (run 32429029312: one live blocker at
+    //    13s idle). The rendered line must still carry the load-bearing
+    //    signature, or the pair would be unlabeled for the WRONG reason (a
+    //    missed match instead of the no-mask rule).
+    const guardMatch = LIVE.match(
+      /fail\(`owner still has \$\{remaining\.length\} ACTIVE\/PAUSED session\(s\) blocking the UI starter after the archive retry: \$\{survivors\}`\)/,
+    );
+    expect(guardMatch, 'the guard spare-fail template must be present in verify-live.mjs').not.toBeNull();
+    const spareLine = guardMatch![0]
+      .replace('fail(`', '')
+      .replace('`)', '')
+      .replace('${remaining.length}', '1')
+      .replace('${survivors}', 'drill-li… (COLLECTING_INGREDIENTS, chicken_rice_onion_001, 13s idle)');
+    expect(spareLine).toContain(SPARED_LIVE_SESSION_SIGNATURE);
+
+    // 3. Positive control: the rendered spare ALONE is a genuine spared
+    //    failure. This proves the template is faithful — the pair below is
+    //    unlabeled only BECAUSE a second failure sits next to it.
+    expect(classifyVerifyVerdict({ failures: [spareLine] }).reason).toBe('spared-live-session');
+
+    // 4. The third-drill shape: spare + simulated regression → plain fail,
+    //    and the reason must be undefined — sparing NEVER masks a real
+    //    failure. (Live drill 32429029312 recorded exactly this: RESULT:
+    //    FAIL (2) → verdict failure, reason null.)
+    const v = classifyVerifyVerdict({ failures: [spareLine, seamMessage] });
+    expect(v.kind).toBe('fail');
+    expect(v.reason).toBeUndefined();
+  });
 });
