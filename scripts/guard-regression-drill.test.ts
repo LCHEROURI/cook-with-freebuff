@@ -177,6 +177,52 @@ describe('scripts/guard-regression-drill.mjs · the comparator + its golden', ()
     }
   });
 
+  it('proves the regeneration path fires on GOLDEN drift — a golden edit exits 1 against the unchanged fixture', () => {
+    // The fixture-mutation direction above pins one side of the round-trip
+    // (a drifted FIXTURE line is caught); this direction pins the other
+    // side (a drifted GOLDEN template is caught against the unchanged
+    // fixture). Mutate the RESULT count in a temp COPY of the committed
+    // golden (2 -> 9), point a temp script copy at that golden, and run
+    // --diff against the UNCHANGED fixture: buildExpected regenerates the
+    // drifted template as FAIL (9) while the actual line regenerates as
+    // FAIL (2) — a genuine mismatch that must exit 1.
+    //
+    // The mutation must be ANCHORED to the actual golden line: the golden's
+    // header comment also contains "RESULT: FAIL (2)", so a bare replace
+    // would edit the comment and leave the real line untouched — the drill
+    // would pass vacuously.
+    const src = readFileSync(resolve(process.cwd(), SCRIPT), 'utf8');
+    const goldenSrc = readFileSync(resolve(process.cwd(), GOLDEN), 'utf8');
+    const driftedGolden = goldenSrc.replace(/^RESULT: FAIL \(2\)$/m, 'RESULT: FAIL (9)');
+    expect(driftedGolden, 'the golden mutation must land on the real line').not.toBe(goldenSrc);
+    expect(driftedGolden.split('\n').filter((l) => l.startsWith('RESULT:'))).toEqual(['RESULT: FAIL (9)']);
+
+    const tmpScript = resolve(process.cwd(), 'scripts/.tmp-regression-golden-drift.mjs');
+    const tmpGolden = resolve('/tmp', 'regression-drift-golden.txt');
+    const driftedScript = src.replace(
+      "resolve(ROOT, 'scripts/__golden__/guard-regression-drill.txt')",
+      `'${tmpGolden}'`,
+    );
+    expect(driftedScript, 'the golden-path mutation must actually land').not.toContain(
+      "resolve(ROOT, 'scripts/__golden__/guard-regression-drill.txt')",
+    );
+    writeFileSync(tmpScript, driftedScript);
+    writeFileSync(tmpGolden, driftedGolden);
+    try {
+      expect(() => execFileSync('node', [tmpScript, '--diff', resolve(process.cwd(), FIXTURE)], { encoding: 'utf8' })).toThrow();
+    } catch (e) {
+      const err = e as { status?: number; stderr?: string; stdout?: string };
+      expect(err.status).toBe(1);
+      const out = `${err.stdout ?? ''}${err.stderr ?? ''}`;
+      expect(out).toContain('drift detected against the golden:');
+      expect(out).toContain('expected: RESULT: FAIL (9)');
+      expect(out).toContain('actual:   RESULT: FAIL (2)');
+    } finally {
+      rmSync(tmpScript, { force: true });
+      rmSync(tmpGolden, { force: true });
+    }
+  });
+
   it('declares exit semantics so a future editor cannot silently change the contract', () => {
     // 0 = match, 1 = drift, 2 = missing/unparseable. Pinning the exit paths
     // so a regression (say, exiting 0 on drift) fails CI instead of shipping
