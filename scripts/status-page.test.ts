@@ -94,8 +94,11 @@ describe('app/status/page.tsx · the glance surface', () => {
   it('labels a spared-live-session failure as intentional instead of a bare failure', () => {
     // The guard-spare drill recorded verdict failure with reason
     // spared-live-session — the page must label it as an intentional drill /
-    // overlapping-run collision, not claim a regression.
-    expect(PAGE).toContain('isSpared = status?.verifyLive?.reason === \'spared-live-session\'');
+    // overlapping-run collision, not claim a regression. The reason value
+    // comes from the shared SPARED_LIVE_REASON constant (single source of
+    // truth with the classifier + recorder), never a page-local literal.
+    expect(PAGE).toContain("import { SPARED_LIVE_REASON } from '../../scripts/verify-live-classify.mjs'");
+    expect(PAGE).toContain('isSpared = status?.verifyLive?.reason === SPARED_LIVE_REASON');
     expect(PAGE).toContain("'✗ Failing — spared live session (intentional)'");
     expect(PAGE).toContain("'Spared a live session — drill/overlap, not a regression'");
     expect(PAGE).toContain('isSpared');
@@ -201,9 +204,11 @@ describe('scripts/record-verify-status.mjs · the recorder', () => {
   it('accepts an optional reason and persists it only when valid', () => {
     // --reason is OPTIONAL: an empty/absent value must not persist a stale
     // reason field, and an unknown reason must be rejected by the schema so a
-    // typo can never label a real failure as intentional.
+    // typo can never label a real failure as intentional. The enum derives
+    // from the shared SPARED_LIVE_REASON constant — never a local literal.
+    expect(RECORDER).toContain("import { SPARED_LIVE_REASON } from './verify-live-classify.mjs'");
     expect(RECORDER).toContain("const reason = flag('--reason', process.env.VERIFY_REASON ?? '');");
     expect(RECORDER).toContain('...(reason ? { reason } : {})');
-    expect(RECORDER).toContain("z.enum(['spared-live-session']).optional()");
+    expect(RECORDER).toContain('z.enum([SPARED_LIVE_REASON]).optional()');
   });
 });

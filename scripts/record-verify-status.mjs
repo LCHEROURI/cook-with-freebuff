@@ -43,6 +43,7 @@ import { resolve as resolvePath } from 'node:path';
 import { z } from 'zod';
 import { initializeApp, cert, getApps } from 'firebase-admin/app';
 import { getFirestore } from 'firebase-admin/firestore';
+import { SPARED_LIVE_REASON } from './verify-live-classify.mjs';
 
 // ── Status document schema ──────────────────────────────────────────────────
 // The doc is trusted by the /api/status route, so it is validated here BEFORE
@@ -59,7 +60,7 @@ const verifyLiveStatusSchema = z.object({
   runUrl: z
     .string()
     .refine((v) => v === '' || /^https?:\/\//.test(v), 'runUrl must be empty or an http(s) URL'),
-  reason: z.enum(['spared-live-session']).optional(),
+  reason: z.enum([SPARED_LIVE_REASON]).optional(),
 });
 
 // ── Env loading (process.env wins; .env.local fills the gaps) ───────────────

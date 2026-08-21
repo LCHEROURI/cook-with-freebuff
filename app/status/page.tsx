@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import styles from './page.module.css';
 import { useAuthSession } from '@/lib/auth/useAuthSession';
+import { SPARED_LIVE_REASON } from '../../scripts/verify-live-classify.mjs';
 
 interface VerifyLive {
   verdict: string;
@@ -85,7 +86,7 @@ export default function StatusPage() {
     }
   };
 
-  const isSpared = status?.verifyLive?.reason === 'spared-live-session';
+  const isSpared = status?.verifyLive?.reason === SPARED_LIVE_REASON;
   const verdictClass =
     status?.verifyLive?.verdict === 'success'
       ? styles.pass

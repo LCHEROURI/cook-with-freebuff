@@ -72,6 +72,14 @@ export const GEMINI_CASCADE_PREFIXES = [
 export const SPARED_LIVE_SESSION_SIGNATURE =
   'ACTIVE/PAUSED session(s) blocking the UI starter after the archive retry';
 
+// The machine-readable reason value persisted to deploy_status/verify_live and
+// rendered by the /status page. It is the SINGLE source of truth for the
+// reason enum: the classifier returns it, the recorder's Zod schema validates
+// it, and the status page's spared-label check compares against it — so a
+// renamed reason can never desync the label (the cross-file codegen contract
+// in verify-live-classify.test.ts proves all three reference this constant).
+export const SPARED_LIVE_REASON = 'spared-live-session';
+
 // The guard's NOTE line phrases the same blocker differently — it says
 // "blocking the UI starter — archiving and retrying once" (the retry is
 // upcoming), while the fail line says "after the archive retry" (the retry
@@ -116,6 +124,6 @@ export function classifyVerifyVerdict({ failures }) {
   // mask a genuine failure next to the spare.
   const sparedLive =
     failures.length === 1 && failures[0].includes(SPARED_LIVE_SESSION_SIGNATURE);
-  if (sparedLive) return { kind: 'fail', reason: 'spared-live-session' };
+  if (sparedLive) return { kind: 'fail', reason: SPARED_LIVE_REASON };
   return { kind: 'fail' };
 }

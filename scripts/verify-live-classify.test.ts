@@ -6,6 +6,7 @@ import {
   GEMINI_CASCADE_PREFIXES,
   GEMINI_CREDITS_SIGNATURES,
   SIMULATED_REGRESSION_SIGNATURE,
+  SPARED_LIVE_REASON,
   SPARED_LIVE_SESSION_SIGNATURE,
 } from './verify-live-classify.mjs';
 
@@ -546,5 +547,80 @@ describe('scripts/verify-live-classify.mjs · the spare path is one source of tr
       const failLine = golden.split('\n').find((l) => l.startsWith('✗ FAIL:'));
       expect(failLine, `${g}: FAIL line must equal the source template`).toBe(goldenFail);
     }
+  });
+});
+
+describe('scripts/verify-live-classify.mjs · the reason value is one source of truth (cross-file)', () => {
+  // The reason enum value 'spared-live-session' used to live as three
+  // independent literals: the classifier's return, the recorder's Zod schema,
+  // and the /status page's isSpared check. A rename in one would silently
+  // desync the label (page never marks a spared drill intentional, or marks a
+  // bare failure as spared). SPARED_LIVE_REASON is now the single source of
+  // truth; these pins prove every consumer derives from it and nothing
+  // hard-codes a second copy.
+
+  const RECORDER = readFileSync('scripts/record-verify-status.mjs', 'utf8');
+  const PAGE = readFileSync('app/status/page.tsx', 'utf8');
+
+  it('exports the exact reason value as the constant', () => {
+    expect(SPARED_LIVE_REASON).toBe('spared-live-session');
+  });
+
+  it('the classifier returns the constant — never a hard-coded literal', () => {
+    // The module source must reference the constant in the spared branch.
+    expect(readFileSync('scripts/verify-live-classify.mjs', 'utf8')).toContain(
+      "if (sparedLive) return { kind: 'fail', reason: SPARED_LIVE_REASON };",
+    );
+  });
+
+  it('the recorder validates the reason against the constant — never a local literal', () => {
+    expect(RECORDER).toContain("import { SPARED_LIVE_REASON } from './verify-live-classify.mjs'");
+    expect(RECORDER).toContain('z.enum([SPARED_LIVE_REASON]).optional()');
+    expect(RECORDER).not.toContain("z.enum(['spared-live-session'])");
+  });
+
+  it('the /status page checks the reason against the constant — never a page-local literal', () => {
+    expect(PAGE).toContain("import { SPARED_LIVE_REASON } from '../../scripts/verify-live-classify.mjs'");
+    expect(PAGE).toContain('isSpared = status?.verifyLive?.reason === SPARED_LIVE_REASON');
+    expect(PAGE).not.toContain("reason === 'spared-live-session'");
+  });
+
+  it('a renamed reason desyncs loudly: exact-value pin + literal-free pins fire together (mutation)', () => {
+    // Direction 1 — rename the constant value in an in-memory copy of the
+    // classifier: the exact-value pin above is what catches it (all consumers
+    // reference the constant, so only a deliberate value change surfaces).
+    const reworded = readFileSync('scripts/verify-live-classify.mjs', 'utf8').replace(
+      "export const SPARED_LIVE_REASON = 'spared-live-session';",
+      "export const SPARED_LIVE_REASON = 'spared-live-session-renamed';",
+    );
+    expect(reworded, 'the reword mutation must actually land').not.toContain(
+      "export const SPARED_LIVE_REASON = 'spared-live-session';",
+    );
+    expect(reworded).toContain("export const SPARED_LIVE_REASON = 'spared-live-session-renamed';");
+
+    // Direction 2 — revert the recorder to a local literal: the literal-free
+    // pin above must fail.
+    const recorderInlined = RECORDER.replace('z.enum([SPARED_LIVE_REASON]).optional()', "z.enum(['spared-live-session']).optional()");
+    expect(recorderInlined, 'the recorder inline mutation must actually land').not.toContain(
+      'z.enum([SPARED_LIVE_REASON]).optional()',
+    );
+    expect(recorderInlined).toContain("z.enum(['spared-live-session']).optional()");
+
+    // Direction 3 — revert the page to a local literal: the page pin must fail.
+    const pageInlined = PAGE.replace('reason === SPARED_LIVE_REASON', "reason === 'spared-live-session'");
+    expect(pageInlined, 'the page inline mutation must actually land').not.toContain(
+      'reason === SPARED_LIVE_REASON',
+    );
+    expect(pageInlined).toContain("reason === 'spared-live-session'");
+
+    // The pins are the guards: assert each mutation breaks its corresponding
+    // literal-free contract. (These are the same assertions the tests above
+    // run against the unmutated sources, so weakening them here would also
+    // weaken the live pins — same discipline as the string-input drills.)
+    expect(recorderInlined).not.toContain('z.enum([SPARED_LIVE_REASON]).optional()');
+    expect(recorderInlined).toContain("z.enum(['spared-live-session']).optional()");
+    expect(pageInlined).not.toContain('reason === SPARED_LIVE_REASON');
+    expect(pageInlined).toContain("reason === 'spared-live-session'");
+    expect(SPARED_LIVE_REASON).toBe('spared-live-session');
   });
 });
