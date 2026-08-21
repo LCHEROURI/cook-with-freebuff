@@ -409,6 +409,30 @@ describe('Phase 3A repository write contracts', () => {
     expect(fake.writeCount()).toBe(0);
   });
 
+  it('reads representative existing shapes without validating or rewriting them', async () => {
+    const legacyRecipe = {
+      id: 'legacy-recipe', userId: 'user-1', title: 'Legacy Rice', servings: 2,
+      estimatedPrepMinutes: 5, estimatedCookMinutes: 15, totalMinutes: 20,
+      ingredients: [{ id: 'i1', name: 'rice', quantity: 1, unit: 'cup', optional: false }],
+      equipment: [], prepSteps: [], cookingSteps: [], dietaryTags: [], allergens: [],
+      safetyNotes: [], generatedAt: 1_600_000_000_000, updatedAt: 1_600_000_000_000,
+    };
+    const legacySession = {
+      id: 'legacy-session', userId: 'user-1', status: 'PAUSED', currentPhase: 'PAUSED',
+      currentPrepStepIndex: 0, currentCookingStepIndex: 0, activeTimerIds: [],
+      availableIngredients: [], startedAt: 1_600_000_000_000,
+      lastActivityAt: 1_600_000_000_000, version: 1,
+    };
+    const fake = await useDb({
+      'recipes/legacy-recipe': legacyRecipe,
+      'cooking_sessions/legacy-session': legacySession,
+    });
+
+    expect(await repo.getRecipe('legacy-recipe')).toEqual(legacyRecipe);
+    expect(await repo.getSession('legacy-session')).toEqual(legacySession);
+    expect(fake.writeCount()).toBe(0);
+  });
+
   it('rejects an invalid pantry patch after merging with the stored document', async () => {
     const fake = await useDb({
       'pantry_items/pantry-1': {

@@ -163,6 +163,52 @@ describe.skipIf(!emulator)('Cook With Freebuff Firestore authorization contract'
     });
   });
 
+  it('keeps representative existing Cook document shapes owner-readable', async () => {
+    const existingDocuments: Array<[string, Record<string, unknown>]> = [
+      [`users/${COOK_OWNER_UID}`, { createdAt: 1_600_000_000_000 }],
+      [`dietary_profiles/${COOK_OWNER_UID}`, {
+        userId: COOK_OWNER_UID,
+        updatedAt: 1_600_000_000_000,
+      }],
+      ['recipes/legacy-recipe', {
+        id: 'legacy-recipe', userId: COOK_OWNER_UID, title: 'Legacy recipe',
+        generatedAt: 1_600_000_000_000, updatedAt: 1_600_000_000_000,
+      }],
+      ['cooking_sessions/legacy-session', {
+        id: 'legacy-session', userId: COOK_OWNER_UID, status: 'PAUSED',
+        startedAt: 1_600_000_000_000, version: 1,
+      }],
+      ['cooking_session_events/legacy-event', {
+        id: 'legacy-event', userId: COOK_OWNER_UID, sessionId: 'legacy-session',
+        type: 'SESSION_STARTED', at: 1_600_000_000_000,
+      }],
+      ['timers/legacy-timer', {
+        id: 'legacy-timer', userId: COOK_OWNER_UID, sessionId: 'legacy-session',
+        status: 'RUNNING', startedAt: 1_600_000_000_000,
+      }],
+      ['pantry_items/legacy-pantry', {
+        id: 'legacy-pantry', userId: COOK_OWNER_UID, name: 'rice', source: 'MANUAL',
+      }],
+      ['leftovers/legacy-leftover', {
+        id: 'legacy-leftover', userId: COOK_OWNER_UID, title: 'Soup', status: 'ACTIVE',
+      }],
+      ['grocery_list/legacy-grocery', {
+        id: 'legacy-grocery', userId: COOK_OWNER_UID, name: 'Milk', status: 'OPEN',
+      }],
+      ['agent_tool_logs/legacy-log', {
+        id: 'legacy-log', userId: COOK_OWNER_UID, tool: 'legacy-tool',
+        at: 1_600_000_000_000,
+      }],
+    ];
+
+    for (const [path, data] of existingDocuments) {
+      await harness.seed(path, data);
+      await assertSucceeds(harness.owner.firestore().doc(path).get());
+      await assertFails(harness.secondUser.firestore().doc(path).get());
+      await assertFails(harness.unauthenticated.firestore().doc(path).get());
+    }
+  });
+
   it('keeps correlation markers server-managed and inaccessible to every client', async () => {
     await harness.seed('correlation_markers/server-marker', {
       markedAt: 1_700_000_000_000,
