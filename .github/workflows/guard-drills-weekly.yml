@@ -51,8 +51,44 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # Top-level preflight: replay ALL THREE comparator fixtures in ONE job
+  # before the sequential dispatch chain starts, so a shared golden or
+  # regex drift fails in ~30s instead of after the spare leg's npm ci +
+  # ~25 min dispatch (and cascading skips to boundary + regression). Each
+  # drill job still carries its own per-job gate (a fix to one comparator
+  # lands without re-running the others), but the preflight is the
+  # earliest shared signal. Plain node only — no gh, no Firestore, no
+  # node_modules — so there is no npm ci here, and the token needs only
+  # contents: read (the preflight never dispatches or uploads).
+  preflight:
+    name: Preflight — replay all three comparator fixtures
+    runs-on: ubuntu-latest
+    # The gates are seconds each; 5 min is pure headroom.
+    timeout-minutes: 5
+    permissions:
+      contents: read
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v5
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: 22
+
+      - name: Replay the spare-drill fixture (preflight)
+        run: node scripts/guard-spare-drill.mjs --diff scripts/__golden__/spare-drill-log.txt
+
+      - name: Replay the boundary-drill fixture (preflight)
+        run: node scripts/guard-boundary-drill.mjs --diff scripts/__golden__/boundary-drill-log.txt
+
+      - name: Replay the regression-drill fixture (preflight)
+        run: node scripts/guard-regression-drill.mjs --diff scripts/__golden__/regression-drill-log.txt
+
   spare-drill:
     name: Compare live spare-path lines against scripts/__golden__/guard-spare-drill.txt
+    needs: preflight
     runs-on: ubuntu-latest
     # The comparator dispatches ci.yml (`gh workflow run`) and uploads the
     # captured log, so the token needs actions:write (dispatch + artifacts).

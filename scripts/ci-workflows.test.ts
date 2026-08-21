@@ -1309,4 +1309,34 @@ describe('.github/workflows/guard-drills-weekly.yml · Sunday-night spare + boun
       expect(comparatorIdx).toBeGreaterThan(npmCiIdx);
     }
   });
+
+  it('runs all three fixture gates once in a top-level preflight before the dispatch chain', () => {
+    // The per-job gates are belt-and-suspenders; the preflight is the
+    // earliest SHARED signal: one job replays all three fixtures before
+    // the spare leg's npm ci + ~25 min dispatch, so a shared golden or
+    // regex drift fails in ~30s instead of after the first dispatch (and
+    // cascading skips to boundary + regression). The chain must start
+    // from it (spare-drill needs: preflight), and the preflight must run
+    // the gates with plain node only — no npm ci and no actions:write,
+    // because it never dispatches or uploads.
+    const preflightStart = GUARD_DRILLS_WEEKLY.indexOf('preflight:');
+    expect(preflightStart).toBeGreaterThan(-1);
+    const spareStart = GUARD_DRILLS_WEEKLY.indexOf('spare-drill:', preflightStart);
+    expect(spareStart).toBeGreaterThan(preflightStart);
+    const preflightSection = GUARD_DRILLS_WEEKLY.slice(preflightStart, spareStart);
+    for (const gate of [
+      'node scripts/guard-spare-drill.mjs --diff scripts/__golden__/spare-drill-log.txt',
+      'node scripts/guard-boundary-drill.mjs --diff scripts/__golden__/boundary-drill-log.txt',
+      'node scripts/guard-regression-drill.mjs --diff scripts/__golden__/regression-drill-log.txt',
+    ]) {
+      expect(preflightSection).toContain(gate);
+    }
+    // Plain node only — no dependency install in the preflight.
+    expect(preflightSection).not.toContain('run: npm ci');
+    // Only contents: read — the preflight never dispatches or uploads.
+    expect(preflightSection).toMatch(/permissions:\n\s+contents: read/);
+    expect(preflightSection).not.toContain('actions: write');
+    // The dispatch chain must start from the preflight.
+    expect(GUARD_DRILLS_WEEKLY).toMatch(/spare-drill:[\s\S]*?needs:\s*preflight/);
+  });
 });
