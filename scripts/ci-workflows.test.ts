@@ -1246,7 +1246,7 @@ describe('.github/workflows/guard-drills-weekly.yml · Sunday-night spare + boun
     // after any drill failure.
     for (const script of ['guard-spare-drill.mjs', 'guard-boundary-drill.mjs', 'guard-regression-drill.mjs']) {
       const src = readFileSync(`scripts/${script}`, 'utf8');
-      expect(src).toContain("['--delete']);\n  runNodeWithEnv(resolve(ROOT, 'scripts/drill-live-session.mjs'), ['--seed']);");
+      expect(src).toContain("['--delete']);\n    runNodeWithEnv(resolve(ROOT, 'scripts/drill-live-session.mjs'), ['--seed']);");
     }
   });
 

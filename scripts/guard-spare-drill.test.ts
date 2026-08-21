@@ -251,6 +251,18 @@ describe('scripts/guard-spare-drill.mjs · the comparator + its golden', () => {
     expect(src).toContain('drift detected against the golden');// drift message
   });
 
+  it('post-seed exits use process.exitCode + return so try/finally cleanup always runs', () => {
+    // A post-seed process.exit(…) bypasses finally blocks, leaking the
+    // drill-live-session and poisoning the next run. Pin that the main()
+    // post-seed path uses process.exitCode + return (not process.exit) so
+    // the finally cleanup always executes.
+    const src = readFileSync(resolve(process.cwd(), SCRIPT), 'utf8');
+    expect(src).toMatch(/process\.exitCode = 2; return/);  // dispatch-not-found / verify:live timeout / no lines
+    expect(src).toMatch(/process\.exitCode = 1; return/);  // drift
+    expect(src).toContain('try {');                         // post-seed try block
+    expect(src).toContain('} finally {');                  // cleanup in finally
+  });
+
   it('dispatches ci.yml on main with the proven base shape — no drill input', () => {
     // The spare drill's dispatch is the pure base shape all three
     // comparators share: gh(['workflow', 'run', 'ci.yml', '--ref', 'main']).

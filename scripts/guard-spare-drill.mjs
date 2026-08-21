@@ -373,83 +373,87 @@ async function main() {
   }
   if (!runId) {
     fail('workflow dispatched but the new ci.yml run could not be located');
-    process.exit(2);
+    process.exitCode = 2; return;
   }
   note(`dispatched run: ${runId}`);
 
-  let jobId = null;
-  for (let i = 0; i < 40; i++) {
-    const out = ghJson(['run', 'view', String(runId), '--json', 'jobs']);
-    const verify = (out.jobs ?? []).find((j) => /Verify deployed/.test(j.name));
-    if (verify?.status === 'in_progress') {
-      jobId = String(verify.databaseId);
-      ok(`verify:live IN_PROGRESS after ${i} polls, job ${jobId}`);
-      break;
+  try {
+    let jobId = null;
+    for (let i = 0; i < 40; i++) {
+      const out = ghJson(['run', 'view', String(runId), '--json', 'jobs']);
+      const verify = (out.jobs ?? []).find((j) => /Verify deployed/.test(j.name));
+      if (verify?.status === 'in_progress') {
+        jobId = String(verify.databaseId);
+        ok(`verify:live IN_PROGRESS after ${i} polls, job ${jobId}`);
+        break;
+      }
+      await sleep(15_000);
     }
-    await sleep(15_000);
-  }
-  if (!jobId) { fail('verify:live never went IN_PROGRESS'); process.exit(2); }
+    if (!jobId) { fail('verify:live never went IN_PROGRESS'); process.exitCode = 2; return; }
 
-  note('seeding drill-live-session (fresh, <60s idle → GUARD spares it)');
-  // Delete-first (idempotent): a leaked session from a failed run — cleanup
-  // previously ran only on the happy path, so a reason-assertion failure
-  // left the doc ACTIVE and the next seed died with "already exists — delete
-  // first" (nightly re-run 32482323556). --delete tolerates absence, so a
-  // stale drill session self-heals here instead of blocking the dispatch.
-  runNodeWithEnv(resolve(ROOT, 'scripts/drill-live-session.mjs'), ['--delete']);
-  runNodeWithEnv(resolve(ROOT, 'scripts/drill-live-session.mjs'), ['--seed']);
-  note('keep-alive touching every 15s through the guard window');
-  for (let i = 1; i <= 24; i++) {
-    await sleep(15_000);
-    const out = runNodeWithEnv(resolve(ROOT, 'scripts/drill-live-session.mjs'), ['--touch']).trim();
-    console.log(out);
-    const status = gh(['run', 'view', String(runId), '--json', 'status', '--jq', '.status']);
-    if (status.includes('completed')) {
-      note(`run ${runId} completed (touch cycle ${i})`);
-      break;
+    note('seeding drill-live-session (fresh, <60s idle → GUARD spares it)');
+    // Delete-first (idempotent): a leaked session from a failed run — cleanup
+    // previously ran only on the happy path, so a reason-assertion failure
+    // left the doc ACTIVE and the next seed died with "already exists — delete
+    // first" (nightly re-run 32482323556). --delete tolerates absence, so a
+    // stale drill session self-heals here instead of blocking the dispatch.
+    runNodeWithEnv(resolve(ROOT, 'scripts/drill-live-session.mjs'), ['--delete']);
+    runNodeWithEnv(resolve(ROOT, 'scripts/drill-live-session.mjs'), ['--seed']);
+    note('keep-alive touching every 15s through the guard window');
+    for (let i = 1; i <= 24; i++) {
+      await sleep(15_000);
+      const out = runNodeWithEnv(resolve(ROOT, 'scripts/drill-live-session.mjs'), ['--touch']).trim();
+      console.log(out);
+      const status = gh(['run', 'view', String(runId), '--json', 'status', '--jq', '.status']);
+      if (status.includes('completed')) {
+        note(`run ${runId} completed (touch cycle ${i})`);
+        break;
+      }
     }
-  }
 
-  for (let i = 0; i < 30; i++) {
-    const status = gh(['run', 'view', String(runId), '--json', 'status', '--jq', '.status']);
-    if (status.includes('completed')) break;
-    await sleep(15_000);
-  }
-
-  const log = fetchJobLog(jobId);
-  writeFileSync('/tmp/vlive-guard-spare-drill.log', log);
-
-  const parsed = extractLines(log);
-  if (!parsed.noteGroups && !parsed.failGroups) {
-    fail('no spare-path lines found in the verify-live log');
-    process.exit(2);
-  }
-  const norm = normalizedLines(parsed);
-  const dr = compare(norm);
-  if (dr.length === 0) {
-    const idle = parsed.noteGroups?.[5] ?? parsed.failGroups?.[5];
-    ok(`spare-path lines match the golden (note=${parsed.noteGroups ? 'present' : 'absent'}, fail=${parsed.failGroups ? 'present' : 'absent'}, idle=${idle}s)`);
-  } else {
-    fail('drift detected against the golden:');
-    for (const f of dr) {
-      if (f.kind === 'mismatch') console.error(`    - expected: ${f.expected}\n      actual:   ${f.actual}`);
-      else if (f.kind === 'extra') console.error(`    - extra unexpected line: ${f.actual}`);
-      else if (f.kind === 'missing-line') console.error(`    - missing expected line: ${f.expected}`);
-      else if (f.kind === 'no-actual') console.error(`    - no actual lines matched; expected: ${f.expected.join('\\n')}`);
+    for (let i = 0; i < 30; i++) {
+      const status = gh(['run', 'view', String(runId), '--json', 'status', '--jq', '.status']);
+      if (status.includes('completed')) break;
+      await sleep(15_000);
     }
-    process.exit(1);
+
+    const log = fetchJobLog(jobId);
+    writeFileSync('/tmp/vlive-guard-spare-drill.log', log);
+
+    const parsed = extractLines(log);
+    if (!parsed.noteGroups && !parsed.failGroups) {
+      fail('no spare-path lines found in the verify-live log');
+      process.exitCode = 2; return;
+    }
+    const norm = normalizedLines(parsed);
+    const dr = compare(norm);
+    if (dr.length === 0) {
+      const idle = parsed.noteGroups?.[5] ?? parsed.failGroups?.[5];
+      ok(`spare-path lines match the golden (note=${parsed.noteGroups ? 'present' : 'absent'}, fail=${parsed.failGroups ? 'present' : 'absent'}, idle=${idle}s)`);
+    } else {
+      fail('drift detected against the golden:');
+      for (const f of dr) {
+        if (f.kind === 'mismatch') console.error(`    - expected: ${f.expected}\n      actual:   ${f.actual}`);
+        else if (f.kind === 'extra') console.error(`    - extra unexpected line: ${f.actual}`);
+        else if (f.kind === 'missing-line') console.error(`    - missing expected line: ${f.expected}`);
+        else if (f.kind === 'no-actual') console.error(`    - no actual lines matched; expected: ${f.expected.join('\\n')}`);
+      }
+      process.exitCode = 1; return;
+    }
+
+    // The drill is not complete until the DEPLOYED endpoint reports the reason
+    // it just produced. Run the live assertion only after the log golden
+    // matched, so a log-shaped failure exits 1/2 before this step. The failure
+    // count derived from the log's RESULT line tells the assertion whether the
+    // run was spare-only (reason MUST be the spared constant) or mixed with a
+    // co-occurring failure (reason MUST be null per the no-mask rule).
+    await assertLiveStatusReason(runId, failureCountFromLog(log));
+  } finally {
+    note('cleanup: deleting drill-live-session');
+    try {
+      runNodeWithEnv(resolve(ROOT, 'scripts/drill-live-session.mjs'), ['--delete']);
+    } catch (e) { note(`cleanup: ${e.message?.slice(0, 80) ?? e}`); }
   }
-
-  // The drill is not complete until the DEPLOYED endpoint reports the reason
-  // it just produced. Run the live assertion only after the log golden
-  // matched, so a log-shaped failure exits 1/2 before this step. The failure
-  // count derived from the log's RESULT line tells the assertion whether the
-  // run was spare-only (reason MUST be the spared constant) or mixed with a
-  // co-occurring failure (reason MUST be null per the no-mask rule).
-  await assertLiveStatusReason(runId, failureCountFromLog(log));
-
-  note('cleanup: deleting drill-live-session');
-  runNodeWithEnv(resolve(ROOT, 'scripts/drill-live-session.mjs'), ['--delete']);
 }
 
 function parseArgv(argv) {

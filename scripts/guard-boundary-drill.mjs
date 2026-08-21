@@ -269,86 +269,89 @@ async function main() {
   const dispatched = gh(['workflow', 'run', 'ci.yml', '--ref', 'main']);
   // gh returns the URL of the run on the last line
   const runId = (dispatched.match(/actions\/runs\/(\d+)/) ?? [])[1];
-  if (!runId) { fail(`could not parse run id from dispatch output: ${dispatched}`); process.exit(2); }
+  if (!runId) { fail(`could not parse run id from dispatch output: ${dispatched}`); process.exitCode = 2; return; }
   note(`dispatched run: ${runId}`);
   await sleep(8_000);
 
-  // 2. poll until verify-live is in_progress
-  let jobId = null;
-  for (let i = 0; i < 40; i++) {
-    const out = ghJson(['run', 'view', String(runId), '--json', 'jobs']);
-    const verify = (out.jobs ?? []).find((j) => /Verify deployed/.test(j.name));
-    if (verify?.status === 'in_progress') {
-      jobId = String(verify.databaseId);
-      ok(`verify:live IN_PROGRESS after ${i} polls, job ${jobId}`);
-      break;
-    }
-    await sleep(15_000);
-  }
-  if (!jobId) { fail('verify:live never went IN_PROGRESS'); process.exit(2); }
-
-  // 3. seed + backdate loop (the boundary drill shape: idle just past 60s
-  //    so the guard's archive path accepts the session immediately).
-  note(`seeding drill-live-session + backdating to ${TARGET_IDLE_SECONDS}s idle (boundary: GUARD archives)`);
-  // Delete-first (idempotent): a leaked session from a failed run must never
-  // block the next seed — --delete tolerates absence, so a stale drill
-  // session self-heals here instead of dying with "already exists — delete
-  // first" (nightly re-run 32482323556).
-  runNodeWithEnv(resolve(ROOT, 'scripts/drill-live-session.mjs'), ['--delete']);
-  runNodeWithEnv(resolve(ROOT, 'scripts/drill-live-session.mjs'), ['--seed']);
-  runNodeWithEnv(resolve(ROOT, 'scripts/drill-live-session.mjs'), ['--backdate', String(TARGET_IDLE_SECONDS)]);
-  note(`keep-alive backdating every 15s through the guard window (target idle ≈ ${TARGET_IDLE_SECONDS}s)`);
-  for (let i = 1; i <= 24; i++) {
-    await sleep(15_000);
-    const out = runNodeWithEnv(resolve(ROOT, 'scripts/drill-live-session.mjs'), ['--backdate', String(TARGET_IDLE_SECONDS)]).trim();
-    console.log(out);
-    // Break early if the run has completed.
-    const status = gh(['run', 'view', String(runId), '--json', 'status', '--jq', '.status']);
-    if (status.includes('completed')) {
-      note(`run ${runId} completed (backdate cycle ${i})`);
-      break;
-    }
-  }
-
-  // 4. wait for run completion (if not already)
-  for (let i = 0; i < 30; i++) {
-    const status = gh(['run', 'view', String(runId), '--json', 'status', '--jq', '.status']);
-    if (status.includes('completed')) break;
-    await sleep(15_000);
-  }
-
-  // 5. fetch the verify-live log
-  const log = fetchJobLog(jobId);
-  writeFileSync('/tmp/vlive-guard-boundary-drill.log', log);
-
-  // 6. extract + normalize + compare
-  const parsed = extractLines(log);
-  if (!parsed.noteGroups && !parsed.okGroups) {
-    fail('no boundary-path lines found in the verify-live log');
-    process.exit(2);
-  }
-  const norm = normalizedLines(parsed);
-  const dr = compare(norm);
-  if (dr.length === 0) {
-    const idle = parsed.noteGroups?.[5] ?? '?';
-    ok(`boundary-path lines match the golden (note=${parsed.noteGroups ? 'present' : 'absent'}, archive-ok=${parsed.okGroups ? 'present' : 'absent'}, idle=${idle}s)`);
-  } else {
-    fail('drift detected against the golden:');
-    for (const f of dr) {
-      if (f.kind === 'mismatch') console.error(`    - expected: ${f.expected}\n      actual:   ${f.actual}`);
-      else if (f.kind === 'extra') console.error(`    - extra unexpected line: ${f.actual}`);
-      else if (f.kind === 'missing-line') console.error(`    - missing expected line: ${f.expected}`);
-      else if (f.kind === 'no-actual') console.error(`    - no actual lines matched; expected: ${f.expected.join('\\n')}`);
-    }
-    process.exit(1);
-  }
-
-  // 7. cleanup the session if it's still around (a successful archive
-  //    moves it to ABANDONED — the helper's --delete handles that).
-  note('cleanup: deleting drill-live-session');
   try {
+    // 2. poll until verify-live is in_progress
+    let jobId = null;
+    for (let i = 0; i < 40; i++) {
+      const out = ghJson(['run', 'view', String(runId), '--json', 'jobs']);
+      const verify = (out.jobs ?? []).find((j) => /Verify deployed/.test(j.name));
+      if (verify?.status === 'in_progress') {
+        jobId = String(verify.databaseId);
+        ok(`verify:live IN_PROGRESS after ${i} polls, job ${jobId}`);
+        break;
+      }
+      await sleep(15_000);
+    }
+    if (!jobId) { fail('verify:live never went IN_PROGRESS'); process.exitCode = 2; return; }
+
+    // 3. seed + backdate loop (the boundary drill shape: idle just past 60s
+    //    so the guard's archive path accepts the session immediately).
+    note(`seeding drill-live-session + backdating to ${TARGET_IDLE_SECONDS}s idle (boundary: GUARD archives)`);
+    // Delete-first (idempotent): a leaked session from a failed run must never
+    // block the next seed — --delete tolerates absence, so a stale drill
+    // session self-heals here instead of dying with "already exists — delete
+    // first" (nightly re-run 32482323556).
     runNodeWithEnv(resolve(ROOT, 'scripts/drill-live-session.mjs'), ['--delete']);
-  } catch (e) { note(`cleanup: ${e.message?.slice(0, 80) ?? e}`); }
+    runNodeWithEnv(resolve(ROOT, 'scripts/drill-live-session.mjs'), ['--seed']);
+    runNodeWithEnv(resolve(ROOT, 'scripts/drill-live-session.mjs'), ['--backdate', String(TARGET_IDLE_SECONDS)]);
+    note(`keep-alive backdating every 15s through the guard window (target idle ≈ ${TARGET_IDLE_SECONDS}s)`);
+    for (let i = 1; i <= 24; i++) {
+      await sleep(15_000);
+      const out = runNodeWithEnv(resolve(ROOT, 'scripts/drill-live-session.mjs'), ['--backdate', String(TARGET_IDLE_SECONDS)]).trim();
+      console.log(out);
+      // Break early if the run has completed.
+      const status = gh(['run', 'view', String(runId), '--json', 'status', '--jq', '.status']);
+      if (status.includes('completed')) {
+        note(`run ${runId} completed (backdate cycle ${i})`);
+        break;
+      }
+    }
+
+    // 4. wait for run completion (if not already)
+    for (let i = 0; i < 30; i++) {
+      const status = gh(['run', 'view', String(runId), '--json', 'status', '--jq', '.status']);
+      if (status.includes('completed')) break;
+      await sleep(15_000);
+    }
+
+    // 5. fetch the verify-live log
+    const log = fetchJobLog(jobId);
+    writeFileSync('/tmp/vlive-guard-boundary-drill.log', log);
+
+    // 6. extract + normalize + compare
+    const parsed = extractLines(log);
+    if (!parsed.noteGroups && !parsed.okGroups) {
+      fail('no boundary-path lines found in the verify-live log');
+      process.exitCode = 2; return;
+    }
+    const norm = normalizedLines(parsed);
+    const dr = compare(norm);
+    if (dr.length === 0) {
+      const idle = parsed.noteGroups?.[5] ?? '?';
+      ok(`boundary-path lines match the golden (note=${parsed.noteGroups ? 'present' : 'absent'}, archive-ok=${parsed.okGroups ? 'present' : 'absent'}, idle=${idle}s)`);
+    } else {
+      fail('drift detected against the golden:');
+      for (const f of dr) {
+        if (f.kind === 'mismatch') console.error(`    - expected: ${f.expected}\n      actual:   ${f.actual}`);
+        else if (f.kind === 'extra') console.error(`    - extra unexpected line: ${f.actual}`);
+        else if (f.kind === 'missing-line') console.error(`    - missing expected line: ${f.expected}`);
+        else if (f.kind === 'no-actual') console.error(`    - no actual lines matched; expected: ${f.expected.join('\\n')}`);
+      }
+      process.exitCode = 1; return;
+    }
+  } finally {
+    // 7. cleanup the session if it's still around (a successful archive
+    //    moves it to ABANDONED — the helper's --delete handles that).
+    //    try/finally ensures cleanup runs even when assertions fail.
+    note('cleanup: deleting drill-live-session');
+    try {
+      runNodeWithEnv(resolve(ROOT, 'scripts/drill-live-session.mjs'), ['--delete']);
+    } catch (e) { note(`cleanup: ${e.message?.slice(0, 80) ?? e}`); }
+  }
 }
 
 function parseArgv(argv) {

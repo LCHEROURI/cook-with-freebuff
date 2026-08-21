@@ -282,6 +282,14 @@ describe('scripts/guard-regression-drill.mjs · the comparator + its golden', ()
     expect(src).toMatch(/process\.exit\(2\)/);
   });
 
+  it('post-seed exits use process.exitCode + return so try/finally cleanup always runs', () => {
+    const src = readFileSync(resolve(process.cwd(), SCRIPT), 'utf8');
+    expect(src).toMatch(/process\.exitCode = 2; return/);
+    expect(src).toMatch(/process\.exitCode = 1; return/);
+    expect(src).toContain('try {');
+    expect(src).toContain('} finally {');
+  });
+
   it('dispatches ci.yml WITH force_verify_live_regression=true and discovers the run by listing', () => {
     // The regression drill's dispatch MUST carry the input — without it the
     // seam never fires and the log would only show a lone spare (which the

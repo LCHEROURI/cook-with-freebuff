@@ -98,8 +98,15 @@ describe('scripts/guard-boundary-drill.mjs · the comparator + its golden', () =
     // closes. Pin that the exit lives right after the drift fail(…) loop,
     // identical to the spare comparator's structure.
     expect(text).toMatch(/drift detected against the golden:[\s\S]*?process\.exit\(1\)/);
-    // 0: the ok() happy path; main().then(…) is the structural marker.
-    expect(text).toMatch(/main\(\)\.then\(\(\) => process\.exit\(0\)\)/);
+    // 0: the ok() happy path; main().then(…) is the structural marker.    expect(text).toMatch(/main\(\)\.then\(\(\) => process\.exit\(0\)\)/);
+  });
+
+  it('post-seed exits use process.exitCode + return so try/finally cleanup always runs', () => {
+    const text = readFileSync(resolve(process.cwd(), SCRIPT), 'utf8');
+    expect(text).toMatch(/process\.exitCode = 2; return/);
+    expect(text).toMatch(/process\.exitCode = 1; return/);
+    expect(text).toContain('try {');
+    expect(text).toContain('} finally {');
   });
 
   it('reads the boundary golden (NOT the spare one) and writes the boundary log file (NOT the spare one)', () => {
