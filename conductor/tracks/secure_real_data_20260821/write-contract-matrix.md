@@ -30,7 +30,7 @@ emulator.
 | Marker writes | Malformed markers never persist; foreign-slot and legacy behavior remain intact | Existing marker helpers and session transaction |
 | Delete / cleanup | No payload schema; IDs/cutoffs/batch bounds are validated and authorization is proven in Phase 2 | Existing delete helpers and stale-marker sweep |
 
-## Known gaps at inventory time
+## Inventory findings resolved in Phase 1
 
 - `updatePantryItem`, `updateLeftover`, and `updateGroceryItem` send raw partials
   directly to Firestore without schema parsing.
@@ -43,3 +43,8 @@ emulator.
 - `readDoc` and query helpers cast stored data without schema validation; Phase
   1 validates before writes while preserving backward-compatible reads, as the
   track explicitly forbids a destructive migration.
+
+The first four write-boundary findings above are resolved by Tasks 1.3–1.5 and
+covered by `lib/server/repositories.test.ts`. The final read-path constraint is
+intentional for this phase: existing stored shapes remain readable while every
+new or changed document is validated before persistence.
