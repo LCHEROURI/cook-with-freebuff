@@ -61,8 +61,6 @@ interface Doc<T> {
   data: T;
 }
 
-type AdminDb = NonNullable<ReturnType<typeof getAdminDb>>;
-
 function assertImmutableFields<T extends object>(
   current: T,
   proposed: Partial<T>,
@@ -115,24 +113,25 @@ async function writeValidatedDocument<T extends object>(
   await ref.set(parsed as unknown as Record<string, unknown>);
 }
 
-async function prepareValidatedPatch<T extends object>(
-  db: AdminDb,
+async function updateValidatedDocument<T extends object>(
   collectionPath: string,
   id: string,
   patch: Partial<T>,
   schema: AnyZodObject,
   immutableFields: readonly (keyof T)[],
-): Promise<Partial<T>> {
+): Promise<void> {
   // Parse before any Firestore I/O. Besides failing fast, strict partial
   // parsing prevents unknown keys from being smuggled through update().
   const parsedPatch = schema.partial().strict().parse(patch) as Partial<T>;
+  const db = getAdminDb();
+  if (!db) throw new Error('Firestore not initialized');
   const ref = db.collection(collectionPath).doc(id);
   const snap = await ref.get();
   if (!snap.exists) throw new Error(`${collectionPath}/${id} not found`);
   const current = snap.data() as T;
   assertImmutableFields(current, parsedPatch, immutableFields);
   schema.parse({ ...current, ...parsedPatch });
-  return parsedPatch;
+  await ref.update(parsedPatch as unknown as Record<string, unknown>);
 }
 
 /**
@@ -544,21 +543,13 @@ export async function updateTimer(
   id: string,
   partial: Partial<CookingTimer>,
 ): Promise<void> {
-  const parsedPartial = cookingTimerSchema.partial().strict().parse(partial);
-  const db = getAdminDb();
-  if (!db) throw new Error('Firestore not initialized');
-  const validated = await prepareValidatedPatch<CookingTimer>(
-    db,
+  await updateValidatedDocument<CookingTimer>(
     TIMERS,
     id,
-    parsedPartial,
+    partial,
     cookingTimerSchema,
     ['id', 'userId', 'sessionId', 'startedAt', 'durationSeconds'],
   );
-  await db
-    .collection(TIMERS)
-    .doc(id)
-    .update(validated as unknown as Record<string, unknown>);
 }
 
 export async function listActiveTimers(sessionId: string): Promise<CookingTimer[]> {
@@ -630,17 +621,13 @@ export async function updatePantryItem(
   id: string,
   partial: Partial<PantryItem>,
 ): Promise<void> {
-  const db = getAdminDb();
-  if (!db) throw new Error('Firestore not initialized');
-  const validated = await prepareValidatedPatch<PantryItem>(
-    db,
+  await updateValidatedDocument<PantryItem>(
     PANTRY,
     id,
     partial,
     pantryItemSchema,
     ['id', 'userId', 'source'],
   );
-  await db.collection(PANTRY).doc(id).update(validated as unknown as Record<string, unknown>);
 }
 
 export async function deletePantryItem(id: string): Promise<void> {
@@ -669,17 +656,13 @@ export async function listLeftovers(userId: UserId): Promise<Leftover[]> {
 }
 
 export async function updateLeftover(id: string, partial: Partial<Leftover>): Promise<void> {
-  const db = getAdminDb();
-  if (!db) throw new Error('Firestore not initialized');
-  const validated = await prepareValidatedPatch<Leftover>(
-    db,
+  await updateValidatedDocument<Leftover>(
     LEFTOVERS,
     id,
     partial,
     leftoverSchema,
     ['id', 'userId', 'recipeId', 'completedAt', 'storedAt'],
   );
-  await db.collection(LEFTOVERS).doc(id).update(validated as unknown as Record<string, unknown>);
 }
 
 // ── Grocery list repository (K10) ────────────────────────────────────────────
@@ -704,17 +687,13 @@ export async function listGroceryItems(userId: UserId): Promise<GroceryItem[]> {
 }
 
 export async function updateGroceryItem(id: string, partial: Partial<GroceryItem>): Promise<void> {
-  const db = getAdminDb();
-  if (!db) throw new Error('Firestore not initialized');
-  const validated = await prepareValidatedPatch<GroceryItem>(
-    db,
+  await updateValidatedDocument<GroceryItem>(
     GROCERY,
     id,
     partial,
     groceryItemSchema,
     ['id', 'userId', 'source', 'pantryItemId', 'createdAt'],
   );
-  await db.collection(GROCERY).doc(id).update(validated as unknown as Record<string, unknown>);
 }
 
 export async function deleteGroceryItem(id: string): Promise<void> {
