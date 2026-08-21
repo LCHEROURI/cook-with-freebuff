@@ -554,6 +554,90 @@ describe('scripts/verify-live-classify.mjs · the spare path is one source of tr
     }
   });
 
+  it('the boundary golden archive-OK line derives from the guard ok() renderer + the PROBE_GRACE_MS sweep settle message', () => {
+    // The boundary golden's second evidence line (`✓ archived <N> blocking
+    // session(s) — retried, owner is clean before the UI starter`) was only
+    // ever pinned as a literal in guard-boundary-drill.test.ts — it never
+    // derived from what verify-live.mjs actually EMITS, so a renamed guard
+    // ok(...) message would break the comparator's OK_RE extraction while the
+    // golden silently kept the old text. This test closes that gap: the
+    // archive-OK line must equal the guard's own ok() template rendered
+    // through the ok() renderer prefix (the `✓ ` — never a hard-coded literal
+    // in the archive call), and the pre-run sweep's PROBE_GRACE_MS settle
+    // message (the `↳ pre-run sweep:` line that archives stale probes past
+    // PROBE_GRACE_MS) must derive from its source console.log template too.
+
+    // 1. The ok() renderer — the source of the `✓ ` prefix. The guard's
+    //    archive call passes only the message; the checkmark comes from the
+    //    renderer, so inlining `✓ ` into the ok(...) call (a literal) fails
+    //    this pin.
+    const okRendererMatch = LIVE.match(/const ok = \(m\) => console\.log\(`  ✓ \$\{m\}`\);/);
+    expect(okRendererMatch, 'the ok() renderer must be present in verify-live.mjs').not.toBeNull();
+    const checkMark = (okRendererMatch![0].match(/✓/) ?? ['✓'])[0];
+
+    // 2. The archive-OK message = the guard's ok(...) template rendered
+    //    through the renderer prefix, with ${archived} → <N>.
+    const archiveTemplateMatch = LIVE.match(
+      /ok\(`archived \$\{archived\} blocking session\(s\) — retried, owner is clean before the UI starter`\)/,
+    );
+    expect(archiveTemplateMatch, 'the guard archive ok() template must be present in verify-live.mjs').not.toBeNull();
+    const archiveOkGolden = `${checkMark} ${archiveTemplateMatch![0]
+      .replace('ok(`', '')
+      .replace('`)', '')
+      .replace('${archived}', '<N>')}`;
+
+    // The committed boundary golden's archive-OK line must equal the
+    // source-derived line (the comparator strips leading spaces, so the
+    // renderer's two-space indent never reaches the golden).
+    const boundaryGolden = readFileSync('scripts/__golden__/guard-boundary-drill.txt', 'utf8');
+    const okLine = boundaryGolden.split('\n').find((l) => l.startsWith('✓ archived'));
+    expect(okLine, 'boundary golden: archive-OK line must equal the source template').toBe(archiveOkGolden);
+
+    // 3. The PROBE_GRACE_MS settle message — the pre-run sweep's
+    //    `↳ pre-run sweep:` line, the only message that reports the
+    //    PROBE_GRACE_MS-based sweep (archived stale probes / deleted orphaned
+    //    recipes). Derive it from its source console.log template so a renamed
+    //    sweep phrasing fails the extraction instead of drifting silently.
+    const sweepTemplateMatch = LIVE.match(
+      /console\.log\(`  ↳ pre-run sweep: archived \$\{archived\} stale probe session\(s\), deleted \$\{deletes\.length\} orphaned probe recipe\(s\)`\)/,
+    );
+    expect(sweepTemplateMatch, 'the pre-run sweep settle template must be present in verify-live.mjs').not.toBeNull();
+    const sweepDerived = sweepTemplateMatch![0]
+      .replace('console.log(`', '')
+      .replace('`)', '')
+      .replace('${archived}', '<N>')
+      .replace('${deletes.length}', '<N>');
+    expect(sweepDerived).toBe(
+      '  ↳ pre-run sweep: archived <N> stale probe session(s), deleted <N> orphaned probe recipe(s)',
+    );
+
+    // Mutation drills — both directions load-bearing:
+    //   • reword the guard's archive message → the archive template
+    //     extraction fails (the comparator's OK_RE would stop matching too),
+    //   • inline the `✓ ` into the ok(...) call instead of the renderer → the
+    //     renderer pin fails even though the emitted text is byte-identical.
+    const rewordedArchive = LIVE.replace(
+      'ok(`archived ${archived} blocking session(s) — retried, owner is clean before the UI starter`)',
+      'ok(`archived ${archived} blocking session(s) — retried, owner is clean, UI starter ready`)',
+    );
+    expect(rewordedArchive, 'the archive reword mutation must actually land').not.toBe(LIVE);
+    expect(rewordedArchive).not.toContain('ok(`archived ${archived} blocking session(s) — retried, owner is clean before the UI starter`)');
+    expect(rewordedArchive.match(/ok\(`archived \$\{archived\} blocking session\(s\) — retried, owner is clean before the UI starter`\)/)).toBeNull();
+
+    const inlinedCheck = LIVE.replace('const ok = (m) => console.log(`  ✓ ${m}`);', 'const ok = (m) => console.log(`  ${m}`);').replace(
+      'ok(`archived ${archived} blocking session(s) — retried, owner is clean before the UI starter`)',
+      'ok(`✓ archived ${archived} blocking session(s) — retried, owner is clean before the UI starter`)',
+    );
+    expect(inlinedCheck, 'the inline-checkmark mutation must actually land').not.toBe(LIVE);
+    expect(inlinedCheck).not.toContain('const ok = (m) => console.log(`  ✓ ${m}`);');
+    expect(inlinedCheck.match(/const ok = \(m\) => console\.log\(`  ✓ \$\{m\}`\);/)).toBeNull();
+
+    // The pins are the guards.
+    expect(LIVE).toContain('const ok = (m) => console.log(`  ✓ ${m}`);');
+    expect(LIVE).toContain('ok(`archived ${archived} blocking session(s) — retried, owner is clean before the UI starter`)');
+    expect(okLine).toBe(archiveOkGolden);
+  });
+
   it('the golden seam + RESULT lines derive from the source seam fail() and RESULT print', () => {
     // The regression golden's last two evidence lines are fully static (no
     // drill-run variants): the seam's SIMULATED regression FAIL (produced by
