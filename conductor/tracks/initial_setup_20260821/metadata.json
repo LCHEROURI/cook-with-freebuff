@@ -1,0 +1,13 @@
+{
+  "id": "initial_setup_20260821",
+  "title": "Initialize Cook With Freebuff Conductor context",
+  "type": "chore",
+  "status": "complete",
+  "created": "2026-08-21T22:59:04Z",
+  "updated": "2026-08-21T22:59:04Z",
+  "current_phase": 2,
+  "current_task": null,
+  "phases": { "total": 2, "completed": 2 },
+  "tasks": { "total": 5, "completed": 5 },
+  "commits": []
+}
