@@ -1111,6 +1111,27 @@ describe('.github/workflows/spare-drill-nightly.yml · nightly spare-path golden
     // first overnight run — fail CI here instead.
     expect(SPARE_DRILL_NIGHTLY).toMatch(/permissions:\n\s+contents: read\n\s+actions: write/);
   });
+
+  it('replays the spare-drill fixture as a fast pre-dispatch gate before npm ci', () => {
+    // Mirror of the weekly's gate (guard-drills-weekly.yml): the
+    // comparator's --diff mode against the committed fixture log burns
+    // seconds (plain node — no gh, no Firestore, no node_modules) instead
+    // of a ~25 min ci.yml dispatch, so a golden or regex drift fails here
+    // before the comparator ever dispatches. The gate must sit BEFORE
+    // `npm ci` (that's what makes it fast — no dependency install) and
+    // must point at the log fixture, not the golden. The comparator must
+    // follow npm ci — the gate line embeds the same script path (plus
+    // --diff), so a bare indexOf would match the gate itself and pass
+    // vacuously.
+    const gate = 'node scripts/guard-spare-drill.mjs --diff scripts/__golden__/spare-drill-log.txt';
+    expect(SPARE_DRILL_NIGHTLY).toContain(gate);
+    const gateIdx = SPARE_DRILL_NIGHTLY.indexOf(gate);
+    const npmCiIdx = SPARE_DRILL_NIGHTLY.indexOf('run: npm ci');
+    expect(gateIdx).toBeGreaterThan(-1);
+    expect(npmCiIdx).toBeGreaterThan(gateIdx);
+    const comparatorIdx = SPARE_DRILL_NIGHTLY.indexOf('node scripts/guard-spare-drill.mjs', npmCiIdx);
+    expect(comparatorIdx).toBeGreaterThan(npmCiIdx);
+  });
 });
 
 describe('.github/workflows/guard-drills-weekly.yml · Sunday-night spare + boundary + regression comparators', () => {

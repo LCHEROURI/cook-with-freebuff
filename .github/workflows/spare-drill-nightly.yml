@@ -59,6 +59,16 @@ jobs:
           node-version: 22
           cache: npm
 
+      # Fast pre-dispatch gate (mirror of the weekly guard-drills spare
+      # job): replay the comparator's --diff mode against the committed
+      # fixture log BEFORE burning a ~25 min ci.yml dispatch. --diff needs
+      # only plain node (stdlib + local modules — no gh, no Firestore, no
+      # node_modules), so this runs before npm ci. A golden or regex drift
+      # fails here in seconds; without the gate it would surface only
+      # after the full dispatch+seed+touch+fetch cycle.
+      - name: Replay the spare-drill fixture (fast pre-dispatch gate)
+        run: node scripts/guard-spare-drill.mjs --diff scripts/__golden__/spare-drill-log.txt
+
       - name: Install dependencies
         run: npm ci
 
