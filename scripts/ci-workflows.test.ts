@@ -1008,12 +1008,12 @@ describe('.github/workflows/spare-drill-nightly.yml · nightly spare-path golden
   });
 });
 
-describe('.github/workflows/guard-drills-weekly.yml · Sunday-night spare + boundary comparators', () => {
+describe('.github/workflows/guard-drills-weekly.yml · Sunday-night spare + boundary + regression comparators', () => {
   // The daily spare-drill-nightly runs only the spare comparator — drift
-  // on the boundary (archive-path) shape would surface only via a manual
-  // dispatch. This weekly runs both comparators sequentially so a future
-  // failure on either side shows up the next Monday morning with the
-  // captured log pinned as a 90-day artifact.
+  // on the boundary (archive-path) or regression (no-mask) shapes would
+  // surface only via a manual dispatch. This weekly runs all three
+  // comparators sequentially so a future failure on any side shows up the
+  // next Monday morning with the captured log pinned as a 90-day artifact.
 
   it('runs Sundays at 22:00 UTC and supports manual dispatch', () => {
     // 22:00 UTC Sunday sits clear of every existing nightly:
@@ -1069,12 +1069,37 @@ describe('.github/workflows/guard-drills-weekly.yml · Sunday-night spare + boun
 
   it('archives both captured logs at 90 days so a quarterly review sees the full Sunday-night set', () => {
     // The daily upload keeps 14 days; the weekly rolls them forward so
-    // the 3-month drift review has a clean capture set. Both captured
+    // the 3-month drift review has a clean capture set. All three captured
     // log paths must be uploaded — drop one and a future drift on that
     // side has no recoverable evidence.
     expect(GUARD_DRILLS_WEEKLY).toContain('actions/upload-artifact@v4');
     expect(GUARD_DRILLS_WEEKLY).toContain('/tmp/vlive-guard-spare-drill.log');
     expect(GUARD_DRILLS_WEEKLY).toContain('/tmp/vlive-guard-boundary-drill.log');
+    expect(GUARD_DRILLS_WEEKLY).toContain('/tmp/vlive-guard-regression-drill.log');
     expect(GUARD_DRILLS_WEEKLY).toContain('retention-days: 90');
+  });
+
+  it('runs the regression comparator THIRD (after boundary via needs:) with the full credential set', () => {
+    // The regression drill is the no-mask proof: dispatch ci.yml WITH
+    // force_verify_live_regression=true so the run carries two failures,
+    // then diff the evidence lines AND assert the recorded reason is null.
+    // It must run after boundary-drill (needs:) so the three sequential
+    // ci.yml dispatches never cancel each other (ci.yml's concurrency
+    // group cancels in_progress runs).
+    expect(GUARD_DRILLS_WEEKLY).toContain('node scripts/guard-regression-drill.mjs');
+    expect(GUARD_DRILLS_WEEKLY).toMatch(/regression-drill:[\s\S]*?needs:\s*boundary-drill/);
+    const regressionStart = GUARD_DRILLS_WEEKLY.indexOf('regression-drill:');
+    const needsIdx = GUARD_DRILLS_WEEKLY.indexOf('needs: boundary-drill', regressionStart);
+    const scriptIdx = GUARD_DRILLS_WEEKLY.indexOf('node scripts/guard-regression-drill.mjs', regressionStart);
+    expect(needsIdx).toBeGreaterThan(-1);
+    expect(scriptIdx).toBeGreaterThan(needsIdx);
+    // The regression job gets the same five credentials as the other legs
+    // (gh for dispatch/log fetch, Firestore for the no-mask assertion).
+    const regressionJob = GUARD_DRILLS_WEEKLY.slice(regressionStart);
+    expect(regressionJob).toContain('GH_TOKEN: ${{ github.token }}');
+    expect(regressionJob).toContain('APP_OWNER_UID: ${{ secrets.APP_OWNER_UID }}');
+    expect(regressionJob).toContain('FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}');
+    expect(regressionJob).toContain('NEXT_PUBLIC_FIREBASE_API_KEY: ${{ secrets.NEXT_PUBLIC_FIREBASE_API_KEY }}');
+    expect(regressionJob).toContain('NEXT_PUBLIC_FIREBASE_APP_ID: ${{ secrets.NEXT_PUBLIC_FIREBASE_APP_ID }}');
   });
 });

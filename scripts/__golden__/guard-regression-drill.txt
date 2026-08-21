@@ -1,0 +1,33 @@
+# scripts/__golden__/guard-regression-drill.txt — committed golden for the
+# spare + SIMULATED regression drill (the no-mask proof).
+#
+# This drill dispatches ci.yml with force_verify_live_regression=true and
+# keeps a seeded drill-live-session fresh through the guard window, so the
+# verify:live run carries TWO failures: the guard's spare FAIL (a live
+# session inside LIVE_SESSION_GRACE_MS survived the archive retry) plus the
+# seam's SIMULATED regression fail. The classifier must record
+# verdict=failure with reason=null for that shape — sparing NEVER masks a
+# genuine failure next to it (live proof: run 32429029312).
+#
+# The golden pins the four evidence lines the comparator extracts from the
+# verify-live job log:
+#   – NOTE (archiving and retrying once — printed on any blocker)
+#   – spare FAIL (owner still has … after the archive retry)
+#   – seam FAIL (the FORCE_VERIFY_LIVE_REGRESSION seam's fixed message)
+#   – RESULT: FAIL (2) — the count line proves exactly TWO failures
+#
+# Placeholder convention matches guard-spare-drill.txt:
+#   – "<N>" is the OWNER's blocking session count (1 in a drill)
+#   – "<ID>…" is the doc id prefix (drill-li- for drill-live-session)
+#   – "<PHASE>" is the session's currentPhase (COLLECTING_INGREDIENTS)
+#   – "<RECIPE>" is recipeId first 30 (chicken_rice_onion_001)
+#   – "<IDLE>" is the guard's measured idle age in seconds (drift-by-int)
+#
+# The seam + RESULT lines are fully static (no drill-run variants). Any
+# rename of the guard's fail(...), the seam's fail('SIMULATED …'), or the
+# RESULT count must update this file in lockstep — the comparator's regex
+# extraction fails on a renamed phrasing, and the diff catches surface drift.
+- owner has <N> ACTIVE/PAUSED session(s) blocking the UI starter — archiving and retrying once: <ID>… (<PHASE>, <RECIPE>, <IDLE>s idle)
+✗ FAIL: owner still has <N> ACTIVE/PAUSED session(s) blocking the UI starter after the archive retry: <ID>… (<PHASE>, <RECIPE>, <IDLE>s idle)
+✗ FAIL: SIMULATED regression test — voice driver exercised with FORCE_VERIFY_LIVE_REGRESSION=true to prove sparing never masks a real failure
+RESULT: FAIL (2)

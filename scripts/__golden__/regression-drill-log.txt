@@ -1,0 +1,17 @@
+# scripts/__golden__/regression-drill-log.txt — canonical spare+regression
+# log fixture (mirror of spare-drill-log.txt for the regression comparator).
+#
+# Same discipline as the spare fixture: the smallest possible capture that
+# exercises the regression comparator's extraction step end to end. The
+# lines have already been through the comparator's own strip (2 tab-fields
+# + ISO-8601 timestamp + leading spaces), so a future CI environment can
+# replay the unit test without downloading run jobs. Captured from the live
+# third drill (run 32429029312): the NOTE, the spare FAIL, the seam's
+# SIMULATED regression FAIL, and the RESULT count line proving exactly two
+# failures. The comparator additionally asserts (full mode only) that the
+# recorded deploy_status/verify_live doc carries verdict=failure with NO
+# reason — the no-mask guarantee.
+- owner has 1 ACTIVE/PAUSED session(s) blocking the UI starter — archiving and retrying once: drill-li… (COLLECTING_INGREDIENTS, chicken_rice_onion_001, 12s idle)
+✗ FAIL: owner still has 1 ACTIVE/PAUSED session(s) blocking the UI starter after the archive retry: drill-li… (COLLECTING_INGREDIENTS, chicken_rice_onion_001, 13s idle)
+✗ FAIL: SIMULATED regression test — voice driver exercised with FORCE_VERIFY_LIVE_REGRESSION=true to prove sparing never masks a real failure
+RESULT: FAIL (2)
