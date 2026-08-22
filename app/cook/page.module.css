@@ -183,6 +183,255 @@
 }
 
 /* ── Recipe starter ──────────────────────────────────────────────────────── */
+.pantryStarter {
+  width: 100%;
+  max-width: 30rem;
+  padding: 1.1rem;
+  text-align: left;
+  background: var(--color-surface);
+  border: 1px solid var(--color-brand-subtle-border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
+}
+
+.pantryStarterHeader {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.pantryStarterEyebrow,
+.pantryStarterTitle,
+.pantryStarterHelp,
+.pantryProfileTitle {
+  margin: 0;
+}
+
+.pantryStarterEyebrow {
+  color: var(--color-brand);
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.pantryStarterTitle {
+  margin-top: 0.15rem;
+  color: var(--color-text);
+  font-family: var(--font-display);
+  font-size: 1.35rem;
+  font-weight: 600;
+}
+
+.pantryStarterHelp {
+  margin-top: 0.55rem;
+  color: var(--color-text-secondary);
+  font-size: 0.92rem;
+  line-height: 1.5;
+}
+
+.pantryEditLink,
+.pantryKitchenLink {
+  color: var(--color-brand);
+  font-weight: 600;
+  text-decoration: underline;
+  text-underline-offset: 0.18em;
+}
+
+.pantryLoadState,
+.pantryLoadError {
+  width: 100%;
+  max-width: 30rem;
+  margin: 0;
+  padding: 0.85rem 1rem;
+  border-radius: var(--radius-md);
+}
+
+.pantryLoadState {
+  color: var(--color-text-secondary);
+  background: var(--color-surface-secondary);
+}
+
+.pantryLoadError {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  color: var(--color-danger);
+  background: var(--color-danger-bg);
+  border: 1px solid var(--color-danger-border);
+}
+
+.pantryLoadError button {
+  min-height: 44px;
+  padding: 0.5rem 0.8rem;
+  color: var(--color-danger);
+  background: transparent;
+  border: 1px solid currentColor;
+  border-radius: var(--radius-sm);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.starterAlternative {
+  width: 100%;
+  max-width: 26rem;
+  margin: 0;
+  color: var(--color-text-muted);
+  font-size: 0.85rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.pantryEditLink {
+  min-height: 44px;
+  display: inline-flex;
+  align-items: center;
+  white-space: nowrap;
+}
+
+.pantryKitchenLink {
+  min-height: 44px;
+  margin-top: 0.75rem;
+  display: inline-flex;
+  align-items: center;
+}
+
+.pantryStarterForm {
+  display: flex;
+  flex-direction: column;
+  gap: 0.9rem;
+  margin-top: 1rem;
+}
+
+.pantryFieldset {
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.pantryLegend,
+.pantryProfileTitle {
+  color: var(--color-text);
+  font-size: 0.9rem;
+  font-weight: 700;
+}
+
+.pantryChoices {
+  display: grid;
+  gap: 0.55rem;
+  margin-top: 0.55rem;
+}
+
+.pantryChoice {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  min-height: 48px;
+  padding: 0.65rem 0.75rem;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+}
+
+.pantryChoice:focus-within {
+  border-color: var(--color-brand);
+  box-shadow: 0 0 0 3px var(--color-brand-subtle);
+}
+
+.pantryChoice input {
+  width: 1.2rem;
+  height: 1.2rem;
+  accent-color: var(--color-brand);
+}
+
+.pantryChoiceBody {
+  display: flex;
+  flex: 1;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.4rem;
+}
+
+.pantryChoiceName {
+  color: var(--color-text);
+  font-weight: 600;
+}
+
+.pantryChoiceBadges {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+.pantryBadgeSoon,
+.pantryBadgeConfirm {
+  padding: 0.18rem 0.45rem;
+  border-radius: 999px;
+  font-size: 0.72rem;
+  font-weight: 700;
+}
+
+.pantryBadgeSoon {
+  color: var(--color-warning-text, var(--color-accent-hover));
+  background: var(--color-warning-bg);
+}
+
+.pantryBadgeConfirm {
+  color: var(--color-text-secondary);
+  background: var(--color-surface-secondary);
+}
+
+.pantryProfile {
+  padding: 0.75rem;
+  color: var(--color-text-secondary);
+  background: var(--color-brand-subtle);
+  border-radius: var(--radius-md);
+}
+
+.pantryProfileList {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem 0.9rem;
+  margin: 0.45rem 0 0;
+  padding-left: 1.1rem;
+  font-size: 0.84rem;
+}
+
+.pantryRefinements summary {
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+  color: var(--color-brand);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.pantryRefinementGrid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.7rem;
+}
+
+.pantryRefinementGrid label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  color: var(--color-text-secondary);
+  font-size: 0.82rem;
+  font-weight: 600;
+}
+
+@media (max-width: 480px) {
+  .pantryRefinementGrid {
+    grid-template-columns: 1fr;
+  }
+}
+
 .starterForm {
   display: flex;
   flex-direction: column;

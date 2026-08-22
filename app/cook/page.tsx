@@ -5,6 +5,11 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import styles from './page.module.css';
 import ConstraintDetails from './ConstraintDetails';
+import {
+  PantryStarter,
+  type PantryStarterSelection,
+  type PantryStarterSnapshot,
+} from './PantryStarter';
 import RecipeRowMeta from './RecipeRowMeta';
 import { CookScreen } from '@/components/CookScreen';
 import { StarterTour, dismissStarterTour } from '@/components/StarterTour';
@@ -21,6 +26,7 @@ export default function CookPage() {
   // The API routes require a Bearer Firebase ID token. Real sign-in happens
   // on /login; /cook is protected — signed-out visitors are sent there.
   const auth = useAuthSession();
+  const getToken = auth.getToken;
   const cook = useCookingSession({ getToken: auth.getToken });
   const voice = useVoiceSession({ getToken: auth.getToken });
   // Real microphone → speech-to-text at the edge; the final transcript flows
@@ -147,6 +153,11 @@ export default function CookPage() {
     starting: boolean;
   }>({ prompt: '', creating: false, error: null, ready: null, starting: false });
 
+  const [pantryStarter, setPantryStarter] = useState<{
+    status: 'loading' | 'ready' | 'error';
+    snapshot: PantryStarterSnapshot | null;
+  }>({ status: 'loading', snapshot: null });
+
   // Camera scan state — snap a photo of the fridge/pantry, Gemini identifies
   // what's there, and the results fill the starter input for review.
   const [scan, setScan] = useState<{
@@ -182,7 +193,7 @@ export default function CookPage() {
         reader.readAsDataURL(file);
       });
 
-      const token = await auth.getToken();
+      const token = await getToken();
       const res = await fetch('/api/vision/scan', {
         method: 'POST',
         headers: { 'content-type': 'application/json', ...(token ? { authorization: `Bearer ${token}` } : {}), ...(await appCheckHeaders(true)) },
@@ -247,9 +258,32 @@ export default function CookPage() {
   const [filterProtein, setFilterProtein] = useState<string>('');
   const [startingId, setStartingId] = useState<string | null>(null);
 
+  const fetchPantryStarter = useCallback(async () => {
+    setPantryStarter((current) => ({ ...current, status: 'loading' }));
+    try {
+      const token = await getToken();
+      const res = await fetch('/api/cook', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', ...(token ? { authorization: `Bearer ${token}` } : {}), ...(await appCheckHeaders()) },
+        body: JSON.stringify({ action: 'pantry_starter' }),
+      });
+      const body = (await res.json()) as {
+        success: boolean;
+        data?: PantryStarterSnapshot;
+      };
+      if (!res.ok || !body.success || !body.data) {
+        setPantryStarter({ status: 'error', snapshot: null });
+        return;
+      }
+      setPantryStarter({ status: 'ready', snapshot: body.data });
+    } catch {
+      setPantryStarter({ status: 'error', snapshot: null });
+    }
+  }, [getToken]);
+
   const fetchRecipes = useCallback(async (protein?: string) => {
     try {
-      const token = await auth.getToken();
+      const token = await getToken();
       const res = await fetch('/api/cook', {
         method: 'POST',
         headers: { 'content-type': 'application/json', ...(token ? { authorization: `Bearer ${token}` } : {}), ...(await appCheckHeaders()) },
@@ -264,7 +298,7 @@ export default function CookPage() {
     } catch {
       setRecipes({ status: 'error', items: [] });
     }
-  }, [auth]);
+  }, [getToken]);
 
   // Fetch the list whenever the starter (no active session) is on screen.
   useEffect(() => {
@@ -272,6 +306,11 @@ export default function CookPage() {
     void fetchRecipes(filterProtein);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cook.loading, snap?.found, filterProtein, fetchRecipes]);
+
+  useEffect(() => {
+    if (cook.loading || snap?.found) return;
+    void fetchPantryStarter();
+  }, [cook.loading, snap?.found, fetchPantryStarter]);
 
   const handleCreateRecipe = async (text: string) => {
     const trimmed = text.trim();
@@ -333,6 +372,68 @@ export default function CookPage() {
         ready: null,
         starting: false,
       });
+    }
+  };
+
+  const handleCreateFromPantry = async (selection: PantryStarterSelection) => {
+    if (starter.creating || starter.starting) return;
+    setStarter((current) => ({ ...current, creating: true, error: null, ready: null, starting: false }));
+    try {
+      const token = await auth.getToken();
+      const res = await fetch('/api/cook', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', ...(token ? { authorization: `Bearer ${token}` } : {}), ...(await appCheckHeaders()) },
+        body: JSON.stringify({ action: 'create_recipe', ...selection }),
+      });
+      const body = (await res.json()) as {
+        success: boolean;
+        data?: {
+          recipeId: string;
+          title: string;
+          servings: number;
+          preferences: { servings: number | null; allergies: string[]; dietaryRestrictions: string[] };
+          validation: { valid: boolean; errors: string[]; confirmations: string[] };
+        };
+        error?: { message?: string };
+      };
+      if (!res.ok || !body.success || !body.data) {
+        setStarter((current) => ({
+          ...current,
+          creating: false,
+          error: body.error?.message ?? `Could not create the recipe (${res.status})`,
+          ready: null,
+        }));
+        return;
+      }
+      if (!body.data.validation.valid) {
+        setStarter((current) => ({
+          ...current,
+          creating: false,
+          error: `The recipe needs a few fixes before it is ready: ${body.data!.validation.errors.join(' ')}`,
+          ready: null,
+        }));
+        return;
+      }
+      setStarter((current) => ({
+        ...current,
+        creating: false,
+        error: null,
+        ready: {
+          recipeId: body.data!.recipeId,
+          title: body.data!.title,
+          servings: body.data!.servings,
+          confirmations: body.data!.validation.confirmations,
+          preferences: body.data!.preferences,
+        },
+      }));
+      void fetchRecipes();
+    } catch (error) {
+      setStarter((current) => ({
+        ...current,
+        creating: false,
+        error: error instanceof Error ? error.message : 'Could not create the recipe.',
+        ready: null,
+      }));
     }
   };
 
@@ -443,10 +544,30 @@ export default function CookPage() {
           <h1 className={styles.title}>Cook With Me</h1>
           <p className={styles.emptyText}>
             {cook.error ??
-              "Let's cook. Tell me what you have (e.g. chicken, rice and onion) and I'll create a validated recipe — then we start cooking, step by step."}
+              "Let's turn what is already in your kitchen into dinner — then cook it together, one step at a time."}
           </p>
+          {pantryStarter.status === 'loading' && (
+            <p className={styles.pantryLoadState} role="status" aria-live="polite">
+              Checking your pantry…
+            </p>
+          )}
+          {pantryStarter.status === 'error' && (
+            <div className={styles.pantryLoadError} role="alert">
+              <span>Could not load your pantry. You can still use the ingredient starter below.</span>
+              <button type="button" onClick={() => void fetchPantryStarter()}>Try again</button>
+            </div>
+          )}
+          {pantryStarter.status === 'ready' && pantryStarter.snapshot && (
+            <PantryStarter
+              snapshot={pantryStarter.snapshot}
+              creating={starter.creating || starter.starting}
+              onCreate={(selection) => void handleCreateFromPantry(selection)}
+            />
+          )}
+          <p className={styles.starterAlternative}>Or type, speak, or scan what you have</p>
           <form
             className={styles.starterForm}
+            aria-label="Create a recipe from ingredients"
             onSubmit={(e) => {
               e.preventDefault();
               void handleCreateRecipe(starter.prompt);
