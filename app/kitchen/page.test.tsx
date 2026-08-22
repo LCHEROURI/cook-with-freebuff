@@ -77,12 +77,18 @@ const base: UseAuthSessionResult = {
 
 const mockAuth = vi.mocked(useAuthSession);
 
-function mockFetch({ pantryAddFails = false } = {}) {
+function mockFetch({
+  pantryAddFails = false,
+  profile = null,
+}: {
+  pantryAddFails?: boolean;
+  profile?: Record<string, unknown> | null;
+} = {}) {
   const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
     const body = JSON.parse(String(init?.body ?? '{}')) as { action?: string };
     if (body.action === 'snapshot') {
       return new Response(
-        JSON.stringify({ success: true, data: { pantry: [], grocery: [], leftovers: [], profile: null } }),
+        JSON.stringify({ success: true, data: { pantry: [], grocery: [], leftovers: [], profile } }),
         { status: 200, headers: { 'content-type': 'application/json' } },
       );
     }
@@ -159,5 +165,52 @@ describe('app/kitchen/page.tsx · voice-initiated confirmations', () => {
 
     await waitFor(() => expect(screen.getByRole('alert')).toBeInTheDocument());
     expect(speech.speak).not.toHaveBeenCalled();
+  });
+});
+
+describe('app/kitchen/page.tsx · preferred equipment', () => {
+  it('loads preferred equipment and includes edits in the profile update', async () => {
+    const fetchMock = mockFetch({
+      profile: {
+        userId: 'user-1',
+        allergies: [],
+        dietaryRestrictions: [],
+        dislikedIngredients: [],
+        preferredCuisines: [],
+        preferredEquipment: ['air fryer'],
+        defaultServings: 2,
+        updatedAt: 1,
+      },
+    });
+    await renderKitchen();
+
+    const equipment = await screen.findByLabelText('Preferred equipment, comma separated');
+    expect(equipment).toHaveValue('air fryer');
+    fireEvent.change(equipment, { target: { value: 'air fryer, Dutch oven' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save profile' }));
+
+    await waitFor(() => {
+      const update = fetchMock.mock.calls
+        .map(([, init]) => JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>)
+        .find((body) => body.action === 'profile_update');
+      expect(update?.preferredEquipment).toBe('air fryer, Dutch oven');
+    });
+  });
+
+  it('treats a legacy profile without preferred equipment as an empty list', async () => {
+    mockFetch({
+      profile: {
+        userId: 'user-1',
+        allergies: [],
+        dietaryRestrictions: [],
+        dislikedIngredients: [],
+        preferredCuisines: [],
+        defaultServings: 2,
+        updatedAt: 1,
+      },
+    });
+    await renderKitchen();
+
+    expect(await screen.findByLabelText('Preferred equipment, comma separated')).toHaveValue('');
   });
 });

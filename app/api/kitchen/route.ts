@@ -201,6 +201,7 @@ async function handle(userId: string, body: unknown): Promise<NextResponse> {
       const dietaryRestrictions = list(parsed.dietaryRestrictions);
       const dislikedIngredients = list(parsed.dislikedIngredients);
       const preferredCuisines = list(parsed.preferredCuisines);
+      const preferredEquipment = list(parsed.preferredEquipment);
       const defaultServingsRaw = num(parsed.defaultServings);
       const defaultServings =
         defaultServingsRaw === undefined ? undefined : Math.max(1, Math.floor(defaultServingsRaw));
@@ -209,6 +210,7 @@ async function handle(userId: string, body: unknown): Promise<NextResponse> {
         ...(dietaryRestrictions !== undefined ? { dietaryRestrictions } : {}),
         ...(dislikedIngredients !== undefined ? { dislikedIngredients } : {}),
         ...(preferredCuisines !== undefined ? { preferredCuisines } : {}),
+        ...(preferredEquipment !== undefined ? { preferredEquipment } : {}),
         ...(defaultServings !== undefined ? { defaultServings } : {}),
       });
       return NextResponse.json({ success: true, data: { profile: updated } });

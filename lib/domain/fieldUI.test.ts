@@ -81,8 +81,8 @@ describe('leftoverFieldUI', () => {
 });
 
 describe('profileFieldUI', () => {
-  it('annotates four list fields with comma separator', () => {
-    for (const field of ['allergies', 'dietaryRestrictions', 'dislikedIngredients', 'preferredCuisines']) {
+  it('annotates profile list fields with comma separator', () => {
+    for (const field of ['allergies', 'dietaryRestrictions', 'dislikedIngredients', 'preferredCuisines', 'preferredEquipment']) {
       expect(profileFieldUI.resolve(field)).toBe(', ');
     }
   });
