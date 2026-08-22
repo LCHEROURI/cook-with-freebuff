@@ -71,9 +71,34 @@ Command: `npm run test:emulator`
 Result: 3 files passed, 5 tests passed. Rollback/resume atomicity, paginated
 correlation-marker cleanup, and the rules harness are green.
 
-## Pending production evidence
+## Production preflight and external prerequisite blocker
 
-Task 4.3 must run the enforcement-required deployed verifier and the guarded
-authenticated real-data smoke, or record the precise missing external
-prerequisite. Documentation, compatibility/rollback release checks, and final
-manual verification remain pending.
+Task 4.3 performed a read-only deployment-identity check and a non-mutating,
+unattested request on 2026-08-22. No credential values were printed.
+
+- Guarded worktree commit: `f446598edf89caa2ef5d61b75455fbe53377768d`.
+- Live `/api/build-info` commit:
+  `7e5bd6a02d19d9b4497e4d4ce9c134581c7a2de4`, built at
+  `2026-08-21T23:00:59.519Z`.
+- Required API key, project ID, app ID, service account, and owner UID are
+  present in the imported worktree environment; the App Check site key is not
+  available to this runner.
+- An unattested `POST /api/agent` returned HTTP 401 `UNAUTHENTICATED`, not the
+  required HTTP 403 `APP_CHECK_FAILED`. The stale deployment therefore does
+  not provide the enforcement-required negative proof.
+
+The guarded revision must be deployed with the
+`NEXT_PUBLIC_FIREBASE_APP_CHECK_SITE_KEY` App Hosting secret available and
+`APP_CHECK_ENFORCED=1`, then `/api/build-info` must report that revision before
+running:
+
+```text
+npm run verify:live -- --require-app-check-enforced
+npm run verify:real-data
+```
+
+Those write-capable probes were not run against the known-stale deployment:
+their temporary production writes could not produce valid release evidence.
+This is the precise external prerequisite blocker allowed by Task 4.3.
+Documentation, compatibility/rollback release checks, and final manual
+verification remain pending.
