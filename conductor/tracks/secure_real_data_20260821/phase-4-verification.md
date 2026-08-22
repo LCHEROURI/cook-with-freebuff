@@ -100,5 +100,13 @@ npm run verify:real-data
 Those write-capable probes were not run against the known-stale deployment:
 their temporary production writes could not produce valid release evidence.
 This is the precise external prerequisite blocker allowed by Task 4.3.
-Documentation, compatibility/rollback release checks, and final manual
-verification remain pending.
+Subsequent tasks completed the operational documentation and release checklist;
+their unchecked production prerequisites remain blocking.
+
+## Manual verification checkpoint
+
+Accepted by the user on 2026-08-22 with the production-release blocker above
+retained. Acceptance covers the completed local implementation, tests,
+documentation, cleanup safeguards, and scope lock; it does not certify the
+stale live deployment or waive any unchecked item in
+`release-readiness-checklist.md`.
