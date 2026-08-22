@@ -1319,4 +1319,172 @@ describe('/api/cook — correlationId boundary', () => {
       expect(match.allIngredientsFound).toBe(false);
     });
   });
+
+  describe('check_recipe_pantry — single-recipe gap check', () => {
+    it('returns per-ingredient match details for an owned recipe', async () => {
+      const ctx = testContext('user-1');
+      mockBuild.mockImplementation(() => ctx);
+      const now = Date.now();
+
+      const recipeStore = ctx.recipeStore as InMemoryRecipeStore;
+      await recipeStore.createRecipe({
+        ...makeRecipe(),
+        id: 'recipe-gap',
+        title: 'Gap Check Recipe',
+        ingredients: [
+          { id: 'i1', name: 'chicken thighs', quantity: 4, unit: 'pieces', optional: false },
+          { id: 'i2', name: 'rice', quantity: 2, unit: 'cups', optional: false },
+          { id: 'i3', name: 'olive oil', quantity: 1, unit: 'tbsp', optional: false },
+        ],
+        prepSteps: [
+          { id: 'p1', stepNumber: 1, instruction: 'Rinse the rice', spokenInstruction: 'Rinse the rice', estimatedSeconds: 60, ingredientsUsed: ['rice'], equipmentUsed: [] },
+        ],
+        cookingSteps: [
+          { id: 'c1', stepNumber: 1, instruction: 'Cook the chicken', spokenInstruction: 'Cook the chicken', estimatedSeconds: 900, timerSeconds: 900, ingredientsUsed: ['chicken thighs'], equipmentUsed: ['pan'] },
+        ],
+        updatedAt: now,
+      });
+
+      const pantryStore = ctx.pantryStore as InMemoryPantryStore;
+      await pantryStore.upsertItem({
+        id: 'pantry-chicken', userId: 'user-1', name: 'chicken thighs', confidence: 1, source: 'VOICE', lastConfirmedAt: now,
+      });
+
+      const res = await post({ action: 'check_recipe_pantry', recipeId: 'recipe-gap' });
+      expect(res.status).toBe(200);
+      const body = await res.json();
+      expect(body.success).toBe(true);
+      expect(Array.isArray(body.data.details)).toBe(true);
+      expect(body.data.details.length).toBe(3);
+
+      // chicken thighs: matched
+      const chicken = body.data.details.find((d: any) => d.name === 'chicken thighs');
+      expect(chicken).toBeDefined();
+      expect(chicken.status).toBe('matched');
+
+      // rice: missing
+      const rice = body.data.details.find((d: any) => d.name === 'rice');
+      expect(rice).toBeDefined();
+      expect(rice.status).toBe('missing');
+
+      // olive oil: missing
+      const oil = body.data.details.find((d: any) => d.name === 'olive oil');
+      expect(oil).toBeDefined();
+      expect(oil.status).toBe('missing');
+    });
+
+    it('returns 404 for a recipe owned by another user', async () => {
+      const ctx = testContext('user-1');
+      mockBuild.mockImplementation(() => ctx);
+      const recipeStore = ctx.recipeStore as InMemoryRecipeStore;
+      await recipeStore.createRecipe({
+        ...makeRecipe(),
+        id: 'recipe-other',
+        userId: 'user-2',
+        title: 'Other Dinner',
+        ingredients: [{ id: 'i-other', name: 'salmon', quantity: 1, unit: 'piece', optional: false }],
+        prepSteps: [{ id: 'po1', stepNumber: 1, instruction: 'Cook salmon', spokenInstruction: 'Cook salmon', estimatedSeconds: 300, ingredientsUsed: ['salmon'], equipmentUsed: ['pan'] }],
+        cookingSteps: [],
+        updatedAt: Date.now(),
+      });
+
+      const res = await post({ action: 'check_recipe_pantry', recipeId: 'recipe-other' });
+      expect(res.status).toBe(404);
+    });
+
+    it('filters out an unsafe recipe', async () => {
+      const ctx = testContext('user-1');
+      mockBuild.mockImplementation(() => ctx);
+      const now = Date.now();
+
+      const profileStore = ctx.dietaryProfileStore as InMemoryDietaryProfileStore;
+      await profileStore.upsertProfile({
+        userId: 'user-1',
+        allergies: ['peanuts'],
+        dietaryRestrictions: [],
+        dislikedIngredients: [],
+        preferredCuisines: [],
+        preferredEquipment: [],
+        updatedAt: now,
+      });
+
+      const recipeStore = ctx.recipeStore as InMemoryRecipeStore;
+      await recipeStore.createRecipe({
+        ...makeRecipe(),
+        id: 'recipe-unsafe',
+        title: 'Peanut Noodles',
+        ingredients: [{ id: 'i-pn', name: 'peanuts', quantity: 1, unit: 'cup', optional: false }],
+        allergens: ['peanuts'],
+        prepSteps: [{ id: 'pu1', stepNumber: 1, instruction: 'Crush peanuts', spokenInstruction: 'Crush peanuts', estimatedSeconds: 60, ingredientsUsed: ['peanuts'], equipmentUsed: [] }],
+        cookingSteps: [],
+        updatedAt: now,
+      });
+
+      const res = await post({ action: 'check_recipe_pantry', recipeId: 'recipe-unsafe' });
+      expect(res.status).toBe(404);
+    });
+
+    it('returns 400 when recipeId is missing', async () => {
+      const ctx = testContext('user-1');
+      mockBuild.mockImplementation(() => ctx);
+      const res = await post({ action: 'check_recipe_pantry' });
+      expect(res.status).toBe(400);
+    });
+
+    it('reports expired pantry items as expired status', async () => {
+      const ctx = testContext('user-1');
+      mockBuild.mockImplementation(() => ctx);
+      const now = Date.now();
+
+      const recipeStore = ctx.recipeStore as InMemoryRecipeStore;
+      await recipeStore.createRecipe({
+        ...makeRecipe(),
+        id: 'recipe-expired',
+        title: 'Egg Test',
+        ingredients: [{ id: 'i-egg', name: 'eggs', quantity: 4, unit: 'pieces', optional: false }],
+        prepSteps: [],
+        cookingSteps: [{ id: 'c-egg', stepNumber: 1, instruction: 'Boil eggs', spokenInstruction: 'Boil eggs', estimatedSeconds: 600, timerSeconds: 600, ingredientsUsed: ['eggs'], equipmentUsed: ['pot'] }],
+        updatedAt: now,
+      });
+
+      const pantryStore = ctx.pantryStore as InMemoryPantryStore;
+      await pantryStore.upsertItem({
+        id: 'pantry-eggs', userId: 'user-1', name: 'eggs', confidence: 1, source: 'VOICE', lastConfirmedAt: now,
+        expirationDate: now - 86400000,
+      });
+
+      const res = await post({ action: 'check_recipe_pantry', recipeId: 'recipe-expired' });
+      expect(res.status).toBe(200);
+      const body = await res.json();
+      expect(body.data.details[0].status).toBe('expired');
+    });
+
+    it('reports stale pantry items as stale status', async () => {
+      const ctx = testContext('user-1');
+      mockBuild.mockImplementation(() => ctx);
+      const now = Date.now();
+
+      const recipeStore = ctx.recipeStore as InMemoryRecipeStore;
+      await recipeStore.createRecipe({
+        ...makeRecipe(),
+        id: 'recipe-stale',
+        title: 'Stale Test',
+        ingredients: [{ id: 'i-stale', name: 'garlic', quantity: 3, unit: 'cloves', optional: false }],
+        prepSteps: [],
+        cookingSteps: [{ id: 'c-s', stepNumber: 1, instruction: 'Mince garlic', spokenInstruction: 'Mince garlic', estimatedSeconds: 60, ingredientsUsed: ['garlic'], equipmentUsed: ['knife'] }],
+        updatedAt: now,
+      });
+
+      const pantryStore = ctx.pantryStore as InMemoryPantryStore;
+      await pantryStore.upsertItem({
+        id: 'pantry-garlic', userId: 'user-1', name: 'garlic', confidence: 1, source: 'VOICE',
+        lastConfirmedAt: now - 31 * 24 * 60 * 60 * 1000, // 31 days ago
+      });
+
+      const res = await post({ action: 'check_recipe_pantry', recipeId: 'recipe-stale' });
+      expect(res.status).toBe(200);
+      const body = await res.json();
+      expect(body.data.details[0].status).toBe('stale');
+    });
+  });
 });

@@ -11,7 +11,7 @@
 // query); launching uses the same launch action the list rows use.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useParams, useRouter } from 'next/navigation';
 import styles from './page.module.css';
@@ -86,6 +86,32 @@ export default function RecipeDetailPage() {
   // different 1–24 count produces the scaled display copy below.
   const [targetServings, setTargetServings] = useState<number | null>(null);
 
+  // ── Pantry gap check ──────────────────────────────────────────────────────
+
+  interface PantryIngredientDetail {
+    name: string;
+    status: 'matched' | 'missing' | 'expired' | 'stale' | 'uncertain';
+    pantryItemId?: string;
+  }
+
+  type PantryCheckState =
+    | { status: 'idle' }
+    | { status: 'loading' }
+    | { status: 'ready'; details: PantryIngredientDetail[] }
+    | { status: 'error'; message: string };
+
+  const [pantryCheck, setPantryCheck] = useState<PantryCheckState>({ status: 'idle' });
+  const [groceryAddIds, setGroceryAddIds] = useState<Set<string>>(new Set());
+  const groceryLockRef = useRef(false);
+
+  const STATUS_LABEL: Record<string, string> = {
+    matched: 'Found',
+    missing: 'Needed',
+    expired: 'Needs replacement',
+    stale: 'Needs confirmation',
+    uncertain: 'Needs confirmation',
+  };
+
   const fetchRecipe = useCallback(async () => {
     setState({ status: 'loading' });
     try {
@@ -148,6 +174,63 @@ export default function RecipeDetailPage() {
       setStartError(e instanceof Error ? e.message : 'Could not start cooking.');
     } finally {
       setStarting(false);
+    }
+  };
+
+  const handleCheckPantry = async () => {
+    setPantryCheck({ status: 'loading' });
+    try {
+      const token = await getToken();
+      const res = await fetch('/api/cook', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', ...(token ? { authorization: `Bearer ${token}` } : {}), ...(await appCheckHeaders()) },
+        body: JSON.stringify({ action: 'check_recipe_pantry', recipeId }),
+      });
+      const body = (await res.json()) as { success: boolean; data?: { details: PantryIngredientDetail[] }; error?: { message?: string } };
+      if (!res.ok || !body.success || !body.data) {
+        setPantryCheck({ status: 'error', message: body.error?.message ?? 'Could not check pantry.' });
+        return;
+      }
+      setPantryCheck({ status: 'ready', details: body.data.details });
+    } catch {
+      setPantryCheck({ status: 'error', message: 'Could not check pantry.' });
+    }
+  };
+
+  const handleAddToGrocery = async (name: string) => {
+    if (groceryLockRef.current) return;
+    groceryLockRef.current = true;
+    try {
+      const token = await getToken();
+      const res = await fetch('/api/kitchen', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', ...(token ? { authorization: `Bearer ${token}` } : {}), ...(await appCheckHeaders()) },
+        body: JSON.stringify({ action: 'grocery_add', name }),
+      });
+      if (res.ok) {
+        setGroceryAddIds((prev) => new Set(prev).add(name));
+      }
+    } finally {
+      groceryLockRef.current = false;
+    }
+  };
+
+  const handleAddNeededItems = async () => {
+    if (groceryLockRef.current || pantryCheck.status !== 'ready') return;
+    groceryLockRef.current = true;
+    try {
+      const needed = pantryCheck.details.filter((d) => d.status === 'missing' || d.status === 'expired');
+      const token = await getToken();
+      for (const item of needed) {
+        await fetch('/api/kitchen', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', ...(token ? { authorization: `Bearer ${token}` } : {}), ...(await appCheckHeaders()) },
+          body: JSON.stringify({ action: 'grocery_add', name: item.name }),
+        });
+        setGroceryAddIds((prev) => new Set(prev).add(item.name));
+      }
+    } finally {
+      groceryLockRef.current = false;
     }
   };
 
@@ -311,6 +394,71 @@ export default function RecipeDetailPage() {
       <button type="button" className={styles.startBtn} onClick={() => void handleStart()} disabled={starting}>
         {starting ? 'Starting…' : '▶ Start cooking'}
       </button>
+
+      {/* ── Pantry gap check ─────────────────────────────────────────────── */}
+      {pantryCheck.status === 'idle' && (
+        <button type="button" className={styles.pantryCheckBtn} onClick={() => void handleCheckPantry()}>
+          🧺 Check my pantry
+        </button>
+      )}
+
+      {pantryCheck.status === 'loading' && (
+        <p className={styles.pantryCheckLoading} role="status" aria-live="polite">
+          Checking your pantry…
+        </p>
+      )}
+
+      {pantryCheck.status === 'error' && (
+        <div className={styles.pantryCheckError} role="alert">
+          <span>{pantryCheck.message}</span>
+          <button type="button" onClick={() => setPantryCheck({ status: 'idle' })} className={styles.pantryCheckClose}>
+            ×
+          </button>
+        </div>
+      )}
+
+      {pantryCheck.status === 'ready' && (
+        <section className={styles.pantryCheckPanel} aria-label="Pantry match">
+          <h3 className={styles.pantryCheckTitle}>Pantry check</h3>
+          <ul className={styles.pantryCheckList}>
+            {pantryCheck.details.map((d) => (
+              <li key={d.name} className={`${styles.pantryCheckItem} ${styles[`status_${d.status}`]}`}>
+                <span className={styles.pantryCheckIcon}>
+                  {d.status === 'matched' ? '✅' : d.status === 'missing' ? '🔴' : d.status === 'expired' ? '❌' : '⚠️'}
+                </span>
+                <span className={styles.pantryCheckName}>{d.name}</span>
+                <span className={styles.pantryCheckStatus}>{STATUS_LABEL[d.status]}</span>
+                {(d.status === 'missing' || d.status === 'expired') && !groceryAddIds.has(d.name) && (
+                  <button
+                    type="button"
+                    className={styles.pantryCheckAddBtn}
+                    onClick={() => void handleAddToGrocery(d.name)}
+                    aria-label={`Add ${d.name} to grocery list`}
+                  >
+                    🛒
+                  </button>
+                )}
+                {groceryAddIds.has(d.name) && (
+                  <span className={styles.pantryCheckAdded}>Added</span>
+                )}
+              </li>
+            ))}
+          </ul>
+          <div className={styles.pantryCheckActions}>
+            <button
+              type="button"
+              className={styles.pantryCheckBulkBtn}
+              onClick={() => void handleAddNeededItems()}
+              disabled={groceryLockRef.current || !pantryCheck.details.some((d) => (d.status === 'missing' || d.status === 'expired') && !groceryAddIds.has(d.name))}
+            >
+              🛒 Add needed items
+            </button>
+            <button type="button" className={styles.pantryCheckClose} onClick={() => setPantryCheck({ status: 'idle' })}>
+              Close
+            </button>
+          </div>
+        </section>
+      )}
 
       <section className={styles.section} aria-label="Ingredients">
         <h2 className={styles.sectionTitle}>Ingredients</h2>

@@ -43,7 +43,7 @@ const ACTIONS = [
   'launch', 'status', 'done', 'repeat', 'back', 'pause', 'resume', 'timers',
   'start_over', 'substitute', 'apply_substitution', 'correct', 'recover', 'clear_recovery',
   'create_recipe', 'pantry_starter', 'list_recipes', 'get_recipe', 'delete_recipe',
-  'match_pantry_recipes',
+  'match_pantry_recipes', 'check_recipe_pantry',
 ] as const;
 type CookAction = (typeof ACTIONS)[number];
 
@@ -401,6 +401,46 @@ async function handle(userId: string, body: unknown): Promise<NextResponse> {
 
       const ranked = rankRecipeMatches(matches);
       return NextResponse.json({ success: true, data: { matches: ranked } });
+    }
+    case 'check_recipe_pantry': {
+      // Single-recipe gap check: compare recipe ingredients to the user's
+      // pantry and return per-ingredient match status (found, missing,
+      // expired, stale, uncertain). Reuses the existing pantry-match engine.
+      if (!recipeId) {
+        return NextResponse.json(
+          { success: false, error: { code: 'INVALID_BODY', message: 'check_recipe_pantry requires a recipeId', recoverable: false } },
+          { status: 400 },
+        );
+      }
+      if (!ctx.recipeStore || !ctx.pantryStore || !ctx.dietaryProfileStore) {
+        return NextResponse.json(
+          { success: false, error: { code: 'UNAVAILABLE', message: 'Recipe gap check is not available', recoverable: false } },
+          { status: 500 },
+        );
+      }
+
+      const recipe = await ctx.recipeStore.getRecipe(recipeId);
+      if (!recipe || recipe.userId !== userId) {
+        return NextResponse.json(
+          { success: false, error: { code: 'NOT_FOUND', message: 'Recipe not found', recoverable: false } },
+          { status: 404 },
+        );
+      }
+
+      // Safety gate: unsafe recipes are not exposed through this action.
+      const profile = (await ctx.dietaryProfileStore.getProfile(userId)) ?? emptyProfile(userId);
+      if (!evaluateStoredRecipeSafety(recipe, profile).canList) {
+        return NextResponse.json(
+          { success: false, error: { code: 'NOT_FOUND', message: 'Recipe not found', recoverable: false } },
+          { status: 404 },
+        );
+      }
+
+      const pantryService = new PantryService(ctx.pantryStore);
+      const pantryItems = await pantryService.listPantry(userId);
+      const result = matchRecipeToPantry(recipe.ingredients, pantryItems);
+
+      return NextResponse.json({ success: true, data: { details: result.details } });
     }
     case 'pantry_starter': {
       if (!ctx.pantryStore || !ctx.dietaryProfileStore) {

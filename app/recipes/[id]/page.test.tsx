@@ -123,7 +123,7 @@ const RECIPE: Recipe = {
 
 function mockFetch({ notFound = false, fail = false } = {}) {
   const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
-    const body = JSON.parse(String(init?.body ?? '{}')) as { action?: string };
+    const body = JSON.parse(String(init?.body ?? '{}')) as { action?: string; recipeId?: string; name?: string };
     if (body.action === 'launch') {
       return new Response(JSON.stringify({ success: true }), {
         status: 200,
@@ -144,6 +144,27 @@ function mockFetch({ notFound = false, fail = false } = {}) {
         });
       }
       return new Response(JSON.stringify({ success: true, data: { recipe: RECIPE } }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    }
+    if (body.action === 'check_recipe_pantry') {
+      return new Response(JSON.stringify({
+        success: true,
+        data: {
+          details: [
+            { name: 'chicken thighs', status: 'matched', pantryItemId: 'p1' },
+            { name: 'olive oil', status: 'missing' },
+            { name: 'salt', status: 'expired', pantryItemId: 'p3' },
+          ],
+        },
+      }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    }
+    if (body.action === 'grocery_add') {
+      return new Response(JSON.stringify({ success: true }), {
         status: 200,
         headers: { 'content-type': 'application/json' },
       });
@@ -329,5 +350,388 @@ describe('app/recipes/[id]/page.tsx · rendered behavior', () => {
     await screen.findByText('Chicken Rice');
     fireEvent.click(screen.getByRole('button', { name: 'Stop reading' }));
     expect(speech.stop).toHaveBeenCalledTimes(1);
+  });
+
+  // ── Pantry gap check ──────────────────────────────────────────────────
+
+  describe('pantry gap check', () => {
+    beforeEach(() => {
+      // Reset fetch per-test.
+      vi.unstubAllGlobals();
+    });
+
+    it('shows Check my pantry button and requests check_recipe_pantry on click', async () => {
+      const fm = mockFetch();
+      render(<RecipeDetailPage />);
+      await screen.findByText('Chicken Rice');
+
+      const btn = screen.getByRole('button', { name: '🧺 Check my pantry' });
+      expect(btn).toBeInTheDocument();
+      fireEvent.click(btn);
+
+      await waitFor(() => {
+        expect(fm).toHaveBeenCalledWith(
+          expect.stringContaining('/api/cook'),
+          expect.objectContaining({
+            body: expect.stringContaining('"check_recipe_pantry"'),
+          }),
+        );
+      });
+    });
+
+    it('renders status labels: Found, Needed, Needs replacement', async () => {
+      mockFetch();
+      render(<RecipeDetailPage />);
+      await screen.findByText('Chicken Rice');
+
+      fireEvent.click(screen.getByRole('button', { name: '🧺 Check my pantry' }));
+
+      await waitFor(() => {
+        expect(screen.getByText('Found')).toBeInTheDocument();
+        expect(screen.getByText('Needed')).toBeInTheDocument();
+        expect(screen.getByText('Needs replacement')).toBeInTheDocument();
+      });
+
+      // chicken thighs → Found, olive oil → Needed, salt → Needs replacement
+      const panel = screen.getByLabelText('Pantry match');
+      expect(panel.textContent).toContain('chicken thighs');
+      expect(panel.textContent).toContain('olive oil');
+      expect(panel.textContent).toContain('salt');
+    });
+
+    it('does not claim quantity sufficiency', async () => {
+      mockFetch();
+      render(<RecipeDetailPage />);
+      await screen.findByText('Chicken Rice');
+
+      fireEvent.click(screen.getByRole('button', { name: '🧺 Check my pantry' }));
+
+      await waitFor(() => {
+        expect(screen.getByText('chicken thighs')).toBeInTheDocument();
+      });
+
+      // The page must never say "enough", "sufficient", "ready to cook",
+      // or "fully stocked".
+      const panel = screen.getByLabelText('Pantry match');
+      const text = panel.textContent ?? '';
+      expect(text).not.toMatch(/enough/i);
+      expect(text).not.toMatch(/sufficient/i);
+      expect(text).not.toMatch(/ready to cook/i);
+      expect(text).not.toMatch(/fully stocked/i);
+    });
+
+    it('shows loading state while checking', async () => {
+      // Delay the response so we can observe the loading state.
+      const fm = vi.fn(async (_url: string, init?: RequestInit) => {
+        const body = JSON.parse(String(init?.body ?? '{}')) as { action?: string };
+        if (body.action === 'get_recipe') {
+          return new Response(JSON.stringify({ success: true, data: { recipe: RECIPE } }), { status: 200, headers: { 'content-type': 'application/json' } });
+        }
+        if (body.action === 'check_recipe_pantry') {
+          // Slight delay so loading state renders.
+          await new Promise((r) => setTimeout(r, 50));
+          return new Response(JSON.stringify({ success: true, data: { details: [{ name: 'chicken thighs', status: 'matched' }] } }), { status: 200, headers: { 'content-type': 'application/json' } });
+        }
+        return new Response(JSON.stringify({ success: false }), { status: 500, headers: { 'content-type': 'application/json' } });
+      });
+      vi.stubGlobal('fetch', fm);
+
+      render(<RecipeDetailPage />);
+      await screen.findByText('Chicken Rice');
+
+      fireEvent.click(screen.getByRole('button', { name: '🧺 Check my pantry' }));
+      expect(screen.getByText('Checking your pantry…')).toBeInTheDocument();
+    });
+
+    it('shows error state with retry via re-clicking Check my pantry', async () => {
+      let calls = 0;
+      const fm = vi.fn(async () => {
+        calls++;
+        if (calls <= 2) {
+          // First call is get_recipe, second is check_recipe_pantry.
+          if (calls === 2) {
+            return new Response(JSON.stringify({ success: false, error: { message: 'Boom' } }), { status: 500, headers: { 'content-type': 'application/json' } });
+          }
+        }
+        if (calls === 3) {
+          return new Response(JSON.stringify({ success: true, data: { details: [{ name: 'chicken', status: 'matched' }] } }), { status: 200, headers: { 'content-type': 'application/json' } });
+        }
+        return new Response(JSON.stringify({ success: true, data: { recipe: RECIPE } }), { status: 200, headers: { 'content-type': 'application/json' } });
+      });
+      vi.stubGlobal('fetch', fm);
+
+      render(<RecipeDetailPage />);
+      await screen.findByText('Chicken Rice');
+      fireEvent.click(screen.getByRole('button', { name: '🧺 Check my pantry' }));
+      await waitFor(() => { expect(screen.getByText('Boom')).toBeInTheDocument(); });
+
+      // Close error → idle → re-click (close button shows ×)
+      fireEvent.click(screen.getByText('×'));
+      // The close button resets to idle, Check my pantry should reappear.
+      await waitFor(() => { expect(screen.getByRole('button', { name: '🧺 Check my pantry' })).toBeInTheDocument(); });
+      fireEvent.click(screen.getByRole('button', { name: '🧺 Check my pantry' }));
+      await waitFor(() => { expect(screen.getByText('chicken')).toBeInTheDocument(); });
+    });
+
+    it('closes the panel and returns to recipe view', async () => {
+      mockFetch();
+      render(<RecipeDetailPage />);
+      await screen.findByText('Chicken Rice');
+
+      fireEvent.click(screen.getByRole('button', { name: '🧺 Check my pantry' }));
+      await waitFor(() => { expect(screen.getByText('Found')).toBeInTheDocument(); });
+
+      fireEvent.click(screen.getByRole('button', { name: 'Close' }));
+      await waitFor(() => {
+        expect(screen.queryByLabelText('Pantry match')).not.toBeInTheDocument();
+        expect(screen.getByRole('button', { name: '🧺 Check my pantry' })).toBeInTheDocument();
+      });
+    });
+
+    it('individual add sends grocery_add with the ingredient name', async () => {
+      const fm = mockFetch();
+      render(<RecipeDetailPage />);
+      await screen.findByText('Chicken Rice');
+
+      fireEvent.click(screen.getByRole('button', { name: '🧺 Check my pantry' }));
+      await waitFor(() => { expect(screen.getByText('Needed')).toBeInTheDocument(); });
+
+      // olive oil is missing → should have an Add button.
+      const addBtn = screen.getByRole('button', { name: 'Add olive oil to grocery list' });
+      fireEvent.click(addBtn);
+
+      await waitFor(() => {
+        expect(fm).toHaveBeenCalledWith(
+          expect.stringContaining('/api/kitchen'),
+          expect.objectContaining({
+            body: expect.stringContaining('"grocery_add"'),
+          }),
+        );
+      });
+    });
+
+    it('matched ingredient does not show an add button', async () => {
+      mockFetch();
+      render(<RecipeDetailPage />);
+      await screen.findByText('Chicken Rice');
+
+      fireEvent.click(screen.getByRole('button', { name: '🧺 Check my pantry' }));
+      await waitFor(() => { expect(screen.getByText('Found')).toBeInTheDocument(); });
+
+      // chicken thighs is matched → no Add button.
+      expect(screen.queryByRole('button', { name: 'Add chicken thighs to grocery list' })).not.toBeInTheDocument();
+    });
+
+    it('Add needed items sends grocery_add only for missing and expired', async () => {
+      const fm = mockFetch();
+      render(<RecipeDetailPage />);
+      await screen.findByText('Chicken Rice');
+
+      fireEvent.click(screen.getByRole('button', { name: '🧺 Check my pantry' }));
+      await waitFor(() => { expect(screen.getByText('Needed')).toBeInTheDocument(); });
+
+      fireEvent.click(screen.getByRole('button', { name: '🛒 Add needed items' }));
+
+      await waitFor(() => {
+        // Should include olive oil (missing) and salt (expired), but NOT chicken thighs (matched).
+        const kitchenCalls = fm.mock.calls.filter(([url]) => String(url).includes('/api/kitchen'));
+        const bodies = kitchenCalls.map(([, init]) => JSON.parse(String((init as RequestInit)?.body ?? '{}')));
+        const names = bodies.map((b: { name?: string }) => b.name);
+        expect(names).toContain('olive oil');
+        expect(names).toContain('salt');
+        expect(names).not.toContain('chicken thighs');
+      });
+    });
+
+    it('rapid double-click on Add needed items sends only one round of requests', async () => {
+      let kitchenCalls = 0;
+      const fm = vi.fn(async (_url: string, init?: RequestInit) => {
+        const body = JSON.parse(String(init?.body ?? '{}')) as { action?: string };
+        if (body.action === 'check_recipe_pantry') {
+          return new Response(JSON.stringify({ success: true, data: { details: [{ name: 'a', status: 'missing' }, { name: 'b', status: 'expired' }] } }), { status: 200, headers: { 'content-type': 'application/json' } });
+        }
+        if (body.action === 'grocery_add') {
+          kitchenCalls++;
+          return new Response(JSON.stringify({ success: true }), { status: 200, headers: { 'content-type': 'application/json' } });
+        }
+        return new Response(JSON.stringify({ success: true, data: { recipe: RECIPE } }), { status: 200, headers: { 'content-type': 'application/json' } });
+      });
+      vi.stubGlobal('fetch', fm);
+
+      render(<RecipeDetailPage />);
+      await screen.findByText('Chicken Rice');
+      fireEvent.click(screen.getByRole('button', { name: '🧺 Check my pantry' }));
+      await waitFor(() => { expect(screen.getByRole('button', { name: '🛒 Add needed items' })).toBeInTheDocument(); });
+
+      // Two rapid clicks.
+      const bulkBtn = screen.getByRole('button', { name: '🛒 Add needed items' });
+      fireEvent.click(bulkBtn);
+      fireEvent.click(bulkBtn);
+
+      await waitFor(() => { expect(kitchenCalls).toBe(2); }); // 1 each for a + b = 2
+      // No extra calls beyond the two expected.
+      expect(kitchenCalls).toBe(2);
+    });
+
+    // ── Needs confirmation label ────────────────────────────────────────
+
+    it('renders Needs confirmation for stale and uncertain ingredients', async () => {
+      const fm = vi.fn(async (_url: string, init?: RequestInit) => {
+        const body = JSON.parse(String(init?.body ?? '{}')) as { action?: string };
+        if (body.action === 'check_recipe_pantry') {
+          return new Response(JSON.stringify({
+            success: true,
+            data: { details: [
+              { name: 'old spice', status: 'stale', pantryItemId: 's1' },
+              { name: 'maybe milk', status: 'uncertain', pantryItemId: 'u1' },
+            ] },
+          }), { status: 200, headers: { 'content-type': 'application/json' } });
+        }
+        return new Response(JSON.stringify({ success: true, data: { recipe: RECIPE } }), { status: 200, headers: { 'content-type': 'application/json' } });
+      });
+      vi.stubGlobal('fetch', fm);
+
+      render(<RecipeDetailPage />);
+      await screen.findByText('Chicken Rice');
+      fireEvent.click(screen.getByRole('button', { name: '🧺 Check my pantry' }));
+
+      await waitFor(() => {
+        expect(screen.getByText('old spice')).toBeInTheDocument();
+        expect(screen.getByText('maybe milk')).toBeInTheDocument();
+      });
+
+      // Both stale and uncertain should show "Needs confirmation".
+      expect(screen.getAllByText('Needs confirmation').length).toBe(2);
+    });
+
+    // ── Stale/uncertain → no grocery add ───────────────────────────────
+
+    it('stale and uncertain ingredients have no grocery add button', async () => {
+      const fm = vi.fn(async (_url: string, init?: RequestInit) => {
+        const body = JSON.parse(String(init?.body ?? '{}')) as { action?: string };
+        if (body.action === 'check_recipe_pantry') {
+          return new Response(JSON.stringify({
+            success: true,
+            data: { details: [
+              { name: 'old spice', status: 'stale', pantryItemId: 's1' },
+              { name: 'maybe milk', status: 'uncertain', pantryItemId: 'u1' },
+            ] },
+          }), { status: 200, headers: { 'content-type': 'application/json' } });
+        }
+        return new Response(JSON.stringify({ success: true, data: { recipe: RECIPE } }), { status: 200, headers: { 'content-type': 'application/json' } });
+      });
+      vi.stubGlobal('fetch', fm);
+
+      render(<RecipeDetailPage />);
+      await screen.findByText('Chicken Rice');
+      fireEvent.click(screen.getByRole('button', { name: '🧺 Check my pantry' }));
+
+      await waitFor(() => { expect(screen.getAllByText('Needs confirmation').length).toBeGreaterThanOrEqual(1); });
+
+      // Neither stale nor uncertain should have an Add to grocery button.
+      expect(screen.queryByRole('button', { name: 'Add old spice to grocery list' })).not.toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: 'Add maybe milk to grocery list' })).not.toBeInTheDocument();
+    });
+
+    // ── Individual double-click → one request ──────────────────────────
+
+    it('rapid double-click on individual add sends exactly one grocery_add', async () => {
+      let kitchenCalls = 0;
+      const fm = vi.fn(async (_url: string, init?: RequestInit) => {
+        const body = JSON.parse(String(init?.body ?? '{}')) as { action?: string };
+        if (body.action === 'check_recipe_pantry') {
+          return new Response(JSON.stringify({
+            success: true,
+            data: { details: [{ name: 'needed item', status: 'missing' }] },
+          }), { status: 200, headers: { 'content-type': 'application/json' } });
+        }
+        if (body.action === 'grocery_add') {
+          kitchenCalls++;
+          return new Response(JSON.stringify({ success: true }), { status: 200, headers: { 'content-type': 'application/json' } });
+        }
+        return new Response(JSON.stringify({ success: true, data: { recipe: RECIPE } }), { status: 200, headers: { 'content-type': 'application/json' } });
+      });
+      vi.stubGlobal('fetch', fm);
+
+      render(<RecipeDetailPage />);
+      await screen.findByText('Chicken Rice');
+      fireEvent.click(screen.getByRole('button', { name: '🧺 Check my pantry' }));
+      await waitFor(() => { expect(screen.getByRole('button', { name: 'Add needed item to grocery list' })).toBeInTheDocument(); });
+
+      const addBtn = screen.getByRole('button', { name: 'Add needed item to grocery list' });
+      fireEvent.click(addBtn);
+      fireEvent.click(addBtn);
+
+      await waitFor(() => { expect(kitchenCalls).toBe(1); });
+    });
+
+    // ── Grocery failure — lock release → retry ────────────────────────
+
+    it('grocery failure releases lock so intentional retry works', async () => {
+      let kitchenCalls = 0;
+      const fm = vi.fn(async (_url: string, init?: RequestInit) => {
+        const body = JSON.parse(String(init?.body ?? '{}')) as { action?: string };
+        if (body.action === 'get_recipe') {
+          return new Response(JSON.stringify({ success: true, data: { recipe: RECIPE } }), { status: 200, headers: { 'content-type': 'application/json' } });
+        }
+        if (body.action === 'check_recipe_pantry') {
+          return new Response(JSON.stringify({
+            success: true,
+            data: { details: [{ name: 'fail item', status: 'missing' }] },
+          }), { status: 200, headers: { 'content-type': 'application/json' } });
+        }
+        if (body.action === 'grocery_add') {
+          kitchenCalls++;
+          if (kitchenCalls === 1) {
+            return new Response(JSON.stringify({ success: false, error: { message: 'Network error' } }), { status: 500, headers: { 'content-type': 'application/json' } });
+          }
+          return new Response(JSON.stringify({ success: true }), { status: 200, headers: { 'content-type': 'application/json' } });
+        }
+        return new Response(JSON.stringify({ success: true }), { status: 200, headers: { 'content-type': 'application/json' } });
+      });
+      vi.stubGlobal('fetch', fm);
+
+      render(<RecipeDetailPage />);
+      await screen.findByText('Chicken Rice');
+      fireEvent.click(screen.getByRole('button', { name: '🧺 Check my pantry' }));
+      await waitFor(() => { expect(screen.getByRole('button', { name: 'Add fail item to grocery list' })).toBeInTheDocument(); });
+
+      // First click: fails (but lock releases in finally).
+      fireEvent.click(screen.getByRole('button', { name: 'Add fail item to grocery list' }));
+      await waitFor(() => { expect(kitchenCalls).toBe(1); });
+
+      // Second click: should succeed — lock was released.
+      fireEvent.click(screen.getByRole('button', { name: 'Add fail item to grocery list' }));
+      await waitFor(() => { expect(kitchenCalls).toBe(2); });
+    });
+
+    // ── Empty pantry ───────────────────────────────────────────────────
+
+    it('handles empty pantry response without crashing', async () => {
+      const fm = vi.fn(async (_url: string, init?: RequestInit) => {
+        const body = JSON.parse(String(init?.body ?? '{}')) as { action?: string };
+        if (body.action === 'check_recipe_pantry') {
+          return new Response(JSON.stringify({ success: true, data: { details: [] } }), { status: 200, headers: { 'content-type': 'application/json' } });
+        }
+        return new Response(JSON.stringify({ success: true, data: { recipe: RECIPE } }), { status: 200, headers: { 'content-type': 'application/json' } });
+      });
+      vi.stubGlobal('fetch', fm);
+
+      render(<RecipeDetailPage />);
+      await screen.findByText('Chicken Rice');
+      fireEvent.click(screen.getByRole('button', { name: '🧺 Check my pantry' }));
+
+      // Should not crash. Panel should still render (though empty).
+      await waitFor(() => {
+        expect(screen.getByText('Pantry check')).toBeInTheDocument();
+      });
+
+      // Must not claim readiness or quantity sufficiency.
+      const panel = screen.getByLabelText('Pantry match');
+      const text = panel.textContent ?? '';
+      expect(text).not.toMatch(/enough/i);
+      expect(text).not.toMatch(/sufficient/i);
+      expect(text).not.toMatch(/ready to cook/i);
+    });
   });
 });
