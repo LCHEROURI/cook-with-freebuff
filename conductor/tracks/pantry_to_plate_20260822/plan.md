@@ -1,4 +1,4 @@
-# Plan: pantry_to_plate_20260822 — [~] In Progress
+# Plan: pantry_to_plate_20260822 — [x] Complete
 
 ## Phase 1: Pantry-to-Plate Smart Starter
 
@@ -7,7 +7,7 @@
 - [x] Task 1.3: Add the authenticated pantry-starter server contract
 - [x] Task 1.4: Build the accessible Cook from my pantry starter
 - [x] Task 1.5: Connect pantry results to existing recipe and guided-cooking flows
-- [~] Task 1.6: Run full regression, security, emulator, accessibility, and build verification
+- [x] Task 1.6: Run full regression, security, emulator, accessibility, and build verification
 
 ### Phase 1 verification
 

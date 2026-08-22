@@ -9,28 +9,28 @@ kitchen context.
 
 ## Acceptance Criteria
 
-- [ ] The pantry starter excludes expired items and does not silently select
+- [x] The pantry starter excludes expired items and does not silently select
   stale or low-confidence items.
-- [ ] Expiring-soon ingredients are visibly prioritized, while stale or
+- [x] Expiring-soon ingredients are visibly prioritized, while stale or
   low-confidence ingredients require explicit confirmation before use.
-- [ ] Saved allergies remain non-removable safety constraints; explicit user
+- [x] Saved allergies remain non-removable safety constraints; explicit user
   choices may refine servings, cuisine, time, craving, and selected ingredients.
-- [ ] Preferred equipment is editable in My Kitchen, schema validated, persisted
+- [x] Preferred equipment is editable in My Kitchen, schema validated, persisted
   through the existing profile repository, and applied to recipe generation.
-- [ ] Pantry item identifiers are resolved server-side for the authenticated
+- [x] Pantry item identifiers are resolved server-side for the authenticated
   owner, and foreign, missing, expired, stale, or unconfirmed uncertain items
   cannot enter the generation request.
-- [ ] The `/cook` starter provides a visible “Cook from my pantry” flow with
+- [x] The `/cook` starter provides a visible “Cook from my pantry” flow with
   selection, expiry/confidence indicators, applied-profile context, optional
   refinements, and an empty-pantry link to `/kitchen`.
-- [ ] Pantry-generated recipes use the existing validation, persistence,
+- [x] Pantry-generated recipes use the existing validation, persistence,
   recipe-ready, saved-recipes, scaling, read-aloud, and guided-cooking flows.
-- [ ] Manual, voice, and photo recipe starters remain available and unchanged in
+- [x] Manual, voice, and photo recipe starters remain available and unchanged in
   behavior.
-- [ ] Existing authentication, App Check ordering/enforcement, owner isolation,
+- [x] Existing authentication, App Check ordering/enforcement, owner isolation,
   Firestore write validation, cooking-state safety, pantry consumption, grocery
   synchronization, leftovers behavior, and accessibility contracts remain green.
-- [ ] Typecheck, lint, unit/contract tests, rules tests, emulator tests, and the
+- [x] Typecheck, lint, unit/contract tests, rules tests, emulator tests, and the
   production build pass.
 
 ## Functional Requirements
