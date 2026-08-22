@@ -11,6 +11,11 @@ const CHECKLIST_PATH =
 const checklist = existsSync(CHECKLIST_PATH)
   ? readFileSync(CHECKLIST_PATH, 'utf8')
   : '';
+const HANDOFF_PATH =
+  'conductor/tracks/secure_real_data_20260821/union-rules-release-handoff.md';
+const handoff = existsSync(HANDOFF_PATH)
+  ? readFileSync(HANDOFF_PATH, 'utf8')
+  : '';
 
 describe('secure real-data operational documentation', () => {
   it('documents write validation, ownership rules, and App Check boundaries', () => {
@@ -65,5 +70,22 @@ describe('secure real-data operational documentation', () => {
     expect(checklist).toContain('Unattested request returns 403 `APP_CHECK_FAILED`');
     expect(checklist).toContain('Authenticated real-data smoke returns `RESULT: PASS`');
     expect(checklist).toContain('Release status: BLOCKED');
+  });
+
+  it('pins the external union-rules release handoff and its stop conditions', () => {
+    expect(handoff).toContain('LCHEROURI/cook-with-freebuff');
+    expect(handoff).toContain(
+      'a008bfcf320171ddf022f92c4d57e57e62539045e8b20ed42fc736eccb1b24f4',
+    );
+    expect(handoff).toContain(
+      'b07673b5cfe6389e2ccee37993767deed3f0512586b6faf66fc9dd1007937745',
+    );
+    expect(handoff).toContain('git diff --no-index --exit-code');
+    expect(handoff).toContain('firestore:rules,firestore:indexes');
+    expect(handoff).toContain('not a certified shared union index artifact');
+    expect(handoff).toContain('npm run test:rules');
+    expect(handoff).toContain('npm run verify:real-data');
+    expect(handoff).toContain('Do not access or modify the sibling application');
+    expect(handoff).toContain('STOP');
   });
 });
