@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
 const security = readFileSync('SECURITY.md', 'utf8');
@@ -6,6 +6,11 @@ const deployment = readFileSync('DEPLOYMENT.md', 'utf8');
 const testing = readFileSync('TESTING.md', 'utf8');
 const agents = readFileSync('AGENTS.md', 'utf8');
 const scriptAgents = readFileSync('scripts/AGENTS.md', 'utf8');
+const CHECKLIST_PATH =
+  'conductor/tracks/secure_real_data_20260821/release-readiness-checklist.md';
+const checklist = existsSync(CHECKLIST_PATH)
+  ? readFileSync(CHECKLIST_PATH, 'utf8')
+  : '';
 
 describe('secure real-data operational documentation', () => {
   it('documents write validation, ownership rules, and App Check boundaries', () => {
@@ -47,5 +52,18 @@ describe('secure real-data operational documentation', () => {
     expect(scriptAgents).toContain('npm run verify:real-data');
     expect(scriptAgents).toContain('Admin SDK is cleanup-only for the asserted document lifecycle');
     expect(scriptAgents).toContain('Never run write-capable production probes until `/api/build-info`');
+  });
+
+  it('separates proven compatibility from external release prerequisites', () => {
+    expect(checklist).toContain('No destructive data migration is required');
+    expect(checklist).toContain('Existing representative document shapes');
+    expect(checklist).toContain('Rollback App Check with a reviewed redeploy');
+    expect(checklist).toContain('previous complete synchronized union ruleset');
+    expect(checklist).toContain('Do not access or modify the sibling application');
+    expect(checklist).toContain('byte-identical');
+    expect(checklist).toContain('Live build SHA matches the guarded revision');
+    expect(checklist).toContain('Unattested request returns 403 `APP_CHECK_FAILED`');
+    expect(checklist).toContain('Authenticated real-data smoke returns `RESULT: PASS`');
+    expect(checklist).toContain('Release status: BLOCKED');
   });
 });
