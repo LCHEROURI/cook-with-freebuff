@@ -110,3 +110,20 @@ retained. Acceptance covers the completed local implementation, tests,
 documentation, cleanup safeguards, and scope lock; it does not certify the
 stale live deployment or waive any unchecked item in
 `release-readiness-checklist.md`.
+
+## Final finished-tree verification
+
+Command: `npm run check`
+
+Result: exit 0 after all 25 track tasks and the manual checkpoint were
+complete.
+
+- TypeScript: passed.
+- Lint: passed with the existing `app/cook/page.tsx:377` hook warning and
+  Next.js `next lint` deprecation notice.
+- Tests: 126 files passed, 1,645 tests passed.
+- Production build: passed with the existing dynamic dependency warning from
+  `lib/server/admin.ts`.
+
+The implementation track is locally complete. Production release remains
+BLOCKED exactly as recorded in `release-readiness-checklist.md`.
