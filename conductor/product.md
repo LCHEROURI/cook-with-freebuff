@@ -22,6 +22,8 @@ confirmed.
 ## Core capabilities
 
 - Capture available ingredients by voice, text, or image.
+- Turn trusted, owner-scoped pantry inventory and saved kitchen preferences into
+  a reviewable recipe starter without re-entering known context.
 - Generate and validate structured recipes under dietary and equipment
   constraints.
 - Guide one physical action at a time through a persistent session state machine.
