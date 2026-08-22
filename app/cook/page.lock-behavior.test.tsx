@@ -175,3 +175,172 @@ describe('submission lock (behavioral)', () => {
     expect(countCreateCalls(fetchMock)).toBe(2);
   });
 });
+
+// ── Use these soon — behavioral ───────────────────────────────────────────
+
+describe('Use these soon section', () => {
+  function matchResp(matches: unknown[]) {
+    return { ok: true, json: async () => ({ success: true, data: { matches } }) };
+  }
+
+  const EXPIRING_MATCH = {
+    recipeId: 'r1', title: 'Spinach Soup', servings: 2, totalMinutes: 25,
+    ingredientCount: 5, matchPercent: 60, matchedCount: 3, missingCount: 2,
+    expiredCount: 0, staleCount: 0, uncertainCount: 0,
+    expiringSoonCount: 1, expiringSoonIngredients: ['spinach'],
+    allIngredientsFound: false,
+  };
+
+  const NON_EXPIRING_MATCH = {
+    recipeId: 'r2', title: 'Plain Rice', servings: 2, totalMinutes: 20,
+    ingredientCount: 1, matchPercent: 100, matchedCount: 1, missingCount: 0,
+    expiredCount: 0, staleCount: 0, uncertainCount: 0,
+    expiringSoonCount: 0, expiringSoonIngredients: [],
+    allIngredientsFound: true,
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockAuth.mockReturnValue(authBase);
+    mockCook.mockReturnValue({
+      snapshot: { found: false, activeTimers: [] } as unknown as ReturnType<typeof useCookingSession>['snapshot'],
+      loading: false, error: null, alert: null,
+      dismissAlert: vi.fn(), launch: vi.fn(), done: vi.fn(), repeat: vi.fn(),
+      back: vi.fn(), pause: vi.fn(), resume: vi.fn(), startOver: vi.fn(), refresh: vi.fn(),
+    });
+  });
+
+  afterEach(() => { vi.unstubAllGlobals(); });
+
+  it('renders when expiring-soon matches exist', async () => {
+    let matchCalls = 0;
+    const fetchMock = vi.fn(async (_url: unknown, init?: RequestInit) => {
+      const body = init?.body ? JSON.parse(String(init.body)) as { action?: string } : {};
+      if (body.action === 'pantry_starter') return PANTRY_STARTER;
+      if (body.action === 'list_recipes') return RECIPES_EMPTY;
+      if (body.action === 'match_pantry_recipes') { matchCalls++; return matchResp([EXPIRING_MATCH]); }
+      return { ok: true, json: async () => ({ success: true }) };
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<CookPage />);
+
+    await waitFor(() => { expect(screen.getByText('Use these soon')).toBeInTheDocument(); });
+    // Spinach Soup appears in both "Use these soon" and "What can I make?" — both should exist.
+    const soupNodes = screen.getAllByText('Spinach Soup');
+    expect(soupNodes.length).toBeGreaterThanOrEqual(1);
+    expect(screen.getByText('Uses soon: spinach')).toBeInTheDocument();
+    expect(matchCalls).toBe(1);
+  });
+
+  it('does not render when no expiring-soon matches exist', async () => {
+    const fetchMock = vi.fn(async (_url: unknown, init?: RequestInit) => {
+      const body = init?.body ? JSON.parse(String(init.body)) as { action?: string } : {};
+      if (body.action === 'pantry_starter') return PANTRY_STARTER;
+      if (body.action === 'list_recipes') return RECIPES_EMPTY;
+      if (body.action === 'match_pantry_recipes') return matchResp([NON_EXPIRING_MATCH]);
+      return { ok: true, json: async () => ({ success: true }) };
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<CookPage />);
+
+    // "What can I make?" should appear because there are matches.
+    await waitFor(() => { expect(screen.getByText('What can I make?')).toBeInTheDocument(); });
+    // But "Use these soon" must NOT appear.
+    expect(screen.queryByText('Use these soon')).toBeNull();
+  });
+
+  it('ranks more expiring-soon ingredients higher', async () => {
+    const MORE_EXPIRING = {
+      recipeId: 'rA', title: 'Z Three Expiring', servings: 2, totalMinutes: 30,
+      ingredientCount: 5, matchPercent: 60, matchedCount: 3, missingCount: 2,
+      expiredCount: 0, staleCount: 0, uncertainCount: 0,
+      expiringSoonCount: 3, expiringSoonIngredients: ['milk', 'eggs', 'cheese'],
+      allIngredientsFound: false,
+    };
+    const LESS_EXPIRING = {
+      recipeId: 'rB', title: 'A One Expiring', servings: 2, totalMinutes: 30,
+      ingredientCount: 5, matchPercent: 60, matchedCount: 3, missingCount: 2,
+      expiredCount: 0, staleCount: 0, uncertainCount: 0,
+      expiringSoonCount: 1, expiringSoonIngredients: ['spinach'],
+      allIngredientsFound: false,
+    };
+    const fetchMock = vi.fn(async (_url: unknown, init?: RequestInit) => {
+      const body = init?.body ? JSON.parse(String(init.body)) as { action?: string } : {};
+      if (body.action === 'pantry_starter') return PANTRY_STARTER;
+      if (body.action === 'list_recipes') return RECIPES_EMPTY;
+      // Deliberately unsorted — Z before A.
+      if (body.action === 'match_pantry_recipes') return matchResp([LESS_EXPIRING, MORE_EXPIRING]);
+      return { ok: true, json: async () => ({ success: true }) };
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<CookPage />);
+
+    await waitFor(() => { expect(screen.getByText('Use these soon')).toBeInTheDocument(); });
+    // Get titles from the "Use these soon" section specifically.
+    const section = screen.getByLabelText('Use these soon');
+    const items = section.querySelectorAll('li');
+    const titles = Array.from(items).map((li) => li.textContent ?? '');
+    // "Z Three Expiring" (3 expiring-soon) must appear before "A One Expiring" (1).
+    const zIdx = titles.findIndex((t) => t.includes('Z Three'));
+    const aIdx = titles.findIndex((t) => t.includes('A One'));
+    expect(zIdx).toBeLessThan(aIdx);
+  });
+
+  it('Cook this button is present for expiring-soon recipes', async () => {
+    const fetchMock = vi.fn(async (_url: unknown, init?: RequestInit) => {
+      const body = init?.body ? JSON.parse(String(init.body)) as { action?: string } : {};
+      if (body.action === 'pantry_starter') return PANTRY_STARTER;
+      if (body.action === 'list_recipes') return RECIPES_EMPTY;
+      if (body.action === 'match_pantry_recipes') return matchResp([EXPIRING_MATCH]);
+      return { ok: true, json: async () => ({ success: true }) };
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<CookPage />);
+
+    await waitFor(() => { expect(screen.getByText('Use these soon')).toBeInTheDocument(); });
+    // Both sections may have a "Cook Spinach Soup" button.
+    expect(screen.getAllByRole('button', { name: 'Cook Spinach Soup' }).length).toBeGreaterThanOrEqual(1);
+  });
+
+  it('does not claim readiness or quantity sufficiency', async () => {
+    const fetchMock = vi.fn(async (_url: unknown, init?: RequestInit) => {
+      const body = init?.body ? JSON.parse(String(init.body)) as { action?: string } : {};
+      if (body.action === 'pantry_starter') return PANTRY_STARTER;
+      if (body.action === 'list_recipes') return RECIPES_EMPTY;
+      if (body.action === 'match_pantry_recipes') return matchResp([EXPIRING_MATCH]);
+      return { ok: true, json: async () => ({ success: true }) };
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<CookPage />);
+
+    await waitFor(() => { expect(screen.getByText('Use these soon')).toBeInTheDocument(); });
+    // The "All ingredients found" badge only applies to recipes with allIngredientsFound=true.
+    // EXPIRING_MATCH has allIngredientsFound:false. Check the section doesn't use misleading labels.
+    const section = screen.getByLabelText('Use these soon');
+    expect(section.textContent).not.toMatch(/ready to cook|enough|sufficient|fully stocked/i);
+  });
+
+  it('does not issue a second match_pantry_recipes request', async () => {
+    let matchCalls = 0;
+    const fetchMock = vi.fn(async (_url: unknown, init?: RequestInit) => {
+      const body = init?.body ? JSON.parse(String(init.body)) as { action?: string } : {};
+      if (body.action === 'pantry_starter') return PANTRY_STARTER;
+      if (body.action === 'list_recipes') return RECIPES_EMPTY;
+      if (body.action === 'match_pantry_recipes') { matchCalls++; return matchResp([EXPIRING_MATCH]); }
+      return { ok: true, json: async () => ({ success: true }) };
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<CookPage />);
+
+    await waitFor(() => { expect(screen.getByText('Use these soon')).toBeInTheDocument(); });
+    expect(screen.getByText('What can I make?')).toBeInTheDocument();
+    // Both Candidate A and Candidate C share the same data — exactly one fetch.
+    expect(matchCalls).toBe(1);
+  });
+});

@@ -20,6 +20,7 @@ import { useGeminiLive, shouldAutoFallbackToWebSpeech } from '@/lib/hooks/useGem
 import { useLiveDictation } from '@/lib/hooks/useLiveDictation';
 import { useCookingSession } from '@/lib/hooks/useCookingSession';
 import { appCheckHeaders } from '@/lib/firebase/app-check';
+import { rankExpiringSoonMatches } from '@/lib/pantry-match-ranking';
 
 interface PantryMatchItem {
   recipeId: string;
@@ -34,6 +35,7 @@ interface PantryMatchItem {
   staleCount: number;
   uncertainCount: number;
   expiringSoonCount: number;
+  expiringSoonIngredients: string[];
   allIngredientsFound: boolean;
 }
 
@@ -867,6 +869,56 @@ export default function CookPage() {
               </ul>
             </section>
           )}
+          {/* ── Use these soon ──────────────────────────────────────────── */}
+          {pantryMatches.status === 'ready' && (() => {
+            const expiringSoon = rankExpiringSoonMatches(
+              pantryMatches.items.filter((m) => m.expiringSoonCount > 0),
+            );
+            if (expiringSoon.length === 0) return null;
+            // Client-side ranking reuses the server-ranked list which already
+            // prioritises expiring-soon items — just filter and display.
+            return (
+              <section className={styles.recipesSection} aria-label="Use these soon">
+                <h2 className={styles.recipesTitle}>Use these soon</h2>
+                <ul className={styles.recipesList}>
+                  {expiringSoon.map((m) => (
+                    <li key={m.recipeId} className={styles.recipeCard}>
+                      <div className={styles.recipeInfo}>
+                        <p className={styles.recipeName}>
+                          {m.title}
+                          {m.allIngredientsFound && (
+                            <span className={styles.readyBadge}>All ingredients found</span>
+                          )}
+                        </p>
+                        <RecipeRowMeta
+                          servings={m.servings}
+                          totalMinutes={m.totalMinutes}
+                          ingredientCount={m.ingredientCount}
+                        />
+                        <p className={styles.recipeMatch}>
+                          <span className={styles.matchBar} style={{ width: `${m.matchPercent}%` }} />
+                          Uses soon: {m.expiringSoonIngredients.join(', ')}
+                        </p>
+                        <p className={styles.recipeMatch}>
+                          {m.matchedCount} of {m.ingredientCount} ingredients
+                          {m.missingCount > 0 && ` · ${m.missingCount} missing`}
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        className={styles.recipeStart}
+                        onClick={() => void handleStartSavedRecipe(m.recipeId)}
+                        disabled={startingId !== null}
+                        aria-label={`Cook ${m.title}`}
+                      >
+                        {startingId === m.recipeId ? 'Starting…' : '▶ Cook this'}
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              </section>
+            );
+          })()}
           {recipes.status === 'ready' && recipes.items.length > 0 && (
             <section className={styles.recipesSection} aria-label="Your recipes">
               <h2 className={styles.recipesTitle}>Your recipes</h2>

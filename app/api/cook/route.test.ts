@@ -1318,6 +1318,48 @@ describe('/api/cook — correlationId boundary', () => {
       expect(match.matchedCount).toBe(0);
       expect(match.allIngredientsFound).toBe(false);
     });
+
+    it('returns expiringSoonIngredients array for expiring-soon matches', async () => {
+      const ctx = testContext('user-1');
+      mockBuild.mockImplementation(() => ctx);
+
+      const recipeStore = ctx.recipeStore as InMemoryRecipeStore;
+      const now = Date.now();
+      await recipeStore.createRecipe({
+        userId: 'user-1',
+        id: 'recipe-exp',
+        title: 'Spinach Salad',
+        description: 'Fresh spinach salad',
+        servings: 2,
+        estimatedPrepMinutes: 5,
+        estimatedCookMinutes: 1,
+        totalMinutes: 6,
+        ingredients: [
+          { id: 'i1', name: 'spinach', quantity: 2, unit: 'cups', optional: false },
+        ],
+        equipment: ['bowl'],
+        prepSteps: [{ id: 'p1', stepNumber: 1, instruction: 'Wash spinach', spokenInstruction: 'Wash spinach', estimatedSeconds: 60, ingredientsUsed: ['i1'], equipmentUsed: [] }],
+        cookingSteps: [{ id: 'c1', stepNumber: 1, instruction: 'Toss spinach in bowl', spokenInstruction: 'Toss spinach in bowl', estimatedSeconds: 60, timerSeconds: 60, ingredientsUsed: ['i1'], equipmentUsed: ['bowl'] }],
+        dietaryTags: [],
+        allergens: [],
+        safetyNotes: [],
+        generatedAt: now,
+        updatedAt: now,
+      });
+
+      const pantryStore = ctx.pantryStore as InMemoryPantryStore;
+      await pantryStore.upsertItem({ id: 'p-spinach', userId: 'user-1', name: 'spinach', quantity: 1, confidence: 1, source: 'VOICE', lastConfirmedAt: now, expirationDate: (now + 24 * 60 * 60 * 1000) as any });
+
+      const res = await post({ action: 'match_pantry_recipes' });
+      expect(res.status).toBe(200);
+      const body = await res.json() as any;
+      expect(body.success).toBe(true);
+
+      const match = body.data.matches.find((m: any) => m.title === 'Spinach Salad');
+      expect(match).toBeDefined();
+      expect(match.expiringSoonCount).toBe(1);
+      expect(match.expiringSoonIngredients).toEqual(['spinach']);
+    });
   });
 
   describe('check_recipe_pantry — single-recipe gap check', () => {

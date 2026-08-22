@@ -37,6 +37,8 @@ export interface RecipePantryMatch {
   staleCount: number;
   uncertainCount: number;
   expiringSoonCount: number;
+  /** Matched ingredient names whose pantry item is expiring within 2 days. */
+  expiringSoonIngredients: string[];
   /** All ingredient names are present — quantities are NOT verified. */
   allIngredientsFound: boolean;
 }
@@ -120,10 +122,15 @@ export function matchRecipeToPantry(
   const uncertainCount = details.filter((d) => d.status === 'uncertain').length;
 
   // Expiring-soon: matched items whose pantry item is expiring within 2 days.
+  const expiringSoonIngredients: string[] = [];
   const expiringSoonCount = details.filter((d) => {
     if (d.status !== 'matched') return false;
     const pantryItem = pantryItems.find((p) => p.id === d.pantryItemId);
-    return pantryItem?.expiresSoon ?? false;
+    if (pantryItem?.expiresSoon) {
+      expiringSoonIngredients.push(d.name);
+      return true;
+    }
+    return false;
   }).length;
 
   // A recipe has all ingredients found when every ingredient exists in the
@@ -149,6 +156,7 @@ export function matchRecipeToPantry(
       staleCount,
       uncertainCount,
       expiringSoonCount,
+      expiringSoonIngredients,
       allIngredientsFound,
     },
   };
@@ -211,3 +219,6 @@ export function rankRecipeMatches<T extends RecipePantryMatch>(
 ): T[] {
   return [...matches].sort(compareRecipeMatches);
 }
+
+// Re-export the shared client-safe ranking helper.
+export { rankExpiringSoonMatches } from "../pantry-match-ranking";

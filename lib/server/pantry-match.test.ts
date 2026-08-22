@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   matchRecipeToPantry,
   rankRecipeMatches,
+  rankExpiringSoonMatches,
   type RecipePantryMatch,
 } from './pantry-match';
 import type { Ingredient, PantryItem } from '../domain/types';
@@ -141,6 +142,69 @@ describe('pantry-match', () => {
       expect(result.match.expiredCount).toBe(1);
     });
 
+    // ── expiringSoonIngredients ──────────────────────────────────────────
+
+    it('surfaces expiring-soon matched ingredient names', () => {
+      const result = matchFor(
+        [ingredient({ name: 'spinach' }), ingredient({ name: 'chicken breast' })],
+        [
+          pantryView({ id: 'p1', name: 'spinach', expiresSoon: true, confidence: 1, stale: false, expired: false }),
+          pantryView({ id: 'p2', name: 'chicken breast', expiresSoon: false, confidence: 1, stale: false, expired: false }),
+        ],
+      );
+      expect(result.match.expiringSoonIngredients).toEqual(['spinach']);
+      expect(result.match.expiringSoonCount).toBe(1);
+    });
+
+    it('does not surface expired items in expiringSoonIngredients', () => {
+      const result = matchFor(
+        [ingredient({ name: 'milk' })],
+        [pantryView({ id: 'p1', name: 'milk', expired: true, expiresSoon: true, confidence: 1 })],
+      );
+      expect(result.match.expiringSoonIngredients).toEqual([]);
+      expect(result.match.expiringSoonCount).toBe(0);
+    });
+
+    it('does not surface stale items in expiringSoonIngredients even if near expiration', () => {
+      const result = matchFor(
+        [ingredient({ name: 'cheese' })],
+        [pantryView({ id: 'p1', name: 'cheese', stale: true, expiresSoon: true, confidence: 1 })],
+      );
+      expect(result.match.expiringSoonIngredients).toEqual([]);
+    });
+
+    it('does not surface uncertain items in expiringSoonIngredients even if near expiration', () => {
+      const result = matchFor(
+        [ingredient({ name: 'butter' })],
+        [pantryView({ id: 'p1', name: 'butter', stale: false, expired: false, confidence: 0.5, expiresSoon: true })],
+      );
+      // confidence < 0.8 means status is 'uncertain', not 'matched'
+      expect(result.match.expiringSoonIngredients).toEqual([]);
+    });
+
+    it('does not surface missing items in expiringSoonIngredients', () => {
+      const result = matchFor(
+        [ingredient({ name: 'bread' })],
+        [],
+      );
+      expect(result.match.expiringSoonIngredients).toEqual([]);
+    });
+
+    it('count matches array length for multiple expiring-soon ingredients', () => {
+      const result = matchFor(
+        [ingredient({ name: 'spinach' }), ingredient({ name: 'milk' }), ingredient({ name: 'rice' })],
+        [
+          pantryView({ id: 'p1', name: 'spinach', expiresSoon: true, confidence: 1, stale: false, expired: false }),
+          pantryView({ id: 'p2', name: 'milk', expiresSoon: true, confidence: 1, stale: false, expired: false }),
+          pantryView({ id: 'p3', name: 'rice', expiresSoon: false, confidence: 1, stale: false, expired: false }),
+        ],
+      );
+      expect(result.match.expiringSoonIngredients).toEqual(['spinach', 'milk']);
+      expect(result.match.expiringSoonCount).toBe(2);
+    });
+
+    // ── (end expiringSoonIngredients) ────────────────────────────────────
+
     it('picks the freshest item when duplicates exist', () => {
       const old = pantryView({ id: 'old', name: 'chicken breast', lastConfirmedAt: 1000, stale: true, confidence: 1 });
       const fresh = pantryView({ id: 'fresh', name: 'chicken breast', lastConfirmedAt: Date.now(), stale: false, confidence: 1 });
@@ -220,7 +284,7 @@ describe('pantry-match', () => {
       const m = (t: string, aif: boolean, missing: number, matchPct: number, matched: number, expiring: number): RecipePantryMatch => ({
         recipeId: t, title: t, servings: 2, totalMinutes: 30, ingredientCount: matched + missing,
         matchPercent: matchPct, matchedCount: matched, missingCount: missing,
-        expiredCount: 0, staleCount: 0, uncertainCount: 0, expiringSoonCount: expiring,
+        expiredCount: 0, staleCount: 0, uncertainCount: 0, expiringSoonCount: expiring, expiringSoonIngredients: [],
         allIngredientsFound: aif,
       });
       const ranked = rankRecipeMatches([
@@ -234,7 +298,7 @@ describe('pantry-match', () => {
       const m = (t: string, missing: number, expiring: number): RecipePantryMatch => ({
         recipeId: t, title: t, servings: 2, totalMinutes: 30, ingredientCount: missing + 3,
         matchPercent: Math.round(3 / (missing + 3) * 100), matchedCount: 3, missingCount: missing,
-        expiredCount: 0, staleCount: 0, uncertainCount: 0, expiringSoonCount: expiring,
+        expiredCount: 0, staleCount: 0, uncertainCount: 0, expiringSoonCount: expiring, expiringSoonIngredients: [],
         allIngredientsFound: false,
       });
       const ranked = rankRecipeMatches([
@@ -248,7 +312,7 @@ describe('pantry-match', () => {
       const m = (t: string, expiring: number): RecipePantryMatch => ({
         recipeId: t, title: t, servings: 2, totalMinutes: 30, ingredientCount: 5,
         matchPercent: 60, matchedCount: 3, missingCount: 2,
-        expiredCount: 0, staleCount: 0, uncertainCount: 0, expiringSoonCount: expiring,
+        expiredCount: 0, staleCount: 0, uncertainCount: 0, expiringSoonCount: expiring, expiringSoonIngredients: [],
         allIngredientsFound: false,
       });
       const ranked = rankRecipeMatches([
@@ -262,7 +326,7 @@ describe('pantry-match', () => {
       const m = (t: string, pct: number, matched: number): RecipePantryMatch => ({
         recipeId: t, title: t, servings: 2, totalMinutes: 30, ingredientCount: 5,
         matchPercent: pct, matchedCount: matched, missingCount: 2,
-        expiredCount: 0, staleCount: 0, uncertainCount: 0, expiringSoonCount: 0,
+        expiredCount: 0, staleCount: 0, uncertainCount: 0, expiringSoonCount: 0, expiringSoonIngredients: [],
         allIngredientsFound: false,
       });
       const ranked = rankRecipeMatches([
@@ -276,7 +340,7 @@ describe('pantry-match', () => {
       const m = (t: string, matched: number): RecipePantryMatch => ({
         recipeId: t, title: t, servings: 2, totalMinutes: 30, ingredientCount: 5,
         matchPercent: 60, matchedCount: matched, missingCount: 2,
-        expiredCount: 0, staleCount: 0, uncertainCount: 0, expiringSoonCount: 0,
+        expiredCount: 0, staleCount: 0, uncertainCount: 0, expiringSoonCount: 0, expiringSoonIngredients: [],
         allIngredientsFound: false,
       });
       const ranked = rankRecipeMatches([
@@ -290,7 +354,7 @@ describe('pantry-match', () => {
       const m = (t: string, missing: number, expiring: number): RecipePantryMatch => ({
         recipeId: t, title: t, servings: 2, totalMinutes: 30, ingredientCount: 2,
         matchPercent: 50, matchedCount: 1, missingCount: missing,
-        expiredCount: 0, staleCount: 0, uncertainCount: 0, expiringSoonCount: expiring,
+        expiredCount: 0, staleCount: 0, uncertainCount: 0, expiringSoonCount: expiring, expiringSoonIngredients: [],
         allIngredientsFound: false,
       });
       const items = [m('B', 1, 0), m('A', 1, 0), m('C', 2, 0)];
@@ -303,19 +367,105 @@ describe('pantry-match', () => {
 
   describe('rankRecipeMatches — final tie-breakers', () => {
     it('breaks ties deterministically by title', () => {
-      const a: RecipePantryMatch = { recipeId: 'r1', title: 'Apple Pie', servings: 4, totalMinutes: 60, ingredientCount: 5, matchPercent: 50, matchedCount: 3, missingCount: 2, expiredCount: 0, staleCount: 0, uncertainCount: 0, expiringSoonCount: 0, allIngredientsFound: false };
-      const b: RecipePantryMatch = { recipeId: 'r2', title: 'Banana Bread', servings: 4, totalMinutes: 60, ingredientCount: 5, matchPercent: 50, matchedCount: 3, missingCount: 2, expiredCount: 0, staleCount: 0, uncertainCount: 0, expiringSoonCount: 0, allIngredientsFound: false };
+      const a: RecipePantryMatch = { recipeId: 'r1', title: 'Apple Pie', servings: 4, totalMinutes: 60, ingredientCount: 5, matchPercent: 50, matchedCount: 3, missingCount: 2, expiredCount: 0, staleCount: 0, uncertainCount: 0, expiringSoonCount: 0, expiringSoonIngredients: [], allIngredientsFound: false };
+      const b: RecipePantryMatch = { recipeId: 'r2', title: 'Banana Bread', servings: 4, totalMinutes: 60, ingredientCount: 5, matchPercent: 50, matchedCount: 3, missingCount: 2, expiredCount: 0, staleCount: 0, uncertainCount: 0, expiringSoonCount: 0, expiringSoonIngredients: [], allIngredientsFound: false };
       const ranked = rankRecipeMatches([b, a]);
       expect(ranked[0].title).toBe('Apple Pie');
       expect(ranked[1].title).toBe('Banana Bread');
     });
 
     it('breaks same-title ties by recipe ID', () => {
-      const a: RecipePantryMatch = { recipeId: 'z-recipe', title: 'Pasta', servings: 2, totalMinutes: 20, ingredientCount: 3, matchPercent: 66, matchedCount: 2, missingCount: 1, expiredCount: 0, staleCount: 0, uncertainCount: 0, expiringSoonCount: 0, allIngredientsFound: false };
-      const b: RecipePantryMatch = { recipeId: 'a-recipe', title: 'Pasta', servings: 2, totalMinutes: 20, ingredientCount: 3, matchPercent: 66, matchedCount: 2, missingCount: 1, expiredCount: 0, staleCount: 0, uncertainCount: 0, expiringSoonCount: 0, allIngredientsFound: false };
+      const a: RecipePantryMatch = { recipeId: 'z-recipe', title: 'Pasta', servings: 2, totalMinutes: 20, ingredientCount: 3, matchPercent: 66, matchedCount: 2, missingCount: 1, expiredCount: 0, staleCount: 0, uncertainCount: 0, expiringSoonCount: 0, expiringSoonIngredients: [], allIngredientsFound: false };
+      const b: RecipePantryMatch = { recipeId: 'a-recipe', title: 'Pasta', servings: 2, totalMinutes: 20, ingredientCount: 3, matchPercent: 66, matchedCount: 2, missingCount: 1, expiredCount: 0, staleCount: 0, uncertainCount: 0, expiringSoonCount: 0, expiringSoonIngredients: [], allIngredientsFound: false };
       const ranked = rankRecipeMatches([b, a]);
       expect(ranked[0].recipeId).toBe('a-recipe');
       expect(ranked[1].recipeId).toBe('z-recipe');
     });
+  });
+});
+
+// ── Candidate C: rankExpiringSoonMatches ──────────────────────────────────
+
+describe('rankExpiringSoonMatches — Use These Soon', () => {
+  const m = (overrides: Partial<RecipePantryMatch> & { recipeId: string; title: string }): RecipePantryMatch => ({
+    recipeId: overrides.recipeId,
+    title: overrides.title,
+    servings: 2,
+    totalMinutes: 30,
+    ingredientCount: overrides.ingredientCount ?? 5,
+    matchPercent: overrides.matchPercent ?? 60,
+    matchedCount: overrides.matchedCount ?? 3,
+    missingCount: overrides.missingCount ?? 2,
+    expiredCount: 0,
+    staleCount: 0,
+    uncertainCount: 0,
+    expiringSoonCount: overrides.expiringSoonCount ?? 0,
+    expiringSoonIngredients: overrides.expiringSoonIngredients ?? [],
+    allIngredientsFound: overrides.allIngredientsFound ?? false,
+  });
+
+  it('filters out recipes with zero expiring-soon ingredients', () => {
+    const ranked = rankExpiringSoonMatches([
+      m({ recipeId: 'r1', title: 'No Expiring', expiringSoonCount: 0 }),
+    ]);
+    expect(ranked).toEqual([]);
+  });
+
+  it('ranks more expiring-soon ingredients higher (tier 1)', () => {
+    const ranked = rankExpiringSoonMatches([
+      m({ recipeId: 'r1', title: 'One Expiring', expiringSoonCount: 1 }),
+      m({ recipeId: 'r2', title: 'Three Expiring', expiringSoonCount: 3 }),
+      m({ recipeId: 'r3', title: 'Two Expiring', expiringSoonCount: 2 }),
+    ]);
+    expect(ranked.map((r) => r.title)).toEqual(['Three Expiring', 'Two Expiring', 'One Expiring']);
+  });
+
+  it('ranks allIngredientsFound above non-complete when expiring count is equal (tier 2)', () => {
+    const ranked = rankExpiringSoonMatches([
+      m({ recipeId: 'r1', title: 'Missing Items', expiringSoonCount: 2, allIngredientsFound: false }),
+      m({ recipeId: 'r2', title: 'All Found', expiringSoonCount: 2, allIngredientsFound: true }),
+    ]);
+    expect(ranked[0].title).toBe('All Found');
+  });
+
+  it('ranks fewer missing above more missing when expiring + allFound are tied (tier 3)', () => {
+    const ranked = rankExpiringSoonMatches([
+      m({ recipeId: 'r1', title: 'More Missing', expiringSoonCount: 1, allIngredientsFound: false, missingCount: 3 }),
+      m({ recipeId: 'r2', title: 'Fewer Missing', expiringSoonCount: 1, allIngredientsFound: false, missingCount: 1 }),
+    ]);
+    expect(ranked[0].title).toBe('Fewer Missing');
+  });
+
+  it('ranks higher match percent when expiring + allFound + missing are tied (tier 4)', () => {
+    const ranked = rankExpiringSoonMatches([
+      m({ recipeId: 'r1', title: 'Low Match', expiringSoonCount: 1, allIngredientsFound: false, missingCount: 2, matchPercent: 40 }),
+      m({ recipeId: 'r2', title: 'High Match', expiringSoonCount: 1, allIngredientsFound: false, missingCount: 2, matchPercent: 80 }),
+    ]);
+    expect(ranked[0].title).toBe('High Match');
+  });
+
+  it('ranks higher matched count when all above are tied (tier 5)', () => {
+    const ranked = rankExpiringSoonMatches([
+      m({ recipeId: 'r1', title: 'Fewer Matched', expiringSoonCount: 1, allIngredientsFound: false, missingCount: 2, matchPercent: 50, matchedCount: 2 }),
+      m({ recipeId: 'r2', title: 'More Matched', expiringSoonCount: 1, allIngredientsFound: false, missingCount: 2, matchPercent: 50, matchedCount: 4 }),
+    ]);
+    expect(ranked[0].title).toBe('More Matched');
+  });
+
+  it('breaks ties with title (tier 6)', () => {
+    const ranked = rankExpiringSoonMatches([
+      m({ recipeId: 'r2', title: 'Zebra Cake', expiringSoonCount: 1, allIngredientsFound: false, missingCount: 2, matchPercent: 50, matchedCount: 3 }),
+      m({ recipeId: 'r1', title: 'Apple Pie', expiringSoonCount: 1, allIngredientsFound: false, missingCount: 2, matchPercent: 50, matchedCount: 3 }),
+    ]);
+    expect(ranked[0].title).toBe('Apple Pie');
+  });
+
+  it('breaks same-title ties with recipe ID (tier 7)', () => {
+    const ranked = rankExpiringSoonMatches([
+      m({ recipeId: 'z', title: 'Pasta', expiringSoonCount: 1, allIngredientsFound: false, missingCount: 2, matchPercent: 50, matchedCount: 3 }),
+      m({ recipeId: 'a', title: 'Pasta', expiringSoonCount: 1, allIngredientsFound: false, missingCount: 2, matchPercent: 50, matchedCount: 3 }),
+    ]);
+    expect(ranked[0].recipeId).toBe('a');
+    expect(ranked[1].recipeId).toBe('z');
   });
 });
