@@ -4,16 +4,16 @@
   "type": "refactor",
   "status": "in_progress",
   "created": "2026-08-21T23:07:44Z",
-  "updated": "2026-08-21T23:39:25Z",
+  "updated": "2026-08-22T00:01:47Z",
   "current_phase": 3,
-  "current_task": "3.1",
+  "current_task": "3.2",
   "phases": {
     "total": 4,
     "completed": 2
   },
   "tasks": {
     "total": 25,
-    "completed": 12
+    "completed": 13
   },
   "commits": [
     "34d0979: docs(security): inventory persistence write contracts",
@@ -28,6 +28,7 @@
     "838caf3: fix(security): preserve Cook document ownership",
     "14337d3: test(security): lock union rules scope",
     "e3e68e4: test(security): prove existing data compatibility",
-    "fae92d3: docs(security): record phase 2 verification"
+    "fae92d3: docs(security): record phase 2 verification",
+    "2fb31fe: test(security): lock App Check route ordering"
   ]
 }
