@@ -18,9 +18,15 @@ import { gateAppCheck } from '@/lib/server/app-check';
 import { buildProductionContext } from '@/lib/server/stores';
 import { createGuideService } from '@/lib/server/tools/guide-tools';
 import { generateRecipeTool } from '@/lib/server/tools/recipe-tools';
+import {
+  PantryStarterService,
+  pantryRecipeInputSchema,
+} from '@/lib/server/pantry-starter-service';
 import { extractIngredients, extractRecipePreferences } from '@/lib/agent/extract';
 import { validateRecipe } from '@/lib/recipe/validate';
 import type { Recipe } from '@/lib/domain/types';
+import type { RecipeRequest } from '@/lib/ai/types';
+import type { ToolContext } from '@/lib/server/tools/types';
 import { logError, logInfo } from '@/lib/server/logger';
 import {
   generateCorrelationId,
@@ -32,12 +38,76 @@ import {
 const ACTIONS = [
   'launch', 'status', 'done', 'repeat', 'back', 'pause', 'resume', 'timers',
   'start_over', 'substitute', 'apply_substitution', 'correct', 'recover', 'clear_recovery',
-  'create_recipe', 'list_recipes', 'get_recipe', 'delete_recipe',
+  'create_recipe', 'pantry_starter', 'list_recipes', 'get_recipe', 'delete_recipe',
 ] as const;
 type CookAction = (typeof ACTIONS)[number];
 
 function isCookAction(v: unknown): v is CookAction {
   return typeof v === 'string' && (ACTIONS as readonly string[]).includes(v);
+}
+
+interface ResponsePreferences {
+  servings: number | null;
+  allergies: string[];
+  dietaryRestrictions: string[];
+}
+
+async function generateRecipeResponse(
+  ctx: ToolContext,
+  request: RecipeRequest,
+  preferences: ResponsePreferences,
+): Promise<NextResponse> {
+  const parsedInput = generateRecipeTool.inputSchema.safeParse({ request });
+  if (!parsedInput.success) {
+    return NextResponse.json(
+      {
+        success: false,
+        error: {
+          code: 'INVALID_BODY',
+          message: 'Could not build a recipe request from that input.',
+          recoverable: true,
+        },
+      },
+      { status: 400 },
+    );
+  }
+  const result = await generateRecipeTool.handler(ctx, parsedInput.data);
+  const generated = (result.data ?? {}) as { recipe?: Recipe };
+  if (!result.success || !generated.recipe) {
+    return NextResponse.json(
+      {
+        success: false,
+        error: result.error ?? {
+          code: 'GENERATION_FAILED',
+          message: 'Could not create a recipe from that.',
+          recoverable: true,
+        },
+      },
+      { status: 400 },
+    );
+  }
+  const recipe = generated.recipe;
+  const validation = validateRecipe(recipe, {
+    availableIngredients: request.ingredientsAvailable.map((ingredient) => ingredient.name),
+    availableEquipment: request.availableEquipment,
+    allergies: request.allergies,
+    dietaryRestrictions: request.dietaryRestrictions,
+  });
+  return NextResponse.json({
+    success: true,
+    data: {
+      recipeId: recipe.id,
+      title: recipe.title,
+      servings: recipe.servings,
+      proteinCategories: recipe.proteinCategories ?? [],
+      preferences,
+      validation: {
+        valid: validation.valid,
+        errors: validation.errors.slice(0, 5).map((error) => error.message),
+        confirmations: validation.missingConfirmations.slice(0, 8).map((item) => item.item),
+      },
+    },
+  });
 }
 
 async function handle(userId: string, body: unknown): Promise<NextResponse> {
@@ -57,6 +127,14 @@ async function handle(userId: string, body: unknown): Promise<NextResponse> {
     failedTool?: unknown;
     prompt?: unknown;
     protein?: unknown;
+    pantryItemIds?: unknown;
+    confirmedPantryItemIds?: unknown;
+    servings?: unknown;
+    maxTimeMinutes?: unknown;
+    cuisine?: unknown;
+    craving?: unknown;
+    allergies?: unknown;
+    dietaryRestrictions?: unknown;
   };
 
   const action: CookAction = isCookAction(parsed.action) ? parsed.action : 'status';
@@ -270,7 +348,40 @@ async function handle(userId: string, body: unknown): Promise<NextResponse> {
         }));
       return NextResponse.json({ success: true, data: { recipes } });
     }
+    case 'pantry_starter': {
+      if (!ctx.pantryStore || !ctx.dietaryProfileStore) {
+        return NextResponse.json(
+          { success: false, error: { code: 'UNAVAILABLE', message: 'Pantry starter is not available', recoverable: true } },
+          { status: 503 },
+        );
+      }
+      const starter = new PantryStarterService(ctx.pantryStore, ctx.dietaryProfileStore);
+      const snapshot = await starter.getSnapshot(userId);
+      return NextResponse.json({ success: true, data: snapshot });
+    }
     case 'create_recipe': {
+      if (parsed.pantryItemIds !== undefined) {
+        if (!ctx.pantryStore || !ctx.dietaryProfileStore) {
+          return NextResponse.json(
+            { success: false, error: { code: 'UNAVAILABLE', message: 'Pantry starter is not available', recoverable: true } },
+            { status: 503 },
+          );
+        }
+        const pantryInput = pantryRecipeInputSchema.safeParse(parsed);
+        if (!pantryInput.success) {
+          return NextResponse.json(
+            { success: false, error: { code: 'INVALID_BODY', message: 'Choose at least one valid pantry item.', recoverable: false } },
+            { status: 400 },
+          );
+        }
+        const starter = new PantryStarterService(ctx.pantryStore, ctx.dietaryProfileStore);
+        const request = await starter.buildRecipeRequest(userId, pantryInput.data);
+        return generateRecipeResponse(ctx, request, {
+          servings: request.servings ?? null,
+          allergies: request.allergies,
+          dietaryRestrictions: request.dietaryRestrictions,
+        });
+      }
       // The missing "start" stage: turn "chicken, rice and onion" into a
       // validated, persisted recipe the user can immediately launch. This is
       // the UI the /cook empty state now points at — before this, the only

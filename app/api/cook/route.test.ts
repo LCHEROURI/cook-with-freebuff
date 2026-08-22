@@ -2,7 +2,13 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { NextResponse } from 'next/server';
 import { POST, GET } from './route';
 import { SessionService, InMemorySessionStore } from '@/lib/server/session-service';
-import { InMemoryTimerStore, InMemoryLogStore, InMemoryRecipeStore } from '@/lib/server/tools';
+import {
+  InMemoryTimerStore,
+  InMemoryLogStore,
+  InMemoryRecipeStore,
+  InMemoryPantryStore,
+  InMemoryDietaryProfileStore,
+} from '@/lib/server/tools';
 import type { ToolContext } from '@/lib/server/tools/types';
 import type { Recipe } from '@/lib/domain/types';
 
@@ -86,6 +92,8 @@ function testContext(userId: string): ToolContext {
     timerStore: new InMemoryTimerStore(),
     logStore: new InMemoryLogStore(),
     recipeStore: recipes,
+    pantryStore: new InMemoryPantryStore(),
+    dietaryProfileStore: new InMemoryDietaryProfileStore(),
   };
 }
 
@@ -615,6 +623,165 @@ describe('/api/cook', () => {
       expect(Array.isArray(req?.availableEquipment)).toBe(true);
       expect(req?.servings).toBe(2);
       expect((req as { ingredientsAvailable?: unknown[] })?.ingredientsAvailable).toHaveLength(2);
+    });
+  });
+
+  describe('pantry starter — authenticated kitchen context', () => {
+    async function seedPantry() {
+      const now = Date.now();
+      await ctx.pantryStore?.upsertItem({
+        id: 'pantry-chicken',
+        userId: 'user-1',
+        name: 'chicken thighs',
+        quantity: 4,
+        unit: 'pieces',
+        confidence: 1,
+        source: 'MANUAL',
+        lastConfirmedAt: now,
+        expirationDate: now + 24 * 60 * 60 * 1000,
+      });
+      await ctx.pantryStore?.upsertItem({
+        id: 'pantry-rice',
+        userId: 'user-1',
+        name: 'rice',
+        quantity: 2,
+        unit: 'cups',
+        confidence: 0.6,
+        source: 'RECIPE_USAGE',
+        lastConfirmedAt: now,
+      });
+      await ctx.pantryStore?.upsertItem({
+        id: 'pantry-expired',
+        userId: 'user-1',
+        name: 'old yogurt',
+        confidence: 1,
+        source: 'MANUAL',
+        lastConfirmedAt: now,
+        expirationDate: now - 1000,
+      });
+      await ctx.pantryStore?.upsertItem({
+        id: 'pantry-foreign',
+        userId: 'user-2',
+        name: 'secret truffles',
+        confidence: 1,
+        source: 'MANUAL',
+        lastConfirmedAt: now,
+      });
+      await ctx.dietaryProfileStore?.upsertProfile({
+        userId: 'user-1',
+        allergies: ['Peanuts'],
+        dietaryRestrictions: ['gluten-free'],
+        dislikedIngredients: ['cilantro'],
+        preferredCuisines: ['Italian'],
+        defaultServings: 3,
+        preferredEquipment: ['air fryer'],
+        updatedAt: now,
+      });
+    }
+
+    it('returns only non-expired owner candidates with trust and profile context', async () => {
+      await seedPantry();
+
+      const res = await post({ action: 'pantry_starter' });
+      expect(res.status).toBe(200);
+      const body = await res.json();
+      expect(body.data.items.map((item: { id: string }) => item.id)).toEqual([
+        'pantry-chicken',
+        'pantry-rice',
+      ]);
+      expect(body.data.items[0]).toMatchObject({
+        id: 'pantry-chicken',
+        expiresSoon: true,
+        requiresConfirmation: false,
+        selectedByDefault: true,
+      });
+      expect(body.data.items[1]).toMatchObject({
+        id: 'pantry-rice',
+        requiresConfirmation: true,
+        selectedByDefault: false,
+      });
+      expect(body.data.profile).toEqual({
+        allergies: ['Peanuts'],
+        dietaryRestrictions: ['gluten-free'],
+        dislikedIngredients: ['cilantro'],
+        preferredCuisines: ['Italian'],
+        defaultServings: 3,
+        preferredEquipment: ['air fryer'],
+      });
+    });
+
+    it('builds generation input from server-resolved pantry and saved profile', async () => {
+      await seedPantry();
+      let received: unknown = null;
+      registerRecipeGenerator('default', {
+        generate: async (request) => {
+          received = request;
+          return makeGeneratedRecipe();
+        },
+      });
+
+      const res = await post({
+        action: 'create_recipe',
+        pantryItemIds: ['pantry-chicken', 'pantry-rice'],
+        confirmedPantryItemIds: ['pantry-rice'],
+        servings: 4,
+        maxTimeMinutes: 35,
+        cuisine: 'Thai',
+        craving: 'something comforting',
+        allergies: ['sesame', 'peanuts'],
+        dietaryRestrictions: ['dairy-free'],
+      });
+
+      expect(res.status).toBe(200);
+      const request = received as Record<string, unknown>;
+      expect(request).toMatchObject({
+        servings: 4,
+        maxTimeMinutes: 35,
+        cuisinePreferences: ['Thai'],
+        craving: 'something comforting',
+        allergies: ['Peanuts', 'sesame'],
+        dietaryRestrictions: ['gluten-free', 'dairy-free'],
+        dislikedIngredients: ['cilantro'],
+        availableEquipment: ['air fryer'],
+      });
+      expect((request.ingredientsAvailable as { name: string }[]).map((item) => item.name)).toEqual([
+        'chicken thighs',
+        'rice',
+      ]);
+    });
+
+    it('requires explicit confirmation before uncertain pantry items reach the provider', async () => {
+      await seedPantry();
+      const generate = vi.fn(async () => makeGeneratedRecipe());
+      registerRecipeGenerator('default', { generate });
+
+      const res = await post({
+        action: 'create_recipe',
+        pantryItemIds: ['pantry-rice'],
+        confirmedPantryItemIds: [],
+      });
+
+      expect(res.status).toBe(400);
+      const body = await res.json();
+      expect(body.error.code).toBe('PANTRY_CONFIRMATION_REQUIRED');
+      expect(generate).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ['missing', 'PANTRY_ITEM_NOT_FOUND'],
+      ['pantry-foreign', 'PANTRY_ITEM_NOT_FOUND'],
+      ['pantry-expired', 'PANTRY_ITEM_INELIGIBLE'],
+    ])('rejects unavailable pantry id %s without leaking or generating', async (itemId, code) => {
+      await seedPantry();
+      const generate = vi.fn(async () => makeGeneratedRecipe());
+      registerRecipeGenerator('default', { generate });
+
+      const res = await post({ action: 'create_recipe', pantryItemIds: [itemId] });
+
+      expect(res.status).toBe(400);
+      const body = await res.json();
+      expect(body.error.code).toBe(code);
+      expect(generate).not.toHaveBeenCalled();
     });
   });
 });

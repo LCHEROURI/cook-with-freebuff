@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { pruneNulls } from './gemini';
+import { buildGenerationPrompt, pruneNulls } from './gemini';
 
 describe('pruneNulls — model JSON normalization', () => {
   it('drops null-valued optional fields so zod .optional() accepts them', () => {
@@ -28,5 +28,25 @@ describe('pruneNulls — model JSON normalization', () => {
     const out = pruneNulls({ title: 'X', ingredients: [{ name: 'rice', quantity: null, unit: 'cups' }] }) as Record<string, unknown>;
     expect(out.title).toBe('X');
     expect((out.ingredients as Record<string, unknown>[])[0].unit).toBe('cups');
+  });
+});
+
+describe('buildGenerationPrompt', () => {
+  it('includes the optional pantry-starter craving without changing ingredients', () => {
+    const prompt = buildGenerationPrompt({
+      ingredientsAvailable: [
+        { id: 'i1', name: 'rice', quantity: 1, unit: 'cup', optional: false },
+      ],
+      servings: 2,
+      dietaryRestrictions: [],
+      allergies: [],
+      cuisinePreferences: [],
+      dislikedIngredients: [],
+      availableEquipment: [],
+      craving: 'something comforting',
+    });
+
+    expect(prompt).toContain('Craving: something comforting');
+    expect(prompt).toContain('Available ingredients: 1 cup rice');
   });
 });

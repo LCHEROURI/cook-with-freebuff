@@ -362,6 +362,7 @@ export const recipeRequestSchema = z.object({
   cuisinePreferences: z.array(z.string()).default([]),
   dislikedIngredients: z.array(z.string()).default([]),
   availableEquipment: z.array(z.string()).default([]),
+  craving: z.string().trim().min(1).max(200).optional(),
   skillLevel: z.enum(['beginner', 'intermediate', 'advanced']).optional(),
 });
 

@@ -119,7 +119,7 @@ function formatIngredient(ing: Ingredient): string {
   return parts.join(' ');
 }
 
-function buildGenerationPrompt(request: RecipeRequest): string {
+export function buildGenerationPrompt(request: RecipeRequest): string {
   return [
     'You are a professional recipe generator. Produce a recipe that uses ONLY the ingredients listed as available.',
     '',
@@ -142,6 +142,7 @@ function buildGenerationPrompt(request: RecipeRequest): string {
     request.cuisinePreferences.length ? `Cuisine preferences: ${request.cuisinePreferences.join(', ')}` : '',
     request.dislikedIngredients.length ? `Avoid: ${request.dislikedIngredients.join(', ')}` : '',
     request.availableEquipment.length ? `Available equipment: ${request.availableEquipment.join(', ')}` : '',
+    request.craving ? `Craving: ${request.craving}` : '',
     request.skillLevel ? `Skill level: ${request.skillLevel}` : '',
     '',
     'Recipe JSON schema:',

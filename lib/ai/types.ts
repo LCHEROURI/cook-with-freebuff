@@ -21,6 +21,8 @@ export interface RecipeRequest {
   cuisinePreferences: string[];
   dislikedIngredients: string[];
   availableEquipment: string[];
+  /** Optional free-text intent for this one recipe, such as “something comforting”. */
+  craving?: string;
   skillLevel?: 'beginner' | 'intermediate' | 'advanced';
 }
 
