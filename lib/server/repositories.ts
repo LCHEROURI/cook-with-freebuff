@@ -33,7 +33,12 @@ import {
   leftoverSchema,
   groceryItemSchema,
   correlationMarkerSchema,
+  recipeGenerationMarkerSchema,
 } from '../domain/schemas';
+import type {
+  RecipeGenerationClaim,
+  RecipeGenerationLeaseInput,
+} from './tools/types';
 
 // ── Base Firestore helpers ───────────────────────────────────────────────────
 
@@ -308,6 +313,102 @@ export async function clearCorrelationMarker(id: string): Promise<void> {
   if (legacyKeyable(id)) {
     await deleteDoc(CORRELATION_MARKERS, id);
   }
+}
+
+function currentGenerationLease(
+  marker: ReturnType<typeof recipeGenerationMarkerSchema.parse>,
+  input: RecipeGenerationLeaseInput,
+): boolean {
+  return marker.status === 'leased'
+    && marker.userId === input.userId
+    && marker.requestHash === input.requestHash
+    && marker.leaseToken === input.leaseToken
+    && marker.leaseExpiresAt > input.now;
+}
+
+export async function claimRecipeGeneration(
+  input: RecipeGenerationLeaseInput,
+): Promise<RecipeGenerationClaim> {
+  const db = getAdminDb();
+  if (!db) throw new Error('Firestore not initialized');
+  const ref = db.collection(CORRELATION_MARKERS).doc(markerKey(input.markerId));
+  return db.runTransaction(async (transaction) => {
+    const snap = await transaction.get(ref);
+    if (snap.exists) {
+      const current = recipeGenerationMarkerSchema.parse(snap.data());
+      if (current.rawId !== input.markerId
+        || current.userId !== input.userId
+        || current.requestHash !== input.requestHash) {
+        return { status: 'conflict' } as const;
+      }
+      if (current.status === 'completed' && current.recipeId) {
+        return { status: 'completed', recipeId: current.recipeId } as const;
+      }
+      if (current.status === 'leased' && current.leaseExpiresAt > input.now) {
+        return { status: 'in_progress' } as const;
+      }
+    }
+    const marker = recipeGenerationMarkerSchema.parse({
+      kind: 'recipe_generation',
+      rawId: input.markerId,
+      markedAt: input.now,
+      updatedAt: input.now,
+      userId: input.userId,
+      requestHash: input.requestHash,
+      status: 'leased',
+      leaseToken: input.leaseToken,
+      leaseExpiresAt: input.now + input.leaseMs,
+    });
+    transaction.set(ref, marker);
+    return { status: 'acquired', leaseToken: input.leaseToken } as const;
+  });
+}
+
+export async function completeRecipeGeneration(
+  input: RecipeGenerationLeaseInput & { recipe: Recipe },
+): Promise<boolean> {
+  const recipe = recipeSchema.strict().parse(input.recipe);
+  if (recipe.id !== input.recipe.id || recipe.userId !== input.userId) return false;
+  const db = getAdminDb();
+  if (!db) throw new Error('Firestore not initialized');
+  const markerRef = db.collection(CORRELATION_MARKERS).doc(markerKey(input.markerId));
+  const recipeRef = db.collection(RECIPES).doc(recipe.id);
+  return db.runTransaction(async (transaction) => {
+    const markerSnap = await transaction.get(markerRef);
+    if (!markerSnap.exists) return false;
+    const current = recipeGenerationMarkerSchema.parse(markerSnap.data());
+    if (current.rawId !== input.markerId || !currentGenerationLease(current, input)) return false;
+    transaction.create(recipeRef, recipe as unknown as Record<string, unknown>);
+    transaction.set(markerRef, recipeGenerationMarkerSchema.parse({
+      ...current,
+      status: 'completed',
+      recipeId: recipe.id,
+      markedAt: input.now,
+      updatedAt: input.now,
+    }));
+    return true;
+  });
+}
+
+export async function failRecipeGeneration(
+  input: RecipeGenerationLeaseInput,
+): Promise<boolean> {
+  const db = getAdminDb();
+  if (!db) throw new Error('Firestore not initialized');
+  const markerRef = db.collection(CORRELATION_MARKERS).doc(markerKey(input.markerId));
+  return db.runTransaction(async (transaction) => {
+    const markerSnap = await transaction.get(markerRef);
+    if (!markerSnap.exists) return false;
+    const current = recipeGenerationMarkerSchema.parse(markerSnap.data());
+    if (current.rawId !== input.markerId || !currentGenerationLease(current, input)) return false;
+    transaction.set(markerRef, recipeGenerationMarkerSchema.parse({
+      ...current,
+      status: 'failed',
+      markedAt: input.now,
+      updatedAt: input.now,
+    }));
+    return true;
+  });
 }
 
 export interface StaleMarkerCleanupResult {

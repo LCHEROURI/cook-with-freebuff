@@ -1,4 +1,4 @@
-# Plan: pantry_to_plate_20260822 — [~] In Progress
+# Plan: pantry_to_plate_20260822 — [x] Complete
 
 ## Phase 1: Pantry-to-Plate Smart Starter
 
@@ -20,7 +20,7 @@
 ## Phase 2: Review Remediation
 
 - [x] Task 2.1: Enforce deterministic recipe safety before persistence, usable listing, and guided-cooking launch
-- [ ] Task 2.2: Add effective-context generation idempotency with fenced leases and complete verification
+- [x] Task 2.2: Add effective-context generation idempotency with fenced leases and complete verification
 
 ### Phase 2 verification
 

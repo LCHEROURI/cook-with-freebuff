@@ -2,18 +2,18 @@
   "id": "pantry_to_plate_20260822",
   "title": "Phase 3B Pantry-to-Plate Smart Starter",
   "type": "feature",
-  "status": "in_progress",
+  "status": "complete",
   "created": "2026-08-22T00:00:00Z",
-  "updated": "2026-08-22T15:29:49Z",
+  "updated": "2026-08-22T15:45:26Z",
   "current_phase": 2,
   "current_task": null,
   "phases": {
     "total": 2,
-    "completed": 1
+    "completed": 2
   },
   "tasks": {
     "total": 8,
-    "completed": 7
+    "completed": 8
   },
   "commits": [
     "37ce5ae: chore(conductor): start Pantry-to-Plate track",
@@ -24,6 +24,7 @@
     "54c1a37: chore: mark task 1.4 complete (pantry_to_plate_20260822)",
     "7639139: test(cook): verify pantry recipe handoff (pantry_to_plate_20260822)",
     "9ec7311: chore: mark task 1.5 complete (pantry_to_plate_20260822)",
-    "948a705: docs(cook): record Pantry-to-Plate verification (pantry_to_plate_20260822)"
+    "948a705: docs(cook): record Pantry-to-Plate verification (pantry_to_plate_20260822)",
+    "67de049: fix(cook): enforce recipe safety invariants"
   ]
 }

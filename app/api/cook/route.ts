@@ -55,7 +55,11 @@ interface ResponsePreferences {
 }
 
 function errorStatus(code: string | undefined): number {
-  return code === 'RECIPE_UNSAFE' ? 422 : 400;
+  if (code === 'RECIPE_UNSAFE') return 422;
+  if (code === 'IDEMPOTENCY_CONFLICT' || code === 'GENERATION_IN_PROGRESS' || code === 'GENERATION_SUPERSEDED') {
+    return 409;
+  }
+  return 400;
 }
 
 async function generateRecipeResponse(

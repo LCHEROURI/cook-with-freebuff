@@ -22,6 +22,15 @@ Verified on 2026-08-22 in the Cook-only worktree on branch
   launched through the existing guided-cooking flow.
 - Existing recipe detail, servings scaling, read-aloud/voice UI, guided cooking,
   pantry consumption, grocery synchronization, and leftovers suites pass.
+- Deterministic safety evaluation blocks unsafe generated recipes before
+  persistence and blocks unsafe stored recipes from normal listing or guided
+  cooking while preserving warning and confirmation behavior.
+- Recipe-generation idempotency hashes the server-resolved effective request,
+  including current authenticated profile constraints; completed replays are
+  revalidated before use and changed requests or profiles conflict safely.
+- Valid concurrent leases suppress duplicate provider calls. Stale leases may
+  recompute, but both in-memory and real Firestore transaction tests prove that
+  only the current unexpired fencing token can persist and complete a recipe.
 - The local `/cook` route compiled and returned HTTP 200 from a clean local
   development-server smoke run. Authenticated interaction semantics are covered
   by component and route tests; no production account or data was used.
@@ -31,9 +40,9 @@ Verified on 2026-08-22 in the Cook-only worktree on branch
 | Command | Result |
 | --- | --- |
 | `git diff --check` | Pass |
-| `npm run check` | Pass: typecheck, lint (0 errors), 1,673/1,673 tests, production build with 17 routes |
+| `npm run check` | Pass: typecheck, lint (0 errors), 1,691/1,691 tests, production build with 17 routes |
 | `npm run test:rules` | Pass: 30/30 tests across 2 files |
-| `npm run test:emulator` | Pass: 6/6 tests across 3 files |
+| `npm run test:emulator` | Pass: 7/7 tests across 4 files |
 
 The lint/build output retains the pre-existing exhaustive-deps warning for the
 voice effect in `app/cook/page.tsx` and the pre-existing dynamic-import warning

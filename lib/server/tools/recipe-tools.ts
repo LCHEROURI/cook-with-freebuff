@@ -8,6 +8,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { z } from 'zod';
+import { randomUUID } from 'node:crypto';
 import { recipeSchema, recipeRequestSchema } from '../../domain/schemas';
 import { scaleRecipe, replaceIngredientInRecipe } from '../../recipe/transform';
 import { validateRecipe } from '../../recipe/validate';
@@ -21,6 +22,16 @@ import type { ToolDefinition } from './types';
 import type { Recipe, Ingredient } from '../../domain/types';
 import { classifyProteins } from '../../recipe/classify';
 import { evaluateGeneratedRecipeSafety } from '../recipe-safety';
+import { evaluateStoredRecipeSafety } from '../recipe-safety';
+import { emptyProfile } from '../profile-service';
+import {
+  effectiveRecipeRequest,
+  hashEffectiveRecipeRequest,
+  recipeGenerationMarkerId,
+} from '../recipe-generation';
+import type { RecipeGenerationLeaseInput } from './types';
+
+const GENERATION_LEASE_MS = 2 * 60 * 1000;
 
 export const generateRecipeTool: ToolDefinition = {
   name: 'generate_recipe',
@@ -31,11 +42,60 @@ export const generateRecipeTool: ToolDefinition = {
     if (!generator) {
       return fail('GENERATION_UNAVAILABLE', 'No recipe generator provider is configured', true);
     }
+    const profile = (await ctx.dietaryProfileStore?.getProfile(ctx.userId)) ?? emptyProfile(ctx.userId);
+    const request = effectiveRecipeRequest(args.request, profile);
+    const requestHash = hashEffectiveRecipeRequest(request);
+    const generationStore = ctx.recipeGenerationStore;
+    let lease: RecipeGenerationLeaseInput | null = null;
+
+    if (generationStore && ctx.recipeStore && ctx.correlationId) {
+      lease = {
+        markerId: recipeGenerationMarkerId(ctx.userId, ctx.correlationId),
+        userId: ctx.userId,
+        requestHash,
+        leaseToken: randomUUID(),
+        now: Date.now(),
+        leaseMs: GENERATION_LEASE_MS,
+      };
+      const claim = await generationStore.claim(lease);
+      if (claim.status === 'conflict') {
+        return fail('IDEMPOTENCY_CONFLICT', 'This request key was already used for different recipe inputs', false);
+      }
+      if (claim.status === 'in_progress') {
+        return fail('GENERATION_IN_PROGRESS', 'An identical recipe request is already being generated', true);
+      }
+      if (claim.status === 'completed') {
+        const recipe = await ctx.recipeStore.getRecipe(claim.recipeId);
+        if (!recipe || recipe.userId !== ctx.userId) {
+          return fail('GENERATION_RESULT_MISSING', 'The completed recipe is no longer available', true);
+        }
+        const safety = evaluateStoredRecipeSafety(recipe, profile);
+        if (!safety.canList) {
+          return fail(
+            'RECIPE_UNSAFE',
+            safety.blockingErrors[0]?.message ?? 'Stored recipe did not pass current safety validation',
+            true,
+          );
+        }
+        return ok({ recipe, safety, replayed: true });
+      }
+    }
+
+    const failLease = async (code: string, message: string, recoverable: boolean) => {
+      if (lease && generationStore) {
+        const current = await generationStore.fail({ ...lease, now: Date.now() });
+        if (!current) {
+          return fail('GENERATION_SUPERSEDED', 'A newer generation attempt owns this request', true);
+        }
+      }
+      return fail(code, message, recoverable);
+    };
+
     try {
-      const recipe = await generator.generate(args.request);
+      const recipe = await generator.generate(request);
       const parsed = recipeSchema.safeParse(recipe);
       if (!parsed.success) {
-        return fail(
+        return failLease(
           'GENERATION_INVALID',
           `Generator returned an invalid recipe: ${parsed.error.issues[0]?.message ?? 'schema error'}`,
           true,
@@ -46,15 +106,15 @@ export const generateRecipeTool: ToolDefinition = {
         userId: ctx.userId,
         proteinCategories: classifyProteins(parsed.data.ingredients),
         preferences: {
-          servings: args.request.servings ?? null,
-          allergies: args.request.allergies,
-          dietaryRestrictions: args.request.dietaryRestrictions,
+          servings: request.servings ?? null,
+          allergies: request.allergies,
+          dietaryRestrictions: request.dietaryRestrictions,
         },
         updatedAt: parsed.data.updatedAt,
       };
-      const safety = evaluateGeneratedRecipeSafety(owned, args.request);
+      const safety = evaluateGeneratedRecipeSafety(owned, request);
       if (!safety.canPersist) {
-        return fail(
+        return failLease(
           'RECIPE_UNSAFE',
           safety.blockingErrors[0]?.message ?? 'Generated recipe did not pass safety validation',
           true,
@@ -70,11 +130,28 @@ export const generateRecipeTool: ToolDefinition = {
         // Also stamp the user-provided build constraints (servings, allergies,
         // dietary restrictions) from the request, so a saved recipe records
         // what it was built FOR — the /cook "Your recipes" rows surface them.
-        await ctx.recipeStore.createRecipe(owned);
+        if (lease && generationStore) {
+          const completed = await generationStore.complete({ ...lease, now: Date.now(), recipe: owned });
+          if (!completed) {
+            return fail('GENERATION_SUPERSEDED', 'A newer generation attempt owns this request', true);
+          }
+        } else {
+          await ctx.recipeStore.createRecipe(owned);
+        }
         return ok({ recipe: owned, safety });
       }
       return ok({ recipe: owned, safety });
     } catch (e) {
+      if (lease && generationStore) {
+        try {
+          const current = await generationStore.fail({ ...lease, now: Date.now() });
+          if (!current) {
+            return fail('GENERATION_SUPERSEDED', 'A newer generation attempt owns this request', true);
+          }
+        } catch {
+          // Preserve the original provider/store error if failure recording is unavailable.
+        }
+      }
       return toToolError(e);
     }
   },

@@ -6,6 +6,7 @@ import {
   InMemoryTimerStore,
   InMemoryLogStore,
   InMemoryRecipeStore,
+  InMemoryRecipeGenerationStore,
   InMemoryPantryStore,
   InMemoryDietaryProfileStore,
 } from '@/lib/server/tools';
@@ -86,15 +87,17 @@ function makeRecipe(): Recipe {
   };
 }
 
-function testContext(userId: string): ToolContext {
+function testContext(userId: string, correlationId?: string): ToolContext {
   const store = new InMemorySessionStore();
   const recipes = new InMemoryRecipeStore();
   return {
     userId,
+    correlationId,
     sessionService: new SessionService(store),
     timerStore: new InMemoryTimerStore(),
     logStore: new InMemoryLogStore(),
     recipeStore: recipes,
+    recipeGenerationStore: new InMemoryRecipeGenerationStore(recipes),
     pantryStore: new InMemoryPantryStore(),
     dietaryProfileStore: new InMemoryDietaryProfileStore(),
   };
@@ -120,7 +123,10 @@ describe('/api/cook', () => {
     mockGate.mockResolvedValue(null);
     mockResolve.mockResolvedValue('user-1');
     ctx = testContext('user-1');
-    mockBuild.mockImplementation(() => ctx);
+    mockBuild.mockImplementation((_userId: string, correlationId?: string) => {
+      ctx.correlationId = correlationId;
+      return ctx;
+    });
     // No AI providers by default — each create_recipe test registers its own
     // stub generator (the deployed app wires the real Gemini one).
     resetProviders();
@@ -547,6 +553,134 @@ describe('/api/cook', () => {
       expect(typeof stored?.updatedAt).toBe('number');
     });
 
+    it('replays a completed generation without invoking the provider again', async () => {
+      const generate = vi.fn(async () => makeGeneratedRecipe());
+      registerRecipeGenerator('default', { generate });
+      const request = {
+        action: 'create_recipe',
+        prompt: 'I have chicken thighs and rice',
+        correlationId: 'generate-replay-1',
+      };
+
+      const first = await post(request);
+      const replay = await post(request);
+      const firstBody = await first.json();
+      const replayBody = await replay.json();
+
+      expect(first.status).toBe(200);
+      expect(replay.status).toBe(200);
+      expect(generate).toHaveBeenCalledTimes(1);
+      expect(replayBody.data.recipeId).toBe(firstBody.data.recipeId);
+    });
+
+    it('allows only one provider call while an identical generation lease is valid', async () => {
+      let release!: () => void;
+      const gate = new Promise<void>((resolve) => { release = resolve; });
+      const generate = vi.fn(async () => {
+        await gate;
+        return makeGeneratedRecipe();
+      });
+      registerRecipeGenerator('default', { generate });
+      const request = {
+        action: 'create_recipe',
+        prompt: 'I have chicken thighs and rice',
+        correlationId: 'generate-concurrent-1',
+      };
+
+      const first = post(request);
+      await vi.waitFor(() => expect(generate).toHaveBeenCalledTimes(1));
+      const concurrent = post(request);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      release();
+      const responses = await Promise.all([first, concurrent]);
+
+      expect(generate).toHaveBeenCalledTimes(1);
+      expect(responses.map((response) => response.status).sort()).toEqual([200, 409]);
+    });
+
+    it('revalidates a completed replay before returning a stored recipe', async () => {
+      const generate = vi.fn(async () => makeGeneratedRecipe());
+      registerRecipeGenerator('default', { generate });
+      const request = {
+        action: 'create_recipe',
+        prompt: 'I have chicken thighs and rice, no peanuts',
+        correlationId: 'generate-replay-safety-1',
+      };
+
+      const first = await post(request);
+      expect(first.status).toBe(200);
+      const stored = await ctx.recipeStore?.getRecipe('recipe-generated-1');
+      expect(stored).not.toBeNull();
+      await ctx.recipeStore?.updateRecipe({ ...stored!, allergens: ['Peanuts'] });
+
+      const replay = await post(request);
+      const replayBody = await replay.json();
+
+      expect(replay.status).toBe(422);
+      expect(replayBody.error.code).toBe('RECIPE_UNSAFE');
+      expect(generate).toHaveBeenCalledTimes(1);
+    });
+
+    it('rejects reuse of an idempotency key for a different effective request', async () => {
+      const generate = vi.fn(async () => makeGeneratedRecipe());
+      registerRecipeGenerator('default', { generate });
+
+      const first = await post({
+        action: 'create_recipe',
+        prompt: 'I have chicken thighs and rice',
+        correlationId: 'generate-conflict-1',
+      });
+      const conflict = await post({
+        action: 'create_recipe',
+        prompt: 'I have chicken thighs and onion',
+        correlationId: 'generate-conflict-1',
+      });
+      const conflictBody = await conflict.json();
+
+      expect(first.status).toBe(200);
+      expect(conflict.status).toBe(409);
+      expect(conflictBody.error.code).toBe('IDEMPOTENCY_CONFLICT');
+      expect(generate).toHaveBeenCalledTimes(1);
+    });
+
+    it('includes the current authenticated safety profile in request equivalence', async () => {
+      const now = Date.now();
+      await ctx.dietaryProfileStore?.upsertProfile({
+        userId: 'user-1',
+        allergies: [],
+        dietaryRestrictions: ['gluten-free'],
+        dislikedIngredients: [],
+        preferredCuisines: [],
+        preferredEquipment: [],
+        updatedAt: now,
+      });
+      const generate = vi.fn(async () => makeGeneratedRecipe());
+      registerRecipeGenerator('default', { generate });
+      const request = {
+        action: 'create_recipe',
+        prompt: 'I have chicken thighs and rice',
+        correlationId: 'generate-profile-conflict-1',
+      };
+
+      const first = await post(request);
+      await ctx.dietaryProfileStore?.upsertProfile({
+        userId: 'user-1',
+        allergies: ['Peanuts'],
+        dietaryRestrictions: ['gluten-free'],
+        dislikedIngredients: [],
+        preferredCuisines: [],
+        preferredEquipment: [],
+        updatedAt: now + 1,
+      });
+      const conflict = await post(request);
+      const conflictBody = await conflict.json();
+
+      expect(first.status).toBe(200);
+      expect(conflict.status).toBe(409);
+      expect(conflictBody.error.code).toBe('IDEMPOTENCY_CONFLICT');
+      expect(generate).toHaveBeenCalledTimes(1);
+    });
+
     it('reports GENERATION_UNAVAILABLE when no provider is registered', async () => {
       const res = await post({ action: 'create_recipe', prompt: 'I have chicken thighs' });
       expect(res.status).toBe(400);
@@ -884,7 +1018,7 @@ describe('/api/cook — correlationId boundary', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockResolve.mockResolvedValue('user-1');
-    mockBuild.mockImplementation(() => testContext('user-1'));
+    mockBuild.mockImplementation((userId: string, correlationId?: string) => testContext(userId, correlationId));
     resetProviders();
   });
 
