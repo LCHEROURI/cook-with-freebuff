@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import {
@@ -9,7 +10,7 @@ import {
   EMULATOR_PORT,
 } from './emulator-test-helper';
 
-export const COOK_RULES_PROJECT = 'demo-cook-with-freebuff-rules';
+const COOK_RULES_PROJECT_PREFIX = 'demo-cook-rules';
 export const COOK_OWNER_UID = 'cook-owner';
 export const COOK_SECOND_USER_UID = 'cook-second-user';
 
@@ -32,8 +33,9 @@ export interface CookRulesHarness {
  */
 export async function createCookRulesHarness(): Promise<CookRulesHarness> {
   const rules = await readFile(RULES_PATH, 'utf8');
+  const projectId = `${COOK_RULES_PROJECT_PREFIX}-${randomUUID().slice(0, 8)}`;
   const environment = await initializeTestEnvironment({
-    projectId: COOK_RULES_PROJECT,
+    projectId,
     firestore: {
       host: '127.0.0.1',
       port: EMULATOR_PORT,

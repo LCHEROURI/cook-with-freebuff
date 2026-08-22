@@ -60,4 +60,27 @@ describe.skipIf(!emulator)('Cook With Freebuff Firestore rules harness', () => {
       harness.unauthenticated.firestore().doc('recipes/owner-recipe').get(),
     );
   });
+
+  it('isolates Firestore state between independently initialized harnesses', async () => {
+    const firstHarness = await createCookRulesHarness();
+    const secondHarness = await createCookRulesHarness();
+
+    try {
+      await secondHarness.seed('recipes/isolated-recipe', {
+        id: 'isolated-recipe',
+        userId: COOK_OWNER_UID,
+        title: 'Second harness recipe',
+      });
+
+      await firstHarness.clear();
+
+      const recipe = await assertSucceeds(
+        secondHarness.owner.firestore().doc('recipes/isolated-recipe').get(),
+      );
+      expect(recipe.data()?.title).toBe('Second harness recipe');
+    } finally {
+      await firstHarness.cleanup();
+      await secondHarness.cleanup();
+    }
+  });
 });
