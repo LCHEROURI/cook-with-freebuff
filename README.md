@@ -57,15 +57,21 @@ the quota-bearing routes (`/api/cook`, `/api/tools`, `/api/agent`,
 `/api/vision/scan`, `/api/voice/token`); the server verifies it with
 `firebase-admin`'s `appCheck().verifyToken()` before any model work.
 
-Rollout is safe by default: `APP_CHECK_ENFORCED` unset means "verify a present
-token but never block" (monitor mode); setting it to `1` rejects a missing or
-invalid token with 403. Emulators always pass.
+The runtime supports a staged rollout: `APP_CHECK_ENFORCED` unset or `0` means
+"verify a present token but never block" (monitor mode), while `1` rejects a
+missing or invalid token with 403. Emulators always pass. Production App
+Hosting is pinned to enforcement and obtains the browser site key from Secret
+Manager; use the
+[App Check rollout runbook](conductor/tracks/secure_real_data_20260821/app-check-rollout-runbook.md)
+for prerequisites, observation, activation, rollback, and diagnosis.
 
 To turn it on:
 1. Firebase console → App Check → Apps → Web: register a reCAPTCHA v3 site key.
-2. Add `NEXT_PUBLIC_FIREBASE_APP_CHECK_SITE_KEY` (see `.env.example`) and deploy.
+2. Provision `NEXT_PUBLIC_FIREBASE_APP_CHECK_SITE_KEY` as the App Hosting secret
+   referenced by `apphosting.yaml`, then deploy.
 3. Confirm requests now carry the token (monitor mode logs verify failures).
-4. Set `APP_CHECK_ENFORCED=1` to hard-block unattested requests.
+4. Set `APP_CHECK_ENFORCED=1` to hard-block unattested requests and require the
+   enforcement live verifier.
 
 Local dev: set `NEXT_PUBLIC_APP_CHECK_DEBUG=1` to use the debug provider, then
 register the printed token under App Check → Manage debug tokens.
