@@ -110,6 +110,19 @@ describe('verifyAppCheckToken', () => {
     await expect(verifyAppCheckToken('good-token')).resolves.toEqual({ ok: false, reason: 'app-mismatch' });
   });
 
+  it('fails closed when enforced without the expected production app id', async () => {
+    process.env.APP_CHECK_ENFORCED = '1';
+    delete process.env.NEXT_PUBLIC_FIREBASE_APP_ID;
+    verifyToken.mockResolvedValue({ appId: 'untrusted-app-id' });
+    const { verifyAppCheckToken } = await import('./app-check');
+
+    await expect(verifyAppCheckToken('valid-but-unscoped-token')).resolves.toEqual({
+      ok: false,
+      reason: 'unconfigured',
+    });
+    expect(verifyToken).not.toHaveBeenCalled();
+  });
+
   it('passes an app-id mismatch in monitor mode (logs, never blocks)', async () => {
     verifyToken.mockResolvedValue({ appId: 'other-app-id' });
     const { verifyAppCheckToken } = await import('./app-check');
@@ -117,12 +130,12 @@ describe('verifyAppCheckToken', () => {
     await expect(verifyAppCheckToken('good-token')).resolves.toEqual({ ok: true });
   });
 
-  it('rejects an invalid token when enforced', async () => {
+  it('rejects a malformed token when enforced', async () => {
     process.env.APP_CHECK_ENFORCED = '1';
     verifyToken.mockRejectedValue(new Error('app-check/argument-error'));
     const { verifyAppCheckToken } = await import('./app-check');
 
-    await expect(verifyAppCheckToken('bad-token')).resolves.toEqual({ ok: false, reason: 'invalid-token' });
+    await expect(verifyAppCheckToken('not-a-jwt')).resolves.toEqual({ ok: false, reason: 'invalid-token' });
   });
 
   it('passes an invalid token in monitor mode (logs, never blocks)', async () => {

@@ -67,6 +67,12 @@ export async function verifyAppCheckToken(
     return enforced ? { ok: false, reason: 'missing-token' } : { ok: true };
   }
 
+  const expected = process.env.NEXT_PUBLIC_FIREBASE_APP_ID?.trim();
+  if (enforced && !expected) {
+    logWarn('app-check.unconfigured', { missing: 'NEXT_PUBLIC_FIREBASE_APP_ID' });
+    return { ok: false, reason: 'unconfigured' };
+  }
+
   const app = getAdminApp();
   if (!app) {
     return enforced ? { ok: false, reason: 'unconfigured' } : { ok: true };
@@ -81,7 +87,6 @@ export async function verifyAppCheckToken(
       logWarn('app-check.replay', { appId });
       return enforced ? { ok: false, reason: 'replay' } : { ok: true };
     }
-    const expected = process.env.NEXT_PUBLIC_FIREBASE_APP_ID;
     if (expected && appId !== expected) {
       logWarn('app-check.app-mismatch', { appId, expected, enforced });
       return enforced ? { ok: false, reason: 'app-mismatch' } : { ok: true };
