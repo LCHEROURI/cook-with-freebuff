@@ -2,8 +2,8 @@
 
 ## Phase 1: Pantry-to-Plate Smart Starter
 
-- [~] Task 1.1: Define and test the trusted kitchen-context policy
-- [ ] Task 1.2: Finish preferred-equipment profile support
+- [x] Task 1.1: Define and test the trusted kitchen-context policy
+- [~] Task 1.2: Finish preferred-equipment profile support
 - [ ] Task 1.3: Add the authenticated pantry-starter server contract
 - [ ] Task 1.4: Build the accessible Cook from my pantry starter
 - [ ] Task 1.5: Connect pantry results to existing recipe and guided-cooking flows
