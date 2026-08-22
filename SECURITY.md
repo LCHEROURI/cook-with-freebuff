@@ -31,6 +31,34 @@ tests.
 - **Firestore rules** — the shared-project union ruleset
   (portfolio + kitchen collections, owner-scoped, catch-all deny last).
 
+## Data-write integrity
+
+Every repository create and update validates the complete resulting document
+against its canonical Zod schema before Firestore mutation. Partial updates are
+merged with the stored document and then validated, so a valid-looking patch
+cannot leave invalid persisted state. Repository policies also reject changes
+to immutable identity, ownership, source, and creation fields. Optimistic
+session versions and correlation-marker transaction semantics remain enforced.
+
+Client rules independently prove owner, second-user, and anonymous outcomes.
+The Cook clauses preserve ownership on updates, append-only collections reject
+updates/deletes, and server-managed collections deny all client access. Because
+`firestore.rules` is shared, `scripts/firestore-rules-scope.test.ts` preserves
+the non-Cook union sections byte-for-byte and keeps the catch-all deny last.
+
+## App Check boundary
+
+For the quota-bearing `/api/agent`, `/api/cook`, `/api/tools`,
+`/api/vision/scan`, and `/api/voice/token` routes, App Check runs before authentication and provider work. In production, `APP_CHECK_ENFORCED=1` fails
+closed when the token, expected app ID, site key, or Admin credentials are
+missing or invalid. Voice-token and vision requests consume single-use tokens;
+standard routes verify ordinary attestation tokens.
+
+The local Firebase emulator path retains its explicit App Check bypass so
+development does not need production attestation. Monitor mode is rollout-only:
+production acceptance requires an unattested HTTP 403 `APP_CHECK_FAILED` and
+an attested authenticated success from the deployed verifier.
+
 ## Server-only surface
 
 `lib/server/*` (admin credentials, Firestore, repositories, logger) is

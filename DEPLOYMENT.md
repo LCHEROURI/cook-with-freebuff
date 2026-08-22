@@ -31,6 +31,10 @@ push/PR ──► GitHub Actions (validate: typecheck · lint · test · build
 | Variable | Where | Purpose |
 |---|---|---|
 | `NEXT_PUBLIC_FIREBASE_API_KEY` | GitHub secret | Client Firebase auth |
+| `NEXT_PUBLIC_FIREBASE_PROJECT_ID` | App Hosting config, `.env.local` | Canonical shared Firebase project |
+| `NEXT_PUBLIC_FIREBASE_APP_ID` | App Hosting config, GitHub secret, `.env.local` | Expected App Check application identity |
+| `NEXT_PUBLIC_FIREBASE_APP_CHECK_SITE_KEY` | App Hosting secret, `.env.local` | Web attestation site key |
+| `APP_CHECK_ENFORCED` | App Hosting runtime | Production fail-closed switch; must be `1` |
 | `FIREBASE_SERVICE_ACCOUNT` | `.env.local`, GitHub secret | Admin SDK (inline JSON) |
 | `APP_OWNER_UID` | `.env.local`, GitHub secret | Owner identity for verify:live + admin flows |
 | `GOOGLE_AI_API_KEY` | `.env.local`, GitHub secret | Gemini provider (recipe gen, conversation) |
@@ -41,19 +45,24 @@ sync across both stores.
 ## Deploying
 
 ```bash
-# 1. Validate locally
-npm run typecheck && npm test && npm run build
+# 1. Validate locally, including unit/contract/emulator/build gates
+npm run check
+npm run test:rules
+npm run test:emulator
 
-# 2. Land to main (protected — see "Landing changes (strict flow)" below):
+# 2. Confirm the App Hosting site-key secret exists, APP_CHECK_ENFORCED=1,
+#    and the shared union-rules synchronization prerequisite is satisfied.
+
+# 3. Land to main (protected — see "Landing changes (strict flow)" below):
 #    owner   git push origin main                                     # bypass-with-recording
 #    anyone  npm run land:pr -- --message "fix: ..." --wait           # branch + PR + merge-when-green
 
-# 3. CI deploys the main branch to App Hosting (after validate + smoke pass)
+# 4. CI deploys the main branch to App Hosting (after validate + smoke pass)
 
-# 4. CI verifies the deployed app end to end (same run, after the rollout
-#    serves the pushed commit):
-#    npm run verify:live            # seeds owner recipe → guided flow → safety gate →
-                                    # timer → pantry confirm → Gemini turn → cleanup
+# 5. Only after /api/build-info serves that commit, run the enforced route and
+#    authenticated Firestore proofs:
+npm run verify:live -- --require-app-check-enforced
+npm run verify:real-data
 ```
 
 `verify:live` also runs automatically in CI in the same run as every main
@@ -163,6 +172,20 @@ keyed per commit, so the green/skipped runs satisfied the required checks).
 That dance is obsolete: PR-only + auto-merge replaced it, and the owner's
 bypass-with-recording makes the direct push itself unblocked.
 
+## App Check rollout gate
+
+`apphosting.yaml` supplies the App Check site-key secret at build/runtime and
+sets `APP_CHECK_ENFORCED=1` at runtime. The rollout is acceptable only when
+`/api/build-info` reports the intended revision and an unattested quota-route
+request returns 403 `APP_CHECK_FAILED` before authentication/provider work.
+The required live verifier then proves an attested authenticated success.
+
+Do not run either write-capable production probe against a stale revision.
+`verify:live` performs cleanup sweeps and flow writes; `verify:real-data`
+creates an isolated document and temporary Auth users. A stale `/api/build-info`
+SHA or a 401 response to the unattested preflight is a deployment prerequisite
+blocker, not permission to continue.
+
 ## Verify:live contract
 
 `scripts/verify-live.mjs` proves the whole stack against the live App Hosting
@@ -182,8 +205,19 @@ Any failure exits non-zero; the CI job fails, so a broken deploy can't go green.
 
 ```bash
 npm run verify:live                       # deployed default
+npm run verify:live -- --require-app-check-enforced  # release proof
 npm run verify:live -- --app http://localhost:3100   # local dev server
 ```
+
+## Authenticated real-data contract
+
+`npm run verify:real-data` is an explicit production-only proof against the
+canonical shared Firebase project. It refuses emulator hosts and unexpected
+project IDs, mints two unique temporary users, and performs owner create/read/
+update/delete through the client SDK. The second user must receive
+`permission-denied` for read, update, and delete. A `finally` cleanup backstop
+removes the isolated pantry document and both users; logs never include tokens
+or credentials. Run it only after the deployed App Check proof above passes.
 
 ## Firestore rules & indexes
 
@@ -205,7 +239,11 @@ npm run verify:live -- --app http://localhost:3100   # local dev server
 App Hosting keeps prior rollouts; to roll back, promote a previous rollout via
 the Firebase console (App Hosting → rollouts) or redeploy an earlier commit.
 There is no second host to switch to — the App Hosting rollout history IS the
-rollback surface.
+rollback surface. For an App Check incident, redeploy a reviewed configuration
+with `APP_CHECK_ENFORCED=0` while diagnosis proceeds; do not remove route gates
+or weaken Firestore rules. Re-run the unattested/attested proofs after restoring
+enforcement. Rules rollback must use a previously synchronized complete union
+ruleset, never a Cook-only fragment.
 
 ## Troubleshooting
 
@@ -213,6 +251,8 @@ rollback surface.
 |---|---|---|
 | verify:live fails at seed | `FIREBASE_SERVICE_ACCOUNT` stale/missing | Re-sync all three stores |
 | verify:live fails at Gemini turn | `GOOGLE_AI_API_KEY` missing | Add to GitHub secrets (and `apphosting.yaml` for runtime), redeploy |
+| Unattested quota route returns 401 instead of 403 `APP_CHECK_FAILED` | Stale deployment or enforcement disabled | Confirm `/api/build-info`, site-key secret, app ID, and `APP_CHECK_ENFORCED=1`; redeploy before live writes |
+| Attested route fails `APP_CHECK_FAILED` | Wrong app ID, malformed/replayed token, or missing Admin readiness | Verify App Hosting config and mint a fresh token; voice/vision tokens are single-use |
 | `/api/*` returns 401 | ID token rejected | Check `NEXT_PUBLIC_FIREBASE_API_KEY` matches project |
 | Firestore reads/writes fail client-side | Rules not deployed / drifted | Verify the sibling synchronization prerequisite, then deploy the canonical union ruleset through the authorized release workflow |
 | CI validate fails at lint | ESLint config drift | `npm run lint` locally first |
