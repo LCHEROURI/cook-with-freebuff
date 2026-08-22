@@ -1,8 +1,47 @@
+const EXPECTED_PROJECT_ID = 'portfolio-app-freebuff2';
 const DEFAULT_APP = 'https://cook-with-freebuff--portfolio-app-freebuff2.us-central1.hosted.app';
 
 function flag(args, name, fallback) {
   const index = args.indexOf(name);
   return index >= 0 && args[index + 1] ? args[index + 1] : fallback;
+}
+
+/**
+ * Validates that the preflight host is bound to the expected Firebase project.
+ * Accepts only official Firebase Hosting / App Hosting hostname forms:
+ *
+ *   PROJECT_ID.web.app
+ *   PROJECT_ID.firebaseapp.com
+ *   SITE_ID--PROJECT_ID.REGION.hosted.app
+ *
+ * Substring-only matches are rejected — an attacker-controlled host such as
+ * \`evil--PROJECT_ID.attacker.example\` must not pass the check.
+ */
+function assertHostBoundToProject(appUrl) {
+  const hostname = new URL(appUrl).hostname;
+
+  // Default Firebase Hosting domains — exact match at the project level.
+  if (
+    hostname === `${EXPECTED_PROJECT_ID}.web.app` ||
+    hostname === `${EXPECTED_PROJECT_ID}.firebaseapp.com`
+  ) {
+    return;
+  }
+
+  // Firebase App Hosting preview / production channels.
+  // The --projectId label may be followed by a region dot (production)
+  // or a channel suffix (--projectId-preview.region.hosted.app). The
+  // hostname must end with the Google-controlled .hosted.app TLD.
+  if (
+    hostname.endsWith('.hosted.app') &&
+    /--portfolio-app-freebuff2(?:[.-])/.test(hostname)
+  ) {
+    return;
+  }
+
+  throw new Error(
+    `Refusing preflight against an untrusted host; the deployment URL must reference project ${EXPECTED_PROJECT_ID}.`,
+  );
 }
 
 export function parseProductionPreflightOptions(args, env) {
@@ -14,8 +53,11 @@ export function parseProductionPreflightOptions(args, env) {
     throw new Error('The expected production SHA must be a full 40-character Git commit SHA.');
   }
 
+  const app = flag(args, '--app', env.VERIFY_BASE_URL ?? DEFAULT_APP).replace(/\/$/, '');
+  assertHostBoundToProject(app);
+
   return {
-    app: flag(args, '--app', env.VERIFY_BASE_URL ?? DEFAULT_APP).replace(/\/$/, ''),
+    app,
     expectedSha: expectedSha.toLowerCase(),
   };
 }
