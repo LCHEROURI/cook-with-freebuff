@@ -21,6 +21,22 @@ import { useLiveDictation } from '@/lib/hooks/useLiveDictation';
 import { useCookingSession } from '@/lib/hooks/useCookingSession';
 import { appCheckHeaders } from '@/lib/firebase/app-check';
 
+interface PantryMatchItem {
+  recipeId: string;
+  title: string;
+  servings: number;
+  totalMinutes: number;
+  ingredientCount: number;
+  matchPercent: number;
+  matchedCount: number;
+  missingCount: number;
+  expiredCount: number;
+  staleCount: number;
+  uncertainCount: number;
+  expiringSoonCount: number;
+  allIngredientsFound: boolean;
+}
+
 export default function CookPage() {
   const router = useRouter();
   // The API routes require a Bearer Firebase ID token. Real sign-in happens
@@ -305,12 +321,48 @@ export default function CookPage() {
     }
   }, [getToken]);
 
+  // ── "What Can I Make?" — pantry-aware recipe matches ─────────────────────
+
+  const [pantryMatches, setPantryMatches] = useState<{
+    status: 'loading' | 'ready' | 'error';
+    items: PantryMatchItem[];
+  }>({ status: 'loading', items: [] });
+
+  const fetchPantryMatches = useCallback(async () => {
+    try {
+      const token = await getToken();
+      const res = await fetch('/api/cook', {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          ...(token ? { authorization: `Bearer ${token}` } : {}),
+          ...(await appCheckHeaders()),
+        },
+        body: JSON.stringify({ action: 'match_pantry_recipes' }),
+      });
+      const body = (await res.json()) as { success: boolean; data?: { matches: PantryMatchItem[] } };
+      if (!res.ok || !body.success || !body.data) {
+        setPantryMatches({ status: 'error', items: [] });
+        return;
+      }
+      setPantryMatches({ status: 'ready', items: body.data.matches });
+    } catch {
+      setPantryMatches({ status: 'error', items: [] });
+    }
+  }, [getToken]);
+
   // Fetch the list whenever the starter (no active session) is on screen.
   useEffect(() => {
     if (cook.loading || snap?.found) return;
     void fetchRecipes(filterProtein);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cook.loading, snap?.found, filterProtein, fetchRecipes]);
+
+  useEffect(() => {
+    if (cook.loading || snap?.found) return;
+    void fetchPantryMatches();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cook.loading, snap?.found, fetchPantryMatches]);
 
   useEffect(() => {
     if (cook.loading || snap?.found) return;
@@ -774,6 +826,46 @@ export default function CookPage() {
                 {starter.starting ? 'Starting…' : '▶ Start cooking'}
               </button>
             </div>
+          )}
+          {pantryMatches.status === 'ready' && pantryMatches.items.length > 0 && (
+            <section className={styles.recipesSection} aria-label="What can I make?">
+              <h2 className={styles.recipesTitle}>What can I make?</h2>
+              <ul className={styles.recipesList}>
+                {pantryMatches.items.map((m) => (
+                  <li key={m.recipeId} className={styles.recipeCard}>
+                    <div className={styles.recipeInfo}>
+                      <p className={styles.recipeName}>
+                        {m.title}
+                        {m.allIngredientsFound && (
+                          <span className={styles.readyBadge}>All ingredients found</span>
+                        )}
+                      </p>
+                      <RecipeRowMeta
+                        servings={m.servings}
+                        totalMinutes={m.totalMinutes}
+                        ingredientCount={m.ingredientCount}
+                      />
+                      <p className={styles.recipeMatch}>
+                        <span className={styles.matchBar} style={{ width: `${m.matchPercent}%` }} />
+                        {m.matchedCount} of {m.ingredientCount} ingredients
+                        {m.missingCount > 0 && ` · ${m.missingCount} missing`}
+                        {m.expiredCount > 0 && ` · ${m.expiredCount} expired`}
+                        {m.expiringSoonCount > 0 && ` · ${m.expiringSoonCount} expiring soon`}
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      className={styles.recipeStart}
+                      onClick={() => void handleStartSavedRecipe(m.recipeId)}
+                      disabled={startingId !== null}
+                      aria-label={`Cook ${m.title}`}
+                    >
+                      {startingId === m.recipeId ? 'Starting…' : '▶ Cook this'}
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </section>
           )}
           {recipes.status === 'ready' && recipes.items.length > 0 && (
             <section className={styles.recipesSection} aria-label="Your recipes">

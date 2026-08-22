@@ -3,12 +3,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import '@testing-library/jest-dom/vitest';
 
-// Behavioral double-submission lock tests.
-// Prove:
-//  1. Two synchronous form submits -> exactly one fetch('create_recipe').
-//  2. Two rapid Pantry clicks -> exactly one fetch('create_recipe').
-//  3. Lock releases after failure -> next submission gets fresh fetch.
-
 const push = vi.fn();
 const replace = vi.fn();
 
@@ -77,9 +71,30 @@ const authBase: UseAuthSessionResult = {
   signIn: vi.fn(async () => {}), signOut: vi.fn(async () => {}),
 };
 
-const RECIPE_OK = { ok: true, json: async () => ({ success: true, data: { recipeId: 'recipe-1', title: 'Chicken and Rice', servings: 2, preferences: { servings: 2, allergies: [], dietaryRestrictions: [] }, validation: { valid: true, errors: [], confirmations: [] } } }) };
+const RECIPE_OK = { ok: true, json: async () => ({
+  success: true, data: {
+    recipeId: 'recipe-1', title: 'Chicken and Rice', servings: 2,
+    preferences: { servings: 2, allergies: [], dietaryRestrictions: [] },
+    validation: { valid: true, errors: [], confirmations: [] },
+  },
+}) };
 const PANTRY_STARTER = { ok: true, json: async () => ({ success: true, data: { items: [{ id: 'chicken', name: 'chicken', confidence: 1, stale: false, expiresSoon: false, daysUntilExpiration: null, requiresConfirmation: false, selectedByDefault: true }], profile: { allergies: [], dietaryRestrictions: [], dislikedIngredients: [], preferredCuisines: [], defaultServings: 2, preferredEquipment: [] } } }) };
 const RECIPES_EMPTY = { ok: true, json: async () => ({ success: true, data: { recipes: [] } }) };
+const MATCHES_EMPTY = { ok: true, json: async () => ({ success: true, data: { matches: [] } }) };
+
+function buildFetch(...actions: string[]) {
+  const fns: Record<string, () => unknown> = {
+    pantry_starter: () => PANTRY_STARTER,
+    list_recipes: () => RECIPES_EMPTY,
+    match_pantry_recipes: () => MATCHES_EMPTY,
+    create_recipe: () => RECIPE_OK,
+  };
+  return vi.fn(async (url: unknown, init?: RequestInit) => {
+    const body = init?.body ? JSON.parse(String(init.body)) as { action?: string } : {};
+    const fn = fns[body.action ?? ''];
+    return fn ? fn() : { ok: true, json: async () => ({ success: true }) };
+  });
+}
 
 function countCreateCalls(fetchMock: ReturnType<typeof vi.fn>): number {
   return fetchMock.mock.calls.filter(([, init]) => {
@@ -101,15 +116,8 @@ beforeEach(() => {
 afterEach(() => { vi.unstubAllGlobals(); });
 
 describe('submission lock (behavioral)', () => {
-  // ── Manual ────────────────────────────────────────────────────────────────
-
   it('two synchronous form submits -> exactly one create_recipe fetch', async () => {
-    const fetchMock = vi.fn(async (url: unknown, init?: RequestInit) => {
-      const body = init?.body ? JSON.parse(String(init.body)) as { action?: string } : {};
-      if (body.action === 'pantry_starter') return { ok: true, json: async () => ({ success: true, data: { items: [], profile: null } }) };
-      if (body.action === 'list_recipes') return RECIPES_EMPTY;
-      return RECIPE_OK;
-    });
+    const fetchMock = buildFetch();
     vi.stubGlobal('fetch', fetchMock);
 
     render(<CookPage />);
@@ -117,8 +125,6 @@ describe('submission lock (behavioral)', () => {
     await act(() => { fireEvent.change(input, { target: { value: 'chicken thighs and rice' } }); });
     const form = screen.getByLabelText('Create a recipe from ingredients');
 
-    // Fire TWO submits in the SAME act() tick — the lock must catch the second one
-    // before the first handler's finally block releases it.
     await act(() => {
       fireEvent.submit(form);
       fireEvent.submit(form);
@@ -128,22 +134,13 @@ describe('submission lock (behavioral)', () => {
     expect(countCreateCalls(fetchMock)).toBe(1);
   });
 
-  // ── Pantry ────────────────────────────────────────────────────────────────
-
   it('two rapid Pantry clicks -> exactly one create_recipe fetch', async () => {
-    const fetchMock = vi.fn(async (url: unknown, init?: RequestInit) => {
-      const body = init?.body ? JSON.parse(String(init.body)) as { action?: string } : {};
-      if (body.action === 'pantry_starter') return PANTRY_STARTER;
-      if (body.action === 'list_recipes') return RECIPES_EMPTY;
-      return RECIPE_OK;
-    });
+    const fetchMock = buildFetch();
     vi.stubGlobal('fetch', fetchMock);
 
     render(<CookPage />);
     const pantryBtn = await screen.findByTestId('pantry-create');
 
-    // userEvent respects disabled, so the second click (after the handler sets
-    // creating=true + the button disables) is a no-op.
     fireEvent.click(pantryBtn);
     fireEvent.click(pantryBtn);
 
@@ -151,14 +148,13 @@ describe('submission lock (behavioral)', () => {
     expect(countCreateCalls(fetchMock)).toBe(1);
   });
 
-  // ── Lock release after failure ────────────────────────────────────────────
-
   it('lock releases after failure, so next submission gets a fresh fetch', async () => {
     let calls = 0;
     const fetchMock = vi.fn(async (url: unknown, init?: RequestInit) => {
       const body = init?.body ? JSON.parse(String(init.body)) as { action?: string } : {};
-      if (body.action === 'pantry_starter') return { ok: true, json: async () => ({ success: true, data: { items: [], profile: null } }) };
+      if (body.action === 'pantry_starter') return PANTRY_STARTER;
       if (body.action === 'list_recipes') return RECIPES_EMPTY;
+      if (body.action === 'match_pantry_recipes') return MATCHES_EMPTY;
       calls++;
       if (calls === 1) return { ok: false, json: async () => ({ success: false, error: { code: 'INTERNAL_ERROR', message: 'Network error', recoverable: true } }) };
       return RECIPE_OK;
@@ -170,11 +166,9 @@ describe('submission lock (behavioral)', () => {
     await act(() => { fireEvent.change(input, { target: { value: 'chicken thighs and rice' } }); });
     const form = screen.getByLabelText('Create a recipe from ingredients');
 
-    // First submit: fails.
     await act(() => { fireEvent.submit(form); });
     await waitFor(() => { expect(screen.getByText(/Network error/)).toBeInTheDocument(); });
 
-    // Second submit: succeeds because finally released the lock.
     await act(() => { fireEvent.submit(form); });
     await waitFor(() => { expect(screen.getByText('Chicken and Rice')).toBeInTheDocument(); });
 

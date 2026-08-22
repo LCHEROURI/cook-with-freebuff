@@ -25,6 +25,8 @@ import {
 import { extractIngredients, extractRecipePreferences } from '@/lib/agent/extract';
 import { validateRecipe } from '@/lib/recipe/validate';
 import { evaluateStoredRecipeSafety } from '@/lib/server/recipe-safety';
+import { matchRecipeToPantry, rankRecipeMatches } from '@/lib/server/pantry-match';
+import { PantryService } from '@/lib/server/pantry-service';
 import { emptyProfile } from '@/lib/server/profile-service';
 import type { Recipe } from '@/lib/domain/types';
 import type { RecipeRequest } from '@/lib/ai/types';
@@ -41,6 +43,7 @@ const ACTIONS = [
   'launch', 'status', 'done', 'repeat', 'back', 'pause', 'resume', 'timers',
   'start_over', 'substitute', 'apply_substitution', 'correct', 'recover', 'clear_recovery',
   'create_recipe', 'pantry_starter', 'list_recipes', 'get_recipe', 'delete_recipe',
+  'match_pantry_recipes',
 ] as const;
 type CookAction = (typeof ACTIONS)[number];
 
@@ -362,6 +365,42 @@ async function handle(userId: string, body: unknown): Promise<NextResponse> {
           updatedAt: r.updatedAt,
         }));
       return NextResponse.json({ success: true, data: { recipes } });
+    }
+    case 'match_pantry_recipes': {
+      // Cross-reference saved recipes against the user's pantry and return
+      // ranked matches — "What Can I Make?" on the Cook page.
+      if (!ctx.pantryStore || !ctx.dietaryProfileStore || !ctx.recipeStore) {
+        return NextResponse.json(
+          { success: false, error: { code: 'UNAVAILABLE', message: 'Pantry matching is not available', recoverable: true } },
+          { status: 503 },
+        );
+      }
+      const pantryService = new PantryService(ctx.pantryStore);
+      const pantryItems = await pantryService.listPantry(userId);
+      const profile = (await ctx.dietaryProfileStore.getProfile(userId)) ?? emptyProfile(userId);
+      const allRecipes = await ctx.recipeStore.listRecipes(userId);
+      console.error('DEBUG match_pantry allRecipes:', allRecipes.length, 'pantryItems:', pantryItems.length);
+      console.error('DEBUG recipeIds:', allRecipes.map(r => r.id), 'pantryIds:', pantryItems.map(p => p.id));
+
+      // Safety-filter: owner-scoped + safety re-evaluation.
+      const safeRecipes = allRecipes.filter((recipe) =>
+        evaluateStoredRecipeSafety(recipe, profile).canList,
+      );
+
+      // Match each recipe against the pantry.
+      const matches = safeRecipes.map((recipe) => {
+        const result = matchRecipeToPantry(recipe.ingredients, pantryItems);
+        return {
+          ...result.match,
+          recipeId: recipe.id,
+          title: recipe.title,
+          servings: recipe.servings,
+          totalMinutes: recipe.totalMinutes,
+        };
+      });
+
+      const ranked = rankRecipeMatches(matches);
+      return NextResponse.json({ success: true, data: { matches: ranked } });
     }
     case 'pantry_starter': {
       if (!ctx.pantryStore || !ctx.dietaryProfileStore) {

@@ -1077,4 +1077,246 @@ describe('/api/cook — correlationId boundary', () => {
     expect(res.status).toBe(200);
     expect(mockBuild).toHaveBeenCalledWith('user-1', 'boundary-ok-1');
   });
+
+  describe('match_pantry_recipes — pantry-aware recipe suggestions', () => {
+    it('returns ranked matches when pantry items exist', async () => {
+      const ctx = testContext('user-1');
+      mockBuild.mockImplementation(() => ctx);
+
+      // Seed recipes with known ingredients.
+      const now = Date.now();
+      const recipeStore = ctx.recipeStore as InMemoryRecipeStore;
+      await recipeStore.createRecipe({
+        ...makeRecipe(),
+        id: 'recipe-a',
+        title: 'Chicken Thighs with Rice',
+        ingredients: [
+          { id: 'i1', name: 'chicken thighs', quantity: 4, unit: 'pieces', optional: false },
+          { id: 'i2', name: 'rice', quantity: 2, unit: 'cups', optional: false },
+        ],
+        prepSteps: [
+          { id: 'p1', stepNumber: 1, instruction: 'Rinse the rice', spokenInstruction: 'Rinse the rice', estimatedSeconds: 60, ingredientsUsed: ['rice'], equipmentUsed: [] },
+        ],
+        cookingSteps: [
+          { id: 'c1', stepNumber: 1, instruction: 'Cook the chicken', spokenInstruction: 'Cook the chicken', estimatedSeconds: 900, timerSeconds: 900, ingredientsUsed: ['chicken thighs'], equipmentUsed: ['pan'] },
+        ],
+        updatedAt: now,
+      });
+      await recipeStore.createRecipe({
+        ...makeRecipe(),
+        id: 'recipe-b',
+        title: 'Beef Stew',
+        ingredients: [
+          { id: 'i3', name: 'beef chuck', quantity: 2, unit: 'lbs', optional: false },
+          { id: 'i4', name: 'carrots', quantity: 3, unit: 'pieces', optional: false },
+          { id: 'i5', name: 'potatoes', quantity: 4, unit: 'pieces', optional: false },
+        ],
+        prepSteps: [
+          { id: 'p2', stepNumber: 1, instruction: 'Chop the carrots', spokenInstruction: 'Chop the carrots', estimatedSeconds: 120, ingredientsUsed: ['carrots'], equipmentUsed: ['knife'] },
+        ],
+        cookingSteps: [
+          { id: 'c2', stepNumber: 1, instruction: 'Brown the beef', spokenInstruction: 'Brown the beef', estimatedSeconds: 300, timerSeconds: 300, ingredientsUsed: ['beef chuck'], equipmentUsed: ['pot'] },
+        ],
+        updatedAt: now + 1000,
+      });
+
+      // Seed pantry: one match for recipe-a, nothing for recipe-b.
+      const pantryStore = ctx.pantryStore as InMemoryPantryStore;
+      await pantryStore.upsertItem({
+        id: 'pantry-1',
+        userId: 'user-1',
+        name: 'chicken thighs',
+        quantity: 4,
+        unit: 'pieces',
+        confidence: 1,
+        source: 'VOICE',
+        lastConfirmedAt: now,
+      });
+      await pantryStore.upsertItem({
+        id: 'pantry-2',
+        userId: 'user-1',
+        name: 'rice',
+        quantity: 2,
+        unit: 'cups',
+        confidence: 1,
+        source: 'VOICE',
+        lastConfirmedAt: now,
+      });
+
+      const res = await post({ action: 'match_pantry_recipes' });
+      expect(res.status).toBe(200);
+      const body = await res.json();
+      expect(body.success).toBe(true);
+      expect(Array.isArray(body.data.matches)).toBe(true);
+      expect(body.data.matches.length).toBeGreaterThanOrEqual(1);
+
+      // Ready-to-cook recipe (100% match) should rank first.
+      const chickenMatch = body.data.matches.find((m: any) => m.title === 'Chicken Thighs with Rice');
+      expect(chickenMatch).toBeDefined();
+      expect(chickenMatch.allIngredientsFound).toBe(true);
+      expect(chickenMatch.matchPercent).toBe(100);
+      expect(chickenMatch.matchedCount).toBe(2);
+      expect(chickenMatch.missingCount).toBe(0);
+    });
+
+    it('returns an empty array when the user has no recipes', async () => {
+      const ctx = testContext('user-1');
+      mockBuild.mockImplementation(() => ctx);
+
+      const res = await post({ action: 'match_pantry_recipes' });
+      expect(res.status).toBe(200);
+      const body = await res.json();
+      expect(body.success).toBe(true);
+      expect(body.data.matches).toEqual([]);
+    });
+
+    it('returns all-missing when the pantry is empty', async () => {
+      const ctx = testContext('user-1');
+      mockBuild.mockImplementation(() => ctx);
+      const recipeStore = ctx.recipeStore as InMemoryRecipeStore;
+      await recipeStore.createRecipe({
+        ...makeRecipe(),
+        id: 'recipe-c',
+        title: 'Pasta Carbonara',
+        ingredients: [
+          { id: 'i6', name: 'spaghetti', quantity: 1, unit: 'lb', optional: false },
+          { id: 'i7', name: 'eggs', quantity: 3, unit: 'pieces', optional: false },
+        ],
+        prepSteps: [
+          { id: 'p3', stepNumber: 1, instruction: 'Boil the spaghetti', spokenInstruction: 'Boil the spaghetti', estimatedSeconds: 600, ingredientsUsed: ['spaghetti'], equipmentUsed: ['pot'] },
+        ],
+        cookingSteps: [
+          { id: 'c3', stepNumber: 1, instruction: 'Fry the eggs', spokenInstruction: 'Fry the eggs', estimatedSeconds: 180, timerSeconds: 180, ingredientsUsed: ['eggs'], equipmentUsed: ['pan'] },
+        ],
+        updatedAt: Date.now(),
+      });
+
+      const res = await post({ action: 'match_pantry_recipes' });
+      expect(res.status).toBe(200);
+      const body = await res.json();
+      expect(body.success).toBe(true);
+      expect(body.data.matches.length).toBe(1);
+      const match = body.data.matches[0];
+      expect(match.matchedCount).toBe(0);
+      expect(match.missingCount).toBe(2);
+      expect(match.allIngredientsFound).toBe(false);
+    });
+
+    it('filters out recipes that fail safety evaluation', async () => {
+      const ctx = testContext('user-1');
+      mockBuild.mockImplementation(() => ctx);
+
+      // Set a peanut allergy in the dietary profile.
+      const profileStore = ctx.dietaryProfileStore as InMemoryDietaryProfileStore;
+      await profileStore.upsertProfile({
+        userId: 'user-1',
+        allergies: ['peanuts'],
+        dietaryRestrictions: [],
+        dislikedIngredients: [],
+        preferredCuisines: [],
+        preferredEquipment: [],
+        updatedAt: Date.now(),
+      });
+
+      // Try to save a recipe with peanut ingredient.
+      const recipeStore = ctx.recipeStore as InMemoryRecipeStore;
+      await recipeStore.createRecipe({
+        ...makeRecipe(),
+        id: 'recipe-unsafe',
+        title: 'Peanut Stir Fry',
+        ingredients: [
+          { id: 'i8', name: 'peanuts', quantity: 1, unit: 'cup', optional: false },
+        ],
+        prepSteps: [
+          { id: 'pu1', stepNumber: 1, instruction: 'Crush the peanuts', spokenInstruction: 'Crush the peanuts', estimatedSeconds: 60, ingredientsUsed: ['peanuts'], equipmentUsed: [] },
+        ],
+        cookingSteps: [],
+        // Mark as containing peanut allergens.
+        allergens: ['peanuts'],
+        updatedAt: Date.now(),
+      });
+
+      const res = await post({ action: 'match_pantry_recipes' });
+      expect(res.status).toBe(200);
+      const body = await res.json();
+      expect(body.success).toBe(true);
+      // The unsafe recipe should not appear.
+      const peanutMatch = body.data.matches.find((m: any) => m.title === 'Peanut Stir Fry');
+      expect(peanutMatch).toBeUndefined();
+    });
+
+    it('honours ownership isolation', async () => {
+      const ctx = testContext('user-1');
+      mockBuild.mockImplementation(() => ctx);
+      const recipeStore = ctx.recipeStore as InMemoryRecipeStore;
+
+      // Recipe belonging to another user.
+      await recipeStore.createRecipe({
+        ...makeRecipe(),
+        id: 'recipe-other',
+        userId: 'user-2',
+        title: 'Someone Else Dinner',
+        ingredients: [
+          { id: 'i9', name: 'salmon', quantity: 1, unit: 'piece', optional: false },
+        ],
+        prepSteps: [
+          { id: 'po1', stepNumber: 1, instruction: 'Season the salmon', spokenInstruction: 'Season the salmon', estimatedSeconds: 30, ingredientsUsed: ['salmon'], equipmentUsed: [] },
+        ],
+        cookingSteps: [],
+        updatedAt: Date.now(),
+      });
+
+      const res = await post({ action: 'match_pantry_recipes' });
+      expect(res.status).toBe(200);
+      const body = await res.json();
+      expect(body.success).toBe(true);
+      // Other user's recipe should not leak.
+      const leaked = body.data.matches.find((m: any) => m.title === 'Someone Else Dinner');
+      expect(leaked).toBeUndefined();
+    });
+
+    it('handles expired pantry items — does not count them as matched', async () => {
+      const ctx = testContext('user-1');
+      mockBuild.mockImplementation(() => ctx);
+      const now = Date.now();
+      const recipeStore = ctx.recipeStore as InMemoryRecipeStore;
+      await recipeStore.createRecipe({
+        ...makeRecipe(),
+        id: 'recipe-d',
+        title: 'Egg Salad',
+        ingredients: [
+          { id: 'i10', name: 'eggs', quantity: 4, unit: 'pieces', optional: false },
+        ],
+        prepSteps: [],
+        cookingSteps: [
+          { id: 'ce1', stepNumber: 1, instruction: 'Boil the eggs', spokenInstruction: 'Boil the eggs', estimatedSeconds: 600, timerSeconds: 600, ingredientsUsed: ['eggs'], equipmentUsed: ['pot'] },
+        ],
+        updatedAt: now,
+      });
+
+      // Seed expired pantry item.
+      const pantryStore = ctx.pantryStore as InMemoryPantryStore;
+      await pantryStore.upsertItem({
+        id: 'pantry-expired',
+        userId: 'user-1',
+        name: 'eggs',
+        quantity: 4,
+        unit: 'pieces',
+        confidence: 1,
+        source: 'VOICE',
+        lastConfirmedAt: now,
+        expirationDate: now - 86400000, // 1 day ago
+      });
+
+      const res = await post({ action: 'match_pantry_recipes' });
+      expect(res.status).toBe(200);
+      const body = await res.json();
+      expect(body.success).toBe(true);
+      const match = body.data.matches.find((m: any) => m.title === 'Egg Salad');
+      expect(match).toBeDefined();
+      expect(match.expiredCount).toBe(1);
+      expect(match.matchedCount).toBe(0);
+      expect(match.allIngredientsFound).toBe(false);
+    });
+  });
 });

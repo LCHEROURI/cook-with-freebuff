@@ -1435,3 +1435,33 @@
   font-size: 0.82rem;
   color: var(--color-text);
 }
+
+/* ── "What Can I Make?" pantry-match cards ───────────────────────────── */
+
+.readyBadge {
+  display: inline-block;
+  margin-left: 8px;
+  padding: 1px 8px;
+  border-radius: 12px;
+  background: #2e7d32;
+  color: #fff;
+  font-size: 0.75rem;
+  font-weight: 600;
+  vertical-align: middle;
+}
+
+.recipeMatch {
+  margin-top: 6px;
+  font-size: 0.82rem;
+  color: #666;
+}
+
+.matchBar {
+  display: inline-block;
+  height: 4px;
+  background: #e85d2c;
+  border-radius: 2px;
+  vertical-align: middle;
+  margin-right: 6px;
+  max-width: 80px;
+}
