@@ -24,6 +24,8 @@ import {
 } from '@/lib/server/pantry-starter-service';
 import { extractIngredients, extractRecipePreferences } from '@/lib/agent/extract';
 import { validateRecipe } from '@/lib/recipe/validate';
+import { evaluateStoredRecipeSafety } from '@/lib/server/recipe-safety';
+import { emptyProfile } from '@/lib/server/profile-service';
 import type { Recipe } from '@/lib/domain/types';
 import type { RecipeRequest } from '@/lib/ai/types';
 import type { ToolContext } from '@/lib/server/tools/types';
@@ -50,6 +52,10 @@ interface ResponsePreferences {
   servings: number | null;
   allergies: string[];
   dietaryRestrictions: string[];
+}
+
+function errorStatus(code: string | undefined): number {
+  return code === 'RECIPE_UNSAFE' ? 422 : 400;
 }
 
 async function generateRecipeResponse(
@@ -83,7 +89,7 @@ async function generateRecipeResponse(
           recoverable: true,
         },
       },
-      { status: 400 },
+      { status: errorStatus(result.error?.code) },
     );
   }
   const recipe = generated.recipe;
@@ -325,6 +331,8 @@ async function handle(userId: string, body: unknown): Promise<NextResponse> {
         ? parsed.protein.trim().toLowerCase()
         : undefined;
       let owned = await ctx.recipeStore?.listRecipes(userId) ?? [];
+      const profile = (await ctx.dietaryProfileStore?.getProfile(userId)) ?? emptyProfile(userId);
+      owned = owned.filter((recipe) => evaluateStoredRecipeSafety(recipe, profile).canList);
       // Client-side filter by protein category (simple enough to not warrant a
       // composite index — listRecipes returns the full set per user).
       if (protein) {
@@ -466,7 +474,7 @@ async function handle(userId: string, body: unknown): Promise<NextResponse> {
             success: false,
             error: result.error ?? { code: 'GENERATION_FAILED', message: 'Could not create a recipe from that.', recoverable: true },
           },
-          { status: 400 },
+          { status: errorStatus(result.error?.code) },
         );
       }
       const recipe = generated.recipe;
@@ -565,7 +573,10 @@ export async function POST(req: Request) {
         message: msg.slice(0, 300),
         latencyMs: Date.now() - startedAt,
       });
-      return NextResponse.json({ success: false, error: { code, message: msg, recoverable } }, { status: 400 });
+      return NextResponse.json(
+        { success: false, error: { code, message: msg, recoverable } },
+        { status: errorStatus(code) },
+      );
     } finally {
       logInfo('api.cook.response', {
         correlationId,

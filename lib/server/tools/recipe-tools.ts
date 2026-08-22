@@ -20,6 +20,7 @@ import { ok, fail, toToolError } from './types';
 import type { ToolDefinition } from './types';
 import type { Recipe, Ingredient } from '../../domain/types';
 import { classifyProteins } from '../../recipe/classify';
+import { evaluateGeneratedRecipeSafety } from '../recipe-safety';
 
 export const generateRecipeTool: ToolDefinition = {
   name: 'generate_recipe',
@@ -40,6 +41,25 @@ export const generateRecipeTool: ToolDefinition = {
           true,
         );
       }
+      const owned = {
+        ...parsed.data,
+        userId: ctx.userId,
+        proteinCategories: classifyProteins(parsed.data.ingredients),
+        preferences: {
+          servings: args.request.servings ?? null,
+          allergies: args.request.allergies,
+          dietaryRestrictions: args.request.dietaryRestrictions,
+        },
+        updatedAt: parsed.data.updatedAt,
+      };
+      const safety = evaluateGeneratedRecipeSafety(owned, args.request);
+      if (!safety.canPersist) {
+        return fail(
+          'RECIPE_UNSAFE',
+          safety.blockingErrors[0]?.message ?? 'Generated recipe did not pass safety validation',
+          true,
+        );
+      }
       if (ctx.recipeStore) {
         // Object-level ownership (K9 Part B): stamp the recipe with the
         // generating user before persisting — without userId the recipe is
@@ -50,21 +70,10 @@ export const generateRecipeTool: ToolDefinition = {
         // Also stamp the user-provided build constraints (servings, allergies,
         // dietary restrictions) from the request, so a saved recipe records
         // what it was built FOR — the /cook "Your recipes" rows surface them.
-        const owned = {
-          ...parsed.data,
-          userId: ctx.userId,
-          proteinCategories: classifyProteins(parsed.data.ingredients),
-          preferences: {
-            servings: args.request.servings ?? null,
-            allergies: args.request.allergies,
-            dietaryRestrictions: args.request.dietaryRestrictions,
-          },
-          updatedAt: parsed.data.updatedAt,
-        };
         await ctx.recipeStore.createRecipe(owned);
-        return ok({ recipe: owned });
+        return ok({ recipe: owned, safety });
       }
-      return ok({ recipe: parsed.data });
+      return ok({ recipe: owned, safety });
     } catch (e) {
       return toToolError(e);
     }

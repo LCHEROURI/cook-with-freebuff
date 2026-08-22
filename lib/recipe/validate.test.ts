@@ -55,6 +55,50 @@ describe('validateRecipe — schema validity', () => {
   });
 });
 
+describe('validateRecipe — explicit safety decisions', () => {
+  it('blocks persistence, usable listing, and launch for a hard allergy error', () => {
+    const result = validateRecipe(
+      makeRecipe({ allergens: ['peanuts'] }),
+      { allergies: ['peanuts'] },
+    );
+
+    expect(result).toMatchObject({
+      blockingErrors: [expect.objectContaining({ field: 'allergens' })],
+      canPersist: false,
+      canList: false,
+      canLaunch: false,
+    });
+  });
+
+  it('keeps warnings nonblocking', () => {
+    const result = validateRecipe(makeRecipe({ safetyNotes: [] }));
+
+    expect(result.warnings.length).toBeGreaterThan(0);
+    expect(result).toMatchObject({
+      blockingErrors: [],
+      canPersist: true,
+      canList: true,
+      canLaunch: true,
+    });
+  });
+
+  it('keeps missing confirmations visible without classifying them as unsafe', () => {
+    const result = validateRecipe(makeRecipe(), {
+      availableIngredients: ['chicken thighs', 'rice'],
+    });
+
+    expect(result.missingConfirmations).toEqual([
+      expect.objectContaining({ item: 'onion' }),
+    ]);
+    expect(result).toMatchObject({
+      blockingErrors: [],
+      canPersist: true,
+      canList: true,
+      canLaunch: true,
+    });
+  });
+});
+
 describe('validateRecipe — ingredient consistency', () => {
   it('flags a step referencing an unknown ingredient', () => {
     const r = makeRecipe({

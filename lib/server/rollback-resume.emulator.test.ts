@@ -82,7 +82,10 @@ function makeRecipe(overrides: Partial<Recipe> = {}): Recipe {
     estimatedPrepMinutes: 10,
     estimatedCookMinutes: 25,
     totalMinutes: 35,
-    ingredients: [{ id: 'i1', name: 'chicken thighs', quantity: 4, unit: 'pieces', optional: false }],
+    ingredients: [
+      { id: 'i1', name: 'chicken thighs', quantity: 4, unit: 'pieces', optional: false },
+      { id: 'i2', name: 'onion', quantity: 1, unit: null, optional: false },
+    ],
     equipment: ['pan', 'knife'],
     prepSteps: [
       { id: 'p1', stepNumber: 1, instruction: 'Dice the onion', spokenInstruction: 'Dice the onion', estimatedSeconds: 120, ingredientsUsed: ['onion'], equipmentUsed: ['knife'] },

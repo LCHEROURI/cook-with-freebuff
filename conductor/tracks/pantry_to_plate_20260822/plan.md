@@ -1,4 +1,4 @@
-# Plan: pantry_to_plate_20260822 — [x] Complete
+# Plan: pantry_to_plate_20260822 — [~] In Progress
 
 ## Phase 1: Pantry-to-Plate Smart Starter
 
@@ -16,3 +16,21 @@
 - Existing manual, voice, photo, recipe, and guided-cooking tests pass.
 - `npm run check`, `npm run test:rules`, and `npm run test:emulator` pass.
 - Acceptance criteria have automated or documented manual evidence.
+
+## Phase 2: Review Remediation
+
+- [x] Task 2.1: Enforce deterministic recipe safety before persistence, usable listing, and guided-cooking launch
+- [ ] Task 2.2: Add effective-context generation idempotency with fenced leases and complete verification
+
+### Phase 2 verification
+
+- Unsafe generated or previously stored recipes cannot persist, appear in the
+  normal usable list, or launch guided cooking.
+- Valid, warning-only, and confirmation-required recipes preserve their
+  documented behavior.
+- Concurrent requests under one valid lease generate once; stale workers cannot
+  complete or fail after a successor takes the lease.
+- Ownership, App Check, authentication, rules, indexes, and existing cooking
+  behavior remain unchanged and green.
+- `git diff --check`, `npm run check`, `npm run test:rules`, and
+  `npm run test:emulator` pass.

@@ -67,7 +67,10 @@ function makeRecipe(): Recipe {
     estimatedPrepMinutes: 10,
     estimatedCookMinutes: 25,
     totalMinutes: 35,
-    ingredients: [{ id: 'i1', name: 'chicken thighs', quantity: 4, unit: 'pieces', optional: false }],
+    ingredients: [
+      { id: 'i1', name: 'chicken thighs', quantity: 4, unit: 'pieces', optional: false },
+      { id: 'i2', name: 'onion', quantity: 1, unit: null, optional: false },
+    ],
     equipment: ['pan', 'knife'],
     prepSteps: [
       { id: 'p1', stepNumber: 1, instruction: 'Dice the onion', spokenInstruction: 'Dice the onion', estimatedSeconds: 120, ingredientsUsed: ['onion'], equipmentUsed: ['knife'] },
@@ -361,7 +364,7 @@ describe('/api/cook', () => {
         id: 'recipe-new',
         title: 'Fresh Pasta',
         updatedAt: 5000,
-        preferences: { servings: 4, allergies: ['peanuts'], dietaryRestrictions: ['vegetarian'] },
+        preferences: { servings: 4, allergies: ['peanuts'], dietaryRestrictions: ['gluten-free'] },
       });
       // Another user's recipe must never leak into the list (userId isolation).
       await store.createRecipe({ ...makeRecipe(), id: 'recipe-other', userId: 'user-2', updatedAt: 9000 });
@@ -375,10 +378,10 @@ describe('/api/cook', () => {
       expect(first.title).toBe('Fresh Pasta');
       expect(first.servings).toBe(2);
       expect(first.totalMinutes).toBe(35);
-      expect(first.ingredientCount).toBe(1);
+      expect(first.ingredientCount).toBe(2);
       // The build constraints surface in the summary — the row shows what the
       // recipe was built for.
-      expect(first.preferences).toEqual({ servings: 4, allergies: ['peanuts'], dietaryRestrictions: ['vegetarian'] });
+      expect(first.preferences).toEqual({ servings: 4, allergies: ['peanuts'], dietaryRestrictions: ['gluten-free'] });
       // A recipe created without preferences gets a safe empty shape (never
       // `undefined` — the client renders it unconditionally).
       expect(body.data.recipes[1].preferences).toEqual({ servings: null, allergies: [], dietaryRestrictions: [] });
@@ -554,7 +557,7 @@ describe('/api/cook', () => {
 
     it('threads servings, allergies, and dietary restrictions into the generation request', async () => {
       // The starter prompt can carry preferences: "…for 4 people, no peanuts,
-      // vegetarian" — create_recipe must parse them and pass them to the
+      // gluten-free" — create_recipe must parse them and pass them to the
       // generator (the request the model actually reads).
       let received: unknown = null;
       registerRecipeGenerator('default', {
@@ -566,7 +569,7 @@ describe('/api/cook', () => {
 
       const res = await post({
         action: 'create_recipe',
-        prompt: 'I have chicken thighs and rice for 4 people, no peanuts, vegetarian',
+        prompt: 'I have chicken thighs and rice for 4 people, no peanuts, gluten-free',
       });
       expect(res.status).toBe(200);
       const req = received as {
@@ -577,7 +580,7 @@ describe('/api/cook', () => {
       };
       expect(req.servings).toBe(4);
       expect(req.allergies).toEqual(['peanuts']);
-      expect(req.dietaryRestrictions).toEqual(['vegetarian']);
+      expect(req.dietaryRestrictions).toEqual(['gluten-free']);
       // The preference spans must be stripped BEFORE ingredient extraction —
       // “rice for 4 people” would otherwise become an ingredient name.
       expect(req.ingredientsAvailable?.map((i) => i.name)).toEqual(['chicken thighs', 'rice']);
@@ -791,6 +794,54 @@ describe('/api/cook', () => {
         phase: 'PREP_GUIDANCE',
         instruction: 'Rinse the rice',
       });
+    });
+
+    it('does not persist a generated recipe that violates an effective allergy', async () => {
+      await seedPantry();
+      registerRecipeGenerator('default', {
+        generate: async () => ({ ...makeGeneratedRecipe(), allergens: ['Peanuts'] }),
+      });
+
+      const created = await post({
+        action: 'create_recipe',
+        pantryItemIds: ['pantry-chicken'],
+      });
+
+      expect(created.status).toBe(422);
+      const body = await created.json();
+      expect(body.error.code).toBe('RECIPE_UNSAFE');
+      expect(await ctx.recipeStore?.getRecipe('recipe-generated-1')).toBeNull();
+    });
+
+    it('excludes a previously stored unsafe recipe from the normal usable list', async () => {
+      await seedPantry();
+      await ctx.recipeStore?.createRecipe({
+        ...makeGeneratedRecipe(),
+        userId: 'user-1',
+        allergens: ['Peanuts'],
+      });
+
+      const listed = await post({ action: 'list_recipes' });
+
+      expect(listed.status).toBe(200);
+      const body = await listed.json();
+      expect(body.data.recipes).toEqual([]);
+    });
+
+    it('rejects a previously stored unsafe recipe before creating a cooking session', async () => {
+      await seedPantry();
+      await ctx.recipeStore?.createRecipe({
+        ...makeGeneratedRecipe(),
+        userId: 'user-1',
+        allergens: ['Peanuts'],
+      });
+
+      const launched = await post({ action: 'launch', recipeId: 'recipe-generated-1' });
+
+      expect(launched.status).toBe(422);
+      const body = await launched.json();
+      expect(body.error.code).toBe('RECIPE_UNSAFE');
+      expect(await ctx.sessionService.getActiveSession('user-1')).toBeNull();
     });
 
     it('requires explicit confirmation before uncertain pantry items reach the provider', async () => {

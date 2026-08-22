@@ -126,6 +126,27 @@ describe('runGenerationPipeline', () => {
     expect(saved!.id).toBe('recipe-1');
   });
 
+  it('does not persist a recipe that fails deterministic allergy validation', async () => {
+    let saved: Recipe | null = null;
+    const recipeStore = { async createRecipe(r: Recipe) { saved = r; } };
+    registerRecipeGenerator('default', {
+      async generate() {
+        return { ...makeRecipe(), allergens: ['peanuts'] };
+      },
+    });
+
+    const result = await runGenerationPipeline({
+      request: makeRequest({ allergies: ['peanuts'] }),
+      recipeStore,
+    });
+
+    expect(result.phase).toBe('COLLECTING_REQUIREMENTS');
+    expect(result.validation?.errors).toEqual([
+      expect.objectContaining({ field: 'allergens' }),
+    ]);
+    expect(saved).toBeNull();
+  });
+
   it('drives the session state machine through the phases', async () => {
     const store = new InMemorySessionStore();
     const service = new SessionService(store);

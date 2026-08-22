@@ -107,6 +107,41 @@ describe('substitution (K7 Part A)', () => {
     expect(events.some((e) => e.type === 'SUBSTITUTION_APPLIED')).toBe(true);
   });
 
+  it('does not persist a substitution that violates recorded dietary safety', async () => {
+    const ctx = makeContext();
+    const recipe = makeRecipe();
+    recipe.ingredients = recipe.ingredients.map((ingredient) =>
+      ingredient.name === 'chicken thighs'
+        ? makeIngredient('tofu', 4, 'pieces')
+        : ingredient,
+    );
+    recipe.cookingSteps = recipe.cookingSteps.map((step) => ({
+      ...step,
+      instruction: 'Sear the tofu 4 minutes',
+      spokenInstruction: 'Sear the tofu four minutes',
+      ingredientsUsed: ['tofu'],
+    }));
+    recipe.preferences = {
+      servings: 2,
+      allergies: [],
+      dietaryRestrictions: ['vegetarian'],
+    };
+    await ctx.recipes.createRecipe(recipe);
+    const snap = await ctx.guide.launchCookWithMe('user-1', recipe.id);
+    await ctx.guide.requestSubstitution('user-1', snap.sessionId, 'garlic');
+
+    await expect(
+      ctx.guide.applySubstitution('user-1', snap.sessionId, {
+        unavailableIngredient: 'garlic',
+        replacement: 'bacon',
+      }),
+    ).rejects.toMatchObject({ code: 'RECIPE_UNSAFE' });
+
+    const stored = await ctx.recipes.getRecipe(recipe.id);
+    expect(stored?.ingredients.some((ingredient) => ingredient.name === 'garlic')).toBe(true);
+    expect(stored?.ingredients.some((ingredient) => ingredient.name === 'bacon')).toBe(false);
+  });
+
   it('supports the "use X" confirmation without repeating the unavailable ingredient', async () => {
     const { guide, snap } = await launch();
     await guide.requestSubstitution('user-1', snap.sessionId, 'milk');

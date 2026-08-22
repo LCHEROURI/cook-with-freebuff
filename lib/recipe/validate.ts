@@ -28,6 +28,13 @@ export interface RecipeValidationContext {
   dietaryRestrictions?: string[];
 }
 
+export interface RecipeSafetyDecision extends RecipeValidationResult {
+  blockingErrors: RecipeValidationError[];
+  canPersist: boolean;
+  canList: boolean;
+  canLaunch: boolean;
+}
+
 const MEAT_TERMS = [
   'chicken', 'beef', 'pork', 'bacon', 'lamb', 'turkey', 'duck', 'veal',
   'steak', 'sausage', 'ham', 'mince', 'ground', 'fish', 'shrimp', 'salmon',
@@ -69,7 +76,7 @@ const norm = (s: string) =>
 export function validateRecipe(
   recipe: Recipe,
   ctx: RecipeValidationContext = {},
-): RecipeValidationResult {
+): RecipeSafetyDecision {
   const errors: RecipeValidationError[] = [];
   const warnings: RecipeValidationError[] = [];
   const missingConfirmations: MissingConfirmation[] = [];
@@ -84,7 +91,7 @@ export function validateRecipe(
         severity: 'error',
       });
     }
-    return { valid: false, errors, warnings, missingConfirmations };
+    return decision(errors, warnings, missingConfirmations);
   }
 
   // 2. Ingredient consistency — every step reference must exist in the list.
@@ -263,7 +270,25 @@ export function validateRecipe(
     }
   }
 
-  return { valid: errors.length === 0, errors, warnings, missingConfirmations };
+  return decision(errors, warnings, missingConfirmations);
+}
+
+function decision(
+  errors: RecipeValidationError[],
+  warnings: RecipeValidationError[],
+  missingConfirmations: MissingConfirmation[],
+): RecipeSafetyDecision {
+  const allowed = errors.length === 0;
+  return {
+    valid: allowed,
+    errors,
+    blockingErrors: errors,
+    warnings,
+    missingConfirmations,
+    canPersist: allowed,
+    canList: allowed,
+    canLaunch: allowed,
+  };
 }
 
 function truncate(s: string, max = 40): string {

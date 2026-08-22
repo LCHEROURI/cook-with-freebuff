@@ -33,6 +33,34 @@ kitchen context.
 - [x] Typecheck, lint, unit/contract tests, rules tests, emulator tests, and the
   production build pass.
 
+## Phase 2 Review Remediation Acceptance Criteria
+
+- [x] Deterministic recipe safety is a required invariant before recipe
+  persistence and again before guided-cooking launch, including previously
+  stored records.
+- [x] A blocking structural, allergy, or dietary error prevents persistence,
+  normal usable listing, and guided-cooking launch.
+- [x] Warning-only recipes preserve existing persistence, listing, and launch
+  behavior.
+- [x] Missing confirmations remain distinct from both blocking errors and full
+  clearance; otherwise-safe recipes preserve the existing confirmation flow.
+- [x] Safety decisions expose `blockingErrors`, `warnings`,
+  `missingConfirmations`, `canPersist`, `canList`, and `canLaunch` explicitly.
+- [x] Current authenticated-owner allergy and dietary constraints are unioned
+  with recorded historical preferences and can never be weakened by them.
+- [ ] The idempotency request hash is computed server-side from the normalized
+  effective `RecipeRequest` after authenticated profile constraints and
+  refinements have been applied; client-controlled fields alone never define
+  equivalence.
+- [ ] A completed idempotent replay is re-evaluated against the current safety
+  decision before it is returned as usable.
+- [ ] Concurrent requests under a valid lease invoke generation once. Lease
+  reclamation may repeat computation, but fencing tokens ensure only the
+  current lease holder can complete or fail the operation and at most one
+  recipe is persisted.
+- [x] Existing valid recipes continue to persist, list, and launch normally,
+  with ownership, App Check, authentication, and authorization unchanged.
+
 ## Functional Requirements
 
 ### FR1 — Trusted kitchen context
@@ -97,6 +125,8 @@ kitchen context.
   least 44px touch targets where applicable.
 - No new Firestore collection, shared rules edit, shared index edit, production
   deployment, or production configuration change is part of this track.
+- Recipe-generation idempotency reuses a namespaced document in the existing
+  server-only `correlation_markers` collection and its bounded cleanup path.
 
 ## Out of Scope
 
