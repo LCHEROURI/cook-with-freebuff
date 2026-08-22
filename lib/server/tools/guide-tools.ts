@@ -30,6 +30,7 @@ export function createGuideService(ctx: ToolContext): GuidedCookingService {
     ctx.pantryStore ? new PantryService(ctx.pantryStore, ctx.sessionService) : undefined,
     ctx.leftoverStore ? new LeftoverService(ctx.leftoverStore, ctx.sessionService) : undefined,
     ctx.groceryStore ? new GroceryService(ctx.groceryStore) : undefined,
+    ctx.dietaryProfileStore,
   );
 }
 

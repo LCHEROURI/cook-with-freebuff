@@ -53,7 +53,7 @@ async function snapshotBody() {
     pantry: { id: string; name: string; quantity: number | null; stale: boolean; expiresSoon: boolean; expired: boolean }[];
     grocery: { id: string; name: string; source: string }[];
     leftovers: { id: string; title: string; servings: number }[];
-    profile: { allergies: string[]; dietaryRestrictions: string[] } | null;
+    profile: { allergies: string[]; dietaryRestrictions: string[]; preferredEquipment: string[] } | null;
   };
 }
 
@@ -209,17 +209,20 @@ describe('/api/kitchen', () => {
         dietaryRestrictions: 'vegetarian',
         dislikedIngredients: 'cilantro',
         preferredCuisines: 'italian, Mexican',
+        preferredEquipment: 'air fryer, Dutch oven',
         defaultServings: 4,
       });
       expect(res.status).toBe(200);
       const body = await res.json();
       expect(body.data.profile.allergies).toEqual(['peanuts', 'Shellfish']);
       expect(body.data.profile.dietaryRestrictions).toEqual(['vegetarian']);
+      expect(body.data.profile.preferredEquipment).toEqual(['air fryer', 'Dutch oven']);
       expect(body.data.profile.defaultServings).toBe(4);
 
       const data = await snapshotBody();
       expect(data.profile?.allergies).toEqual(['peanuts', 'Shellfish']);
       expect(data.profile?.dietaryRestrictions).toEqual(['vegetarian']);
+      expect(data.profile?.preferredEquipment).toEqual(['air fryer', 'Dutch oven']);
     });
 
     it('replaces whole lists (never merges) on a second update', async () => {

@@ -462,7 +462,7 @@ describe('recipe tools', () => {
       request: {
         ingredientsAvailable: [makeIngredient('chicken')],
         servings: 4,
-        dietaryRestrictions: ['vegetarian'],
+        dietaryRestrictions: ['gluten-free'],
         allergies: ['peanuts'],
         cuisinePreferences: [],
         dislikedIngredients: [],
@@ -478,7 +478,7 @@ describe('recipe tools', () => {
     expect(saved!.preferences).toEqual({
       servings: 4,
       allergies: ['peanuts'],
-      dietaryRestrictions: ['vegetarian'],
+      dietaryRestrictions: ['gluten-free'],
     });
   });
 
@@ -535,4 +535,3 @@ describe('recipe tools', () => {
     expect((result.data as { candidates: unknown[] }).candidates.length).toBe(1);
   });
 });
-

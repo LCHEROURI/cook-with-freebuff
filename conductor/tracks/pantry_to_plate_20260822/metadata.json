@@ -1,0 +1,31 @@
+{
+  "id": "pantry_to_plate_20260822",
+  "title": "Phase 3B Pantry-to-Plate Smart Starter",
+  "type": "feature",
+  "status": "in_progress",
+  "created": "2026-08-22T00:00:00Z",
+  "updated": "2026-08-22T16:20:30Z",
+  "current_phase": 3,
+  "current_task": "3.3",
+  "phases": {
+    "total": 3,
+    "completed": 2
+  },
+  "tasks": {
+    "total": 12,
+    "completed": 10
+  },
+  "commits": [
+    "37ce5ae: chore(conductor): start Pantry-to-Plate track",
+    "a82aa48: feat(pantry): define trusted starter context (pantry_to_plate_20260822)",
+    "95d6006: feat(kitchen): save preferred equipment (pantry_to_plate_20260822)",
+    "9f6f202: feat(cook): add secure pantry starter contract (pantry_to_plate_20260822)",
+    "c6cfff9: feat(cook): add pantry starter experience (pantry_to_plate_20260822)",
+    "54c1a37: chore: mark task 1.4 complete (pantry_to_plate_20260822)",
+    "7639139: test(cook): verify pantry recipe handoff (pantry_to_plate_20260822)",
+    "9ec7311: chore: mark task 1.5 complete (pantry_to_plate_20260822)",
+    "948a705: docs(cook): record Pantry-to-Plate verification (pantry_to_plate_20260822)",
+    "67de049: fix(cook): enforce recipe safety invariants",
+    "928be27: fix(cook): fence recipe generation retries"
+  ]
+}

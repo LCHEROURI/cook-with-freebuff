@@ -2,7 +2,14 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { NextResponse } from 'next/server';
 import { POST, GET } from './route';
 import { SessionService, InMemorySessionStore } from '@/lib/server/session-service';
-import { InMemoryTimerStore, InMemoryLogStore, InMemoryRecipeStore } from '@/lib/server/tools';
+import {
+  InMemoryTimerStore,
+  InMemoryLogStore,
+  InMemoryRecipeStore,
+  InMemoryRecipeGenerationStore,
+  InMemoryPantryStore,
+  InMemoryDietaryProfileStore,
+} from '@/lib/server/tools';
 import type { ToolContext } from '@/lib/server/tools/types';
 import type { Recipe } from '@/lib/domain/types';
 
@@ -61,7 +68,10 @@ function makeRecipe(): Recipe {
     estimatedPrepMinutes: 10,
     estimatedCookMinutes: 25,
     totalMinutes: 35,
-    ingredients: [{ id: 'i1', name: 'chicken thighs', quantity: 4, unit: 'pieces', optional: false }],
+    ingredients: [
+      { id: 'i1', name: 'chicken thighs', quantity: 4, unit: 'pieces', optional: false },
+      { id: 'i2', name: 'onion', quantity: 1, unit: null, optional: false },
+    ],
     equipment: ['pan', 'knife'],
     prepSteps: [
       { id: 'p1', stepNumber: 1, instruction: 'Dice the onion', spokenInstruction: 'Dice the onion', estimatedSeconds: 120, ingredientsUsed: ['onion'], equipmentUsed: ['knife'] },
@@ -77,15 +87,19 @@ function makeRecipe(): Recipe {
   };
 }
 
-function testContext(userId: string): ToolContext {
+function testContext(userId: string, correlationId?: string): ToolContext {
   const store = new InMemorySessionStore();
   const recipes = new InMemoryRecipeStore();
   return {
     userId,
+    correlationId,
     sessionService: new SessionService(store),
     timerStore: new InMemoryTimerStore(),
     logStore: new InMemoryLogStore(),
     recipeStore: recipes,
+    recipeGenerationStore: new InMemoryRecipeGenerationStore(recipes),
+    pantryStore: new InMemoryPantryStore(),
+    dietaryProfileStore: new InMemoryDietaryProfileStore(),
   };
 }
 
@@ -109,7 +123,10 @@ describe('/api/cook', () => {
     mockGate.mockResolvedValue(null);
     mockResolve.mockResolvedValue('user-1');
     ctx = testContext('user-1');
-    mockBuild.mockImplementation(() => ctx);
+    mockBuild.mockImplementation((_userId: string, correlationId?: string) => {
+      ctx.correlationId = correlationId;
+      return ctx;
+    });
     // No AI providers by default — each create_recipe test registers its own
     // stub generator (the deployed app wires the real Gemini one).
     resetProviders();
@@ -353,7 +370,7 @@ describe('/api/cook', () => {
         id: 'recipe-new',
         title: 'Fresh Pasta',
         updatedAt: 5000,
-        preferences: { servings: 4, allergies: ['peanuts'], dietaryRestrictions: ['vegetarian'] },
+        preferences: { servings: 4, allergies: ['peanuts'], dietaryRestrictions: ['gluten-free'] },
       });
       // Another user's recipe must never leak into the list (userId isolation).
       await store.createRecipe({ ...makeRecipe(), id: 'recipe-other', userId: 'user-2', updatedAt: 9000 });
@@ -367,10 +384,10 @@ describe('/api/cook', () => {
       expect(first.title).toBe('Fresh Pasta');
       expect(first.servings).toBe(2);
       expect(first.totalMinutes).toBe(35);
-      expect(first.ingredientCount).toBe(1);
+      expect(first.ingredientCount).toBe(2);
       // The build constraints surface in the summary — the row shows what the
       // recipe was built for.
-      expect(first.preferences).toEqual({ servings: 4, allergies: ['peanuts'], dietaryRestrictions: ['vegetarian'] });
+      expect(first.preferences).toEqual({ servings: 4, allergies: ['peanuts'], dietaryRestrictions: ['gluten-free'] });
       // A recipe created without preferences gets a safe empty shape (never
       // `undefined` — the client renders it unconditionally).
       expect(body.data.recipes[1].preferences).toEqual({ servings: null, allergies: [], dietaryRestrictions: [] });
@@ -536,6 +553,169 @@ describe('/api/cook', () => {
       expect(typeof stored?.updatedAt).toBe('number');
     });
 
+    it('replays a completed generation without invoking the provider again', async () => {
+      const generate = vi.fn(async () => makeGeneratedRecipe());
+      registerRecipeGenerator('default', { generate });
+      const request = {
+        action: 'create_recipe',
+        prompt: 'I have chicken thighs and rice',
+        correlationId: 'generate-replay-1',
+      };
+
+      const first = await post(request);
+      const replay = await post(request);
+      const firstBody = await first.json();
+      const replayBody = await replay.json();
+
+      expect(first.status).toBe(200);
+      expect(replay.status).toBe(200);
+      expect(generate).toHaveBeenCalledTimes(1);
+      expect(replayBody.data.recipeId).toBe(firstBody.data.recipeId);
+    });
+
+    it('allows only one provider call while an identical generation lease is valid', async () => {
+      let release!: () => void;
+      const gate = new Promise<void>((resolve) => { release = resolve; });
+      const generate = vi.fn(async () => {
+        await gate;
+        return makeGeneratedRecipe();
+      });
+      registerRecipeGenerator('default', { generate });
+      const request = {
+        action: 'create_recipe',
+        prompt: 'I have chicken thighs and rice',
+        correlationId: 'generate-concurrent-1',
+      };
+
+      const first = post(request);
+      await vi.waitFor(() => expect(generate).toHaveBeenCalledTimes(1));
+      const concurrent = post(request);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      release();
+      const responses = await Promise.all([first, concurrent]);
+
+      expect(generate).toHaveBeenCalledTimes(1);
+      expect(responses.map((response) => response.status).sort()).toEqual([200, 409]);
+    });
+
+    it('revalidates a completed replay before returning a stored recipe', async () => {
+      const generate = vi.fn(async () => makeGeneratedRecipe());
+      registerRecipeGenerator('default', { generate });
+      const request = {
+        action: 'create_recipe',
+        prompt: 'I have chicken thighs and rice, no peanuts',
+        correlationId: 'generate-replay-safety-1',
+      };
+
+      const first = await post(request);
+      expect(first.status).toBe(200);
+      const stored = await ctx.recipeStore?.getRecipe('recipe-generated-1');
+      expect(stored).not.toBeNull();
+      await ctx.recipeStore?.updateRecipe({ ...stored!, allergens: ['Peanuts'] });
+
+      const replay = await post(request);
+      const replayBody = await replay.json();
+
+      expect(replay.status).toBe(422);
+      expect(replayBody.error.code).toBe('RECIPE_UNSAFE');
+      expect(generate).toHaveBeenCalledTimes(1);
+    });
+
+    it('rejects reuse of an idempotency key for a different effective request', async () => {
+      const generate = vi.fn(async () => makeGeneratedRecipe());
+      registerRecipeGenerator('default', { generate });
+
+      const first = await post({
+        action: 'create_recipe',
+        prompt: 'I have chicken thighs and rice',
+        correlationId: 'generate-conflict-1',
+      });
+      const conflict = await post({
+        action: 'create_recipe',
+        prompt: 'I have chicken thighs and onion',
+        correlationId: 'generate-conflict-1',
+      });
+      const conflictBody = await conflict.json();
+
+      expect(first.status).toBe(200);
+      expect(conflict.status).toBe(409);
+      expect(conflictBody.error.code).toBe('IDEMPOTENCY_CONFLICT');
+      expect(generate).toHaveBeenCalledTimes(1);
+    });
+
+    it('includes the current authenticated safety profile in request equivalence', async () => {
+      const now = Date.now();
+      await ctx.dietaryProfileStore?.upsertProfile({
+        userId: 'user-1',
+        allergies: [],
+        dietaryRestrictions: ['gluten-free'],
+        dislikedIngredients: [],
+        preferredCuisines: [],
+        preferredEquipment: [],
+        updatedAt: now,
+      });
+      const generate = vi.fn(async () => makeGeneratedRecipe());
+      registerRecipeGenerator('default', { generate });
+      const request = {
+        action: 'create_recipe',
+        prompt: 'I have chicken thighs and rice',
+        correlationId: 'generate-profile-conflict-1',
+      };
+
+      const first = await post(request);
+      await ctx.dietaryProfileStore?.upsertProfile({
+        userId: 'user-1',
+        allergies: ['Peanuts'],
+        dietaryRestrictions: ['gluten-free'],
+        dislikedIngredients: [],
+        preferredCuisines: [],
+        preferredEquipment: [],
+        updatedAt: now + 1,
+      });
+      const conflict = await post(request);
+      const conflictBody = await conflict.json();
+
+      expect(first.status).toBe(200);
+      expect(conflict.status).toBe(409);
+      expect(conflictBody.error.code).toBe('IDEMPOTENCY_CONFLICT');
+      expect(generate).toHaveBeenCalledTimes(1);
+    });
+
+    it('re-reads the profile before persistence and reports SAFETY_CONTEXT_CHANGED', async () => {
+      registerRecipeGenerator('default', {
+        generate: async () => {
+          await ctx.dietaryProfileStore?.upsertProfile({
+            userId: 'user-1',
+            allergies: ['peanuts'],
+            dietaryRestrictions: [],
+            dislikedIngredients: [],
+            preferredCuisines: [],
+            preferredEquipment: [],
+            updatedAt: Date.now(),
+          });
+          return {
+            ...makeGeneratedRecipe(),
+            ingredients: [
+              { id: 'peanut-butter', name: 'peanut butter', quantity: 1, unit: 'tbsp', optional: false },
+            ],
+            prepSteps: [],
+            cookingSteps: [],
+          };
+        },
+      });
+
+      const response = await post({
+        action: 'create_recipe',
+        prompt: 'I have peanut butter',
+        correlationId: 'generate-profile-change-1',
+      });
+      const body = await response.json();
+
+      expect(response.status).toBe(409);
+      expect(body.error.code).toBe('SAFETY_CONTEXT_CHANGED');
+      expect(await ctx.recipeStore?.getRecipe('recipe-generated-1')).toBeNull();
+    });
+
     it('reports GENERATION_UNAVAILABLE when no provider is registered', async () => {
       const res = await post({ action: 'create_recipe', prompt: 'I have chicken thighs' });
       expect(res.status).toBe(400);
@@ -546,7 +726,7 @@ describe('/api/cook', () => {
 
     it('threads servings, allergies, and dietary restrictions into the generation request', async () => {
       // The starter prompt can carry preferences: "…for 4 people, no peanuts,
-      // vegetarian" — create_recipe must parse them and pass them to the
+      // gluten-free" — create_recipe must parse them and pass them to the
       // generator (the request the model actually reads).
       let received: unknown = null;
       registerRecipeGenerator('default', {
@@ -558,7 +738,7 @@ describe('/api/cook', () => {
 
       const res = await post({
         action: 'create_recipe',
-        prompt: 'I have chicken thighs and rice for 4 people, no peanuts, vegetarian',
+        prompt: 'I have chicken thighs and rice for 4 people, no peanuts, gluten-free',
       });
       expect(res.status).toBe(200);
       const req = received as {
@@ -569,7 +749,7 @@ describe('/api/cook', () => {
       };
       expect(req.servings).toBe(4);
       expect(req.allergies).toEqual(['peanuts']);
-      expect(req.dietaryRestrictions).toEqual(['vegetarian']);
+      expect(req.dietaryRestrictions).toEqual(['gluten-free']);
       // The preference spans must be stripped BEFORE ingredient extraction —
       // “rice for 4 people” would otherwise become an ingredient name.
       expect(req.ingredientsAvailable?.map((i) => i.name)).toEqual(['chicken thighs', 'rice']);
@@ -617,13 +797,263 @@ describe('/api/cook', () => {
       expect((req as { ingredientsAvailable?: unknown[] })?.ingredientsAvailable).toHaveLength(2);
     });
   });
+
+  describe('pantry starter — authenticated kitchen context', () => {
+    async function seedPantry() {
+      const now = Date.now();
+      await ctx.pantryStore?.upsertItem({
+        id: 'pantry-chicken',
+        userId: 'user-1',
+        name: 'chicken thighs',
+        quantity: 4,
+        unit: 'pieces',
+        confidence: 1,
+        source: 'MANUAL',
+        lastConfirmedAt: now,
+        expirationDate: now + 24 * 60 * 60 * 1000,
+      });
+      await ctx.pantryStore?.upsertItem({
+        id: 'pantry-rice',
+        userId: 'user-1',
+        name: 'rice',
+        quantity: 2,
+        unit: 'cups',
+        confidence: 0.6,
+        source: 'RECIPE_USAGE',
+        lastConfirmedAt: now,
+      });
+      await ctx.pantryStore?.upsertItem({
+        id: 'pantry-expired',
+        userId: 'user-1',
+        name: 'old yogurt',
+        confidence: 1,
+        source: 'MANUAL',
+        lastConfirmedAt: now,
+        expirationDate: now - 1000,
+      });
+      await ctx.pantryStore?.upsertItem({
+        id: 'pantry-foreign',
+        userId: 'user-2',
+        name: 'secret truffles',
+        confidence: 1,
+        source: 'MANUAL',
+        lastConfirmedAt: now,
+      });
+      await ctx.dietaryProfileStore?.upsertProfile({
+        userId: 'user-1',
+        allergies: ['Peanuts'],
+        dietaryRestrictions: ['gluten-free'],
+        dislikedIngredients: ['cilantro'],
+        preferredCuisines: ['Italian'],
+        defaultServings: 3,
+        preferredEquipment: ['air fryer'],
+        updatedAt: now,
+      });
+    }
+
+    it('returns only non-expired owner candidates with trust and profile context', async () => {
+      await seedPantry();
+
+      const res = await post({ action: 'pantry_starter' });
+      expect(res.status).toBe(200);
+      const body = await res.json();
+      expect(body.data.items.map((item: { id: string }) => item.id)).toEqual([
+        'pantry-chicken',
+        'pantry-rice',
+      ]);
+      expect(body.data.items[0]).toMatchObject({
+        id: 'pantry-chicken',
+        expiresSoon: true,
+        requiresConfirmation: false,
+        selectedByDefault: true,
+      });
+      expect(body.data.items[1]).toMatchObject({
+        id: 'pantry-rice',
+        requiresConfirmation: true,
+        selectedByDefault: false,
+      });
+      expect(body.data.profile).toEqual({
+        allergies: ['Peanuts'],
+        dietaryRestrictions: ['gluten-free'],
+        dislikedIngredients: ['cilantro'],
+        preferredCuisines: ['Italian'],
+        defaultServings: 3,
+        preferredEquipment: ['air fryer'],
+      });
+    });
+
+    it('builds generation input from server-resolved pantry and saved profile', async () => {
+      await seedPantry();
+      let received: unknown = null;
+      registerRecipeGenerator('default', {
+        generate: async (request) => {
+          received = request;
+          return makeGeneratedRecipe();
+        },
+      });
+
+      const res = await post({
+        action: 'create_recipe',
+        pantryItemIds: ['pantry-chicken', 'pantry-rice'],
+        confirmedPantryItemIds: ['pantry-rice'],
+        servings: 4,
+        maxTimeMinutes: 35,
+        cuisine: 'Thai',
+        craving: 'something comforting',
+        allergies: ['sesame', 'peanuts'],
+        dietaryRestrictions: ['dairy-free'],
+      });
+
+      expect(res.status).toBe(200);
+      const request = received as Record<string, unknown>;
+      expect(request).toMatchObject({
+        servings: 4,
+        maxTimeMinutes: 35,
+        cuisinePreferences: ['Thai'],
+        craving: 'something comforting',
+        allergies: ['Peanuts', 'sesame'],
+        dietaryRestrictions: ['gluten-free', 'dairy-free'],
+        dislikedIngredients: ['cilantro'],
+        availableEquipment: ['air fryer'],
+      });
+      expect((request.ingredientsAvailable as { name: string }[]).map((item) => item.name)).toEqual([
+        'chicken thighs',
+        'rice',
+      ]);
+    });
+
+    it('persists a pantry recipe for the existing saved-recipe and guided-cooking flows', async () => {
+      await seedPantry();
+      registerRecipeGenerator('default', {
+        generate: async () => makeGeneratedRecipe(),
+      });
+
+      const created = await post({
+        action: 'create_recipe',
+        pantryItemIds: ['pantry-chicken'],
+      });
+      expect(created.status).toBe(200);
+      const createdBody = await created.json();
+      expect(createdBody.data.recipeId).toBe('recipe-generated-1');
+      expect(createdBody.data.validation.valid).toBe(true);
+
+      const listed = await post({ action: 'list_recipes' });
+      expect(listed.status).toBe(200);
+      const listedBody = await listed.json();
+      expect(listedBody.data.recipes).toEqual([
+        expect.objectContaining({
+          recipeId: 'recipe-generated-1',
+          title: 'Chicken Thighs with Rice',
+        }),
+      ]);
+
+      const fetched = await post({ action: 'get_recipe', recipeId: 'recipe-generated-1' });
+      expect(fetched.status).toBe(200);
+      const fetchedBody = await fetched.json();
+      expect(fetchedBody.data.recipe).toMatchObject({
+        id: 'recipe-generated-1',
+        userId: 'user-1',
+      });
+
+      const launched = await post({ action: 'launch', recipeId: 'recipe-generated-1' });
+      expect(launched.status).toBe(200);
+      const launchedBody = await launched.json();
+      expect(launchedBody.data).toMatchObject({
+        recipeId: 'recipe-generated-1',
+        phase: 'PREP_GUIDANCE',
+        instruction: 'Rinse the rice',
+      });
+    });
+
+    it('does not persist a generated recipe that violates an effective allergy', async () => {
+      await seedPantry();
+      registerRecipeGenerator('default', {
+        generate: async () => ({ ...makeGeneratedRecipe(), allergens: ['Peanuts'] }),
+      });
+
+      const created = await post({
+        action: 'create_recipe',
+        pantryItemIds: ['pantry-chicken'],
+      });
+
+      expect(created.status).toBe(422);
+      const body = await created.json();
+      expect(body.error.code).toBe('RECIPE_UNSAFE');
+      expect(await ctx.recipeStore?.getRecipe('recipe-generated-1')).toBeNull();
+    });
+
+    it('excludes a previously stored unsafe recipe from the normal usable list', async () => {
+      await seedPantry();
+      await ctx.recipeStore?.createRecipe({
+        ...makeGeneratedRecipe(),
+        userId: 'user-1',
+        allergens: ['Peanuts'],
+      });
+
+      const listed = await post({ action: 'list_recipes' });
+
+      expect(listed.status).toBe(200);
+      const body = await listed.json();
+      expect(body.data.recipes).toEqual([]);
+    });
+
+    it('rejects a previously stored unsafe recipe before creating a cooking session', async () => {
+      await seedPantry();
+      await ctx.recipeStore?.createRecipe({
+        ...makeGeneratedRecipe(),
+        userId: 'user-1',
+        allergens: ['Peanuts'],
+      });
+
+      const launched = await post({ action: 'launch', recipeId: 'recipe-generated-1' });
+
+      expect(launched.status).toBe(422);
+      const body = await launched.json();
+      expect(body.error.code).toBe('RECIPE_UNSAFE');
+      expect(await ctx.sessionService.getActiveSession('user-1')).toBeNull();
+    });
+
+    it('requires explicit confirmation before uncertain pantry items reach the provider', async () => {
+      await seedPantry();
+      const generate = vi.fn(async () => makeGeneratedRecipe());
+      registerRecipeGenerator('default', { generate });
+
+      const res = await post({
+        action: 'create_recipe',
+        pantryItemIds: ['pantry-rice'],
+        confirmedPantryItemIds: [],
+      });
+
+      expect(res.status).toBe(400);
+      const body = await res.json();
+      expect(body.error.code).toBe('PANTRY_CONFIRMATION_REQUIRED');
+      expect(generate).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ['missing', 'PANTRY_ITEM_NOT_FOUND'],
+      ['pantry-foreign', 'PANTRY_ITEM_NOT_FOUND'],
+      ['pantry-expired', 'PANTRY_ITEM_INELIGIBLE'],
+    ])('rejects unavailable pantry id %s without leaking or generating', async (itemId, code) => {
+      await seedPantry();
+      const generate = vi.fn(async () => makeGeneratedRecipe());
+      registerRecipeGenerator('default', { generate });
+
+      const res = await post({ action: 'create_recipe', pantryItemIds: [itemId] });
+
+      expect(res.status).toBe(400);
+      const body = await res.json();
+      expect(body.error.code).toBe(code);
+      expect(generate).not.toHaveBeenCalled();
+    });
+  });
 });
 
 describe('/api/cook — correlationId boundary', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockResolve.mockResolvedValue('user-1');
-    mockBuild.mockImplementation(() => testContext('user-1'));
+    mockBuild.mockImplementation((userId: string, correlationId?: string) => testContext(userId, correlationId));
     resetProviders();
   });
 

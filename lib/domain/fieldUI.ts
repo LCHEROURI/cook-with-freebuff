@@ -84,7 +84,7 @@ export const leftoverFieldUI = makeFieldUIAnnotations(
 /** Dietary profile: allergy/restriction lists are comma-separated. */
 export const profileFieldUI = makeFieldUIAnnotations(
   dietaryProfileSchema,
-  ['allergies', 'dietaryRestrictions', 'dislikedIngredients', 'preferredCuisines'],
+  ['allergies', 'dietaryRestrictions', 'dislikedIngredients', 'preferredCuisines', 'preferredEquipment'],
   [],
 );
 

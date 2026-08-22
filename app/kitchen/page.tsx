@@ -17,7 +17,7 @@ import type { GroceryItemSource, DietaryProfile } from '@/lib/domain/types';
 //   🧺 Pantry      — see quantities + expiry flags, confirm, remove, add
 //   🛒 Grocery     — see open lines + their source, mark bought, remove, add
 //   🍲 Leftovers   — see what's stored and for how long, consume, log
-//   🥗 Profile     — edit allergies / diet / dislikes / cuisines / servings
+//   🥗 Profile     — edit allergies / diet / dislikes / cuisines / servings / equipment
 // Before this screen the ONLY way to read or change any of this was talking
 // to the agent and trusting its reply (K8: "allow users to inspect and change
 // remembered information"). Every mutation goes through /api/kitchen, which
@@ -98,6 +98,7 @@ export default function KitchenPage() {
   const [profileRestrictions, setProfileRestrictions] = useState('');
   const [profileDisliked, setProfileDisliked] = useState('');
   const [profileCuisines, setProfileCuisines] = useState('');
+  const [profileEquipment, setProfileEquipment] = useState('');
   const [profileServings, setProfileServings] = useState('');
   // Latest-edit provenance per form: true only while the most recent edit to
   // that form came from voice, so confirmations speak for voice actions only.
@@ -137,6 +138,7 @@ export default function KitchenPage() {
     setProfileRestrictions((prev) => (prev === '' ? data.profile!.dietaryRestrictions.join(', ') : prev));
     setProfileDisliked((prev) => (prev === '' ? data.profile!.dislikedIngredients.join(', ') : prev));
     setProfileCuisines((prev) => (prev === '' ? data.profile!.preferredCuisines.join(', ') : prev));
+    setProfileEquipment((prev) => (prev === '' ? (data.profile!.preferredEquipment ?? []).join(', ') : prev));
     setProfileServings((prev) => (prev === '' ? String(data.profile!.defaultServings ?? '') : prev));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [data?.profile]);
@@ -777,6 +779,26 @@ export default function KitchenPage() {
               }}
             />
           </label>
+          <label className={styles.field}>
+            <span className={styles.fieldLabel}>Preferred equipment</span>
+            <FormInput
+              fieldUI={profileFieldUI}
+              field="preferredEquipment"
+              className={styles.input}
+              value={profileEquipment}
+              onChange={(e) => {
+                setProfileEquipment(e.target.value);
+                setProfileVoiceInitiated(false);
+              }}
+              voice
+              onVoice={(text) => {
+                setProfileEquipment((current) => appendTranscript(current, text, profileFieldUI.resolve('preferredEquipment')));
+                setProfileVoiceInitiated(true);
+              }}
+              placeholder="air fryer, Dutch oven"
+              aria-label="Preferred equipment, comma separated"
+            />
+          </label>
         </div>
         <button
           type="button"
@@ -790,6 +812,7 @@ export default function KitchenPage() {
               dietaryRestrictions: profileRestrictions,
               dislikedIngredients: profileDisliked,
               preferredCuisines: profileCuisines,
+              preferredEquipment: profileEquipment,
               defaultServings: Number.isFinite(servings) && servings > 0 ? Math.floor(servings) : undefined,
             }).then((ok) => {
               if (ok && wasVoice) speak('Saved your dietary profile');

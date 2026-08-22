@@ -16,7 +16,7 @@
 
 import type { SessionService } from './session-service';
 import { rebaseTimersAfterResume } from './timer-rebase';
-import type { TimerStore, RecipeStore } from './tools/types';
+import type { TimerStore, RecipeStore, DietaryProfileStore } from './tools/types';
 import type { PantryService, ConsumptionResult } from './pantry-service';
 import type { LeftoverService } from './leftover-service';
 import type { GroceryService } from './grocery-service';
@@ -41,6 +41,8 @@ import type {
   TimerAlert,
   TimerStartedInfo,
 } from '../domain/guide';
+import { emptyProfile } from './profile-service';
+import { evaluateStoredRecipeSafety } from './recipe-safety';
 
 // ── Public shapes ────────────────────────────────────────────────────────────
 // The API response shapes live in the client-safe domain module
@@ -128,6 +130,8 @@ export class GuidedCookingService {
     private readonly leftoverService?: LeftoverService,
     /** Optional grocery list (K10) — auto-adds depleted + expired items. */
     private readonly groceryService?: GroceryService,
+    /** Current hard dietary constraints used to revalidate stored recipes. */
+    private readonly dietaryProfileStore?: DietaryProfileStore,
   ) {}
 
   // ── Launch ────────────────────────────────────────────────────────────────
@@ -158,6 +162,15 @@ export class GuidedCookingService {
     // admin SDK read bypasses Firestore rules, so this check is the gate.
     if (recipe.userId && recipe.userId !== userId) {
       throw new GuideError('Recipe belongs to another user', 'FORBIDDEN', false);
+    }
+    const profile = (await this.dietaryProfileStore?.getProfile(userId)) ?? emptyProfile(userId);
+    const safety = evaluateStoredRecipeSafety(recipe, profile);
+    if (!safety.canLaunch) {
+      throw new GuideError(
+        safety.blockingErrors[0]?.message ?? 'Recipe did not pass safety validation',
+        'RECIPE_UNSAFE',
+        true,
+      );
     }
 
     let session: CookingSession | null = null;
@@ -596,14 +609,22 @@ export class GuidedCookingService {
       );
     }
 
+    // Revalidate against current + recorded hard constraints before the write.
+    const profile = (await this.dietaryProfileStore?.getProfile(userId)) ?? emptyProfile(userId);
+    const validation = evaluateStoredRecipeSafety(parsed.data, profile, {
+      availableIngredients: session.availableIngredients.map((i) => i.name),
+    });
+    if (!validation.canPersist) {
+      throw new GuideError(
+        validation.blockingErrors[0]?.message ?? 'Substitution did not pass safety validation',
+        'RECIPE_UNSAFE',
+        true,
+      );
+    }
+
     if (this.recipeStore) {
       await this.recipeStore.updateRecipe(parsed.data);
     }
-
-    // Revalidate the affected recipe against what the cook has.
-    const validation = validateRecipe(parsed.data, {
-      availableIngredients: session.availableIngredients.map((i) => i.name),
-    });
 
     await this.sessionService.logSessionEvent(session.id, 'SUBSTITUTION_APPLIED', {
       from,

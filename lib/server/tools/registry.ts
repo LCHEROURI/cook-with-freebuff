@@ -17,6 +17,9 @@ import type {
   TimerStore,
   LogStore,
   RecipeStore,
+  RecipeGenerationStore,
+  RecipeGenerationLeaseInput,
+  RecipeGenerationClaim,
   PantryStore,
   DietaryProfileStore,
   LeftoverStore,
@@ -225,6 +228,85 @@ export class InMemoryRecipeStore implements RecipeStore {
 
   async deleteRecipe(id: string): Promise<void> {
     this.recipes.delete(id);
+  }
+}
+
+interface InMemoryGenerationMarker {
+  userId: string;
+  requestHash: string;
+  safetyContextHash: string;
+  status: 'leased' | 'completed' | 'failed';
+  leaseToken: string;
+  leaseExpiresAt: number;
+  recipeId?: string;
+}
+
+export class InMemoryRecipeGenerationStore implements RecipeGenerationStore {
+  private markers = new Map<string, InMemoryGenerationMarker>();
+
+  constructor(private readonly recipes: RecipeStore) {}
+
+  async claim(input: RecipeGenerationLeaseInput): Promise<RecipeGenerationClaim> {
+    const current = this.markers.get(input.markerId);
+    if (current) {
+      if (current.userId !== input.userId || current.requestHash !== input.requestHash) {
+        return { status: 'conflict' };
+      }
+      if (current.status === 'completed' && current.recipeId) {
+        return { status: 'completed', recipeId: current.recipeId };
+      }
+      if (current.status === 'leased' && current.leaseExpiresAt > input.now) {
+        return { status: 'in_progress' };
+      }
+    }
+    this.markers.set(input.markerId, {
+      userId: input.userId,
+      requestHash: input.requestHash,
+      safetyContextHash: input.safetyContextHash,
+      status: 'leased',
+      leaseToken: input.leaseToken,
+      leaseExpiresAt: input.now + input.leaseMs,
+    });
+    return { status: 'acquired', leaseToken: input.leaseToken };
+  }
+
+  async complete(input: RecipeGenerationLeaseInput & {
+    recipe: Recipe;
+    currentSafetyContextHash?: string;
+  }): Promise<import('./types').RecipeGenerationCompletion> {
+    const current = this.markers.get(input.markerId);
+    if (!this.isCurrentLease(current, input)) return { status: 'superseded' };
+    if (input.currentSafetyContextHash
+      && input.currentSafetyContextHash !== current.safetyContextHash) {
+      this.markers.set(input.markerId, { ...current, status: 'failed' });
+      return { status: 'safety_context_changed', code: 'SAFETY_CONTEXT_CHANGED' };
+    }
+    if (input.recipe.userId !== input.userId) return { status: 'superseded' };
+    await this.recipes.createRecipe(input.recipe);
+    this.markers.set(input.markerId, {
+      ...current,
+      status: 'completed',
+      recipeId: input.recipe.id,
+    });
+    return { status: 'completed' };
+  }
+
+  async fail(input: RecipeGenerationLeaseInput): Promise<boolean> {
+    const current = this.markers.get(input.markerId);
+    if (!this.isCurrentLease(current, input)) return false;
+    this.markers.set(input.markerId, { ...current, status: 'failed' });
+    return true;
+  }
+
+  private isCurrentLease(
+    marker: InMemoryGenerationMarker | undefined,
+    input: RecipeGenerationLeaseInput,
+  ): marker is InMemoryGenerationMarker {
+    return marker?.status === 'leased'
+      && marker.userId === input.userId
+      && marker.requestHash === input.requestHash
+      && marker.leaseToken === input.leaseToken
+      && marker.leaseExpiresAt > input.now;
   }
 }
 

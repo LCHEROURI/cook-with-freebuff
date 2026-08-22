@@ -93,6 +93,40 @@ export interface RecipeStore {
   deleteRecipe(id: string): Promise<void>;
 }
 
+export type RecipeGenerationClaim =
+  | { status: 'acquired'; leaseToken: string }
+  | { status: 'completed'; recipeId: string }
+  | { status: 'in_progress' }
+  | { status: 'conflict' };
+
+export interface RecipeGenerationLeaseInput {
+  markerId: string;
+  userId: string;
+  requestHash: string;
+  safetyContextHash: string;
+  requestedAllergies: string[];
+  requestedDietaryRestrictions: string[];
+  leaseToken: string;
+  now: number;
+  leaseMs: number;
+}
+
+export type RecipeGenerationCompletion =
+  | { status: 'completed' }
+  | { status: 'superseded' }
+  | { status: 'safety_context_changed'; code: 'SAFETY_CONTEXT_CHANGED' };
+
+/** Server-only lease boundary for idempotent recipe generation. */
+export interface RecipeGenerationStore {
+  claim(input: RecipeGenerationLeaseInput): Promise<RecipeGenerationClaim>;
+  /** Atomically persist the recipe and mark the matching lease complete. */
+  complete(
+    input: RecipeGenerationLeaseInput & { recipe: Recipe; currentSafetyContextHash?: string },
+  ): Promise<RecipeGenerationCompletion>;
+  /** Mark only the current, unexpired lease as failed/retryable. */
+  fail(input: RecipeGenerationLeaseInput): Promise<boolean>;
+}
+
 export interface PantryStore {
   listItems(userId: string): Promise<PantryItem[]>;
   getItem(id: string): Promise<PantryItem | null>;
@@ -131,6 +165,7 @@ export interface ToolContext {
   timerStore: TimerStore;
   logStore: LogStore;
   recipeStore?: RecipeStore;
+  recipeGenerationStore?: RecipeGenerationStore;
   pantryStore?: PantryStore;
   dietaryProfileStore?: DietaryProfileStore;
   leftoverStore?: LeftoverStore;

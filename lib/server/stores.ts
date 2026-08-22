@@ -14,6 +14,7 @@ import type {
   TimerStore,
   LogStore,
   RecipeStore,
+  RecipeGenerationStore,
   PantryStore,
   DietaryProfileStore,
   LeftoverStore,
@@ -65,6 +66,12 @@ export const firestoreRecipeStore: RecipeStore = {
   deleteRecipe: (id) => repo.deleteRecipe(id),
 };
 
+export const firestoreRecipeGenerationStore: RecipeGenerationStore = {
+  claim: (input) => repo.claimRecipeGeneration(input),
+  complete: (input) => repo.completeRecipeGeneration(input),
+  fail: (input) => repo.failRecipeGeneration(input),
+};
+
 export const firestorePantryStore: PantryStore = {
   listItems: (userId) => repo.listPantryItems(userId),
   getItem: (id) => repo.getPantryItem(id),
@@ -107,6 +114,7 @@ export function buildProductionContext(
     timerStore: firestoreTimerStore,
     logStore: firestoreLogStore,
     recipeStore: firestoreRecipeStore,
+    recipeGenerationStore: firestoreRecipeGenerationStore,
     pantryStore: firestorePantryStore,
     dietaryProfileStore: firestoreDietaryProfileStore,
     leftoverStore: firestoreLeftoverStore,

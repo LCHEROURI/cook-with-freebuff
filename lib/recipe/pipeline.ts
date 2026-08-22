@@ -112,23 +112,14 @@ export async function runGenerationPipeline(
   }
   recipe = parsed.data;
 
-  // 4. Persist the recipe.
-  if (recipeStore) {
-    try {
-      await recipeStore.createRecipe(recipe);
-    } catch {
-      // Persistence failure is non-fatal for generation; the recipe is still returned.
-    }
-  }
-
-  // 5. Enter VALIDATING_RECIPE.
+  // 4. Enter VALIDATING_RECIPE.
   const afterGenerate = await settle(session, version, 'VALIDATING_RECIPE', options);
   if (afterGenerate && !afterGenerate.ok) {
     return { recipe, phase: 'ERROR', error: afterGenerate.error };
   }
   version = afterGenerate?.version;
 
-  // 6. Validate — deterministic engine always, AI findings merged when present.
+  // 5. Validate — deterministic engine always, AI findings merged when present.
   const validation = validateRecipe(recipe, {
     availableIngredients: request.ingredientsAvailable.map((i) => i.name),
     availableEquipment: request.availableEquipment,
@@ -144,11 +135,26 @@ export async function runGenerationPipeline(
       validation.warnings.push(...aiResult.warnings);
       validation.missingConfirmations.push(...aiResult.missingConfirmations);
       validation.valid = validation.errors.length === 0;
+      validation.blockingErrors = validation.errors;
+      validation.canPersist = validation.valid;
+      validation.canList = validation.valid;
+      validation.canLaunch = validation.valid;
       if (aiResult.correctedRecipe) {
         validation.correctedRecipe = aiResult.correctedRecipe;
       }
     } catch {
       // Deterministic result stands if the AI validator fails.
+    }
+  }
+
+  // 6. Persist only after every blocking validation error has been ruled out.
+  // Warnings and missing confirmations retain their existing nonblocking
+  // persistence behavior; they are handled by the readiness decision below.
+  if (recipeStore && validation.canPersist) {
+    try {
+      await recipeStore.createRecipe(recipe);
+    } catch {
+      // Persistence failure is non-fatal for generation; the recipe is still returned.
     }
   }
 

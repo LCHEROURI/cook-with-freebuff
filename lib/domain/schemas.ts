@@ -166,6 +166,35 @@ export const correlationMarkerSchema = z.object({
 
 export type CorrelationMarker = z.infer<typeof correlationMarkerSchema>;
 
+/** Namespaced generation lease stored in the server-only marker collection. */
+export const recipeGenerationMarkerSchema = z.object({
+  kind: z.literal('recipe_generation'),
+  rawId: z.string().min(1),
+  markedAt: z.number().int().nonnegative(),
+  updatedAt: z.number().int().nonnegative(),
+  userId: z.string().min(1),
+  requestHash: z.string().regex(/^[a-f0-9]{64}$/),
+  // Optional only for parsing pre-hardening markers; every new claim records it.
+  safetyContextHash: z.string().regex(/^[a-f0-9]{64}$/).optional(),
+  requestedAllergies: z.array(z.string()).default([]),
+  requestedDietaryRestrictions: z.array(z.string()).default([]),
+  status: z.enum(['leased', 'completed', 'failed']),
+  leaseToken: z.string().min(1),
+  leaseExpiresAt: z.number().int().nonnegative(),
+  recipeId: z.string().min(1).optional(),
+  failureCode: z.literal('SAFETY_CONTEXT_CHANGED').optional(),
+}).superRefine((marker, ctx) => {
+  if (marker.status === 'completed' && !marker.recipeId) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['recipeId'],
+      message: 'Completed generation markers require a recipe id',
+    });
+  }
+});
+
+export type RecipeGenerationMarker = z.infer<typeof recipeGenerationMarkerSchema>;
+
 export const recoveryContextSchema = z.object({
   errorCode: z.string().min(1),
   errorMessage: z.string(),
@@ -362,6 +391,7 @@ export const recipeRequestSchema = z.object({
   cuisinePreferences: z.array(z.string()).default([]),
   dislikedIngredients: z.array(z.string()).default([]),
   availableEquipment: z.array(z.string()).default([]),
+  craving: z.string().trim().min(1).max(200).optional(),
   skillLevel: z.enum(['beginner', 'intermediate', 'advanced']).optional(),
 });
 

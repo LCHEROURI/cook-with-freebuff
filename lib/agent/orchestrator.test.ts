@@ -28,7 +28,10 @@ function makeRecipe(): Recipe {
     estimatedPrepMinutes: 10,
     estimatedCookMinutes: 25,
     totalMinutes: 35,
-    ingredients: [{ id: 'i1', name: 'chicken thighs', quantity: 4, unit: 'pieces', optional: false }],
+    ingredients: [
+      { id: 'i1', name: 'chicken thighs', quantity: 4, unit: 'pieces', optional: false },
+      { id: 'i2', name: 'onion', quantity: 1, unit: null, optional: false },
+    ],
     equipment: ['pan', 'knife'],
     prepSteps: [
       { id: 'p1', stepNumber: 1, instruction: 'Heat the oil on high', spokenInstruction: 'Heat the oil on high', estimatedSeconds: 60, ingredientsUsed: [], equipmentUsed: ['pan'], safetyNote: 'Hot oil — keep children away' },
