@@ -5,8 +5,8 @@
 - [x] Task 1.1: Define and test the trusted kitchen-context policy
 - [x] Task 1.2: Finish preferred-equipment profile support
 - [x] Task 1.3: Add the authenticated pantry-starter server contract
-- [~] Task 1.4: Build the accessible Cook from my pantry starter
-- [ ] Task 1.5: Connect pantry results to existing recipe and guided-cooking flows
+- [x] Task 1.4: Build the accessible Cook from my pantry starter
+- [~] Task 1.5: Connect pantry results to existing recipe and guided-cooking flows
 - [ ] Task 1.6: Run full regression, security, emulator, accessibility, and build verification
 
 ### Phase 1 verification
