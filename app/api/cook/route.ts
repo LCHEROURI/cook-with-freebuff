@@ -56,7 +56,10 @@ interface ResponsePreferences {
 
 function errorStatus(code: string | undefined): number {
   if (code === 'RECIPE_UNSAFE') return 422;
-  if (code === 'IDEMPOTENCY_CONFLICT' || code === 'GENERATION_IN_PROGRESS' || code === 'GENERATION_SUPERSEDED') {
+  if (code === 'IDEMPOTENCY_CONFLICT'
+    || code === 'GENERATION_IN_PROGRESS'
+    || code === 'GENERATION_SUPERSEDED'
+    || code === 'SAFETY_CONTEXT_CHANGED') {
     return 409;
   }
   return 400;

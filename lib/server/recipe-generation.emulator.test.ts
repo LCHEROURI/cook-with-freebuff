@@ -1,11 +1,14 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
-import type { Recipe } from '../domain/types';
+import type { DietaryProfile, Recipe } from '../domain/types';
 import {
   AUTO_BOOT,
   bootEmulator,
   EMULATOR_HOST,
 } from '../../scripts/emulator-test-helper';
-import { recipeGenerationMarkerId } from './recipe-generation';
+import {
+  hashEffectiveSafetyContext,
+  recipeGenerationMarkerId,
+} from './recipe-generation';
 
 vi.mock('server-only', () => ({}));
 
@@ -76,6 +79,9 @@ describe.skipIf(!emulator)('recipe-generation fencing · Firestore emulator', ()
       markerId,
       userId,
       requestHash: 'c'.repeat(64),
+      safetyContextHash: hashEffectiveSafetyContext({ allergies: [], dietaryRestrictions: [] }),
+      requestedAllergies: [],
+      requestedDietaryRestrictions: [],
       leaseMs: 100,
     };
     const first = { ...common, leaseToken: `lease-a-${run}`, now: 1_000 };
@@ -86,13 +92,14 @@ describe.skipIf(!emulator)('recipe-generation fencing · Firestore emulator', ()
     try {
       expect(await repo.claimRecipeGeneration(first)).toMatchObject({ status: 'acquired' });
       expect(await repo.claimRecipeGeneration(successor)).toMatchObject({ status: 'acquired' });
-      expect(await repo.completeRecipeGeneration({ ...first, now: 1_102, recipe: firstRecipe })).toBe(false);
+      expect(await repo.completeRecipeGeneration({ ...first, now: 1_102, recipe: firstRecipe }))
+        .toEqual({ status: 'superseded' });
       expect(await repo.failRecipeGeneration({ ...first, now: 1_102 })).toBe(false);
       expect(await repo.completeRecipeGeneration({
         ...successor,
         now: 1_102,
         recipe: successorRecipe,
-      })).toBe(true);
+      })).toEqual({ status: 'completed' });
 
       expect(await repo.getRecipe(firstRecipe.id)).toBeNull();
       expect(await repo.getRecipe(successorRecipe.id)).toMatchObject({ id: successorRecipe.id, userId });
@@ -106,6 +113,68 @@ describe.skipIf(!emulator)('recipe-generation fencing · Firestore emulator', ()
       if (db) {
         await db.collection('recipes').doc(firstRecipe.id).delete();
         await db.collection('recipes').doc(successorRecipe.id).delete();
+        await db.collection('correlation_markers').doc(repo.markerKey(markerId)).delete();
+      }
+    }
+  }, 30_000);
+
+  it('rejects a profile change atomically without a recipe or successful marker', async () => {
+    const run = `${Date.now()}-${Math.floor(Math.random() * 1_000_000)}`;
+    const userId = `profile-change-${run}`;
+    const markerId = recipeGenerationMarkerId(userId, `request-${run}`);
+    const recipe = {
+      ...makeRecipe(`recipe-${run}`, userId),
+      ingredients: [
+        { id: 'peanut-butter', name: 'peanut butter', quantity: 1, unit: 'tbsp', optional: false },
+      ],
+      cookingSteps: [],
+    };
+    const initialProfile: DietaryProfile = {
+      userId,
+      allergies: [],
+      dietaryRestrictions: [],
+      dislikedIngredients: [],
+      preferredCuisines: [],
+      preferredEquipment: [],
+      updatedAt: 1,
+    };
+    const lease = {
+      markerId,
+      userId,
+      requestHash: 'd'.repeat(64),
+      safetyContextHash: hashEffectiveSafetyContext(initialProfile),
+      requestedAllergies: [],
+      requestedDietaryRestrictions: [],
+      leaseToken: `lease-${run}`,
+      now: 2_000,
+      leaseMs: 100,
+    };
+
+    try {
+      await repo.upsertDietaryProfile(initialProfile);
+      expect(await repo.claimRecipeGeneration(lease)).toMatchObject({ status: 'acquired' });
+      await repo.upsertDietaryProfile({
+        ...initialProfile,
+        allergies: ['peanuts'],
+        updatedAt: 2,
+      });
+
+      expect(await repo.completeRecipeGeneration({ ...lease, now: 2_001, recipe }))
+        .toEqual({ status: 'safety_context_changed', code: 'SAFETY_CONTEXT_CHANGED' });
+      expect(await repo.getRecipe(recipe.id)).toBeNull();
+
+      const db = admin.getAdminDb();
+      const marker = await db?.collection('correlation_markers').doc(repo.markerKey(markerId)).get();
+      expect(marker?.data()).toMatchObject({
+        status: 'failed',
+        failureCode: 'SAFETY_CONTEXT_CHANGED',
+      });
+      expect(marker?.data()?.recipeId).toBeUndefined();
+    } finally {
+      const db = admin.getAdminDb();
+      if (db) {
+        await db.collection('recipes').doc(recipe.id).delete();
+        await db.collection('dietary_profiles').doc(userId).delete();
         await db.collection('correlation_markers').doc(repo.markerKey(markerId)).delete();
       }
     }

@@ -174,10 +174,15 @@ export const recipeGenerationMarkerSchema = z.object({
   updatedAt: z.number().int().nonnegative(),
   userId: z.string().min(1),
   requestHash: z.string().regex(/^[a-f0-9]{64}$/),
+  // Optional only for parsing pre-hardening markers; every new claim records it.
+  safetyContextHash: z.string().regex(/^[a-f0-9]{64}$/).optional(),
+  requestedAllergies: z.array(z.string()).default([]),
+  requestedDietaryRestrictions: z.array(z.string()).default([]),
   status: z.enum(['leased', 'completed', 'failed']),
   leaseToken: z.string().min(1),
   leaseExpiresAt: z.number().int().nonnegative(),
   recipeId: z.string().min(1).optional(),
+  failureCode: z.literal('SAFETY_CONTEXT_CHANGED').optional(),
 }).superRefine((marker, ctx) => {
   if (marker.status === 'completed' && !marker.recipeId) {
     ctx.addIssue({

@@ -681,6 +681,41 @@ describe('/api/cook', () => {
       expect(generate).toHaveBeenCalledTimes(1);
     });
 
+    it('re-reads the profile before persistence and reports SAFETY_CONTEXT_CHANGED', async () => {
+      registerRecipeGenerator('default', {
+        generate: async () => {
+          await ctx.dietaryProfileStore?.upsertProfile({
+            userId: 'user-1',
+            allergies: ['peanuts'],
+            dietaryRestrictions: [],
+            dislikedIngredients: [],
+            preferredCuisines: [],
+            preferredEquipment: [],
+            updatedAt: Date.now(),
+          });
+          return {
+            ...makeGeneratedRecipe(),
+            ingredients: [
+              { id: 'peanut-butter', name: 'peanut butter', quantity: 1, unit: 'tbsp', optional: false },
+            ],
+            prepSteps: [],
+            cookingSteps: [],
+          };
+        },
+      });
+
+      const response = await post({
+        action: 'create_recipe',
+        prompt: 'I have peanut butter',
+        correlationId: 'generate-profile-change-1',
+      });
+      const body = await response.json();
+
+      expect(response.status).toBe(409);
+      expect(body.error.code).toBe('SAFETY_CONTEXT_CHANGED');
+      expect(await ctx.recipeStore?.getRecipe('recipe-generated-1')).toBeNull();
+    });
+
     it('reports GENERATION_UNAVAILABLE when no provider is registered', async () => {
       const res = await post({ action: 'create_recipe', prompt: 'I have chicken thighs' });
       expect(res.status).toBe(400);

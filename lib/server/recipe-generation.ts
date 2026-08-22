@@ -79,6 +79,19 @@ export function hashEffectiveRecipeRequest(request: RecipeRequest): string {
   return createHash('sha256').update(JSON.stringify(canonical)).digest('hex');
 }
 
+export interface EffectiveSafetyContext {
+  allergies: string[];
+  dietaryRestrictions: string[];
+}
+
+/** Dedicated identity for the effective hard constraints, independent of prompt identity. */
+export function hashEffectiveSafetyContext(context: EffectiveSafetyContext): string {
+  return createHash('sha256').update(JSON.stringify({
+    allergies: canonicalStrings(context.allergies),
+    dietaryRestrictions: canonicalStrings(context.dietaryRestrictions),
+  })).digest('hex');
+}
+
 export function recipeGenerationMarkerId(userId: string, correlationId: string): string {
   return `recipe-generation:${userId}:${correlationId}`;
 }

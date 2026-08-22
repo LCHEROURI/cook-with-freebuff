@@ -37,8 +37,11 @@ import {
 } from '../domain/schemas';
 import type {
   RecipeGenerationClaim,
+  RecipeGenerationCompletion,
   RecipeGenerationLeaseInput,
 } from './tools/types';
+import { hashEffectiveSafetyContext } from './recipe-generation';
+import { mergeSafetyAllergies } from './kitchen-context';
 
 // ── Base Firestore helpers ───────────────────────────────────────────────────
 
@@ -338,7 +341,9 @@ export async function claimRecipeGeneration(
       const current = recipeGenerationMarkerSchema.parse(snap.data());
       if (current.rawId !== input.markerId
         || current.userId !== input.userId
-        || current.requestHash !== input.requestHash) {
+        || current.requestHash !== input.requestHash
+        || (current.safetyContextHash !== undefined
+          && current.safetyContextHash !== input.safetyContextHash)) {
         return { status: 'conflict' } as const;
       }
       if (current.status === 'completed' && current.recipeId) {
@@ -355,6 +360,9 @@ export async function claimRecipeGeneration(
       updatedAt: input.now,
       userId: input.userId,
       requestHash: input.requestHash,
+      safetyContextHash: input.safetyContextHash,
+      requestedAllergies: input.requestedAllergies,
+      requestedDietaryRestrictions: input.requestedDietaryRestrictions,
       status: 'leased',
       leaseToken: input.leaseToken,
       leaseExpiresAt: input.now + input.leaseMs,
@@ -366,18 +374,45 @@ export async function claimRecipeGeneration(
 
 export async function completeRecipeGeneration(
   input: RecipeGenerationLeaseInput & { recipe: Recipe },
-): Promise<boolean> {
+): Promise<RecipeGenerationCompletion> {
   const recipe = recipeSchema.strict().parse(input.recipe);
-  if (recipe.id !== input.recipe.id || recipe.userId !== input.userId) return false;
+  if (recipe.id !== input.recipe.id || recipe.userId !== input.userId) return { status: 'superseded' };
   const db = getAdminDb();
   if (!db) throw new Error('Firestore not initialized');
   const markerRef = db.collection(CORRELATION_MARKERS).doc(markerKey(input.markerId));
   const recipeRef = db.collection(RECIPES).doc(recipe.id);
+  const profileRef = db.collection('dietary_profiles').doc(input.userId);
   return db.runTransaction(async (transaction) => {
     const markerSnap = await transaction.get(markerRef);
-    if (!markerSnap.exists) return false;
+    if (!markerSnap.exists) return { status: 'superseded' } as const;
     const current = recipeGenerationMarkerSchema.parse(markerSnap.data());
-    if (current.rawId !== input.markerId || !currentGenerationLease(current, input)) return false;
+    if (current.rawId !== input.markerId || !currentGenerationLease(current, input)) {
+      return { status: 'superseded' } as const;
+    }
+    const profileSnap = await transaction.get(profileRef);
+    const currentProfile = profileSnap.exists
+      ? dietaryProfileSchema.parse(profileSnap.data())
+      : { allergies: [], dietaryRestrictions: [] };
+    const currentSafetyContextHash = hashEffectiveSafetyContext({
+      allergies: mergeSafetyAllergies(
+        currentProfile.allergies,
+        current.requestedAllergies,
+      ),
+      dietaryRestrictions: mergeSafetyAllergies(
+        currentProfile.dietaryRestrictions,
+        current.requestedDietaryRestrictions,
+      ),
+    });
+    if (currentSafetyContextHash !== current.safetyContextHash) {
+      transaction.set(markerRef, recipeGenerationMarkerSchema.parse({
+        ...current,
+        status: 'failed',
+        failureCode: 'SAFETY_CONTEXT_CHANGED',
+        markedAt: input.now,
+        updatedAt: input.now,
+      }));
+      return { status: 'safety_context_changed', code: 'SAFETY_CONTEXT_CHANGED' } as const;
+    }
     transaction.create(recipeRef, recipe as unknown as Record<string, unknown>);
     transaction.set(markerRef, recipeGenerationMarkerSchema.parse({
       ...current,
@@ -386,7 +421,7 @@ export async function completeRecipeGeneration(
       markedAt: input.now,
       updatedAt: input.now,
     }));
-    return true;
+    return { status: 'completed' } as const;
   });
 }
 

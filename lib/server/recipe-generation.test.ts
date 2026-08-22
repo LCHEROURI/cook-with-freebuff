@@ -5,6 +5,7 @@ import { InMemoryRecipeGenerationStore, InMemoryRecipeStore } from './tools';
 import {
   effectiveRecipeRequest,
   hashEffectiveRecipeRequest,
+  hashEffectiveSafetyContext,
   recipeGenerationMarkerId,
 } from './recipe-generation';
 
@@ -97,15 +98,25 @@ describe('generation lease fencing', () => {
     const recipes = new InMemoryRecipeStore();
     const store = new InMemoryRecipeGenerationStore(recipes);
     const markerId = recipeGenerationMarkerId('user-1', 'same-request');
-    const common = { markerId, userId: 'user-1', requestHash: 'a'.repeat(64), leaseMs: 100 };
+    const common = {
+      markerId,
+      userId: 'user-1',
+      requestHash: 'a'.repeat(64),
+      safetyContextHash: hashEffectiveSafetyContext({ allergies: [], dietaryRestrictions: [] }),
+      requestedAllergies: [],
+      requestedDietaryRestrictions: [],
+      leaseMs: 100,
+    };
     const first = { ...common, leaseToken: 'lease-a', now: 1_000 };
     const successor = { ...common, leaseToken: 'lease-b', now: 1_101 };
 
     expect(await store.claim(first)).toEqual({ status: 'acquired', leaseToken: 'lease-a' });
     expect(await store.claim(successor)).toEqual({ status: 'acquired', leaseToken: 'lease-b' });
-    expect(await store.complete({ ...first, now: 1_102, recipe: recipe('recipe-a') })).toBe(false);
+    expect(await store.complete({ ...first, now: 1_102, recipe: recipe('recipe-a') }))
+      .toEqual({ status: 'superseded' });
     expect(await store.fail({ ...first, now: 1_102 })).toBe(false);
-    expect(await store.complete({ ...successor, now: 1_102, recipe: recipe('recipe-b') })).toBe(true);
+    expect(await store.complete({ ...successor, now: 1_102, recipe: recipe('recipe-b') }))
+      .toEqual({ status: 'completed' });
 
     expect((await recipes.listRecipes('user-1')).map((item) => item.id)).toEqual(['recipe-b']);
     expect(await store.claim({ ...successor, leaseToken: 'lease-c', now: 1_103 })).toEqual({
@@ -117,7 +128,14 @@ describe('generation lease fencing', () => {
   it('isolates identical client keys by authenticated owner', async () => {
     const recipes = new InMemoryRecipeStore();
     const store = new InMemoryRecipeGenerationStore(recipes);
-    const common = { requestHash: 'b'.repeat(64), leaseMs: 100, now: 1_000 };
+    const common = {
+      requestHash: 'b'.repeat(64),
+      safetyContextHash: hashEffectiveSafetyContext({ allergies: [], dietaryRestrictions: [] }),
+      requestedAllergies: [],
+      requestedDietaryRestrictions: [],
+      leaseMs: 100,
+      now: 1_000,
+    };
 
     const first = await store.claim({
       ...common,

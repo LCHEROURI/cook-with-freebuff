@@ -26,6 +26,7 @@ import { evaluateStoredRecipeSafety } from '../recipe-safety';
 import { emptyProfile } from '../profile-service';
 import {
   effectiveRecipeRequest,
+  hashEffectiveSafetyContext,
   hashEffectiveRecipeRequest,
   recipeGenerationMarkerId,
 } from '../recipe-generation';
@@ -45,6 +46,7 @@ export const generateRecipeTool: ToolDefinition = {
     const profile = (await ctx.dietaryProfileStore?.getProfile(ctx.userId)) ?? emptyProfile(ctx.userId);
     const request = effectiveRecipeRequest(args.request, profile);
     const requestHash = hashEffectiveRecipeRequest(request);
+    const safetyContextHash = hashEffectiveSafetyContext(request);
     const generationStore = ctx.recipeGenerationStore;
     let lease: RecipeGenerationLeaseInput | null = null;
 
@@ -53,6 +55,9 @@ export const generateRecipeTool: ToolDefinition = {
         markerId: recipeGenerationMarkerId(ctx.userId, ctx.correlationId),
         userId: ctx.userId,
         requestHash,
+        safetyContextHash,
+        requestedAllergies: args.request.allergies,
+        requestedDietaryRestrictions: args.request.dietaryRestrictions,
         leaseToken: randomUUID(),
         now: Date.now(),
         leaseMs: GENERATION_LEASE_MS,
@@ -120,6 +125,18 @@ export const generateRecipeTool: ToolDefinition = {
           true,
         );
       }
+      const currentProfile = (await ctx.dietaryProfileStore?.getProfile(ctx.userId))
+        ?? emptyProfile(ctx.userId);
+      const currentRequest = effectiveRecipeRequest(args.request, currentProfile);
+      const currentSafetyContextHash = hashEffectiveSafetyContext(currentRequest);
+      const currentSafety = evaluateGeneratedRecipeSafety(owned, currentRequest);
+      if (!currentSafety.canPersist && currentSafetyContextHash === safetyContextHash) {
+        return failLease(
+          'RECIPE_UNSAFE',
+          currentSafety.blockingErrors[0]?.message ?? 'Generated recipe did not pass current safety validation',
+          true,
+        );
+      }
       if (ctx.recipeStore) {
         // Object-level ownership (K9 Part B): stamp the recipe with the
         // generating user before persisting — without userId the recipe is
@@ -131,16 +148,35 @@ export const generateRecipeTool: ToolDefinition = {
         // dietary restrictions) from the request, so a saved recipe records
         // what it was built FOR — the /cook "Your recipes" rows surface them.
         if (lease && generationStore) {
-          const completed = await generationStore.complete({ ...lease, now: Date.now(), recipe: owned });
-          if (!completed) {
+          const completed = await generationStore.complete({
+            ...lease,
+            now: Date.now(),
+            recipe: owned,
+            currentSafetyContextHash,
+          });
+          if (completed.status === 'safety_context_changed') {
+            return fail(
+              'SAFETY_CONTEXT_CHANGED',
+              'Your allergy or dietary profile changed during generation. Please try again.',
+              true,
+            );
+          }
+          if (completed.status === 'superseded') {
             return fail('GENERATION_SUPERSEDED', 'A newer generation attempt owns this request', true);
           }
         } else {
+          if (!currentSafety.canPersist) {
+            return fail(
+              'RECIPE_UNSAFE',
+              currentSafety.blockingErrors[0]?.message ?? 'Generated recipe did not pass current safety validation',
+              true,
+            );
+          }
           await ctx.recipeStore.createRecipe(owned);
         }
-        return ok({ recipe: owned, safety });
+        return ok({ recipe: owned, safety: currentSafety });
       }
-      return ok({ recipe: owned, safety });
+      return ok({ recipe: owned, safety: currentSafety });
     } catch (e) {
       if (lease && generationStore) {
         try {

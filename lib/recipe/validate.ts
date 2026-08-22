@@ -19,6 +19,11 @@ import type {
   RecipeValidationError,
   MissingConfirmation,
 } from '../ai/types';
+import {
+  classifyIngredientSafety,
+  normalizeAllergyCategory,
+  normalizeRestriction,
+} from './ingredient-safety';
 
 export interface RecipeValidationContext {
   /** Names of ingredients the user says they have. */
@@ -53,14 +58,6 @@ const ACTION_VERBS = [
   'drain', 'rinse', 'wash', 'pat', 'heat', 'caramelize', 'flip', 'strain',
   'crack', 'squeeze', 'zest', 'crush', 'press', 'trim',
 ];
-
-const RESTRICTION_MEAT: Record<string, string[]> = {
-  vegetarian: MEAT_TERMS,
-  vegan: MEAT_TERMS,
-  pescatarian: ['chicken', 'beef', 'pork', 'bacon', 'lamb', 'turkey', 'duck', 'veal', 'steak', 'sausage', 'ham'],
-  halal: ['pork', 'bacon', 'ham', 'prosciutto', 'wine', 'beer'],
-  kosher: ['pork', 'bacon', 'ham', 'shrimp', 'crab', 'lobster', 'scallop'],
-};
 
 // Name normalization: lowercase + separator-tolerant. Generated recipes often
 // reference ingredients in kebab-case ("chicken-thighs") while the ingredient
@@ -159,10 +156,13 @@ export function validateRecipe(
   }
 
   // 5. Dietary constraints — explicit allergies/restrictions take priority.
+  const ingredientEvidence = recipe.ingredients.flatMap(classifyIngredientSafety);
   if (ctx.allergies?.length) {
     const lower = ctx.allergies.map(norm);
     for (const allergen of recipe.allergens) {
-      if (lower.includes(norm(allergen))) {
+      const category = normalizeAllergyCategory(allergen);
+      if (lower.includes(norm(allergen))
+        || (category && ctx.allergies.some((item) => normalizeAllergyCategory(item) === category))) {
         errors.push({
           field: 'allergens',
           message: `Recipe contains allergen: ${allergen}`,
@@ -170,17 +170,33 @@ export function validateRecipe(
         });
       }
     }
-  }
-  if (ctx.dietaryRestrictions?.length) {
-    const ingText = recipe.ingredients.map((i) => i.name.toLowerCase()).join(' ');
-    for (const restriction of ctx.dietaryRestrictions) {
-      const banned = RESTRICTION_MEAT[norm(restriction)];
-      if (!banned) continue;
-      const hit = banned.find((term) => ingText.includes(term));
-      if (hit) {
+    for (const allergy of ctx.allergies) {
+      const category = normalizeAllergyCategory(allergy);
+      if (!category) continue;
+      for (const evidence of ingredientEvidence.filter((item) => item.hazard === category)) {
         errors.push({
           field: 'ingredients',
-          message: `Recipe contains "${hit}" which conflicts with the ${restriction} restriction`,
+          message: `Ingredient "${evidence.ingredient}" contains ${evidence.term}, conflicting with the ${allergy} allergy`,
+          severity: 'error',
+        });
+      }
+    }
+  }
+  if (ctx.dietaryRestrictions?.length) {
+    for (const restriction of ctx.dietaryRestrictions) {
+      const category = normalizeRestriction(restriction);
+      const blockedHazards = category === 'vegetarian'
+        ? new Set(['meat'])
+        : category === 'vegan'
+          ? new Set(['meat', 'animal_product'])
+          : category === 'gluten_free'
+            ? new Set(['gluten'])
+            : null;
+      if (!blockedHazards) continue;
+      for (const evidence of ingredientEvidence.filter((item) => blockedHazards.has(item.hazard))) {
+        errors.push({
+          field: 'ingredients',
+          message: `Ingredient "${evidence.ingredient}" contains ${evidence.term}, conflicting with the ${restriction} restriction`,
           severity: 'error',
         });
       }

@@ -103,16 +103,26 @@ export interface RecipeGenerationLeaseInput {
   markerId: string;
   userId: string;
   requestHash: string;
+  safetyContextHash: string;
+  requestedAllergies: string[];
+  requestedDietaryRestrictions: string[];
   leaseToken: string;
   now: number;
   leaseMs: number;
 }
 
+export type RecipeGenerationCompletion =
+  | { status: 'completed' }
+  | { status: 'superseded' }
+  | { status: 'safety_context_changed'; code: 'SAFETY_CONTEXT_CHANGED' };
+
 /** Server-only lease boundary for idempotent recipe generation. */
 export interface RecipeGenerationStore {
   claim(input: RecipeGenerationLeaseInput): Promise<RecipeGenerationClaim>;
   /** Atomically persist the recipe and mark the matching lease complete. */
-  complete(input: RecipeGenerationLeaseInput & { recipe: Recipe }): Promise<boolean>;
+  complete(
+    input: RecipeGenerationLeaseInput & { recipe: Recipe; currentSafetyContextHash?: string },
+  ): Promise<RecipeGenerationCompletion>;
   /** Mark only the current, unexpired lease as failed/retryable. */
   fail(input: RecipeGenerationLeaseInput): Promise<boolean>;
 }

@@ -234,6 +234,7 @@ export class InMemoryRecipeStore implements RecipeStore {
 interface InMemoryGenerationMarker {
   userId: string;
   requestHash: string;
+  safetyContextHash: string;
   status: 'leased' | 'completed' | 'failed';
   leaseToken: string;
   leaseExpiresAt: number;
@@ -261,6 +262,7 @@ export class InMemoryRecipeGenerationStore implements RecipeGenerationStore {
     this.markers.set(input.markerId, {
       userId: input.userId,
       requestHash: input.requestHash,
+      safetyContextHash: input.safetyContextHash,
       status: 'leased',
       leaseToken: input.leaseToken,
       leaseExpiresAt: input.now + input.leaseMs,
@@ -268,17 +270,25 @@ export class InMemoryRecipeGenerationStore implements RecipeGenerationStore {
     return { status: 'acquired', leaseToken: input.leaseToken };
   }
 
-  async complete(input: RecipeGenerationLeaseInput & { recipe: Recipe }): Promise<boolean> {
+  async complete(input: RecipeGenerationLeaseInput & {
+    recipe: Recipe;
+    currentSafetyContextHash?: string;
+  }): Promise<import('./types').RecipeGenerationCompletion> {
     const current = this.markers.get(input.markerId);
-    if (!this.isCurrentLease(current, input)) return false;
-    if (input.recipe.userId !== input.userId) return false;
+    if (!this.isCurrentLease(current, input)) return { status: 'superseded' };
+    if (input.currentSafetyContextHash
+      && input.currentSafetyContextHash !== current.safetyContextHash) {
+      this.markers.set(input.markerId, { ...current, status: 'failed' });
+      return { status: 'safety_context_changed', code: 'SAFETY_CONTEXT_CHANGED' };
+    }
+    if (input.recipe.userId !== input.userId) return { status: 'superseded' };
     await this.recipes.createRecipe(input.recipe);
     this.markers.set(input.markerId, {
       ...current,
       status: 'completed',
       recipeId: input.recipe.id,
     });
-    return true;
+    return { status: 'completed' };
   }
 
   async fail(input: RecipeGenerationLeaseInput): Promise<boolean> {

@@ -61,6 +61,22 @@ kitchen context.
 - [x] Existing valid recipes continue to persist, list, and launch normally,
   with ownership, App Check, authentication, and authorization unchanged.
 
+## Phase 3 Four-Finding Remediation Acceptance Criteria
+
+- [x] Ingredient names, preparation, and condition provide authoritative
+  deterministic evidence for supported allergy and dietary conflicts;
+  generated allergen metadata can add blockers but can never clear them.
+- [x] Generated and stored recipes receive the same persistence, listing, and
+  launch decision for the same current safety context.
+- [ ] Prompt construction and idempotency hashing consume one normalized
+  effective generation input containing every model-visible field.
+- [ ] Manual and pantry Cook generation send a valid stable correlation ID per
+  intentional attempt and synchronously suppress duplicate submissions.
+- [x] The Firestore completion transaction rejects a changed safety context,
+  writes no recipe, and cannot mark the generation successful.
+- [ ] App Check, authentication, ownership, rules, indexes, and existing guided
+  cooking behavior remain unchanged.
+
 ## Functional Requirements
 
 ### FR1 — Trusted kitchen context
