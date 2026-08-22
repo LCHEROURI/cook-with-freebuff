@@ -45,6 +45,9 @@ Stored in `docs/specs/NNNN-title.md`. Current: 0001 App Hosting primary host, 00
 - Server code lives under `lib/server/` and never imports client code; client code never imports server modules (`server-only` guards enforce this)
 - Every API route resolves the Firebase ID token server side via `resolveUserId` — the client never supplies the user id
 - All Firestore writes are schema validated (Zod) at the repository layer before persisting
+- Quota-bearing routes gate with App Check before authentication, parsing, or quota/provider work; production enforcement fails closed and voice/vision use fresh single-use tokens
+- `firestore.rules` is a shared union: change only Cook clauses, preserve non-Cook union rules byte-for-byte, keep the catch-all deny last, and never deploy before the separately authorized sibling-rules synchronization gate
+- Production proof scripts may write only uniquely prefixed temporary data, must guarantee cleanup, and must not run until `/api/build-info` reports the intended guarded revision
 - Tool calls are the only way the AI model touches state — every tool logs latency and error codes to `agent_tool_logs`
 - Gemini model names resolve from one shared table (`lib/ai/model-roles.ts`) in the order Remote Config, then env var, then hardcoded default, so a model version can change without a deploy; call sites never hardcode a model name
 - Voice flows through hooks (`useVoiceInput`, `useGeminiLive`, `useLiveDictation`); the reusable `VoiceInputButton` (spec 0004) wraps `useVoiceInput` as the transcription entry point on form fields, so no call site touches the raw Web Speech API

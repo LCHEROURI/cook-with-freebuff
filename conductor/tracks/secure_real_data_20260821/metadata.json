@@ -1,0 +1,47 @@
+{
+  "id": "secure_real_data_20260821",
+  "title": "Phase 3A secure real-data hardening",
+  "type": "refactor",
+  "status": "complete",
+  "created": "2026-08-21T23:07:44Z",
+  "updated": "2026-08-22T01:15:30Z",
+  "current_phase": 4,
+  "current_task": null,
+  "phases": {
+    "total": 4,
+    "completed": 4
+  },
+  "tasks": {
+    "total": 25,
+    "completed": 25
+  },
+  "commits": [
+    "34d0979: docs(security): inventory persistence write contracts",
+    "b2d9f18: test(security): pin repository write validation gaps",
+    "e3c36cc: fix(security): validate complete repository writes",
+    "a0ac044: fix(security): enforce repository immutability contracts",
+    "eebcac6: refactor(security): centralize validated patch writes",
+    "6b7b297: test(security): preserve immutable timer metadata",
+    "a5647d8: docs(security): record phase 1 verification",
+    "4ba8a4e: test(security): add Firestore rules harness",
+    "2294706: test(security): pin Cook rules ownership gaps",
+    "838caf3: fix(security): preserve Cook document ownership",
+    "14337d3: test(security): lock union rules scope",
+    "e3e68e4: test(security): prove existing data compatibility",
+    "fae92d3: docs(security): record phase 2 verification",
+    "2fb31fe: test(security): lock App Check route ordering",
+    "10519c2: fix(security): pin enforced attestation outcomes",
+    "8b4c564: fix(security): expose App Check readiness",
+    "ef58ed7: ci(security): require production App Check enforcement",
+    "47a3ec3: test(security): prove enforced App Check live paths",
+    "6f4774c: docs(security): add App Check rollout runbook",
+    "a0ab9e1: docs(security): record phase 3 verification",
+    "32e36b7: test(security): add authenticated real-data smoke",
+    "3d294c5: docs(security): record phase 4 local gates",
+    "fe6b055: docs(security): record production proof blocker",
+    "ae46391: docs(security): document secure production operations",
+    "b4f1767: docs(security): add release readiness checklist",
+    "6331eb3: docs(security): record phase 4 acceptance",
+    "31a2dfb: docs(security): record final track verification"
+  ]
+}

@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { NextResponse } from 'next/server';
 import { POST, GET } from './route';
 import { SessionService, InMemorySessionStore } from '@/lib/server/session-service';
 import { InMemoryTimerStore, InMemoryLogStore, InMemoryRecipeStore } from '@/lib/server/tools';
@@ -11,10 +12,12 @@ vi.mock('@/lib/server/app-check', () => ({ gateAppCheck: vi.fn(async () => null)
 
 import { resolveUserId } from '@/lib/server/admin';
 import { buildProductionContext } from '@/lib/server/stores';
+import { gateAppCheck } from '@/lib/server/app-check';
 import { registerRecipeGenerator, resetProviders } from '@/lib/ai/provider';
 
 const mockResolve = resolveUserId as ReturnType<typeof vi.fn>;
 const mockBuild = buildProductionContext as ReturnType<typeof vi.fn>;
+const mockGate = gateAppCheck as ReturnType<typeof vi.fn>;
 
 // A self-consistent generated recipe (every step reference exists in the
 // ingredient list) so create_recipe's validation passes cleanly.
@@ -103,12 +106,22 @@ describe('/api/cook', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    mockGate.mockResolvedValue(null);
     mockResolve.mockResolvedValue('user-1');
     ctx = testContext('user-1');
     mockBuild.mockImplementation(() => ctx);
     // No AI providers by default — each create_recipe test registers its own
     // stub generator (the deployed app wires the real Gemini one).
     resetProviders();
+  });
+
+  it('returns an App Check block before auth or guided/provider context work', async () => {
+    mockGate.mockResolvedValueOnce(new NextResponse(null, { status: 403 }));
+    const res = await post({ action: 'create_recipe', prompt: 'rice and chicken' });
+
+    expect(res.status).toBe(403);
+    expect(mockResolve).not.toHaveBeenCalled();
+    expect(mockBuild).not.toHaveBeenCalled();
   });
 
   it('returns 401 without a valid token', async () => {

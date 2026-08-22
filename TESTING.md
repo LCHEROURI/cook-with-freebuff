@@ -1,7 +1,10 @@
 # Testing
 
-`npm test` (vitest), `npm run typecheck`, `npm run lint`, `npm run build` —
-all run in CI on every push (see [DEPLOYMENT.md](./DEPLOYMENT.md)).
+`npm run check` runs typecheck, lint, all Vitest suites, and the production
+build. `npm run test:rules` runs the complete owner/second-user/anonymous rules
+matrix, while `npm run test:emulator` covers repository transactions, cleanup,
+and emulator wiring. These gates run against Cook With Freebuff's shared-union
+contracts; see [DEPLOYMENT.md](./DEPLOYMENT.md).
 
 ## Layers (K9 Part D)
 
@@ -25,6 +28,23 @@ conflict), dietary-incompatible recipe blocked by validation.
 (seed recipe → owner token → guided flow incl. safety gate + timer → pantry
 add/confirm with Firestore read-back → Gemini turn → cleanup). Also runs in
 CI after every push.
+
+**App Check release proof** —
+`npm run verify:live -- --require-app-check-enforced` requires the deployed
+revision to reject an unattested quota request with `APP_CHECK_FAILED` and then
+accept a freshly attested, authenticated request. The build SHA must match
+before this write-capable flow starts.
+
+**Authenticated real data** — `npm run verify:real-data` is production-only
+and explicit opt-in. It uses two unique temporary Auth users to prove owner
+create/read/update/delete plus cross-user read/update/delete denial through the
+client SDK. Admin access is only the cleanup backstop. The probe always attempts
+document/user cleanup and never prints credentials or tokens. Do not run it
+against a stale deployment or with emulator hosts configured.
+
+Focused contracts for these surfaces are
+`scripts/verify-real-data.test.ts`, `scripts/app-check-route-order.test.ts`,
+`lib/server/app-check.test.ts`, and `scripts/secure-real-data-docs.test.ts`.
 
 ## Security + observability tests (K9 Parts B/C)
 

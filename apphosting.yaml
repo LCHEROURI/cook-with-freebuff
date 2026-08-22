@@ -35,9 +35,21 @@ env:
       - BUILD
       - RUNTIME
   - variable: NEXT_PUBLIC_FIREBASE_APP_ID
-    value: 1:952213217375:web:4de27046c743eceb523bea
+    value: 1:952213217375:web:ad84f1308f28ca4f523bea
     availability:
       - BUILD
+      - RUNTIME
+
+  # Firebase App Check (site key is public in the browser bundle, but managed
+  # through Secret Manager so each environment can provision its own value)
+  - variable: NEXT_PUBLIC_FIREBASE_APP_CHECK_SITE_KEY
+    secret: NEXT_PUBLIC_FIREBASE_APP_CHECK_SITE_KEY
+    availability:
+      - BUILD
+      - RUNTIME
+  - variable: APP_CHECK_ENFORCED
+    value: "1"
+    availability:
       - RUNTIME
 
   # Feature toggles
