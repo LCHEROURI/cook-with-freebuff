@@ -4,21 +4,23 @@
   "type": "feature",
   "status": "in_progress",
   "created": "2026-08-22T00:00:00Z",
-  "updated": "2026-08-22T13:51:38Z",
+  "updated": "2026-08-22T13:52:46Z",
   "current_phase": 1,
-  "current_task": "1.5",
+  "current_task": "1.6",
   "phases": {
     "total": 1,
     "completed": 0
   },
   "tasks": {
     "total": 6,
-    "completed": 4
+    "completed": 5
   },
   "commits": [
     "a82aa48: feat(pantry): define trusted starter context (pantry_to_plate_20260822)",
     "95d6006: feat(kitchen): save preferred equipment (pantry_to_plate_20260822)",
     "9f6f202: feat(cook): add secure pantry starter contract (pantry_to_plate_20260822)",
-    "c6cfff9: feat(cook): add pantry starter experience (pantry_to_plate_20260822)"
+    "c6cfff9: feat(cook): add pantry starter experience (pantry_to_plate_20260822)",
+    "54c1a37: chore: mark task 1.4 complete (pantry_to_plate_20260822)",
+    "7639139: test(cook): verify pantry recipe handoff (pantry_to_plate_20260822)"
   ]
 }
