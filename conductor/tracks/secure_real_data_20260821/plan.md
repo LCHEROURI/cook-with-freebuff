@@ -36,8 +36,8 @@
 - [x] Task 3.2: Add failing tests for missing, malformed, wrong-app, replayed, and valid attestation in enforced production mode
 - [x] Task 3.3: Harden App Check error mapping and readiness checks without changing emulator behavior
 - [x] Task 3.4: Require enforcement in production deployment configuration and CI live verification
-- [~] Task 3.5: Update the live verifier to prove unattested rejection and attested authenticated success under the required-enforcement flag
-- [ ] Task 3.6: Document prerequisites, monitor observation, activation, rollback, and failure diagnosis
+- [x] Task 3.5: Update the live verifier to prove unattested rejection and attested authenticated success under the required-enforcement flag
+- [~] Task 3.6: Document prerequisites, monitor observation, activation, rollback, and failure diagnosis
 - [ ] Task 3.7: Conductor - User Manual Verification 'App Check enforcement rollout'
 
 ### Phase 3 verification
