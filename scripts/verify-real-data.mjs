@@ -15,6 +15,10 @@ import { getFirestore as getAdminFirestore } from 'firebase-admin/firestore';
 import { deleteApp, initializeApp } from 'firebase/app';
 import { getAuth, signInWithCustomToken, signOut } from 'firebase/auth';
 import { deleteDoc, doc, getDoc, getFirestore, setDoc, updateDoc } from 'firebase/firestore';
+import {
+  parseProductionPreflightOptions,
+  verifyProductionPreflight,
+} from './verify-real-data-preflight.mjs';
 
 const EXPECTED_PROJECT_ID = 'portfolio-app-freebuff2';
 const PANTRY_COLLECTION = 'pantry_items';
@@ -96,6 +100,9 @@ if (!apiKey || !projectId || !appId) {
   throw new Error('Firebase web configuration is incomplete.');
 }
 assertProductionIntent(projectId, serviceAccount);
+const preflightOptions = parseProductionPreflightOptions(process.argv.slice(2), process.env);
+const { deployedSha } = await verifyProductionPreflight(preflightOptions);
+console.log(`Production preflight passed for revision ${deployedSha.slice(0, 12)}.`);
 
 const runId = randomUUID();
 const ownerUid = `verify-real-data-owner-${runId}`;
@@ -211,11 +218,8 @@ async function main() {
     await expectPermissionDenied('cross-user delete', () => deleteDoc(otherRef));
 
     await deleteDoc(ownerRef);
-    const removed = await getDoc(ownerRef);
-    if (removed.exists()) {
-      throw new Error('Owner cleanup did not remove the pantry item.');
-    }
-    console.log('  ✓ owner deleted pantry item and confirmed cleanup');
+    await expectPermissionDenied('owner post-delete read', () => getDoc(ownerRef));
+    console.log('  ✓ owner deleted pantry item; owner-scoped rules denied the missing document read');
     console.log('RESULT: PASS');
   } finally {
     await cleanupProbe();

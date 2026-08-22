@@ -13,7 +13,8 @@ Verified locally: 2026-08-22
 
 ## Authenticated real-data smoke contract
 
-Command contract: `npm run verify:real-data`
+Command contract:
+`npm run verify:real-data -- --expected-sha "$APPROVED_COOK_COMMIT_SHA"`
 
 The production-only probe is explicit opt-in, rejects emulator configuration
 and any Firebase project other than the shared `portfolio-app-freebuff2`
@@ -23,18 +24,19 @@ temporary authenticated identities and uses the Firebase client SDK to prove:
 - owner create, read, update, and delete on one isolated `pantry_items`
   document;
 - second-user read, update, and delete all fail with `permission-denied`;
-- owner deletion is read back as absent; and
+- after owner deletion, the expected `permission-denied` confirms the missing
+  document cannot satisfy the owner-field read rule; and
 - an Admin-SDK `finally` backstop removes the document and both temporary Auth
   users after success, failure, SIGINT, or SIGTERM.
 
 Focused contract command:
 
 ```text
-npx vitest run scripts/verify-real-data.test.ts
+npx vitest run scripts/verify-real-data*.test.ts
 ```
 
-Result: 1 file passed, 5 tests passed. `node --check
-scripts/verify-real-data.mjs` also passed. The production command itself remains
+Result: 2 files passed, 10 tests passed. `node --check` passed for both
+`scripts/verify-real-data.mjs` and its preflight module. The production command itself remains
 pending for Task 4.3; Task 4.1 made no production writes.
 
 ## Full local quality gates
@@ -94,7 +96,7 @@ running:
 
 ```text
 npm run verify:live -- --require-app-check-enforced
-npm run verify:real-data
+npm run verify:real-data -- --expected-sha "$APPROVED_COOK_COMMIT_SHA"
 ```
 
 Those write-capable probes were not run against the known-stale deployment:

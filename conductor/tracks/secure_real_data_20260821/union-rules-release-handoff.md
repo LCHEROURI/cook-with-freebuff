@@ -192,17 +192,21 @@ After the approved Cook application revision is live and `/api/build-info`
 reports that revision, run the guarded production isolation proof:
 
 ```bash
-npm run verify:real-data
+npm run verify:real-data -- --expected-sha "$APPROVED_COOK_COMMIT_SHA"
 ```
 
 Required production evidence:
 
 1. Owner create, read, update, and delete succeed.
 2. A second authenticated user cannot read, update, or delete the owner record.
-3. Owner deletion is read back as absent.
+3. Owner deletion succeeds, then the missing document read returns the expected
+   `permission-denied` because no owner field remains for the read rule.
 4. Temporary data and both temporary Auth users are removed.
 
-`npm run verify:real-data` proves the production pantry path. It does not prove
+The release owner must set `APPROVED_COOK_COMMIT_SHA` to the exact approved
+40-character Cook revision. The guarded command proves that revision and App
+Check enforcement before creating any temporary identities or data, then
+proves the production pantry path. It does not prove
 every Cook collection in production. Keep the full post deployment owner matrix
 check open until the authorized release owner records equivalent owner, second
 user, anonymous, ownership transfer, append only, and server managed evidence

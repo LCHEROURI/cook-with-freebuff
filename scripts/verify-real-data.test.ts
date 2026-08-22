@@ -20,6 +20,14 @@ describe('verify:real-data production safety contract', () => {
     expect(SCRIPT).toContain('serviceAccount.project_id !== EXPECTED_PROJECT_ID');
   });
 
+  it('proves the deployed revision and App Check enforcement before Admin setup', () => {
+    expect(SCRIPT).toContain('parseProductionPreflightOptions(process.argv.slice(2), process.env)');
+    expect(SCRIPT).toContain('await verifyProductionPreflight(preflightOptions)');
+    expect(SCRIPT.indexOf('await verifyProductionPreflight(preflightOptions)')).toBeLessThan(
+      SCRIPT.indexOf('initializeAdminApp('),
+    );
+  });
+
   it('uses two unique temporary identities and authenticated client writes', () => {
     expect(SCRIPT).toContain('randomUUID()');
     expect(SCRIPT).toContain('verify-real-data-owner-');
@@ -31,6 +39,8 @@ describe('verify:real-data production safety contract', () => {
     expect(SCRIPT).toContain('await getDoc(ownerRef)');
     expect(SCRIPT).toContain('await updateDoc(ownerRef');
     expect(SCRIPT).toContain('await deleteDoc(ownerRef)');
+    expect(SCRIPT).toContain("await expectPermissionDenied('owner post-delete read'");
+    expect(SCRIPT).not.toContain('const removed = await getDoc(ownerRef)');
   });
 
   it('proves second-user read, update, and delete are permission-denied', () => {

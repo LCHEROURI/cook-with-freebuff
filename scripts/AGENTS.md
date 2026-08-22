@@ -32,7 +32,7 @@ Everything that proves the deployed app and gates a merge. The verify:live drive
 # The verify family (from repo root, via package.json)
 npm run verify:live                  # deployed host, full E2E
 npm run verify:live -- --require-app-check-enforced  # release App Check proof
-npm run verify:real-data             # guarded authenticated production CRUD/isolation proof
+npm run verify:real-data -- --expected-sha "$APPROVED_COOK_COMMIT_SHA"  # guarded production CRUD/isolation proof
 npm run verify:live:local            # same check against a local dev server (port 3100, VERIFY_LOCAL_PORT to override)
 npm run verify:live:emulator         # against the Firestore emulator
 npm run verify:live:compare          # guided flow vs live app comparison
