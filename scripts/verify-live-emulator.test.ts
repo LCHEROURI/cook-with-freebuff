@@ -108,6 +108,21 @@ describe('verify:live · App Check enforcement probe', () => {
     expect(VERIFY_LIVE).toContain("process.argv.includes('--require-app-check-enforced')");
     expect(VERIFY_LIVE).toContain('App Check enforcement required but the deployed server accepted an unattested request');
   });
+
+  it('pairs the negative probe with an attested authenticated success in required mode', () => {
+    expect(VERIFY_LIVE).toContain('if (REQUIRE_APP_CHECK_ENFORCED) {');
+    expect(VERIFY_LIVE).toContain('const attested = await fetchJson(`${APP}/api/cook`');
+    expect(VERIFY_LIVE).toContain("headers: AUTH");
+    expect(VERIFY_LIVE).toContain("body: JSON.stringify({ action: 'list_recipes' })");
+    expect(VERIFY_LIVE).toContain("attested.status === 200 && attested.body?.success === true");
+    expect(VERIFY_LIVE).toContain('attested authenticated request succeeded');
+  });
+
+  it('mints a fresh App Check token for every single-use route probe', () => {
+    expect(VERIFY_LIVE).toContain('const freshAppCheckAuth = async () =>');
+    expect(VERIFY_LIVE).toContain("fetchJson(`${APP}/api/voice/token`, { method: 'POST', headers: await freshAppCheckAuth() })");
+    expect(VERIFY_LIVE.match(/headers: await freshAppCheckAuth\(\)/g)).toHaveLength(3);
+  });
 });
 
 describe('verify:live · [2b] model resolution proof', () => {
@@ -135,7 +150,7 @@ describe('verify:live · [2b] model resolution proof', () => {
   it('hard-asserts the live-voice model returned by /api/voice/token against Remote Config', () => {
     // A resolver that silently ignores Remote Config and returns the default
     // must fail the gate, not pass unnoticed.
-    expect(VERIFY_LIVE).toContain("fetchJson(`${APP}/api/voice/token`, { method: 'POST', headers: AUTH })");
+    expect(VERIFY_LIVE).toContain("fetchJson(`${APP}/api/voice/token`, { method: 'POST', headers: await freshAppCheckAuth() })");
     expect(VERIFY_LIVE).toContain('returnedModel === rcLive');
     expect(VERIFY_LIVE).toContain('the resolver ignored Remote Config');
   });

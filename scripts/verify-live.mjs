@@ -560,6 +560,21 @@ try {
     'content-type': 'application/json',
     ...(appCheckToken ? { 'X-Firebase-AppCheck': appCheckToken } : {}),
   };
+  const freshAppCheckAuth = async () => {
+    if (EMULATOR || !APP_ID) return AUTH;
+    try {
+      const minted = await getAppCheck(app).createToken(APP_ID);
+      return { ...AUTH, 'X-Firebase-AppCheck': minted.token };
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      if (REQUIRE_APP_CHECK_ENFORCED) {
+        fail(`App Check single-use token mint failed — ${message}`);
+      } else {
+        note(`App Check single-use token NOT minted — ${message} (monitor mode continues unattested)`);
+      }
+      return AUTH;
+    }
+  };
 
   // ── 2a. App Check enforcement probe ─────────────────────────────────────
   // Prove the deployed server ENFORCES App Check, not just accepts it. A valid
@@ -587,6 +602,19 @@ try {
       fail(`App Check enforcement required but the deployed server accepted an unattested request (HTTP ${noAppCheck.status}) — set APP_CHECK_ENFORCED=1`);
     } else {
       note(`App Check in monitor mode — unattested request returned HTTP ${noAppCheck.status} (not blocked)`);
+    }
+
+    if (REQUIRE_APP_CHECK_ENFORCED) {
+      const attested = await fetchJson(`${APP}/api/cook`, {
+        method: 'POST',
+        headers: AUTH,
+        body: JSON.stringify({ action: 'list_recipes' }),
+      });
+      if (attested.status === 200 && attested.body?.success === true) {
+        note('App Check proof — attested authenticated request succeeded');
+      } else {
+        fail(`App Check attested authenticated request failed (HTTP ${attested.status}) — ${j(attested.body?.error ?? attested.body)}`);
+      }
     }
   }
 
@@ -633,7 +661,7 @@ try {
     }
     // Hard-assert the one observable role via the deployed token route: the
     // model the route returned is the one the live-voice client connects with.
-    const tokenProbe = await fetchJson(`${APP}/api/voice/token`, { method: 'POST', headers: AUTH });
+    const tokenProbe = await fetchJson(`${APP}/api/voice/token`, { method: 'POST', headers: await freshAppCheckAuth() });
     const returnedModel = tokenProbe.body?.data?.model;
     const rcLive = rcParams['live_voice_model'];
     if (typeof returnedModel !== 'string' || returnedModel.length === 0) {
@@ -1552,7 +1580,7 @@ try {
   // never flake the post-deploy gate.
   console.log(`\n[4d] Vision scan proof: validation + structured result (${APP}/api/vision/scan)`);
   const missingImage = await fetchJson(`${APP}/api/vision/scan`, {
-    method: 'POST', headers: AUTH,
+    method: 'POST', headers: await freshAppCheckAuth(),
     body: JSON.stringify({}),
   });
   missingImage.status === 400 && missingImage.body?.error?.code === 'MISSING_IMAGE'
@@ -1560,7 +1588,7 @@ try {
     : fail(`expected 400 MISSING_IMAGE, got ${missingImage.status} ${j(missingImage.body)}`);
 
   const scanRes = await fetchJson(`${APP}/api/vision/scan`, {
-    method: 'POST', headers: AUTH,
+    method: 'POST', headers: await freshAppCheckAuth(),
     body: JSON.stringify({ image: VISION_FIXTURE_IMAGE }),
     timeoutMs: 60_000, // cold serverless boot + model latency
   });
