@@ -68,3 +68,24 @@ describe('apphosting.yaml · Firebase client config contract lock', () => {
     expect(appIdIdx).toBeGreaterThan(-1);
   });
 });
+
+describe('apphosting.yaml · production App Check contract', () => {
+  it('injects the browser site key from Secret Manager at build and runtime', () => {
+    expect(YAML).toContain([
+      '  - variable: NEXT_PUBLIC_FIREBASE_APP_CHECK_SITE_KEY',
+      '    secret: NEXT_PUBLIC_FIREBASE_APP_CHECK_SITE_KEY',
+      '    availability:',
+      '      - BUILD',
+      '      - RUNTIME',
+    ].join('\n'));
+  });
+
+  it('enforces App Check in the production runtime', () => {
+    expect(YAML).toContain([
+      '  - variable: APP_CHECK_ENFORCED',
+      '    value: "1"',
+      '    availability:',
+      '      - RUNTIME',
+    ].join('\n'));
+  });
+});
