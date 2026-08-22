@@ -750,6 +750,49 @@ describe('/api/cook', () => {
       ]);
     });
 
+    it('persists a pantry recipe for the existing saved-recipe and guided-cooking flows', async () => {
+      await seedPantry();
+      registerRecipeGenerator('default', {
+        generate: async () => makeGeneratedRecipe(),
+      });
+
+      const created = await post({
+        action: 'create_recipe',
+        pantryItemIds: ['pantry-chicken'],
+      });
+      expect(created.status).toBe(200);
+      const createdBody = await created.json();
+      expect(createdBody.data.recipeId).toBe('recipe-generated-1');
+      expect(createdBody.data.validation.valid).toBe(true);
+
+      const listed = await post({ action: 'list_recipes' });
+      expect(listed.status).toBe(200);
+      const listedBody = await listed.json();
+      expect(listedBody.data.recipes).toEqual([
+        expect.objectContaining({
+          recipeId: 'recipe-generated-1',
+          title: 'Chicken Thighs with Rice',
+        }),
+      ]);
+
+      const fetched = await post({ action: 'get_recipe', recipeId: 'recipe-generated-1' });
+      expect(fetched.status).toBe(200);
+      const fetchedBody = await fetched.json();
+      expect(fetchedBody.data.recipe).toMatchObject({
+        id: 'recipe-generated-1',
+        userId: 'user-1',
+      });
+
+      const launched = await post({ action: 'launch', recipeId: 'recipe-generated-1' });
+      expect(launched.status).toBe(200);
+      const launchedBody = await launched.json();
+      expect(launchedBody.data).toMatchObject({
+        recipeId: 'recipe-generated-1',
+        phase: 'PREP_GUIDANCE',
+        instruction: 'Rinse the rice',
+      });
+    });
+
     it('requires explicit confirmation before uncertain pantry items reach the provider', async () => {
       await seedPantry();
       const generate = vi.fn(async () => makeGeneratedRecipe());
