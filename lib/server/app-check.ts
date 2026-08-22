@@ -28,6 +28,27 @@ export type AppCheckVerdict =
   | { ok: true; reason?: 'emulator' | 'verified' }
   | { ok: false; reason: 'missing-token' | 'invalid-token' | 'app-mismatch' | 'unconfigured' | 'replay' };
 
+type AppCheckFailureReason = Extract<AppCheckVerdict, { ok: false }>['reason'];
+type AppCheckMode = 'emulator' | 'monitor' | 'enforced';
+type AppCheckPrerequisite =
+  | 'NEXT_PUBLIC_FIREBASE_APP_ID'
+  | 'NEXT_PUBLIC_FIREBASE_APP_CHECK_SITE_KEY'
+  | 'FIREBASE_SERVICE_ACCOUNT';
+
+export interface AppCheckReadiness {
+  mode: AppCheckMode;
+  ready: boolean;
+  missing: AppCheckPrerequisite[];
+}
+
+const APP_CHECK_ERROR_MESSAGES: Record<AppCheckFailureReason, string> = {
+  'missing-token': 'App Check token missing',
+  'invalid-token': 'App Check token invalid',
+  'app-mismatch': 'App Check token is for a different app',
+  replay: 'App Check token has already been consumed',
+  unconfigured: 'App Check enforcement is not configured',
+};
+
 /** Options for a route gate. */
 export interface AppCheckGateOptions {
   /**
@@ -50,6 +71,28 @@ function isEmulator(): boolean {
   return !!process.env.FIRESTORE_EMULATOR_HOST;
 }
 
+/** Report whether this process has every prerequisite needed to enforce App Check. */
+export function appCheckReadiness(): AppCheckReadiness {
+  if (isEmulator()) return { mode: 'emulator', ready: true, missing: [] };
+
+  const missing: AppCheckPrerequisite[] = [];
+  if (!process.env.NEXT_PUBLIC_FIREBASE_APP_ID?.trim()) {
+    missing.push('NEXT_PUBLIC_FIREBASE_APP_ID');
+  }
+  if (!process.env.NEXT_PUBLIC_FIREBASE_APP_CHECK_SITE_KEY?.trim()) {
+    missing.push('NEXT_PUBLIC_FIREBASE_APP_CHECK_SITE_KEY');
+  }
+  if (!getAdminApp()) {
+    missing.push('FIREBASE_SERVICE_ACCOUNT');
+  }
+
+  return {
+    mode: appCheckEnforced() ? 'enforced' : 'monitor',
+    ready: missing.length === 0,
+    missing,
+  };
+}
+
 /**
  * Verify a client App Check token.
  *
@@ -67,9 +110,9 @@ export async function verifyAppCheckToken(
     return enforced ? { ok: false, reason: 'missing-token' } : { ok: true };
   }
 
-  const expected = process.env.NEXT_PUBLIC_FIREBASE_APP_ID?.trim();
-  if (enforced && !expected) {
-    logWarn('app-check.unconfigured', { missing: 'NEXT_PUBLIC_FIREBASE_APP_ID' });
+  const readiness = appCheckReadiness();
+  if (enforced && !readiness.ready) {
+    logWarn('app-check.unconfigured', { missing: readiness.missing.join(',') });
     return { ok: false, reason: 'unconfigured' };
   }
 
@@ -79,6 +122,7 @@ export async function verifyAppCheckToken(
   }
 
   try {
+    const expected = process.env.NEXT_PUBLIC_FIREBASE_APP_ID?.trim();
     const { appId, alreadyConsumed } = await getAppCheck(app).verifyToken(
       token,
       opts.consume ? { consume: true } : {},
@@ -112,12 +156,7 @@ export async function gateAppCheck(req: Request, opts: AppCheckGateOptions = {})
   const verdict = await verifyAppCheckToken(token, opts);
   if (verdict.ok) return null;
 
-  const message =
-    verdict.reason === 'missing-token'
-      ? 'App Check token missing'
-      : verdict.reason === 'app-mismatch'
-        ? 'App Check token is for a different app'
-        : 'App Check attestation failed';
+  const message = APP_CHECK_ERROR_MESSAGES[verdict.reason];
 
   return NextResponse.json(
     { success: false, error: { code: 'APP_CHECK_FAILED', message, recoverable: false } },
