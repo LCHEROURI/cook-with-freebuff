@@ -33,7 +33,10 @@ const REAL_PROJECT = {
   projectId: 'portfolio-app-freebuff2',
   storageBucket: 'portfolio-app-freebuff2.firebasestorage.app',
   senderId: '952213217375',
-  appId: '1:952213217375:web:4de27046c743eceb523bea',
+  // App Hosting binds the cook-with-freebuff backend to this dedicated web
+  // app. Using the other active web app in the shared Firebase project makes
+  // App Check mint/verify against the wrong application identity.
+  appId: '1:952213217375:web:ad84f1308f28ca4f523bea',
 };
 
 describe('apphosting.yaml · Firebase client config contract lock', () => {
