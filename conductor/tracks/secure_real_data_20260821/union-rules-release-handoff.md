@@ -127,6 +127,10 @@ The external owner must reconcile the current deployed project indexes, the
 authorized sibling index source, and Cook's `firestore.indexes.json` into one
 reviewed shared index artifact.
 
+Use `shared-index-release-manifest.md` for the Cook signatures, canonical JSON
+comparison method, reconciliation checklist, deployment stops, and evidence
+record.
+
 The Cook inventory checksum is useful for proving that Cook's six composite
 indexes were considered. It is not permission to remove or replace non Cook
 indexes.

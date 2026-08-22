@@ -16,6 +16,11 @@ const HANDOFF_PATH =
 const handoff = existsSync(HANDOFF_PATH)
   ? readFileSync(HANDOFF_PATH, 'utf8')
   : '';
+const INDEX_MANIFEST_PATH =
+  'conductor/tracks/secure_real_data_20260821/shared-index-release-manifest.md';
+const indexManifest = existsSync(INDEX_MANIFEST_PATH)
+  ? readFileSync(INDEX_MANIFEST_PATH, 'utf8')
+  : '';
 
 describe('secure real-data operational documentation', () => {
   it('documents write validation, ownership rules, and App Check boundaries', () => {
@@ -87,5 +92,31 @@ describe('secure real-data operational documentation', () => {
     expect(handoff).toContain('npm run verify:real-data');
     expect(handoff).toContain('Do not access or modify the sibling application');
     expect(handoff).toContain('STOP');
+  });
+
+  it('pins the Cook-only shared-index manifest and reconciliation boundary', () => {
+    expect(indexManifest).toContain('LCHEROURI/cook-with-freebuff');
+    expect(indexManifest).toContain(
+      'b07673b5cfe6389e2ccee37993767deed3f0512586b6faf66fc9dd1007937745',
+    );
+    expect(indexManifest).toContain(
+      'b1b6d5a8042c4cfdaec2a2b74f0d04b28c75c2545ea317b064bf04a076a816d4',
+    );
+    for (const collection of [
+      'recipes',
+      'cooking_sessions',
+      'cooking_session_events',
+      'timers',
+      'pantry_items',
+      'agent_tool_logs',
+    ]) {
+      expect(indexManifest).toContain(`\`${collection}\``);
+    }
+    expect(indexManifest).toContain('timers(sessionId ASC, status ASC)');
+    expect(indexManifest).toContain('Do not access or modify any sibling repository');
+    expect(indexManifest).toContain('unknown shared-project indexes');
+    expect(indexManifest).toContain('firebase firestore:indexes');
+    expect(indexManifest).toContain('git diff --no-index --exit-code');
+    expect(indexManifest).toContain('STOP');
   });
 });
