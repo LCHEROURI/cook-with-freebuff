@@ -91,6 +91,31 @@ describe('effective recipe request identity', () => {
 
     expect(hashEffectiveRecipeRequest(reordered)).toBe(hashEffectiveRecipeRequest(original));
   });
+
+  it('changes hash when an ingredient preparation differs (prompt sees it)', () => {
+    const diced = request();
+    diced.ingredientsAvailable[0].preparation = 'diced';
+    const whole = request();
+    whole.ingredientsAvailable[0].preparation = '';
+
+    expect(hashEffectiveRecipeRequest(diced)).not.toBe(hashEffectiveRecipeRequest(whole));
+  });
+
+  it('changes hash when an ingredient condition differs (prompt sees it)', () => {
+    const fresh = request();
+    fresh.ingredientsAvailable[0].condition = 'fresh';
+    const frozen = request();
+    frozen.ingredientsAvailable[0].condition = 'frozen';
+
+    expect(hashEffectiveRecipeRequest(fresh)).not.toBe(hashEffectiveRecipeRequest(frozen));
+  });
+
+  it('absent preparation/condition is stable across equivalent requests', () => {
+    const a = request();
+    const b = request();
+    // Neither sets preparation or condition — should hash identically.
+    expect(hashEffectiveRecipeRequest(a)).toBe(hashEffectiveRecipeRequest(b));
+  });
 });
 
 describe('generation lease fencing', () => {

@@ -166,6 +166,11 @@ export default function CookPage() {
     items: { name: string; quantity?: number; unit?: string }[];
   }>({ scanning: false, error: null, items: [] });
   const fileInputRef = useRef<HTMLInputElement>(null);
+  // Synchronous guard — prevents two fetch() calls in the same render tick.
+  // The starter.creating boolean covers the React-state backstop (button
+  // disabled), but two keyboard-entered submissions before the next render
+  // would pass that guard. A ref closes the gap.
+  const generationLockRef = useRef(false);
 
   // First-visit guide: the tour shows on the starter until the user dismisses
   // it OR engages with the flow (types, taps the mic, or submits) — seeing
@@ -315,13 +320,16 @@ export default function CookPage() {
   const handleCreateRecipe = async (text: string) => {
     const trimmed = text.trim();
     if (!trimmed || starter.creating || starter.starting) return;
+    if (generationLockRef.current) return;
+    generationLockRef.current = true;
+    const correlationId = crypto.randomUUID();
     setStarter({ prompt: trimmed, creating: true, error: null, ready: null, starting: false });
     try {
       const token = await auth.getToken();
       const res = await fetch('/api/cook', {
         method: 'POST',
         headers: { 'content-type': 'application/json', ...(token ? { authorization: `Bearer ${token}` } : {}), ...(await appCheckHeaders()) },
-        body: JSON.stringify({ action: 'create_recipe', prompt: trimmed }),
+        body: JSON.stringify({ action: 'create_recipe', prompt: trimmed, correlationId }),
       });
       const body = (await res.json()) as {
         success: boolean;
@@ -372,18 +380,23 @@ export default function CookPage() {
         ready: null,
         starting: false,
       });
+    } finally {
+      generationLockRef.current = false;
     }
   };
 
   const handleCreateFromPantry = async (selection: PantryStarterSelection) => {
     if (starter.creating || starter.starting) return;
+    if (generationLockRef.current) return;
+    generationLockRef.current = true;
+    const correlationId = crypto.randomUUID();
     setStarter((current) => ({ ...current, creating: true, error: null, ready: null, starting: false }));
     try {
       const token = await auth.getToken();
       const res = await fetch('/api/cook', {
         method: 'POST',
         headers: { 'content-type': 'application/json', ...(token ? { authorization: `Bearer ${token}` } : {}), ...(await appCheckHeaders()) },
-        body: JSON.stringify({ action: 'create_recipe', ...selection }),
+        body: JSON.stringify({ action: 'create_recipe', ...selection, correlationId }),
       });
       const body = (await res.json()) as {
         success: boolean;
@@ -434,6 +447,8 @@ export default function CookPage() {
         error: error instanceof Error ? error.message : 'Could not create the recipe.',
         ready: null,
       }));
+    } finally {
+      generationLockRef.current = false;
     }
   };
 

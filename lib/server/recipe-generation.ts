@@ -58,6 +58,11 @@ function canonicalIngredients(ingredients: Ingredient[]) {
       quantity: ingredient.quantity,
       unit: ingredient.unit?.trim().toLocaleLowerCase() ?? null,
       optional: ingredient.optional,
+      // preparation and condition are visible to the generation prompt;
+      // omitting them would cause the hash to match for inputs that produce
+      // different prompts ("diced chicken" vs "whole chicken").
+      preparation: ingredient.preparation?.trim().toLocaleLowerCase() ?? null,
+      condition: ingredient.condition?.trim().toLocaleLowerCase() ?? null,
     }))
     .sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b)));
 }
