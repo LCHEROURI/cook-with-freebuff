@@ -359,7 +359,7 @@ async function main() {
 
   // 1. dispatch ci.yml on main
   note('dispatching ci.yml on main (--ref main)');
-  const dispatched = gh(['workflow', 'run', 'ci.yml', '--ref', 'main']);
+  const dispatched = gh(['workflow', 'run', 'ci.yml', '--ref', 'main', '-f', 'source=boundary-drill']);
   // gh returns the URL of the run on the last line
   const runId = (dispatched.match(/actions\/runs\/(\d+)/) ?? [])[1];
   if (!runId) { fail(`could not parse run id from dispatch output: ${dispatched}`); process.exitCode = 2; return; }

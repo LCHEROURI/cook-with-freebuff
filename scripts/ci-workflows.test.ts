@@ -397,6 +397,11 @@ describe('.github/workflows/ci.yml · post-deploy verify:live needs-edge', () =>
     // failure. Empty-default: a normal run passes an empty reason that the
     // recorder omits from the doc.
     expect(verifyBlock).toContain('--reason "${VERIFY_LIVE_REASON:-}"');
+    // The recorder receives the dispatch source tag (inputs.source, default
+    // 'ci') so the status page can distinguish drill runs from clean runs
+    // when verdict=failure and reason=null — a genuine regression has no
+    // source field, while a drill no-mask proof carries the drill name.
+    expect(verifyBlock).toContain("--source \"${{ inputs.source || 'ci' }}\"");
     // Negative: the record step must not introduce another secret wiring.
     const recordStart = verifyBlock.indexOf('name: Record verify:live result for the status page');
     const recordBlock = verifyBlock.slice(recordStart);

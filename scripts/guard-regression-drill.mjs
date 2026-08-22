@@ -306,7 +306,7 @@ async function main() {
   const dispatchedAfter = Date.now() - 2_000;
 
   note('dispatching ci.yml on main with force_verify_live_regression=true (--ref main)');
-  gh(['workflow', 'run', 'ci.yml', '--ref', 'main', '-f', 'force_verify_live_regression=true']);
+  gh(['workflow', 'run', 'ci.yml', '--ref', 'main', '-f', 'force_verify_live_regression=true', '-f', 'source=regression-drill']);
   await sleep(5_000);
 
   let runId = null;

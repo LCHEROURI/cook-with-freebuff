@@ -20,6 +20,14 @@ on:
           Proves sparing NEVER masks a genuine failure run next to it.
         required: false
         default: 'false'
+      source:
+        description: |
+          Dispatch source tag recorded in deploy_status/verify_live so the
+          status page can distinguish drill runs (spare-drill, boundary-drill,
+          regression-drill) from clean ci.yml runs. Default 'ci' means a
+          push-triggered or manual re-run without drill inputs.
+        required: false
+        default: 'ci'
 
 # One run per branch at a time: a new push to the SAME branch cancels the
 # in-progress run (cancel-in-progress). This is EXPECTED behavior, not a
@@ -451,4 +459,4 @@ jobs:
       # paths where verify:live never got far enough to write it.
       - name: Record verify:live result for the status page
         if: ${{ always() && (steps.verify.outcome == 'success' || steps.verify.outcome == 'failure') }}
-        run: node scripts/record-verify-status.mjs --verdict "${VERIFY_LIVE_VERDICT:-${{ steps.verify.outcome }}}" --commit "${{ github.sha }}" --run-url "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" --reason "${VERIFY_LIVE_REASON:-}"
+        run: node scripts/record-verify-status.mjs --verdict "${VERIFY_LIVE_VERDICT:-${{ steps.verify.outcome }}}" --commit "${{ github.sha }}" --run-url "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" --reason "${VERIFY_LIVE_REASON:-}" --source "${{ inputs.source || 'ci' }}"

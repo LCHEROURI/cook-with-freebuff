@@ -75,6 +75,26 @@ describe('app/api/status/route.ts · authenticated status route', () => {
     expect(ROUTE).toContain('reason: string | null');
   });
 
+  it('maps the optional dispatch source tag through to the payload', () => {
+    // The recorder persists a source tag ('spare-drill', 'boundary-drill',
+    // 'regression-drill') on drill runs; the route passes it through so the
+    // status page can distinguish drill no-mask proofs from genuine
+    // regressions when verdict=failure and reason=null.
+    expect(ROUTE).toContain('source: typeof d.source === \'string\' ? d.source : null');
+    expect(ROUTE).toContain('source: string | null');
+  });
+
+  it('computes isGenuineRegression when failure has no drill source', () => {
+    // A reason=null failure WITHOUT a source tag is a genuine regression —
+    // the no-mask rule only applies to drill runs where a co-occurring
+    // failure is expected. The flag is derived from the doc fields, not
+    // a separate query, so it stays in lockstep with the recorded data.
+    expect(ROUTE).toContain('isGenuineRegression');
+    expect(ROUTE).toContain("verdict === 'failure'");
+    expect(ROUTE).toContain('reason === null');
+    expect(ROUTE).toContain('source === null');
+  });
+
   it('degrades gracefully when the record cannot be read', () => {
     expect(ROUTE).toContain('verifyLive = null');
   });
