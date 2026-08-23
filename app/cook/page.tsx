@@ -39,6 +39,13 @@ interface PantryMatchItem {
   allIngredientsFound: boolean;
 }
 
+interface GroceryNeedItem {
+  name: string;
+  recipeCount: number;
+  recipeIds: string[];
+  needsReplacement: boolean;
+}
+
 export default function CookPage() {
   const router = useRouter();
   // The API routes require a Bearer Firebase ID token. Real sign-in happens
@@ -329,6 +336,7 @@ export default function CookPage() {
     status: 'loading' | 'ready' | 'error';
     items: PantryMatchItem[];
   }>({ status: 'loading', items: [] });
+  const [groceryNeeds, setGroceryNeeds] = useState<GroceryNeedItem[]>([]);
 
   const fetchPantryMatches = useCallback(async () => {
     try {
@@ -342,12 +350,14 @@ export default function CookPage() {
         },
         body: JSON.stringify({ action: 'match_pantry_recipes' }),
       });
-      const body = (await res.json()) as { success: boolean; data?: { matches: PantryMatchItem[] } };
+      const body = (await res.json()) as { success: boolean; data?: { matches: PantryMatchItem[]; groceryNeeds?: GroceryNeedItem[] } };
       if (!res.ok || !body.success || !body.data) {
         setPantryMatches({ status: 'error', items: [] });
+        setGroceryNeeds([]);
         return;
       }
       setPantryMatches({ status: 'ready', items: body.data.matches });
+      setGroceryNeeds(body.data.groceryNeeds ?? []);
     } catch {
       setPantryMatches({ status: 'error', items: [] });
     }
@@ -519,6 +529,30 @@ export default function CookPage() {
     setStartingId(recipeId);
     await cook.launch(recipeId);
     setStartingId(null);
+  };
+
+  // ── Grocery needs: add individual ingredient to grocery list ──────────
+  const groceryNeedLockRef = useRef(false);
+  const handleAddGroceryNeed = async (name: string) => {
+    if (groceryNeedLockRef.current) return;
+    groceryNeedLockRef.current = true;
+    try {
+      const token = await getToken();
+      const res = await fetch('/api/kitchen', {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          ...(token ? { authorization: `Bearer ${token}` } : {}),
+          ...(await appCheckHeaders()),
+        },
+        body: JSON.stringify({ action: 'grocery_add', name }),
+      });
+      if (res.ok) {
+        setGroceryNeeds((prev) => prev.filter((n) => n.name !== name));
+      }
+    } finally {
+      groceryNeedLockRef.current = false;
+    }
   };
 
   // Protect the route: once auth settles with no user, go sign in.
@@ -919,6 +953,33 @@ export default function CookPage() {
               </section>
             );
           })()}
+          {/* ── Grocery needs ──────────────────────────────────────────── */}
+          {pantryMatches.status === 'ready' && groceryNeeds.length > 0 && (
+            <section className={styles.recipesSection} aria-label="Grocery needs">
+              <h2 className={styles.recipesTitle}>Grocery needs</h2>
+              <ul className={styles.recipesList}>
+                {groceryNeeds.map((need) => (
+                  <li key={need.name} className={styles.recipeCard}>
+                    <div className={styles.recipeInfo}>
+                      <p className={styles.recipeName}>{need.name}</p>
+                      <p className={styles.recipeMatch}>
+                        {need.needsReplacement && <span className={styles.readyBadge}>Replacement needed · </span>}
+                        Needed by {need.recipeCount} saved recipe{need.recipeCount !== 1 ? 's' : ''}
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      className={styles.recipeStart}
+                      onClick={() => void handleAddGroceryNeed(need.name)}
+                      aria-label={`Add ${need.name} to grocery list`}
+                    >
+                      🛒 Add to grocery
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </section>
+          )}
           {recipes.status === 'ready' && recipes.items.length > 0 && (
             <section className={styles.recipesSection} aria-label="Your recipes">
               <h2 className={styles.recipesTitle}>Your recipes</h2>

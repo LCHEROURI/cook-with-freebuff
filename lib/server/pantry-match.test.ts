@@ -3,6 +3,7 @@ import {
   matchRecipeToPantry,
   rankRecipeMatches,
   rankExpiringSoonMatches,
+  aggregateGroceryNeeds,
   type RecipePantryMatch,
 } from './pantry-match';
 import type { Ingredient, PantryItem } from '../domain/types';
@@ -467,5 +468,114 @@ describe('rankExpiringSoonMatches — Use These Soon', () => {
     ]);
     expect(ranked[0].recipeId).toBe('a');
     expect(ranked[1].recipeId).toBe('z');
+  });
+});
+
+// ── aggregateGroceryNeeds ────────────────────────────────────────────────
+
+describe('aggregateGroceryNeeds', () => {
+  function detail(name: string, status: 'missing' | 'expired' | 'matched' | 'stale' | 'uncertain', pantryItemId?: string) {
+    return { name, status, pantryItemId };
+  }
+
+  it('aggregates same missing ingredient across two recipes', () => {
+    const result = aggregateGroceryNeeds([
+      { recipeId: 'r1', details: [detail('onion', 'missing')] },
+      { recipeId: 'r2', details: [detail('onion', 'missing')] },
+    ]);
+    expect(result).toHaveLength(1);
+    expect(result[0].name).toBe('onion');
+    expect(result[0].recipeCount).toBe(2);
+    expect(result[0].recipeIds).toEqual(['r1', 'r2']);
+    expect(result[0].needsReplacement).toBe(false);
+  });
+
+  it('includes expired ingredient', () => {
+    const result = aggregateGroceryNeeds([
+      { recipeId: 'r1', details: [detail('milk', 'expired')] },
+    ]);
+    expect(result).toHaveLength(1);
+    expect(result[0].name).toBe('milk');
+    expect(result[0].needsReplacement).toBe(true);
+  });
+
+  it('excludes stale ingredients', () => {
+    const result = aggregateGroceryNeeds([
+      { recipeId: 'r1', details: [detail('cheese', 'stale')] },
+    ]);
+    expect(result).toHaveLength(0);
+  });
+
+  it('excludes uncertain ingredients', () => {
+    const result = aggregateGroceryNeeds([
+      { recipeId: 'r1', details: [detail('butter', 'uncertain')] },
+    ]);
+    expect(result).toHaveLength(0);
+  });
+
+  it('excludes matched ingredients', () => {
+    const result = aggregateGroceryNeeds([
+      { recipeId: 'r1', details: [detail('chicken', 'matched')] },
+    ]);
+    expect(result).toHaveLength(0);
+  });
+
+  it('duplicate ingredient rows in one recipe do not inflate recipeCount', () => {
+    const result = aggregateGroceryNeeds([
+      { recipeId: 'r1', details: [detail('onion', 'missing'), detail('onion', 'missing')] },
+    ]);
+    expect(result).toHaveLength(1);
+    expect(result[0].recipeCount).toBe(1);
+    expect(result[0].recipeIds).toEqual(['r1']);
+  });
+
+  it('recipeIds are unique', () => {
+    const result = aggregateGroceryNeeds([
+      { recipeId: 'r1', details: [detail('onion', 'missing'), detail('onion', 'expired')] },
+    ]);
+    expect(result).toHaveLength(1);
+    expect(result[0].recipeIds).toEqual(['r1']);
+    expect(result[0].recipeCount).toBe(1);
+  });
+
+  it('needsReplacement true when any source is expired', () => {
+    const result = aggregateGroceryNeeds([
+      { recipeId: 'r1', details: [detail('milk', 'missing')] },
+      { recipeId: 'r2', details: [detail('milk', 'expired')] },
+    ]);
+    expect(result[0].needsReplacement).toBe(true);
+  });
+
+  it('needsReplacement false when all contributions are missing', () => {
+    const result = aggregateGroceryNeeds([
+      { recipeId: 'r1', details: [detail('milk', 'missing')] },
+      { recipeId: 'r2', details: [detail('milk', 'missing')] },
+    ]);
+    expect(result[0].needsReplacement).toBe(false);
+  });
+
+  it('sorts by higher recipeCount first', () => {
+    const result = aggregateGroceryNeeds([
+      { recipeId: 'r1', details: [detail('onion', 'missing')] },
+      { recipeId: 'r2', details: [detail('milk', 'missing'), detail('milk', 'missing')] },
+      { recipeId: 'r3', details: [detail('milk', 'missing')] },
+    ]);
+    const names = result.map((r) => r.name);
+    expect(names[0]).toBe('milk');
+    expect(result[0].recipeCount).toBe(2);
+  });
+
+  it('alphabetical tie-break', () => {
+    const result = aggregateGroceryNeeds([
+      { recipeId: 'r1', details: [detail('zucchini', 'missing')] },
+      { recipeId: 'r1', details: [detail('apple', 'missing')] },
+    ]);
+    expect(result[0].name).toBe('apple');
+    expect(result[1].name).toBe('zucchini');
+  });
+
+  it('empty input returns empty array', () => {
+    const result = aggregateGroceryNeeds([]);
+    expect(result).toEqual([]);
   });
 });

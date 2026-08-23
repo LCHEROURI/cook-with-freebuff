@@ -25,7 +25,7 @@ import {
 import { extractIngredients, extractRecipePreferences } from '@/lib/agent/extract';
 import { validateRecipe } from '@/lib/recipe/validate';
 import { evaluateStoredRecipeSafety } from '@/lib/server/recipe-safety';
-import { matchRecipeToPantry, rankRecipeMatches } from '@/lib/server/pantry-match';
+import { matchRecipeToPantry, rankRecipeMatches, aggregateGroceryNeeds } from '@/lib/server/pantry-match';
 import { PantryService } from '@/lib/server/pantry-service';
 import { emptyProfile } from '@/lib/server/profile-service';
 import type { Recipe } from '@/lib/domain/types';
@@ -387,9 +387,12 @@ async function handle(userId: string, body: unknown): Promise<NextResponse> {
         evaluateStoredRecipeSafety(recipe, profile).canList,
       );
 
-      // Match each recipe against the pantry.
+      // Match each recipe against the pantry, retaining details for
+      // grocery-needs aggregation (Candidate D).
+      const detailsByRecipe: Array<{ recipeId: string; details: ReturnType<typeof matchRecipeToPantry>['details'] }> = [];
       const matches = safeRecipes.map((recipe) => {
         const result = matchRecipeToPantry(recipe.ingredients, pantryItems);
+        detailsByRecipe.push({ recipeId: recipe.id, details: result.details });
         return {
           ...result.match,
           recipeId: recipe.id,
@@ -400,7 +403,8 @@ async function handle(userId: string, body: unknown): Promise<NextResponse> {
       });
 
       const ranked = rankRecipeMatches(matches);
-      return NextResponse.json({ success: true, data: { matches: ranked } });
+      const groceryNeeds = aggregateGroceryNeeds(detailsByRecipe);
+      return NextResponse.json({ success: true, data: { matches: ranked, groceryNeeds } });
     }
     case 'check_recipe_pantry': {
       // Single-recipe gap check: compare recipe ingredients to the user's

@@ -344,3 +344,131 @@ describe('Use these soon section', () => {
     expect(matchCalls).toBe(1);
   });
 });
+
+// ── Grocery needs — behavioral ──────────────────────────────────────────
+
+describe('Grocery needs section', () => {
+  const GROCERY_MATCHES = {
+    recipeId: 'r1', title: 'Onion Soup', servings: 2, totalMinutes: 25,
+    ingredientCount: 3, matchPercent: 66, matchedCount: 2, missingCount: 1,
+    expiredCount: 0, staleCount: 0, uncertainCount: 0,
+    expiringSoonCount: 0, expiringSoonIngredients: [],
+    allIngredientsFound: false,
+  };
+
+  const GROCERY_NEEDS = [
+    { name: 'onion', recipeCount: 3, recipeIds: ['r1', 'r2', 'r3'], needsReplacement: false },
+    { name: 'milk', recipeCount: 2, recipeIds: ['r1', 'r2'], needsReplacement: true },
+  ];
+
+  function matchResp(matches: unknown[], groceryNeeds: unknown[] = []) {
+    return { ok: true, json: async () => ({ success: true, data: { matches, groceryNeeds } }) };
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockAuth.mockReturnValue(authBase);
+    mockCook.mockReturnValue({
+      snapshot: { found: false, activeTimers: [] } as unknown as ReturnType<typeof useCookingSession>['snapshot'],
+      loading: false, error: null, alert: null,
+      dismissAlert: vi.fn(), launch: vi.fn(), done: vi.fn(), repeat: vi.fn(),
+      back: vi.fn(), pause: vi.fn(), resume: vi.fn(), startOver: vi.fn(), refresh: vi.fn(),
+    });
+  });
+
+  afterEach(() => { vi.unstubAllGlobals(); });
+
+  it('renders when groceryNeeds is non-empty', async () => {
+    const fetchMock = vi.fn(async (_url: unknown, init?: RequestInit) => {
+      const body = init?.body ? JSON.parse(String(init.body)) as { action?: string } : {};
+      if (body.action === 'pantry_starter') return PANTRY_STARTER;
+      if (body.action === 'list_recipes') return RECIPES_EMPTY;
+      if (body.action === 'match_pantry_recipes') return matchResp([GROCERY_MATCHES], GROCERY_NEEDS);
+      return { ok: true, json: async () => ({ success: true }) };
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const { default: CookPage } = await import('./page');
+    render(<CookPage />);
+
+    await waitFor(() => { expect(screen.getByText('Grocery needs')).toBeInTheDocument(); });
+    expect(screen.getByText('onion')).toBeInTheDocument();
+    expect(screen.getByText('Needed by 3 saved recipes')).toBeInTheDocument();
+    expect(screen.getByText('milk')).toBeInTheDocument();
+    expect(screen.getByText(/Replacement needed/)).toBeInTheDocument();
+    expect(screen.getByText(/Needed by 2 saved recipes/)).toBeInTheDocument();
+  });
+
+  it('hides when groceryNeeds is empty', async () => {
+    const fetchMock = vi.fn(async (_url: unknown, init?: RequestInit) => {
+      const body = init?.body ? JSON.parse(String(init.body)) as { action?: string } : {};
+      if (body.action === 'pantry_starter') return PANTRY_STARTER;
+      if (body.action === 'list_recipes') return RECIPES_EMPTY;
+      if (body.action === 'match_pantry_recipes') return matchResp([GROCERY_MATCHES], []);
+      return { ok: true, json: async () => ({ success: true }) };
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const { default: CookPage } = await import('./page');
+    render(<CookPage />);
+
+    await waitFor(() => { expect(screen.getByText('What can I make?')).toBeInTheDocument(); });
+    expect(screen.queryByText('Grocery needs')).toBeNull();
+  });
+
+  it('individual grocery add uses existing kitchen path', async () => {
+    let kitchenCalls = 0;
+    const fetchMock = vi.fn(async (_url: unknown, init?: RequestInit) => {
+      const body = init?.body ? JSON.parse(String(init.body)) as { action?: string } : {};
+      if (body.action === 'pantry_starter') return PANTRY_STARTER;
+      if (body.action === 'list_recipes') return RECIPES_EMPTY;
+      if (body.action === 'match_pantry_recipes') return matchResp([GROCERY_MATCHES], GROCERY_NEEDS);
+      if (body.action === 'grocery_add') { kitchenCalls++; return { ok: true, json: async () => ({ success: true }) }; }
+      return { ok: true, json: async () => ({ success: true }) };
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const { default: CookPage } = await import('./page');
+    render(<CookPage />);
+
+    await waitFor(() => { expect(screen.getByText('Grocery needs')).toBeInTheDocument(); });
+    fireEvent.click(screen.getByRole('button', { name: 'Add onion to grocery list' }));
+    await waitFor(() => { expect(kitchenCalls).toBe(1); });
+  });
+
+  it('no readiness or quantity-sufficiency language', async () => {
+    const fetchMock = vi.fn(async (_url: unknown, init?: RequestInit) => {
+      const body = init?.body ? JSON.parse(String(init.body)) as { action?: string } : {};
+      if (body.action === 'pantry_starter') return PANTRY_STARTER;
+      if (body.action === 'list_recipes') return RECIPES_EMPTY;
+      if (body.action === 'match_pantry_recipes') return matchResp([GROCERY_MATCHES], GROCERY_NEEDS);
+      return { ok: true, json: async () => ({ success: true }) };
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const { default: CookPage } = await import('./page');
+    render(<CookPage />);
+
+    await waitFor(() => { expect(screen.getByText('Grocery needs')).toBeInTheDocument(); });
+    const section = screen.getByLabelText('Grocery needs');
+    expect(section.textContent).not.toMatch(/ready to cook|enough|sufficient|fully stocked|unlock/i);
+  });
+
+  it('no second match_pantry_recipes request for grocery needs', async () => {
+    let matchCalls = 0;
+    const fetchMock = vi.fn(async (_url: unknown, init?: RequestInit) => {
+      const body = init?.body ? JSON.parse(String(init.body)) as { action?: string } : {};
+      if (body.action === 'pantry_starter') return PANTRY_STARTER;
+      if (body.action === 'list_recipes') return RECIPES_EMPTY;
+      if (body.action === 'match_pantry_recipes') { matchCalls++; return matchResp([GROCERY_MATCHES], GROCERY_NEEDS); }
+      return { ok: true, json: async () => ({ success: true }) };
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const { default: CookPage } = await import('./page');
+    render(<CookPage />);
+
+    await waitFor(() => { expect(screen.getByText('Grocery needs')).toBeInTheDocument(); });
+    expect(matchCalls).toBe(1);
+  });
+});

@@ -1362,6 +1362,179 @@ describe('/api/cook — correlationId boundary', () => {
     });
   });
 
+
+    it('returns groceryNeeds in match_pantry_recipes response', async () => {
+      const ctx = testContext('user-1');
+      mockBuild.mockImplementation(() => ctx);
+
+      const recipeStore = ctx.recipeStore as InMemoryRecipeStore;
+      const now = Date.now();
+      await recipeStore.createRecipe({
+        userId: 'user-1', id: 'r-grocery', title: 'Onion Soup',
+        description: 'Simple soup', servings: 2,
+        estimatedPrepMinutes: 5, estimatedCookMinutes: 10, totalMinutes: 15,
+        ingredients: [
+          { id: 'i1', name: 'onion', quantity: 2, unit: 'pieces', optional: false },
+          { id: 'i2', name: 'butter', quantity: 1, unit: 'tbsp', optional: false },
+        ],
+        equipment: ['pot'],
+        prepSteps: [{ id: 'p1', stepNumber: 1, instruction: 'Chop onion', spokenInstruction: 'Chop onion', estimatedSeconds: 60, ingredientsUsed: ['i1'], equipmentUsed: [] }],
+        cookingSteps: [{ id: 'c1', stepNumber: 1, instruction: 'Cook onion', spokenInstruction: 'Cook onion', estimatedSeconds: 600, timerSeconds: 600, ingredientsUsed: ['i1', 'i2'], equipmentUsed: ['pot'] }],
+        dietaryTags: [], allergens: [], safetyNotes: [],
+        generatedAt: now, updatedAt: now,
+      });
+
+      // Second recipe also missing onion
+      await recipeStore.createRecipe({
+        userId: 'user-1', id: 'r-grocery2', title: 'French Onion',
+        description: 'Another soup', servings: 4,
+        estimatedPrepMinutes: 10, estimatedCookMinutes: 20, totalMinutes: 30,
+        ingredients: [
+          { id: 'i3', name: 'onion', quantity: 4, unit: 'pieces', optional: false },
+        ],
+        equipment: ['pot'],
+        prepSteps: [{ id: 'p2', stepNumber: 1, instruction: 'Slice onion', spokenInstruction: 'Slice onion', estimatedSeconds: 120, ingredientsUsed: ['i3'], equipmentUsed: [] }],
+        cookingSteps: [{ id: 'c2', stepNumber: 1, instruction: 'Caramelize', spokenInstruction: 'Caramelize', estimatedSeconds: 1200, timerSeconds: 1200, ingredientsUsed: ['i3'], equipmentUsed: ['pot'] }],
+        dietaryTags: [], allergens: [], safetyNotes: [],
+        generatedAt: now, updatedAt: now,
+      });
+
+      const res = await post({ action: 'match_pantry_recipes' });
+      expect(res.status).toBe(200);
+      const body = await res.json() as any;
+      expect(body.success).toBe(true);
+      expect(body.data.groceryNeeds).toBeDefined();
+      expect(Array.isArray(body.data.groceryNeeds)).toBe(true);
+
+      const onionNeed = body.data.groceryNeeds.find((n: any) => n.name === 'onion');
+      expect(onionNeed).toBeDefined();
+      expect(onionNeed.recipeCount).toBe(2);
+      expect(onionNeed.recipeIds).toContain('r-grocery');
+      expect(onionNeed.recipeIds).toContain('r-grocery2');
+      expect(onionNeed.needsReplacement).toBe(false);
+    });
+
+    it('returns empty groceryNeeds when pantry covers all recipes', async () => {
+      const ctx = testContext('user-1');
+      mockBuild.mockImplementation(() => ctx);
+
+      const recipeStore = ctx.recipeStore as InMemoryRecipeStore;
+      const now = Date.now();
+      await recipeStore.createRecipe({
+        userId: 'user-1', id: 'r-covered', title: 'Covered Dish',
+        description: 'Covered', servings: 2,
+        estimatedPrepMinutes: 5, estimatedCookMinutes: 10, totalMinutes: 15,
+        ingredients: [
+          { id: 'i1', name: 'chicken thighs', quantity: 4, unit: 'pieces', optional: false },
+          { id: 'i2', name: 'rice', quantity: 2, unit: 'cups', optional: false },
+        ],
+        equipment: ['pan'],
+        prepSteps: [{ id: 'p1', stepNumber: 1, instruction: 'Season chicken', spokenInstruction: 'Season chicken', estimatedSeconds: 60, ingredientsUsed: ['i1'], equipmentUsed: [] }],
+        cookingSteps: [{ id: 'c1', stepNumber: 1, instruction: 'Cook chicken', spokenInstruction: 'Cook chicken', estimatedSeconds: 900, timerSeconds: 900, ingredientsUsed: ['i1', 'i2'], equipmentUsed: ['pan'] }],
+        dietaryTags: [], allergens: [], safetyNotes: [],
+        generatedAt: now, updatedAt: now,
+      });
+
+      const pantryStore = ctx.pantryStore as InMemoryPantryStore;
+      await pantryStore.upsertItem({ id: 'p1', userId: 'user-1', name: 'chicken thighs', quantity: 4, confidence: 1, source: 'VOICE', lastConfirmedAt: now });
+      await pantryStore.upsertItem({ id: 'p2', userId: 'user-1', name: 'rice', quantity: 2, confidence: 1, source: 'VOICE', lastConfirmedAt: now });
+
+      const res = await post({ action: 'match_pantry_recipes' });
+      expect(res.status).toBe(200);
+      const body = await res.json() as any;
+      expect(body.data.groceryNeeds).toEqual([]);
+    });
+
+    it('does not contribute unsafe recipes to groceryNeeds', async () => {
+      const ctx = testContext('user-1');
+      mockBuild.mockImplementation(() => ctx);
+
+      const recipeStore = ctx.recipeStore as InMemoryRecipeStore;
+      const now = Date.now();
+      // Recipe with allergen that user is allergic to
+      await recipeStore.createRecipe({
+        userId: 'user-1', id: 'r-unsafe', title: 'Peanut Butter',
+        description: 'Contains peanuts', servings: 2,
+        estimatedPrepMinutes: 5, estimatedCookMinutes: 0, totalMinutes: 5,
+        ingredients: [
+          { id: 'i1', name: 'peanut butter', quantity: 2, unit: 'tbsp', optional: false },
+        ],
+        equipment: ['bowl'],
+        prepSteps: [{ id: 'p1', stepNumber: 1, instruction: 'Scoop peanut butter', spokenInstruction: 'Scoop peanut butter', estimatedSeconds: 30, ingredientsUsed: ['i1'], equipmentUsed: [] }],
+        cookingSteps: [{ id: 'c1', stepNumber: 1, instruction: 'Serve', spokenInstruction: 'Serve', estimatedSeconds: 10, timerSeconds: 10, ingredientsUsed: ['i1'], equipmentUsed: ['bowl'] }],
+        dietaryTags: [], allergens: ['peanuts'], safetyNotes: [],
+        generatedAt: now, updatedAt: now,
+        preferences: { servings: 2, allergies: ['peanuts'], dietaryRestrictions: [] },
+      });
+
+      const res = await post({ action: 'match_pantry_recipes' });
+      expect(res.status).toBe(200);
+      const body = await res.json() as any;
+      // Peanut butter recipe should be safety-filtered out
+      const pbNeed = body.data.groceryNeeds.find((n: any) => n.name === 'peanut butter');
+      expect(pbNeed).toBeUndefined();
+    });
+
+    it('does not include another user recipe in groceryNeeds', async () => {
+      const ctx = testContext('user-1');
+      mockBuild.mockImplementation(() => ctx);
+
+      const recipeStore = ctx.recipeStore as InMemoryRecipeStore;
+      const now = Date.now();
+      await recipeStore.createRecipe({
+        userId: 'user-2', id: 'r-other', title: 'Other Recipe',
+        description: 'Other', servings: 2,
+        estimatedPrepMinutes: 5, estimatedCookMinutes: 10, totalMinutes: 15,
+        ingredients: [
+          { id: 'i1', name: 'exotic spice', quantity: 1, unit: 'tsp', optional: false },
+        ],
+        equipment: ['pan'],
+        prepSteps: [{ id: 'p1', stepNumber: 1, instruction: 'Add spice', spokenInstruction: 'Add spice', estimatedSeconds: 30, ingredientsUsed: ['i1'], equipmentUsed: [] }],
+        cookingSteps: [{ id: 'c1', stepNumber: 1, instruction: 'Cook', spokenInstruction: 'Cook', estimatedSeconds: 600, timerSeconds: 600, ingredientsUsed: ['i1'], equipmentUsed: ['pan'] }],
+        dietaryTags: [], allergens: [], safetyNotes: [],
+        generatedAt: now, updatedAt: now,
+      });
+
+      const res = await post({ action: 'match_pantry_recipes' });
+      expect(res.status).toBe(200);
+      const body = await res.json() as any;
+      const exoticNeed = body.data.groceryNeeds.find((n: any) => n.name === 'exotic spice');
+      expect(exoticNeed).toBeUndefined();
+    });
+
+    it('sorts groceryNeeds by recipeCount descending then name', async () => {
+      const ctx = testContext('user-1');
+      mockBuild.mockImplementation(() => ctx);
+
+      const recipeStore = ctx.recipeStore as InMemoryRecipeStore;
+      const now = Date.now();
+      // r1 needs onion + milk, r2 needs onion, r3 needs milk
+      const mkRecipe = (id: string, title: string, ingredients: {id:string,name:string}[]) => ({
+        userId: 'user-1', id, title, description: 'test', servings: 2,
+        estimatedPrepMinutes: 5, estimatedCookMinutes: 10, totalMinutes: 15,
+        ingredients: ingredients.map(i => ({ ...i, quantity: 1, unit: 'unit', optional: false })),
+        equipment: ['pot'],
+        prepSteps: [{ id: 'p-'+id, stepNumber: 1, instruction: 'prep', spokenInstruction: 'prep', estimatedSeconds: 30, ingredientsUsed: ingredients.map(i=>i.id), equipmentUsed: [] }],
+        cookingSteps: [{ id: 'c-'+id, stepNumber: 1, instruction: 'cook', spokenInstruction: 'cook', estimatedSeconds: 300, timerSeconds: 300, ingredientsUsed: ingredients.map(i=>i.id), equipmentUsed: ['pot'] }],
+        dietaryTags: [], allergens: [], safetyNotes: [],
+        generatedAt: now, updatedAt: now,
+      });
+
+      await recipeStore.createRecipe(mkRecipe('r1', 'Recipe 1', [{id:'i1',name:'onion'},{id:'i2',name:'milk'}]));
+      await recipeStore.createRecipe(mkRecipe('r2', 'Recipe 2', [{id:'i3',name:'onion'}]));
+      await recipeStore.createRecipe(mkRecipe('r3', 'Recipe 3', [{id:'i4',name:'milk'}]));
+
+      const res = await post({ action: 'match_pantry_recipes' });
+      const body = await res.json() as any;
+      const needs = body.data.groceryNeeds;
+
+      // onion: 2 recipes, milk: 2 recipes, alphabetical tie
+      expect(needs[0].name).toBe('milk');
+      expect(needs[0].recipeCount).toBe(2);
+      expect(needs[1].name).toBe('onion');
+      expect(needs[1].recipeCount).toBe(2);
+    });
+
   describe('check_recipe_pantry — single-recipe gap check', () => {
     it('returns per-ingredient match details for an owned recipe', async () => {
       const ctx = testContext('user-1');

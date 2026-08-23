@@ -222,3 +222,78 @@ export function rankRecipeMatches<T extends RecipePantryMatch>(
 
 // Re-export the shared client-safe ranking helper.
 export { rankExpiringSoonMatches } from "../pantry-match-ranking";
+
+
+// ── Grocery Needs aggregation (Candidate D) ──────────────────────────────
+
+export interface GroceryNeed {
+  /** Normalized ingredient name. */
+  name: string;
+  /** Number of distinct safe recipes that need this ingredient. */
+  recipeCount: number;
+  /** IDs of those recipes. */
+  recipeIds: string[];
+  /** True when at least one contributing detail is expired (needs replacement). */
+  needsReplacement: boolean;
+}
+
+/**
+ * Aggregate missing and expired ingredient details across multiple recipes
+ * into a deduplicated, sorted list of grocery needs.
+ *
+ * Only ingredients with status "missing" or "expired" are included.
+ * Stale, uncertain, and matched ingredients are excluded because they
+ * require confirmation or are already available.
+ *
+ * recipeCount and recipeIds track distinct recipes only — duplicate
+ * ingredient rows within a single recipe do not inflate the count.
+ */
+export function aggregateGroceryNeeds(
+  detailsByRecipe: Array<{
+    recipeId: string;
+    details: IngredientMatchDetail[];
+  }>,
+): GroceryNeed[] {
+  // Accumulate by normalized ingredient name.
+  const byName = new Map<string, {
+    recipeIds: Set<string>;
+    hasExpired: boolean;
+  }>();
+
+  for (const { recipeId, details } of detailsByRecipe) {
+    const seen = new Set<string>(); // per-recipe dedup
+    for (const d of details) {
+      if (d.status !== 'missing' && d.status !== 'expired') continue;
+      const key = normalizeIngredientName(d.name);
+      if (seen.has(key)) continue; // same ingredient twice in one recipe → count once
+      seen.add(key);
+
+      let entry = byName.get(key);
+      if (!entry) {
+        entry = { recipeIds: new Set(), hasExpired: false };
+        byName.set(key, entry);
+      }
+      entry.recipeIds.add(recipeId);
+      if (d.status === 'expired') entry.hasExpired = true;
+    }
+  }
+
+  // Convert to sorted array.
+  const needs: GroceryNeed[] = [];
+  for (const [name, entry] of byName) {
+    needs.push({
+      name,
+      recipeCount: entry.recipeIds.size,
+      recipeIds: [...entry.recipeIds],
+      needsReplacement: entry.hasExpired,
+    });
+  }
+
+  // Sort: higher recipeCount first, then alphabetical name.
+  needs.sort((a, b) => {
+    if (a.recipeCount !== b.recipeCount) return b.recipeCount - a.recipeCount;
+    return a.name.localeCompare(b.name);
+  });
+
+  return needs;
+}
