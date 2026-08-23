@@ -77,6 +77,34 @@ export interface GuideAction {
   pausedAt?: number;
 }
 
+/**
+ * Ephemeral completion summary attached to the snapshot returned by the
+ * final `done` call that transitions PLATING → COMPLETED.  Absent from
+ * every other snapshot (including subsequent timer-poll snapshots).
+ *
+ * Each section is independently optional: a missing section means that
+ * best-effort hook either failed or was unavailable.  An empty array
+ * means the hook succeeded but changed nothing.
+ */
+export interface CompletionSummary {
+  pantry?: {
+    adjusted: Array<{
+      name: string;
+      action: 'reduced' | 'removed';
+      before?: number;
+      after?: number;
+    }>;
+  };
+  leftover?: {
+    id: string;
+    title: string;
+    servings: number;
+  };
+  grocery?: {
+    items: string[];
+  };
+}
+
 /** Full state for the cooking UI (includes expandable recipe content). */
 export interface GuideSnapshot extends GuideAction {
   availableIngredients: Ingredient[];
@@ -90,4 +118,9 @@ export interface GuideSnapshot extends GuideAction {
     cookingSteps: { stepNumber: number; instruction: string; timerSeconds?: number }[];
     safetyNotes: string[];
   };
+  /**
+   * Present only on the PLATING → COMPLETED snapshot.  Subsequent timer-poll
+   * snapshots do not carry this field (see useCookingSession preservation).
+   */
+  completionSummary?: CompletionSummary;
 }

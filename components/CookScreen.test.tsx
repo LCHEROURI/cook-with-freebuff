@@ -287,3 +287,78 @@ describe('CookScreen', () => {
     expect(html).toContain('role="alert"');
   });
 });
+
+// ── Completion summary (Candidate E) ────────────────────────────────────────
+
+describe('completion summary rendering (Candidate E)', () => {
+  it('renders the summary with all three sections when present', () => {
+    const html = render(snapshot({
+      phase: 'COMPLETED',
+      completionSummary: {
+        pantry: { adjusted: [{ name: 'chicken thighs', action: 'removed', before: 4 }, { name: 'rice', action: 'reduced', before: 2, after: 1 }] },
+        leftover: { id: 'l1', title: 'Chicken Rice', servings: 2 },
+        grocery: { items: ['chicken thighs'] },
+      },
+    }));
+    expect(html).toContain('Kitchen updated');
+    expect(html).toContain('Pantry');
+    expect(html).toContain('chicken thighs');
+    expect(html).toContain('Leftovers');
+    expect(html).toContain('Chicken Rice');
+    expect(html).toContain('Grocery');
+    expect(html).toContain('On your grocery list');
+  });
+
+  it('does not render the summary when completionSummary is absent', () => {
+    const html = render(snapshot({ phase: 'COMPLETED' }));
+    expect(html).not.toContain('Kitchen updated');
+  });
+
+  it('hides the summary for non-completed phases', () => {
+    const html = render(snapshot({
+      phase: 'PLATING',
+      completionSummary: {
+        pantry: { adjusted: [{ name: 'rice', action: 'reduced', before: 2, after: 1 }] },
+      },
+    }));
+    expect(html).not.toContain('Kitchen updated');
+  });
+
+  it('omits the pantry section when pantry data is absent', () => {
+    const html = render(snapshot({
+      phase: 'COMPLETED',
+      completionSummary: {
+        leftover: { id: 'l1', title: 'Chicken Rice', servings: 2 },
+      },
+    }));
+    expect(html).toContain('Kitchen updated');
+    expect(html).toContain('Leftovers');
+    expect(html).not.toMatch(/>Pantry</);
+  });
+
+  it('omits the grocery section when grocery data is absent', () => {
+    const html = render(snapshot({
+      phase: 'COMPLETED',
+      completionSummary: {
+        pantry: { adjusted: [{ name: 'rice', action: 'reduced', before: 2, after: 1 }] },
+      },
+    }));
+    expect(html).toContain('Kitchen updated');
+    expect(html).toContain('Pantry');
+    expect(html).not.toMatch(/>Grocery</);
+  });
+
+  it('never claims readiness or quantity sufficiency', () => {
+    const html = render(snapshot({
+      phase: 'COMPLETED',
+      completionSummary: {
+        pantry: { adjusted: [{ name: 'chicken thighs', action: 'removed', before: 4 }] },
+      },
+    }));
+    expect(html.toLowerCase()).not.toContain('ready to cook');
+    expect(html.toLowerCase()).not.toContain('enough');
+    expect(html.toLowerCase()).not.toContain('sufficient');
+    expect(html.toLowerCase()).not.toContain('fully stocked');
+    expect(html.toLowerCase()).not.toContain('added to grocery');
+  });
+});

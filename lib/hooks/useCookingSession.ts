@@ -75,7 +75,21 @@ export function useCookingSession(opts: UseCookingSessionOptions = {}) {
       if (data.alerts.length > 0) {
         setAlert(data.alerts.map((a) => a.message).join(' '));
       }
-      setSnapshot(data.snapshot);
+      // Preserve the ephemeral completionSummary: the timer poll rebuilds a
+      // COMPLETED snapshot without the summary, so carry it forward from the
+      // current in-memory snapshot when both are COMPLETED.
+      setSnapshot((prev) => {
+        const incoming = data.snapshot;
+        if (
+          prev?.phase === 'COMPLETED'
+          && prev.completionSummary
+          && incoming.phase === 'COMPLETED'
+          && !incoming.completionSummary
+        ) {
+          return { ...incoming, completionSummary: prev.completionSummary };
+        }
+        return incoming;
+      });
       setError(null);
     } catch {
       // Poll failures are silent — the next poll retries.

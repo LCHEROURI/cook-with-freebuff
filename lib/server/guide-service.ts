@@ -25,6 +25,7 @@ import type {
   CookingStep,
   CookingTimer,
   Ingredient,
+  Leftover,
   Recipe,
   SessionPhase,
 } from '../domain/types';
@@ -36,6 +37,7 @@ import { getSubstitutionService } from '../ai/provider';
 import type { RecipeValidationResult } from '../ai/types';
 import type {
   ActiveTimerInfo,
+  CompletionSummary,
   GuideAction,
   GuideSnapshot,
   TimerAlert,
@@ -51,6 +53,7 @@ import { evaluateStoredRecipeSafety } from './recipe-safety';
 // consumers. See lib/domain/guide.ts.
 export type {
   ActiveTimerInfo,
+  CompletionSummary,
   GuideAction,
   GuideSnapshot,
   TimerAlert,
@@ -292,9 +295,14 @@ export class GuidedCookingService {
         // leftover, and auto-generate grocery lines for depleted + expired
         // items. All best-effort and non-fatal — the completion is durable.
         const consumed = await this.consumePantryForCompleted(userId, updated, recipe);
-        await this.logLeftoverForCompleted(userId, updated, recipe);
-        await this.syncGroceryForCompleted(userId, consumed);
-        return this.buildSnapshot(userId, updated, recipe);
+        const leftover = await this.logLeftoverForCompleted(userId, updated, recipe);
+        const groceryNames = await this.syncGroceryForCompleted(userId, consumed);
+
+        const snapshot = await this.buildSnapshot(userId, updated, recipe);
+        // Attach ephemeral completion summary (only on this PLATING → COMPLETED
+        // transition — subsequent timer-poll snapshots will not carry it).
+        snapshot.completionSummary = this.buildCompletionSummary(consumed, leftover, groceryNames);
+        return snapshot;
       }
       case 'SAFETY_WARNING': {
         // The cook acknowledged the gate — complete the gated step exactly as a
@@ -1162,16 +1170,17 @@ export class GuidedCookingService {
     userId: string,
     session: CookingSession,
     recipe: Recipe,
-  ): Promise<void> {
-    if (!this.leftoverService) return;
+  ): Promise<Leftover | null> {
+    if (!this.leftoverService) return null;
     try {
-      await this.leftoverService.createLeftover(
+      return await this.leftoverService.createLeftover(
         userId,
         { recipeId: recipe.id, title: recipe.title, servings: recipe.servings },
         { sessionId: session.id },
       );
     } catch {
       // Non-fatal — the completion is durable.
+      return null;
     }
   }
 
@@ -1183,22 +1192,50 @@ export class GuidedCookingService {
   private async syncGroceryForCompleted(
     userId: string,
     consumed: ConsumptionResult | null,
-  ): Promise<void> {
-    if (!this.groceryService || !this.pantryService) return;
+  ): Promise<string[] | null> {
+    if (!this.groceryService || !this.pantryService) return null;
     try {
       const depleted = (consumed?.adjusted ?? [])
         .filter((a) => a.action === 'removed')
         .map((a) => ({ name: a.name }));
-      if (depleted.length > 0) {
-        await this.groceryService.syncDepleted(userId, depleted);
-      }
+      const depletedItems = depleted.length > 0
+        ? await this.groceryService.syncDepleted(userId, depleted)
+        : [];
       const expired = await this.pantryService.expiredItems(userId);
-      if (expired.length > 0) {
-        await this.groceryService.syncExpired(userId, expired);
-      }
+      const expiredItems = expired.length > 0
+        ? await this.groceryService.syncExpired(userId, expired)
+        : [];
+      // Combine and deduplicate by name.
+      const allNames = [...depletedItems, ...expiredItems].map((i) => i.name);
+      return [...new Set(allNames)];
     } catch {
       // Non-fatal — the completion is durable.
+      return null;
     }
+  }
+
+  /**
+   * Build the ephemeral completion summary from the actual successful results
+   * of each best-effort hook.  Missing section = hook failed or unavailable.
+   */
+  private buildCompletionSummary(
+    consumed: ConsumptionResult | null,
+    leftover: Leftover | null,
+    groceryNames: string[] | null,
+  ): CompletionSummary | undefined {
+    const pantry = consumed && consumed.adjusted.length > 0
+      ? { adjusted: consumed.adjusted.map(({ name, action, before, after }) => ({ name, action, before, after })) }
+      : undefined;
+    const lv = leftover
+      ? { id: leftover.id, title: leftover.title, servings: leftover.servings }
+      : undefined;
+    const grocery = groceryNames && groceryNames.length > 0
+      ? { items: groceryNames }
+      : undefined;
+    // Return undefined only if ALL sections are empty — callers check
+    // completionSummary?.pantry etc., so undefined means no summary at all.
+    if (!pantry && !lv && !grocery) return undefined;
+    return { pantry, leftover: lv, grocery };
   }
 
   // ── Resolution helpers ────────────────────────────────────────────────────

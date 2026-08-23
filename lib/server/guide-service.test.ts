@@ -916,3 +916,226 @@ describe('K10 completion hooks — leftovers, grocery depletion & expiration (K1
     expect(sourCream?.source).toBe('EXPIRATION');
   });
 });
+
+// ── Completion summary (Candidate E) ────────────────────────────────────────
+
+describe('completion summary (Candidate E)', () => {
+  /** Drive to COMPLETED with pantry + leftover + grocery services. */
+  async function cookWithSummary() {
+    const store = new InMemorySessionStore();
+    const timers = new InMemoryTimerStore();
+    const recipes = new InMemoryRecipeStore();
+    const pantry = new InMemoryPantryStore();
+    const leftovers = new InMemoryLeftoverStore();
+    const groceries = new InMemoryGroceryStore();
+    const sessionService = new SessionService(store);
+    const pantryService = new PantryService(pantry, sessionService);
+    const guide = new GuidedCookingService(
+      sessionService, timers, recipes, pantryService,
+      new LeftoverService(leftovers, sessionService),
+      new GroceryService(groceries),
+    );
+
+    await recipes.createRecipe(makeRecipe());
+    // 4 thighs → exhausted; 2 cups rice → 1 consumed, 1 left; sour cream → expired.
+    const chicken = await pantryService.addItem('user-1', { name: 'chicken thighs', quantity: 4, unit: 'pieces', source: 'MANUAL' });
+    await pantryService.addItem('user-1', { name: 'rice', quantity: 2, unit: 'cup', source: 'MANUAL' });
+    await pantryService.addItem('user-1', { name: 'sour cream', source: 'MANUAL' });
+    await pantryService.confirmItem('user-1', chicken.id);
+    const items = await pantry.listItems('user-1');
+    const sourCream = items.find((i) => i.name === 'sour cream')!;
+    await pantry.upsertItem({ ...sourCream, expirationDate: Date.now() - 1000 });
+
+    const snap = await guide.launchCookWithMe('user-1', 'recipe-1');
+    await guide.completeCurrentAction('user-1', snap.sessionId);
+    await guide.completeCurrentAction('user-1', snap.sessionId);
+    const sessionId = (await guide.getCurrentAction('user-1', snap.sessionId)).sessionId!;
+    const [timer] = await timers.listActiveTimers(sessionId);
+    await timers.updateTimer(timer.id, { startedAt: Date.now() - 250_000, endsAt: Date.now() - 10_000 });
+    await guide.checkTimers('user-1', sessionId);
+    await guide.completeCurrentAction('user-1', sessionId);
+    await guide.completeCurrentAction('user-1', sessionId);
+    await guide.completeCurrentAction('user-1', sessionId);
+    const done = await guide.completeCurrentAction('user-1', sessionId);
+    expect(done.phase).toBe('COMPLETED');
+    return { done, pantry, leftovers, groceries };
+  }
+
+  it('completion snapshot includes pantry reductions actually performed', async () => {
+    const { done } = await cookWithSummary();
+    const summary = done.completionSummary;
+    expect(summary).toBeDefined();
+    const adjusted = summary!.pantry!.adjusted;
+    // chicken thighs: 4→0 (removed), rice: 2→1 (reduced)
+    const chicken = adjusted.find((a) => a.name === 'chicken thighs');
+    expect(chicken).toBeDefined();
+    expect(chicken!.action).toBe('removed');
+    const rice = adjusted.find((a) => a.name === 'rice');
+    expect(rice).toBeDefined();
+    expect(rice!.action).toBe('reduced');
+    expect(rice!.before).toBe(2);
+    expect(rice!.after).toBe(1);
+  });
+
+  it('exhausted pantry item appears as removed', async () => {
+    const { done } = await cookWithSummary();
+    const chicken = done.completionSummary!.pantry!.adjusted.find((a) => a.name === 'chicken thighs');
+    expect(chicken!.action).toBe('removed');
+    expect(chicken!.before).toBe(4);
+    // Pantry service does not set `after` when the item is deleted.
+    expect(chicken!.after).toBeUndefined();
+  });
+
+  it('uncertain or quantity-unknown pantry item is not falsely shown as consumed', async () => {
+    // onion has no quantity in the recipe — never consumed.
+    const { done } = await cookWithSummary();
+    const names = done.completionSummary!.pantry!.adjusted.map((a) => a.name);
+    expect(names).not.toContain('onion');
+  });
+
+  it('successful leftover creation appears in summary', async () => {
+    const { done } = await cookWithSummary();
+    expect(done.completionSummary!.leftover).toBeDefined();
+    expect(done.completionSummary!.leftover!.title).toBe('Chicken Rice');
+    expect(done.completionSummary!.leftover!.servings).toBe(2);
+  });
+
+  it('grocery sync result uses on-list semantics (deduplicated names)', async () => {
+    const { done } = await cookWithSummary();
+    const grocery = done.completionSummary!.grocery!;
+    // chicken thighs (depleted) + sour cream (expired)
+    expect(grocery.items).toContain('chicken thighs');
+    expect(grocery.items).toContain('sour cream');
+  });
+
+  it('pantry hook failure does not fail cooking completion and is omitted', async () => {
+    const store = new InMemorySessionStore();
+    const timers = new InMemoryTimerStore();
+    const recipes = new InMemoryRecipeStore();
+    const sessionService = new SessionService(store);
+    // No pantryService — consumePantryForCompleted returns null.
+    // Include leftover + grocery so the summary is non-empty.
+    const guide = new GuidedCookingService(
+      sessionService, timers, recipes, undefined,
+      new LeftoverService(new InMemoryLeftoverStore(), sessionService),
+      new GroceryService(new InMemoryGroceryStore()),
+    );
+
+    await recipes.createRecipe(makeRecipe());
+    const snap = await guide.launchCookWithMe('user-1', 'recipe-1');
+    await guide.completeCurrentAction('user-1', snap.sessionId);
+    await guide.completeCurrentAction('user-1', snap.sessionId);
+    const sessionId = (await guide.getCurrentAction('user-1', snap.sessionId)).sessionId!;
+    const [timer] = await timers.listActiveTimers(sessionId);
+    await timers.updateTimer(timer.id, { startedAt: Date.now() - 250_000, endsAt: Date.now() - 10_000 });
+    await guide.checkTimers('user-1', sessionId);
+    await guide.completeCurrentAction('user-1', sessionId);
+    await guide.completeCurrentAction('user-1', sessionId);
+    await guide.completeCurrentAction('user-1', sessionId);
+    const done = await guide.completeCurrentAction('user-1', sessionId);
+    expect(done.phase).toBe('COMPLETED');
+    // Summary exists (leftover + grocery sections present), but pantry is omitted.
+    expect(done.completionSummary).toBeDefined();
+    expect(done.completionSummary!.pantry).toBeUndefined();
+    expect(done.completionSummary!.leftover).toBeDefined();
+  });
+
+  it('leftover hook failure does not fail completion and is omitted', async () => {
+    const store = new InMemorySessionStore();
+    const timers = new InMemoryTimerStore();
+    const recipes = new InMemoryRecipeStore();
+    const pantry = new InMemoryPantryStore();
+    const sessionService = new SessionService(store);
+    const pantryService = new PantryService(pantry, sessionService);
+    // No leftoverService — logLeftoverForCompleted returns null.
+    // Include pantry + grocery so the summary is non-empty.
+    const guide = new GuidedCookingService(
+      sessionService, timers, recipes, pantryService, undefined,
+      new GroceryService(new InMemoryGroceryStore()),
+    );
+
+    await recipes.createRecipe(makeRecipe());
+    const chicken = await pantryService.addItem('user-1', { name: 'chicken thighs', quantity: 4, unit: 'pieces', source: 'MANUAL' });
+    await pantryService.confirmItem('user-1', chicken.id);
+
+    const snap = await guide.launchCookWithMe('user-1', 'recipe-1');
+    await guide.completeCurrentAction('user-1', snap.sessionId);
+    await guide.completeCurrentAction('user-1', snap.sessionId);
+    const sessionId = (await guide.getCurrentAction('user-1', snap.sessionId)).sessionId!;
+    const [timer] = await timers.listActiveTimers(sessionId);
+    await timers.updateTimer(timer.id, { startedAt: Date.now() - 250_000, endsAt: Date.now() - 10_000 });
+    await guide.checkTimers('user-1', sessionId);
+    await guide.completeCurrentAction('user-1', sessionId);
+    await guide.completeCurrentAction('user-1', sessionId);
+    await guide.completeCurrentAction('user-1', sessionId);
+    const done = await guide.completeCurrentAction('user-1', sessionId);
+    expect(done.phase).toBe('COMPLETED');
+    // Summary exists (pantry + grocery sections present), but leftover is omitted.
+    expect(done.completionSummary).toBeDefined();
+    expect(done.completionSummary!.leftover).toBeUndefined();
+    expect(done.completionSummary!.pantry).toBeDefined();
+  });
+
+  it('grocery hook failure does not fail completion and is omitted', async () => {
+    const store = new InMemorySessionStore();
+    const timers = new InMemoryTimerStore();
+    const recipes = new InMemoryRecipeStore();
+    const pantry = new InMemoryPantryStore();
+    const sessionService = new SessionService(store);
+    const pantryService = new PantryService(pantry, sessionService);
+    // No groceryService — syncGroceryForCompleted returns null.
+    const guide = new GuidedCookingService(sessionService, timers, recipes, pantryService);
+
+    await recipes.createRecipe(makeRecipe());
+    const chicken = await pantryService.addItem('user-1', { name: 'chicken thighs', quantity: 4, unit: 'pieces', source: 'MANUAL' });
+    await pantryService.confirmItem('user-1', chicken.id);
+
+    const snap = await guide.launchCookWithMe('user-1', 'recipe-1');
+    await guide.completeCurrentAction('user-1', snap.sessionId);
+    await guide.completeCurrentAction('user-1', snap.sessionId);
+    const sessionId = (await guide.getCurrentAction('user-1', snap.sessionId)).sessionId!;
+    const [timer] = await timers.listActiveTimers(sessionId);
+    await timers.updateTimer(timer.id, { startedAt: Date.now() - 250_000, endsAt: Date.now() - 10_000 });
+    await guide.checkTimers('user-1', sessionId);
+    await guide.completeCurrentAction('user-1', sessionId);
+    await guide.completeCurrentAction('user-1', sessionId);
+    await guide.completeCurrentAction('user-1', sessionId);
+    const done = await guide.completeCurrentAction('user-1', sessionId);
+    expect(done.phase).toBe('COMPLETED');
+    expect(done.completionSummary).toBeDefined();
+    expect(done.completionSummary!.grocery).toBeUndefined();
+  });
+
+  it('completion side effects execute only once', async () => {
+    const store = new InMemorySessionStore();
+    const timers = new InMemoryTimerStore();
+    const recipes = new InMemoryRecipeStore();
+    const pantry = new InMemoryPantryStore();
+    const groceries = new InMemoryGroceryStore();
+    const sessionService = new SessionService(store);
+    const pantryService = new PantryService(pantry, sessionService);
+    const groceryService = new GroceryService(groceries);
+    const consumeSpy = vi.spyOn(pantryService, 'consumeForRecipe');
+    const grocerySpy = vi.spyOn(groceryService, 'syncDepleted');
+    const guide = new GuidedCookingService(sessionService, timers, recipes, pantryService, undefined, groceryService);
+
+    await recipes.createRecipe(makeRecipe());
+    const chicken = await pantryService.addItem('user-1', { name: 'chicken thighs', quantity: 4, unit: 'pieces', source: 'MANUAL' });
+    await pantryService.confirmItem('user-1', chicken.id);
+
+    const snap = await guide.launchCookWithMe('user-1', 'recipe-1');
+    await guide.completeCurrentAction('user-1', snap.sessionId);
+    await guide.completeCurrentAction('user-1', snap.sessionId);
+    const sessionId = (await guide.getCurrentAction('user-1', snap.sessionId)).sessionId!;
+    const [timer] = await timers.listActiveTimers(sessionId);
+    await timers.updateTimer(timer.id, { startedAt: Date.now() - 250_000, endsAt: Date.now() - 10_000 });
+    await guide.checkTimers('user-1', sessionId);
+    await guide.completeCurrentAction('user-1', sessionId);
+    await guide.completeCurrentAction('user-1', sessionId);
+    await guide.completeCurrentAction('user-1', sessionId);
+    await guide.completeCurrentAction('user-1', sessionId);
+
+    expect(consumeSpy).toHaveBeenCalledTimes(1);
+    expect(grocerySpy).toHaveBeenCalledTimes(1);
+  });
+});

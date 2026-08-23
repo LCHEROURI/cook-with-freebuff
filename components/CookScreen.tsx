@@ -277,6 +277,37 @@ export function CookScreen({
       {snap.phase === 'COMPLETED' && (
         <section className={styles.completed}>
           <p className={styles.completedText}>🎉 Enjoy your meal!</p>
+          {snap.completionSummary && (
+            <div className={styles.completionSummary}>
+              <p className={styles.completedText}>Kitchen updated</p>
+              {snap.completionSummary.pantry && snap.completionSummary.pantry.adjusted.length > 0 && (
+                <div>
+                  <p className={styles.completedText}>Pantry</p>
+                  <ul>
+                    {snap.completionSummary.pantry.adjusted.map((item) => (
+                      <li key={item.name}>
+                        {item.name}: {item.action === 'removed'
+                          ? `${item.before} → used up`
+                          : `${item.before} → ${item.after}`}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+              {snap.completionSummary.leftover && (
+                <div>
+                  <p className={styles.completedText}>Leftovers</p>
+                  <p>{snap.completionSummary.leftover.title} — {snap.completionSummary.leftover.servings} servings logged</p>
+                </div>
+              )}
+              {snap.completionSummary.grocery && snap.completionSummary.grocery.items.length > 0 && (
+                <div>
+                  <p className={styles.completedText}>Grocery</p>
+                  <p>On your grocery list: {snap.completionSummary.grocery.items.join(', ')}</p>
+                </div>
+              )}
+            </div>
+          )}
         </section>
       )}
 
