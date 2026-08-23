@@ -84,20 +84,21 @@ describe.skipIf(!emulator)('recipe-generation fencing · Firestore emulator', ()
       requestedDietaryRestrictions: [],
       leaseMs: 100,
     };
-    const first = { ...common, leaseToken: `lease-a-${run}`, now: 1_000 };
-    const successor = { ...common, leaseToken: `lease-b-${run}`, now: 1_101 };
+    const clockBase = Date.now();
+    const first = { ...common, leaseToken: `lease-a-${run}`, now: clockBase };
+    const successor = { ...common, leaseToken: `lease-b-${run}`, now: clockBase + 101 };
     const firstRecipe = makeRecipe(`recipe-a-${run}`, userId);
     const successorRecipe = makeRecipe(`recipe-b-${run}`, userId);
 
     try {
       expect(await repo.claimRecipeGeneration(first)).toMatchObject({ status: 'acquired' });
       expect(await repo.claimRecipeGeneration(successor)).toMatchObject({ status: 'acquired' });
-      expect(await repo.completeRecipeGeneration({ ...first, now: 1_102, recipe: firstRecipe }))
+      expect(await repo.completeRecipeGeneration({ ...first, now: clockBase + 102, recipe: firstRecipe }))
         .toEqual({ status: 'superseded' });
-      expect(await repo.failRecipeGeneration({ ...first, now: 1_102 })).toBe(false);
+      expect(await repo.failRecipeGeneration({ ...first, now: clockBase + 102 })).toBe(false);
       expect(await repo.completeRecipeGeneration({
         ...successor,
-        now: 1_102,
+        now: clockBase + 102,
         recipe: successorRecipe,
       })).toEqual({ status: 'completed' });
 
@@ -106,7 +107,7 @@ describe.skipIf(!emulator)('recipe-generation fencing · Firestore emulator', ()
       expect(await repo.claimRecipeGeneration({
         ...successor,
         leaseToken: `lease-c-${run}`,
-        now: 1_103,
+        now: clockBase + 103,
       })).toEqual({ status: 'completed', recipeId: successorRecipe.id });
     } finally {
       const db = admin.getAdminDb();
@@ -138,6 +139,7 @@ describe.skipIf(!emulator)('recipe-generation fencing · Firestore emulator', ()
       preferredEquipment: [],
       updatedAt: 1,
     };
+    const clockBase = Date.now();
     const lease = {
       markerId,
       userId,
@@ -146,10 +148,9 @@ describe.skipIf(!emulator)('recipe-generation fencing · Firestore emulator', ()
       requestedAllergies: [],
       requestedDietaryRestrictions: [],
       leaseToken: `lease-${run}`,
-      now: 2_000,
+      now: clockBase,
       leaseMs: 100,
     };
-
     try {
       await repo.upsertDietaryProfile(initialProfile);
       expect(await repo.claimRecipeGeneration(lease)).toMatchObject({ status: 'acquired' });
@@ -159,7 +160,7 @@ describe.skipIf(!emulator)('recipe-generation fencing · Firestore emulator', ()
         updatedAt: 2,
       });
 
-      expect(await repo.completeRecipeGeneration({ ...lease, now: 2_001, recipe }))
+      expect(await repo.completeRecipeGeneration({ ...lease, now: clockBase + 1, recipe }))
         .toEqual({ status: 'safety_context_changed', code: 'SAFETY_CONTEXT_CHANGED' });
       expect(await repo.getRecipe(recipe.id)).toBeNull();
 
