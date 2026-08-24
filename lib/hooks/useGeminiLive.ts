@@ -27,7 +27,7 @@ import { composeHopReason, runVoiceSelfCheck } from '@/lib/voice/self-check';
 import { TOOL_DECLARATIONS, buildLiveSystemInstruction } from '@/lib/ai/tool-declarations';
 import type { AgentTurn, ExecutedToolCall } from '@/lib/agent/types';
 import type { ToolResult } from '@/lib/server/tools/types';
-import { appCheckHeaders } from '@/lib/firebase/app-check';
+import { appCheckHeaders, appCheckLimitedUseHeaders } from '@/lib/firebase/app-check';
 
 export type LiveMode = 'off' | 'connecting' | 'live';
 export type LiveStatus = 'IDLE' | 'LISTENING' | 'THINKING' | 'SPEAKING' | 'OFFLINE' | 'ERROR';
@@ -299,7 +299,7 @@ export function useGeminiLive(opts: UseGeminiLiveOptions = {}) {
     const client = new GeminiLiveClient({
       tokenUrl: o.tokenUrl ?? DEFAULT_TOKEN_URL,
       getToken: o.getToken,
-      getAppCheckHeaders: appCheckHeaders,
+      getAppCheckHeaders: appCheckLimitedUseHeaders,
       systemInstruction: buildLiveSystemInstruction(o.systemContext ?? {}),
       tools: TOOL_DECLARATIONS,
       ...(o.connectTimeoutMs !== undefined ? { connectTimeoutMs: o.connectTimeoutMs } : {}),
@@ -362,7 +362,7 @@ export function useGeminiLive(opts: UseGeminiLiveOptions = {}) {
       void runVoiceSelfCheck({
         tokenUrl: optsRef.current.tokenUrl ?? DEFAULT_TOKEN_URL,
         getToken: optsRef.current.getToken,
-        getAppCheckHeaders: appCheckHeaders,
+        getAppCheckHeaders: appCheckLimitedUseHeaders,
       }).then((check) => {
         const enriched = composeHopReason(immediate, check);
         // Structured verdict — logged even if the banner was dismissed, so a
