@@ -1,5 +1,6 @@
 // @vitest-environment node
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { NextResponse } from 'next/server';
 import { POST } from './route';
 
 vi.mock('@/lib/server/admin', () => ({
@@ -15,6 +16,8 @@ vi.mock('@/lib/server/model-config', () => ({
 }));
 
 import { resolveUserId } from '@/lib/server/admin';
+import { gateAppCheck } from '@/lib/server/app-check';
+import { resolveGeminiModel } from '@/lib/server/model-config';
 
 const API_KEY = 'AIzaSy-fake-test-key-00000000000000000';
 
@@ -46,6 +49,7 @@ const originalLiveModel = process.env.LIVE_MODEL;
 
 beforeEach(() => {
   vi.clearAllMocks();
+  vi.mocked(gateAppCheck).mockResolvedValue(null);
   process.env.GOOGLE_AI_API_KEY = API_KEY;
   process.env.LIVE_MODEL = 'gemini-3.1-flash-live-preview';
 });
@@ -66,6 +70,17 @@ function authReq(): Request {
 }
 
 describe('POST /api/voice/token', () => {
+  it('returns an App Check block before auth, model resolution, or token minting', async () => {
+    vi.mocked(gateAppCheck).mockResolvedValueOnce(new NextResponse(null, { status: 403 }));
+    vi.stubGlobal('fetch', vi.fn());
+    const res = await POST(authReq());
+
+    expect(res.status).toBe(403);
+    expect(resolveUserId).not.toHaveBeenCalled();
+    expect(resolveGeminiModel).not.toHaveBeenCalled();
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
   it('rejects unauthenticated requests (401)', async () => {
     mockResolve(null);
     const res = await POST(authReq());

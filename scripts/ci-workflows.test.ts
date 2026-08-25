@@ -33,11 +33,11 @@ const GUARD_DRILLS_WEEKLY = readFileSync('.github/workflows/guard-drills-weekly.
 const BRANCH_TIDY = readFileSync('.github/workflows/branch-tidy-weekly.yml', 'utf8');
 const COMPARE_WEEKLY = readFileSync('.github/workflows/compare-live-weekly.yml', 'utf8');
 
-// The verify step's gating `if:` — the four secrets must ALL be present for
+// The verify step's gating `if:` — the five inputs must ALL be present for
 // the deep gates to run (a missing one skips-not-fails, but only on forks;
 // the loud guard below turns that skip into a failure on main deploys).
-const FOUR_SECRETS_GATE =
-  "if: ${{ env.NEXT_PUBLIC_FIREBASE_API_KEY != '' && env.FIREBASE_SERVICE_ACCOUNT != '' && env.APP_OWNER_UID != '' && env.GOOGLE_AI_API_KEY != '' }}";
+const FIVE_INPUTS_GATE =
+  "if: ${{ env.NEXT_PUBLIC_FIREBASE_API_KEY != '' && env.FIREBASE_SERVICE_ACCOUNT != '' && env.APP_OWNER_UID != '' && env.GOOGLE_AI_API_KEY != '' && env.NEXT_PUBLIC_FIREBASE_APP_ID != '' }}";
 // Plain concatenation on purpose: a template literal containing the `${{`
 // GitHub expression syntax would parse as a nested interpolation and throw.
 const SECRET_WIRING = (name: string) => name + ': ${{ secrets.' + name + ' }}';
@@ -324,7 +324,7 @@ describe('.github/workflows/ci.yml · post-deploy verify:live needs-edge', () =>
     expect(smokeBlock).toContain('"$base/api/build-info"');
     // Gated identically to verify:live, so a fork that skips the deep run also
     // skips its pre-flight (both stay skip-not-fail on forks).
-    expect(smokeBlock).toContain(FOUR_SECRETS_GATE);
+    expect(smokeBlock).toContain(FIVE_INPUTS_GATE);
     expect(smokeBlock).toContain('exit 1'); // loud failure, never a silent skip
     expect(smokeBlock).toContain('::error::'); // names the failing hop in the log
     // "Needs nothing new": the smoke must not introduce a secret wiring or an
@@ -346,34 +346,30 @@ describe('.github/workflows/ci.yml · post-deploy verify:live needs-edge', () =>
   it('targets the canonical App Hosting URL for verify:live', () => {
     const verifyStepStart = verifyBlock.indexOf('name: Verify deployed app end to end (verify:live)');
     const verifyStepBlock = verifyBlock.slice(verifyStepStart);
-    expect(verifyStepBlock).toContain('run: npm run verify:live');
-    expect(verifyStepBlock).toContain(FOUR_SECRETS_GATE);
+    expect(verifyStepBlock).toContain('run: npm run verify:live -- --require-app-check-enforced');
+    expect(verifyStepBlock).toContain(FIVE_INPUTS_GATE);
     expect(verifyStepBlock).toContain('VERIFY_BASE_URL: https://cook-with-freebuff--portfolio-app-freebuff2.us-central1.hosted.app');
     // No second-host env anymore — verify:live's [4b] stage was collapsed.
     expect(verifyStepBlock).not.toContain('VERIFY_APPHOSTING_URL');
   });
 
-  it('wires all four secrets into the job env, the loud guard, AND the verify step env (3 wirings each)', () => {
+  it('wires all five required inputs into the job env, loud guard, and verify step (3 wirings each)', () => {
     for (const name of [
       'NEXT_PUBLIC_FIREBASE_API_KEY',
       'FIREBASE_SERVICE_ACCOUNT',
       'APP_OWNER_UID',
       'GOOGLE_AI_API_KEY',
+      'NEXT_PUBLIC_FIREBASE_APP_ID',
     ]) {
       expect(verifyBlock.match(new RegExp(SECRET_WIRING(name).replace(/[$\\{\\}]/g, '\\$&'), 'g'))).toHaveLength(3);
     }
   });
 
-  it('wires NEXT_PUBLIC_FIREBASE_APP_ID into the job env and the verify step env only (2 wirings, no guard)', () => {
-    // The app id attests the driver via App Check, but attestation is
-    // best-effort until App Check is provisioned — so it rides the job + step
-    // env and is NOT part of the loud guard (a missing one must not redden a
-    // monitor-mode deploy).
-    const wiring = new RegExp(SECRET_WIRING('NEXT_PUBLIC_FIREBASE_APP_ID').replace(/[$\\{\\}]/g, '\\$&'), 'g');
-    expect(verifyBlock.match(wiring)).toHaveLength(2);
+  it('makes the App Check app id a loud main-deploy prerequisite', () => {
     const guardStart = verifyBlock.indexOf('name: Fail loudly if a verify secret is missing (main deploy)');
     const guardBlock = verifyBlock.slice(guardStart, verifyBlock.indexOf('name: Wait for the App Hosting rollout'));
-    expect(guardBlock).not.toContain('NEXT_PUBLIC_FIREBASE_APP_ID');
+    expect(guardBlock).toContain('NEXT_PUBLIC_FIREBASE_APP_ID');
+    expect(guardBlock).toContain('mints the App Check token for verify:live');
   });
 
   it('records the verify:live verdict to Firestore after the verify step (runs even on failure)', () => {

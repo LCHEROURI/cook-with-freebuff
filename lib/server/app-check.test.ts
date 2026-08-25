@@ -49,6 +49,7 @@ beforeEach(() => {
   delete process.env.FIRESTORE_EMULATOR_HOST;
   delete process.env.APP_CHECK_ENFORCED;
   process.env.NEXT_PUBLIC_FIREBASE_APP_ID = 'test-app-id';
+  process.env.NEXT_PUBLIC_FIREBASE_APP_CHECK_SITE_KEY = 'test-site-key';
 });
 
 describe('verifyAppCheckToken', () => {
@@ -110,6 +111,19 @@ describe('verifyAppCheckToken', () => {
     await expect(verifyAppCheckToken('good-token')).resolves.toEqual({ ok: false, reason: 'app-mismatch' });
   });
 
+  it('fails closed when enforced without the expected production app id', async () => {
+    process.env.APP_CHECK_ENFORCED = '1';
+    delete process.env.NEXT_PUBLIC_FIREBASE_APP_ID;
+    verifyToken.mockResolvedValue({ appId: 'untrusted-app-id' });
+    const { verifyAppCheckToken } = await import('./app-check');
+
+    await expect(verifyAppCheckToken('valid-but-unscoped-token')).resolves.toEqual({
+      ok: false,
+      reason: 'unconfigured',
+    });
+    expect(verifyToken).not.toHaveBeenCalled();
+  });
+
   it('passes an app-id mismatch in monitor mode (logs, never blocks)', async () => {
     verifyToken.mockResolvedValue({ appId: 'other-app-id' });
     const { verifyAppCheckToken } = await import('./app-check');
@@ -117,12 +131,12 @@ describe('verifyAppCheckToken', () => {
     await expect(verifyAppCheckToken('good-token')).resolves.toEqual({ ok: true });
   });
 
-  it('rejects an invalid token when enforced', async () => {
+  it('rejects a malformed token when enforced', async () => {
     process.env.APP_CHECK_ENFORCED = '1';
     verifyToken.mockRejectedValue(new Error('app-check/argument-error'));
     const { verifyAppCheckToken } = await import('./app-check');
 
-    await expect(verifyAppCheckToken('bad-token')).resolves.toEqual({ ok: false, reason: 'invalid-token' });
+    await expect(verifyAppCheckToken('not-a-jwt')).resolves.toEqual({ ok: false, reason: 'invalid-token' });
   });
 
   it('passes an invalid token in monitor mode (logs, never blocks)', async () => {
@@ -148,6 +162,37 @@ describe('appCheckEnforced', () => {
   });
 });
 
+describe('appCheckReadiness', () => {
+  it('lists every missing prerequisite when enforcement is enabled', async () => {
+    process.env.APP_CHECK_ENFORCED = '1';
+    delete process.env.NEXT_PUBLIC_FIREBASE_APP_ID;
+    delete process.env.NEXT_PUBLIC_FIREBASE_APP_CHECK_SITE_KEY;
+    delete process.env.FIREBASE_SERVICE_ACCOUNT;
+    const { appCheckReadiness } = await import('./app-check');
+
+    expect(appCheckReadiness()).toEqual({
+      mode: 'enforced',
+      ready: false,
+      missing: [
+        'NEXT_PUBLIC_FIREBASE_APP_ID',
+        'NEXT_PUBLIC_FIREBASE_APP_CHECK_SITE_KEY',
+        'FIREBASE_SERVICE_ACCOUNT',
+      ],
+    });
+  });
+
+  it('preserves the unconditional emulator bypass', async () => {
+    process.env.FIRESTORE_EMULATOR_HOST = 'localhost:8080';
+    process.env.APP_CHECK_ENFORCED = '1';
+    delete process.env.NEXT_PUBLIC_FIREBASE_APP_ID;
+    delete process.env.NEXT_PUBLIC_FIREBASE_APP_CHECK_SITE_KEY;
+    delete process.env.FIREBASE_SERVICE_ACCOUNT;
+    const { appCheckReadiness } = await import('./app-check');
+
+    expect(appCheckReadiness()).toEqual({ mode: 'emulator', ready: true, missing: [] });
+  });
+});
+
 describe('gateAppCheck', () => {
   it('returns null when the request passes', async () => {
     const { gateAppCheck } = await import('./app-check');
@@ -165,5 +210,29 @@ describe('gateAppCheck', () => {
     expect(res).not.toBeNull();
     const body = (res as unknown as { body: { error: { code: string } } }).body;
     expect(body.error.code).toBe('APP_CHECK_FAILED');
+  });
+
+  it('maps enforced failures to stable actionable messages', async () => {
+    process.env.APP_CHECK_ENFORCED = '1';
+    const { gateAppCheck } = await import('./app-check');
+    const blockedMessage = async (token?: string) => {
+      const headers = token ? { 'x-firebase-appcheck': token } : undefined;
+      const res = await gateAppCheck(new Request('http://test/api/cook', { method: 'POST', headers }));
+      return (res as unknown as { body: { error: { message: string } } }).body.error.message;
+    };
+
+    await expect(blockedMessage()).resolves.toBe('App Check token missing');
+
+    verifyToken.mockRejectedValueOnce(new Error('app-check/argument-error'));
+    await expect(blockedMessage('not-a-jwt')).resolves.toBe('App Check token invalid');
+
+    verifyToken.mockResolvedValueOnce({ appId: 'other-app-id' });
+    await expect(blockedMessage('wrong-app-token')).resolves.toBe('App Check token is for a different app');
+
+    verifyToken.mockResolvedValueOnce({ appId: 'test-app-id', alreadyConsumed: true });
+    await expect(blockedMessage('replayed-token')).resolves.toBe('App Check token has already been consumed');
+
+    delete process.env.NEXT_PUBLIC_FIREBASE_APP_ID;
+    await expect(blockedMessage('unscoped-token')).resolves.toBe('App Check enforcement is not configured');
   });
 });

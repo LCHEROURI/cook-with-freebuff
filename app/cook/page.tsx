@@ -14,7 +14,7 @@ import { useVoiceInput } from '@/lib/hooks/useVoiceInput';
 import { useGeminiLive, shouldAutoFallbackToWebSpeech } from '@/lib/hooks/useGeminiLive';
 import { useLiveDictation } from '@/lib/hooks/useLiveDictation';
 import { useCookingSession } from '@/lib/hooks/useCookingSession';
-import { appCheckHeaders } from '@/lib/firebase/app-check';
+import { appCheckHeaders, appCheckLimitedUseHeaders } from '@/lib/firebase/app-check';
 
 export default function CookPage() {
   const router = useRouter();
@@ -185,7 +185,7 @@ export default function CookPage() {
       const token = await auth.getToken();
       const res = await fetch('/api/vision/scan', {
         method: 'POST',
-        headers: { 'content-type': 'application/json', ...(token ? { authorization: `Bearer ${token}` } : {}), ...(await appCheckHeaders(true)) },
+        headers: { 'content-type': 'application/json', ...(token ? { authorization: `Bearer ${token}` } : {}), ...(await appCheckLimitedUseHeaders()) },
         body: JSON.stringify({ image: dataUri }),
       });
       const body = await res.json() as {

@@ -149,12 +149,12 @@ describe.skipIf(!emulator)('rollback-resume marker atomicity · Firestore emulat
         expect(snap.phase).toBe('WAITING_FOR_TIMER');
         sessionId = snap.sessionId!;
 
-        // Give the auto-started 240s timer 180s left so the rebase math below
-        // is exact: endsAt = t_backdate + 180s.
+        // Give the auto-started timer 180s left so the rebase math below is
+        // exact. `startedAt` is immutable repository metadata; only the
+        // mutable deadline needs adjusting for this clock-position fixture.
         const [timer] = await flakyTimers.listActiveTimers(sessionId);
         expect(timer).toBeDefined();
         await flakyTimers.updateTimer(timer.id, {
-          startedAt: Date.now() - 60_000,
           endsAt: Date.now() + 180_000,
         });
 
@@ -208,8 +208,8 @@ describe.skipIf(!emulator)('rollback-resume marker atomicity · Firestore emulat
         // transition transaction).
         expect(await repo.hasCorrelationMarker(resumeId)).toBe(true);
 
-        // EXACTLY ONE rebase: endsAt was t_backdate + 180s and the single
-        // shift adds the paused duration (≈ t0 − pause), landing ≈ t0 + 180s.
+        // EXACTLY ONE rebase: endsAt had 180s remaining and the single shift
+        // adds the paused duration (≈ t0 − pause), landing ≈ t0 + 180s.
         // A second shift (the pre-fix double rebase) would add the pause
         // duration again and land ≈ t0 + 183s — outside the tolerance.
         const [rebased] = await flakyTimers.listActiveTimers(sessionId);

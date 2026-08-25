@@ -338,3 +338,272 @@ describe('updateTimer write boundary', () => {
     );
   });
 });
+
+describe('Phase 3A repository write contracts', () => {
+  function fakeWriteDb(seed: Record<string, Record<string, unknown>> = {}) {
+    const store = new Map<string, Record<string, unknown>>(Object.entries(seed));
+    let writes = 0;
+
+    const ref = (path: string, id: string) => ({
+      id,
+      _path: `${path}/${id}`,
+      get: async () => ({
+        exists: store.has(`${path}/${id}`),
+        id,
+        data: () => store.get(`${path}/${id}`) ?? null,
+      }),
+      set: async (data: unknown) => {
+        writes += 1;
+        store.set(`${path}/${id}`, data as Record<string, unknown>);
+      },
+      update: async (partial: unknown) => {
+        writes += 1;
+        const current = store.get(`${path}/${id}`) ?? {};
+        store.set(`${path}/${id}`, {
+          ...current,
+          ...(partial as Record<string, unknown>),
+        });
+      },
+      delete: async () => {
+        writes += 1;
+        store.delete(`${path}/${id}`);
+      },
+    });
+
+    const db: any = {
+      collection: (path: string) => ({
+        doc: (id: string) => ref(path, id),
+        where: () => ({
+          where: () => ({ get: async () => ({ empty: true, docs: [] }) }),
+          get: async () => ({ empty: true, docs: [] }),
+        }),
+      }),
+      runTransaction: async (fn: (tx: any) => Promise<unknown>) => fn({
+        get: (document: ReturnType<typeof ref>) => document.get(),
+        update: (document: ReturnType<typeof ref>, data: unknown) => document.update(data),
+        set: (document: ReturnType<typeof ref>, data: unknown) => document.set(data),
+        delete: (document: ReturnType<typeof ref>) => document.delete(),
+      }),
+    };
+    return { db, store, writeCount: () => writes };
+  }
+
+  async function useDb(seed: Record<string, Record<string, unknown>> = {}) {
+    const fake = fakeWriteDb(seed);
+    const { getAdminDb } = await import('./admin');
+    vi.mocked(getAdminDb).mockReturnValue(fake.db);
+    return fake;
+  }
+
+  it('rejects an invalid full write before Firestore mutation', async () => {
+    const fake = await useDb();
+    await expect(repo.createPantryItem({
+      id: 'pantry-1',
+      userId: 'user-1',
+      name: 'rice',
+      quantity: -1,
+      confidence: 0.9,
+      source: 'MANUAL',
+      lastConfirmedAt: 1_700_000_000_000,
+    })).rejects.toThrow();
+    expect(fake.writeCount()).toBe(0);
+  });
+
+  it('reads representative existing shapes without validating or rewriting them', async () => {
+    const legacyRecipe = {
+      id: 'legacy-recipe', userId: 'user-1', title: 'Legacy Rice', servings: 2,
+      estimatedPrepMinutes: 5, estimatedCookMinutes: 15, totalMinutes: 20,
+      ingredients: [{ id: 'i1', name: 'rice', quantity: 1, unit: 'cup', optional: false }],
+      equipment: [], prepSteps: [], cookingSteps: [], dietaryTags: [], allergens: [],
+      safetyNotes: [], generatedAt: 1_600_000_000_000, updatedAt: 1_600_000_000_000,
+    };
+    const legacySession = {
+      id: 'legacy-session', userId: 'user-1', status: 'PAUSED', currentPhase: 'PAUSED',
+      currentPrepStepIndex: 0, currentCookingStepIndex: 0, activeTimerIds: [],
+      availableIngredients: [], startedAt: 1_600_000_000_000,
+      lastActivityAt: 1_600_000_000_000, version: 1,
+    };
+    const fake = await useDb({
+      'recipes/legacy-recipe': legacyRecipe,
+      'cooking_sessions/legacy-session': legacySession,
+    });
+
+    expect(await repo.getRecipe('legacy-recipe')).toEqual(legacyRecipe);
+    expect(await repo.getSession('legacy-session')).toEqual(legacySession);
+    expect(fake.writeCount()).toBe(0);
+  });
+
+  it('rejects an invalid pantry patch after merging with the stored document', async () => {
+    const fake = await useDb({
+      'pantry_items/pantry-1': {
+        id: 'pantry-1', userId: 'user-1', name: 'rice', quantity: 2,
+        confidence: 0.9, source: 'MANUAL', lastConfirmedAt: 1_700_000_000_000,
+      },
+    });
+    await expect(repo.updatePantryItem('pantry-1', { quantity: -1 })).rejects.toThrow();
+    expect(fake.writeCount()).toBe(0);
+  });
+
+  it('rejects ownership and creation-metadata changes on partial updates', async () => {
+    const fake = await useDb({
+      'leftovers/leftover-1': {
+        id: 'leftover-1', userId: 'user-1', title: 'Soup', servings: 2,
+        completedAt: 1_700_000_000_000, storedAt: 1_700_000_000_000, status: 'ACTIVE',
+      },
+      'grocery_list/grocery-1': {
+        id: 'grocery-1', userId: 'user-1', name: 'Milk', source: 'MANUAL',
+        status: 'OPEN', createdAt: 1_700_000_000_000, updatedAt: 1_700_000_000_000,
+      },
+      'timers/timer-1': {
+        id: 'timer-1', userId: 'user-1', sessionId: 'session-1', label: 'Simmer',
+        durationSeconds: 60, startedAt: 1_700_000_000_000,
+        endsAt: 1_700_000_060_000, status: 'RUNNING',
+      },
+    });
+
+    await expect(repo.updateLeftover('leftover-1', { userId: 'user-2' })).rejects.toThrow();
+    await expect(repo.updateGroceryItem('grocery-1', { createdAt: 1_800_000_000_000 })).rejects.toThrow();
+    await expect(repo.updateTimer('timer-1', { userId: 'user-2' })).rejects.toThrow();
+    expect(fake.writeCount()).toBe(0);
+  });
+
+  it('enforces each collection immutable-field policy on partial updates', async () => {
+    const createdAt = 1_700_000_000_000;
+    const fake = await useDb({
+      'pantry_items/pantry-1': {
+        id: 'pantry-1', userId: 'user-1', name: 'rice', quantity: 2,
+        confidence: 0.9, source: 'MANUAL', lastConfirmedAt: createdAt,
+      },
+      'leftovers/leftover-1': {
+        id: 'leftover-1', userId: 'user-1', recipeId: 'recipe-1', title: 'Soup', servings: 2,
+        completedAt: createdAt, storedAt: createdAt, status: 'ACTIVE',
+      },
+      'grocery_list/grocery-1': {
+        id: 'grocery-1', userId: 'user-1', name: 'Milk', source: 'PANTRY_DEPLETION',
+        pantryItemId: 'pantry-1', status: 'OPEN', createdAt, updatedAt: createdAt,
+      },
+      'timers/timer-1': {
+        id: 'timer-1', userId: 'user-1', sessionId: 'session-1', label: 'Simmer',
+        durationSeconds: 60, startedAt: createdAt, endsAt: createdAt + 60_000,
+        status: 'RUNNING',
+      },
+    });
+
+    const attempts: Array<() => Promise<void>> = [
+      () => repo.updatePantryItem('pantry-1', { id: 'pantry-2' }),
+      () => repo.updatePantryItem('pantry-1', { source: 'VOICE' }),
+      () => repo.updateLeftover('leftover-1', { recipeId: 'recipe-2' }),
+      () => repo.updateLeftover('leftover-1', { completedAt: createdAt + 1 }),
+      () => repo.updateLeftover('leftover-1', { storedAt: createdAt + 1 }),
+      () => repo.updateGroceryItem('grocery-1', { source: 'MANUAL' }),
+      () => repo.updateGroceryItem('grocery-1', { pantryItemId: 'pantry-2' }),
+      () => repo.updateTimer('timer-1', { sessionId: 'session-2' }),
+      () => repo.updateTimer('timer-1', { startedAt: createdAt + 1 }),
+      () => repo.updateTimer('timer-1', { durationSeconds: 120 }),
+    ];
+
+    for (const attempt of attempts) {
+      await expect(attempt()).rejects.toThrow(/immutable field/i);
+    }
+    expect(fake.writeCount()).toBe(0);
+  });
+
+  it('rejects immutable ownership on a full recipe overwrite', async () => {
+    const generatedAt = 1_700_000_000_000;
+    const recipe = {
+      id: 'recipe-1', userId: 'user-1', title: 'Rice', servings: 2,
+      estimatedPrepMinutes: 5, estimatedCookMinutes: 15, totalMinutes: 20,
+      ingredients: [{ id: 'i1', name: 'rice', quantity: 1, unit: 'cup', optional: false }],
+      equipment: [], prepSteps: [], cookingSteps: [], dietaryTags: [], allergens: [],
+      safetyNotes: [], proteinCategories: [], generatedAt, updatedAt: generatedAt,
+    };
+    const fake = await useDb({ 'recipes/recipe-1': recipe });
+    await expect(repo.updateRecipe({ ...recipe, userId: 'user-2' })).rejects.toThrow();
+    expect(fake.writeCount()).toBe(0);
+  });
+
+  it('rejects removing optional immutable fields on full overwrites', async () => {
+    const generatedAt = 1_700_000_000_000;
+    const recipe = {
+      id: 'recipe-1', userId: 'user-1', title: 'Rice', servings: 2,
+      estimatedPrepMinutes: 5, estimatedCookMinutes: 15, totalMinutes: 20,
+      ingredients: [{ id: 'i1', name: 'rice', quantity: 1, unit: 'cup', optional: false }],
+      equipment: [], prepSteps: [], cookingSteps: [], dietaryTags: [], allergens: [],
+      safetyNotes: [], proteinCategories: [], generatedAt, updatedAt: generatedAt,
+    };
+    const leftover = {
+      id: 'leftover-1', userId: 'user-1', recipeId: 'recipe-1', title: 'Rice', servings: 1,
+      completedAt: generatedAt, storedAt: generatedAt, status: 'ACTIVE' as const,
+    };
+    const fake = await useDb({
+      'recipes/recipe-1': recipe,
+      'leftovers/leftover-1': leftover,
+    });
+
+    const { userId: _owner, ...ownerlessRecipe } = recipe;
+    const { recipeId: _recipeId, ...detachedLeftover } = leftover;
+    await expect(repo.updateRecipe(ownerlessRecipe)).rejects.toThrow(/immutable field userId/i);
+    await expect(repo.createLeftover(detachedLeftover)).rejects.toThrow(/immutable field recipeId/i);
+    expect(fake.writeCount()).toBe(0);
+  });
+
+  it('keeps session version and activity time repository-managed in the transaction', async () => {
+    const session = {
+      id: 'session-1', userId: 'user-1', status: 'ACTIVE' as const,
+      currentPhase: 'PREP_GUIDANCE' as const, currentPrepStepIndex: 0,
+      currentCookingStepIndex: 0, activeTimerIds: [], availableIngredients: [],
+      startedAt: 1_700_000_000_000, lastActivityAt: 1_700_000_000_000, version: 4,
+    };
+    const fake = await useDb({ 'cooking_sessions/session-1': session });
+    vi.spyOn(Date, 'now').mockReturnValue(1_800_000_000_000);
+
+    const updated = await repo.updateSession(
+      'session-1',
+      { status: 'PAUSED', currentPhase: 'PAUSED', lastActivityAt: 1_750_000_000_000 },
+      4,
+      { mark: 'pause-session-1' },
+    );
+
+    expect(updated).toMatchObject({ version: 5, lastActivityAt: 1_800_000_000_000 });
+    expect(fake.store.get('cooking_sessions/session-1')).toMatchObject({
+      version: 5,
+      lastActivityAt: 1_800_000_000_000,
+    });
+    expect(fake.store.get(`correlation_markers/${repo.markerKey('pause-session-1')}`)).toEqual({
+      markedAt: 1_800_000_000_000,
+      rawId: 'pause-session-1',
+    });
+  });
+
+  it('rejects a stale session version without writing state or a marker', async () => {
+    const session = {
+      id: 'session-1', userId: 'user-1', status: 'ACTIVE' as const,
+      currentPhase: 'PREP_GUIDANCE' as const, currentPrepStepIndex: 0,
+      currentCookingStepIndex: 0, activeTimerIds: [], availableIngredients: [],
+      startedAt: 1_700_000_000_000, lastActivityAt: 1_700_000_000_000, version: 4,
+    };
+    const fake = await useDb({ 'cooking_sessions/session-1': session });
+
+    await expect(repo.updateSession(
+      'session-1',
+      { status: 'PAUSED', currentPhase: 'PAUSED' },
+      3,
+      { mark: 'stale-pause' },
+    )).rejects.toThrow(/version conflict/i);
+
+    expect(fake.writeCount()).toBe(0);
+    expect(fake.store.has(`correlation_markers/${repo.markerKey('stale-pause')}`)).toBe(false);
+  });
+
+  it('rejects immutable identity changes inside the session transaction', async () => {
+    const session = {
+      id: 'session-1', userId: 'user-1', status: 'ACTIVE', currentPhase: 'PREP_GUIDANCE',
+      currentPrepStepIndex: 0, currentCookingStepIndex: 0, activeTimerIds: [],
+      availableIngredients: [], startedAt: 1_700_000_000_000,
+      lastActivityAt: 1_700_000_000_000, version: 1,
+    };
+    const fake = await useDb({ 'cooking_sessions/session-1': session });
+    await expect(repo.updateSession('session-1', { id: 'session-2' }, 1)).rejects.toThrow();
+    expect(fake.writeCount()).toBe(0);
+  });
+});

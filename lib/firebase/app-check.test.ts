@@ -8,7 +8,10 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-const { getToken } = vi.hoisted(() => ({ getToken: vi.fn() }));
+const { getToken, getLimitedUseToken } = vi.hoisted(() => ({
+  getToken: vi.fn(),
+  getLimitedUseToken: vi.fn(),
+}));
 
 const FAKE_APP_CHECK = { name: 'fake-app-check' };
 
@@ -16,6 +19,7 @@ vi.mock('firebase/app-check', () => ({
   initializeAppCheck: vi.fn(() => FAKE_APP_CHECK),
   ReCaptchaV3Provider: vi.fn(),
   getToken,
+  getLimitedUseToken,
 }));
 
 vi.mock('./client', () => ({
@@ -82,6 +86,16 @@ describe('getAppCheckToken / appCheckHeaders', () => {
 
     await getAppCheckToken(true);
     expect(getToken).toHaveBeenCalledWith(FAKE_APP_CHECK, true);
+  });
+
+  it('uses a limited-use token for replay-protected routes', async () => {
+    process.env.NEXT_PUBLIC_FIREBASE_APP_CHECK_SITE_KEY = 'site-key';
+    getLimitedUseToken.mockResolvedValue({ token: 'limited-token' });
+    const { appCheckLimitedUseHeaders } = await import('./app-check');
+
+    await expect(appCheckLimitedUseHeaders()).resolves.toEqual({ 'x-firebase-appcheck': 'limited-token' });
+    expect(getLimitedUseToken).toHaveBeenCalledWith(FAKE_APP_CHECK);
+    expect(getToken).not.toHaveBeenCalled();
   });
 
   it('returns null when the token fetch fails (graceful degradation)', async () => {
