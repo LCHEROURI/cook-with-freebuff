@@ -196,6 +196,12 @@ describe('.github/workflows/ci.yml · deploy-apphosting job', () => {
     expect(smokeBlock).toContain('NEXT_PUBLIC_FIREBASE_API_KEY');
     expect(smokeBlock).toContain('FIREBASE_SERVICE_ACCOUNT');
     expect(smokeBlock).toContain('APP_OWNER_UID');
+    // App Check is enforced in production: the smoke's driver mints its own
+    // attestation token, so the job env must map the app id or every
+    // quota-bearing leg of the compare 403s with APP_CHECK_FAILED.
+    expect(smokeBlock).toContain(
+      'NEXT_PUBLIC_FIREBASE_APP_ID: ${{ secrets.NEXT_PUBLIC_FIREBASE_APP_ID }}',
+    );
     expect(smokeBlock).toContain("github.repository == 'LCHEROURI/cook-with-freebuff'");
     expect(smokeBlock).toContain('npm run verify:live:compare:emulator');
   });
