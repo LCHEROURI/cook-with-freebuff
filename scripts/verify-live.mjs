@@ -1194,7 +1194,9 @@ try {
     spawnSync('node', ['scripts/drive-starter-prefs.mjs', '--app', APP, '--probe-prefix', `${PROBE_PREFIX}starter-prefs-`, '--out', `${driverOut}-${attempt}`], {
       encoding: 'utf8',
       timeout: 300_000, // Gemini generation + Chrome launch on cold serverless
-      env: process.env,
+      // The minted admin App Check token lets the browser driver attest the
+      // page's OWN requests (headless Chrome cannot complete reCAPTCHA v3).
+      env: { ...process.env, VERIFY_APP_CHECK_TOKEN: appCheckToken ?? '' },
     });
   // ── 3c½. Pre-stage guard: the UI starter must see a CLEAN owner ────────────
   // Fires IMMEDIATELY BEFORE the driver spawn — the last thing the script does
@@ -1336,7 +1338,9 @@ try {
     spawnSync('node', ['scripts/drive-live-voice.mjs', '--app', APP, '--probe-prefix', `${PROBE_PREFIX}voice-`, '--out', `/tmp/verify-live-voice-${t}-${attempt}`], {
       encoding: 'utf8',
       timeout: 420_000, // two Chrome launches + two Gemini Live sessions
-      env: process.env,
+      // The minted admin App Check token lets the browser driver attest the
+      // page's OWN requests (headless Chrome cannot complete reCAPTCHA v3).
+      env: { ...process.env, VERIFY_APP_CHECK_TOKEN: appCheckToken ?? '' },
     });
   let voiceDriver = runVoiceDriver(1);
   let voiceLog = `${voiceDriver.stdout ?? ''}\n${voiceDriver.stderr ?? ''}`;
