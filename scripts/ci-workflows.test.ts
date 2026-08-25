@@ -206,6 +206,26 @@ describe('.github/workflows/ci.yml · deploy-apphosting job', () => {
     expect(smokeBlock).toContain('npm run verify:live:compare:emulator');
   });
 
+  it('verifies the served revision BEFORE the write-capable deployed leg of the compare', () => {
+    // The compare's deployed leg WRITES to the shared production backend
+    // (seed + probe + cleanup) and now passes App Check (it mints a token via
+    // NEXT_PUBLIC_FIREBASE_APP_ID). validate's stale-guard runs in a parallel
+    // job the emulator-compare job does not wait for, so the same
+    // direction-aware tokenless gate must run HERE, immediately before the
+    // smoke: the write-capable leg can never run against a live host that is
+    // ahead of or diverged from the pushed HEAD. (Codex P1, PR #176 review.)
+    const smokeStart = CI.indexOf('\n  emulator-compare:');
+    const smokeBlock = CI.slice(smokeStart, CI.indexOf('\n  deploy-apphosting:', smokeStart));
+    const prereqIdx = smokeBlock.indexOf('Verify the served revision before the write-capable compare leg');
+    expect(prereqIdx).toBeGreaterThan(0);
+    const prereqBlock = smokeBlock.slice(prereqIdx);
+    expect(prereqBlock).toContain('node scripts/verify-deployed-hash-gate.mjs --stale-guard');
+    // The prerequisite must run BEFORE the write-capable smoke, and be gated
+    // on the same credentials (a fork that skips the leg also skips the check).
+    expect(prereqBlock.indexOf('Run the emulator-compare smoke')).toBeGreaterThan(0);
+    expect(prereqBlock).toContain("env.NEXT_PUBLIC_FIREBASE_API_KEY != '' && env.FIREBASE_SERVICE_ACCOUNT != '' && env.APP_OWNER_UID != ''");
+  });
+
   it('retries the deploy on a 409 queue-conflict with backoff (never on other errors)', () => {
     expect(deployBlock).toContain('unable to queue the operation');
     expect(deployBlock).toContain("grep -qE '409|unable to queue the operation'");
