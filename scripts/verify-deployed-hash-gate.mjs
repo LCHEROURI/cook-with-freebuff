@@ -138,6 +138,27 @@ if (anc.status === 0) {
   process.exit(0);
 }
 
+// Content-equivalence escape hatch: squash merges break ANCESTRY, not
+// CONTENT. Merging a branch that was deployed out-of-band (from its own PR
+// head) creates a fresh commit whose tree is byte-identical to what
+// production serves while containing none of live's history — observed for
+// real when #166's squash landed after production had been rolled out from
+// the branch head. The push changes nothing users can see, so blocking it as
+// "stale" is a false positive that wedges main (every later push fails until
+// lineage realigns). Compare TREE oids: equal trees ⇒ no rollback/clobber is
+// possible ⇒ pass; only a genuinely different tree reaches the block.
+const liveTree = spawnSync('git', ['rev-parse', `${live}^{tree}`], { encoding: 'utf8' });
+const headTree = spawnSync('git', ['rev-parse', `${LOCAL_HEAD}^{tree}`], { encoding: 'utf8' });
+if (liveTree.status !== 0 || headTree.status !== 0 || !liveTree.stdout.trim() || !headTree.stdout.trim()) {
+  console.error('✗ FAIL: could not compare trees (git rev-parse <sha>^{tree} failed) — cannot rule out a stale head.');
+  process.exit(1);
+}
+if (liveTree.stdout.trim() === headTree.stdout.trim()) {
+  console.log(`\n  ✓ live (${live.slice(0, 12)}…) is not an ancestor of ${headLabel}, but its TREE is byte-identical (squash merge of an already-deployed state) — nothing to roll back or clobber`);
+  console.log('RESULT: PASS (stale-guard · content-equivalent)');
+  process.exit(0);
+}
+
 console.error(`\n  ✗ STALE-HEAD BLOCK: live is at ${live} and the ${headLabel} (${LOCAL_HEAD.slice(0, 12)}…) is not ahead of it.`);
 console.error('  Pushing would roll the site back or clobber history — pull/rebase first.');
 console.error('  RESULT: FAIL');

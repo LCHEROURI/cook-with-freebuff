@@ -134,6 +134,35 @@ describe('scripts/verify-deployed-hash-gate.mjs · --stale-guard direction routi
     expect(forward).toBeGreaterThan(-1);
     expect(blocked).toBeGreaterThan(forward);
   });
+
+  it('content-equivalent head (live NOT an ancestor, identical TREE) → PASS', () => {
+    // Squash merges break ancestry, not content: merging a branch that was
+    // deployed out-of-band (e.g. from its own PR head) creates a fresh commit
+    // whose tree is byte-identical to what production serves while containing
+    // NONE of live's history. The ancestry rule alone then blocks a push that
+    // changes nothing — observed for real on the post-squash #166 main push.
+    // The gate must therefore compare TREE oids when ancestry fails and PASS
+    // as content-equivalent when they match; only a genuinely different tree
+    // may reach the STALE-HEAD BLOCK.
+    expect(SRC).toContain("spawnSync('git', ['rev-parse', `${live}^{tree}`]");
+    expect(SRC).toContain("spawnSync('git', ['rev-parse', `${LOCAL_HEAD}^{tree}`]");
+    expect(SRC).toContain('RESULT: PASS (stale-guard · content-equivalent)');
+    // Ordering: the escape hatch sits between the failed ancestry check and
+    // the block. A tree-mismatch must still be able to reach the block.
+    const ancIdx = SRC.indexOf("['merge-base', '--is-ancestor', live, LOCAL_HEAD]");
+    const equivIdx = SRC.indexOf('RESULT: PASS (stale-guard · content-equivalent)');
+    const blocked = SRC.indexOf('✗ STALE-HEAD BLOCK');
+    expect(ancIdx).toBeGreaterThan(-1);
+    expect(equivIdx).toBeGreaterThan(ancIdx);
+    expect(blocked).toBeGreaterThan(equivIdx);
+  });
+
+  it('fails loudly when the tree comparison cannot run (no silent green)', () => {
+    // A broken rev-parse on either side must not silently fall through to
+    // either verdict — the same no-silent-green discipline as the live-sha
+    // and commit-fetch failure paths above.
+    expect(SRC).toContain('could not compare trees');
+  });
 });
 
 describe('scripts/verify-deployed-hash-gate.mjs · --head (PR-time variant)', () => {
