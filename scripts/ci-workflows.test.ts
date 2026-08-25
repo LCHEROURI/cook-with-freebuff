@@ -196,8 +196,34 @@ describe('.github/workflows/ci.yml · deploy-apphosting job', () => {
     expect(smokeBlock).toContain('NEXT_PUBLIC_FIREBASE_API_KEY');
     expect(smokeBlock).toContain('FIREBASE_SERVICE_ACCOUNT');
     expect(smokeBlock).toContain('APP_OWNER_UID');
+    // App Check is enforced in production: the smoke's driver mints its own
+    // attestation token, so the job env must map the app id or every
+    // quota-bearing leg of the compare 403s with APP_CHECK_FAILED.
+    expect(smokeBlock).toContain(
+      'NEXT_PUBLIC_FIREBASE_APP_ID: ${{ secrets.NEXT_PUBLIC_FIREBASE_APP_ID }}',
+    );
     expect(smokeBlock).toContain("github.repository == 'LCHEROURI/cook-with-freebuff'");
     expect(smokeBlock).toContain('npm run verify:live:compare:emulator');
+  });
+
+  it('verifies the served revision BEFORE the write-capable deployed leg of the compare', () => {
+    // The compare's deployed leg WRITES to the shared production backend
+    // (seed + probe + cleanup) and now passes App Check (it mints a token via
+    // NEXT_PUBLIC_FIREBASE_APP_ID). validate's stale-guard runs in a parallel
+    // job the emulator-compare job does not wait for, so the same
+    // direction-aware tokenless gate must run HERE, immediately before the
+    // smoke: the write-capable leg can never run against a live host that is
+    // ahead of or diverged from the pushed HEAD. (Codex P1, PR #176 review.)
+    const smokeStart = CI.indexOf('\n  emulator-compare:');
+    const smokeBlock = CI.slice(smokeStart, CI.indexOf('\n  deploy-apphosting:', smokeStart));
+    const prereqIdx = smokeBlock.indexOf('Verify the served revision before the write-capable compare leg');
+    expect(prereqIdx).toBeGreaterThan(0);
+    const prereqBlock = smokeBlock.slice(prereqIdx);
+    expect(prereqBlock).toContain('node scripts/verify-deployed-hash-gate.mjs --stale-guard');
+    // The prerequisite must run BEFORE the write-capable smoke, and be gated
+    // on the same credentials (a fork that skips the leg also skips the check).
+    expect(prereqBlock.indexOf('Run the emulator-compare smoke')).toBeGreaterThan(0);
+    expect(prereqBlock).toContain("env.NEXT_PUBLIC_FIREBASE_API_KEY != '' && env.FIREBASE_SERVICE_ACCOUNT != '' && env.APP_OWNER_UID != ''");
   });
 
   it('retries the deploy on a 409 queue-conflict with backoff (never on other errors)', () => {
