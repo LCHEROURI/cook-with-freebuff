@@ -420,6 +420,21 @@ describe('scripts/verify-live.mjs · live-voice gate [3e] (dictation + active-sc
     expect(DRIVER).toContain('mintToken: mintVoiceToken');
   });
 
+  it('attests the driver own /api/cook launch calls (AUTH carries the admin App Check token)', () => {
+    // Measured live (post-#178 diagnostic run): the CDP injection attests the
+    // PAGE's requests (Phase A dictation passes), but the driver's OWN Node
+    // fetch to /api/cook (action: 'launch', Phase B [3b] and Phase C) used a
+    // bare AUTH and was 403'd by enforcement — "App Check token missing" — so
+    // the active screen never rendered and LISTENING was never reached (the
+    // 420s CI timeout). The driver-side AUTH must carry the same admin token.
+    expect(DRIVER).toContain('const AUTH = {');
+    expect(DRIVER).toContain("...(VERIFY_APP_CHECK_TOKEN ? { 'X-Firebase-AppCheck': VERIFY_APP_CHECK_TOKEN } : {})");
+    // Both launch fetches (Phase B [3b] and Phase C) ride AUTH.
+    expect(DRIVER).toContain("const launch = await fetch(`${APP}/api/cook`, {");
+    expect(DRIVER).toContain("method: 'POST', headers: AUTH,");
+    expect(DRIVER).toContain("const launchC = await fetch(`${APP}/api/cook`, {");
+  });
+
   it('threads the minted admin App Check token into the voice-driver env', () => {
     expect(LIVE).toContain("spawnSync('node', ['scripts/drive-live-voice.mjs', '--app', APP, '--probe-prefix', `${PROBE_PREFIX}voice-`, '--out', `/tmp/verify-live-voice-${t}-${attempt}`], {");
     expect(LIVE).toContain("env: { ...process.env, VERIFY_APP_CHECK_TOKEN: appCheckToken ?? '' },");
