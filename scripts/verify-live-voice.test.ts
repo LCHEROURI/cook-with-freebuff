@@ -388,4 +388,28 @@ describe('scripts/verify-live.mjs · live-voice gate [3e] (dictation + active-sc
     expect(DRIVER).toContain('PHASE_C_OUTCOME_MARKER');
     expect(DRIVER).toContain('console.log(`${PHASE_C_OUTCOME_MARKER} ${summary.outcome}`)');
   });
+
+  it('arms the shared CDP App Check injection inside connectCdp (every phase session is attested)', () => {
+    // The page's own POST /api/voice/token would otherwise be 403'd by
+    // production enforcement: headless Chrome cannot complete reCAPTCHA v3
+    // attestation. The durable CI fix (Step 6S) injects the admin-minted
+    // token into same-origin /api/* requests at the CDP level. Because the
+    // injection is armed inside connectCdp, every phase session (A/B/C) gets
+    // it — not just the first.
+    expect(DRIVER).toContain("import { installAppCheckInjection } from './drive-cdp-app-check.mjs';");
+    expect(DRIVER).toContain("const VERIFY_APP_CHECK_TOKEN = process.env.VERIFY_APP_CHECK_TOKEN ?? '';");
+    expect(DRIVER).toContain('installAppCheckInjection({');
+    expect(DRIVER).toContain('token: VERIFY_APP_CHECK_TOKEN');
+    const connectStart = DRIVER.indexOf('async function connectCdp');
+    expect(connectStart).toBeGreaterThan(-1);
+    const connectSection = DRIVER.slice(connectStart, DRIVER.indexOf('\n// CDP may deliver WS frames base64', connectStart));
+    expect(connectSection).toContain('installAppCheckInjection({');
+    // Armed after Network.enable and before any navigation happens.
+    expect(connectSection.indexOf('installAppCheckInjection({')).toBeGreaterThan(connectSection.indexOf("send('Network.enable')"));
+  });
+
+  it('threads the minted admin App Check token into the voice-driver env', () => {
+    expect(LIVE).toContain("spawnSync('node', ['scripts/drive-live-voice.mjs', '--app', APP, '--probe-prefix', `${PROBE_PREFIX}voice-`, '--out', `/tmp/verify-live-voice-${t}-${attempt}`], {");
+    expect(LIVE).toContain("env: { ...process.env, VERIFY_APP_CHECK_TOKEN: appCheckToken ?? '' },");
+  });
 });
