@@ -192,7 +192,15 @@ if (!exchange.idToken || !exchange.refreshToken) {
 const tokenPayload = JSON.parse(Buffer.from(exchange.idToken.split('.')[1], 'base64url').toString());
 const expiresAt = Date.now() + parseInt(exchange.expiresIn, 10) * 1000;
 ok(`owner idToken minted for ${tokenPayload.sub} (${tokenPayload.email ?? 'owner'})`);
-const AUTH = { authorization: `Bearer ${exchange.idToken}`, 'content-type': 'application/json' };
+// The driver's OWN /api/cook calls (seed launch in Phase B/C) are gated by
+// App Check enforcement just like the page's — measured live: a bare AUTH
+// got 403 "App Check token missing" and the active screen never rendered.
+// Carry the same admin-minted token the CDP injection uses for the page.
+const AUTH = {
+  authorization: `Bearer ${exchange.idToken}`,
+  'content-type': 'application/json',
+  ...(VERIFY_APP_CHECK_TOKEN ? { 'X-Firebase-AppCheck': VERIFY_APP_CHECK_TOKEN } : {}),
+};
 
 const getAdminDb = () => {
   const apps = getApps();
