@@ -151,6 +151,7 @@ jobs:
       NEXT_PUBLIC_FIREBASE_API_KEY: ${{ secrets.NEXT_PUBLIC_FIREBASE_API_KEY }}
       FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
       APP_OWNER_UID: ${{ secrets.APP_OWNER_UID }}
+      NEXT_PUBLIC_FIREBASE_APP_ID: ${{ secrets.NEXT_PUBLIC_FIREBASE_APP_ID }}
 
     steps:
       - name: Check out repository
@@ -187,6 +188,20 @@ jobs:
           echo "::error::Owner-credential secrets missing — the emulator-compare smoke cannot run its deployed leg."
           echo "Add NEXT_PUBLIC_FIREBASE_API_KEY, FIREBASE_SERVICE_ACCOUNT and APP_OWNER_UID under GitHub -> Settings -> Secrets and variables -> Actions, then re-run."
           exit 1
+
+      # Served-revision prerequisite for the write-capable deployed leg: the
+      # compare's deployed leg WRITES to the shared production backend (seed +
+      # probe + cleanup) and, with App Check enforcement on, now mints a token
+      # and passes (PR #176). validate's stale-guard runs in a PARALLEL job
+      # this job does not wait for, so re-run the same direction-aware tokenless
+      # gate HERE, immediately before the write: it proves the live host serves
+      # a revision the pushed HEAD descends from — never ahead of or diverged
+      # from it — before the leg mutates or validates anything. Tokenless: the
+      # live commit comes from the host's public /api/build-info, so no new
+      # secret wiring. (Codex P1, PR #176 review.)
+      - name: Verify the served revision before the write-capable compare leg
+        if: ${{ env.NEXT_PUBLIC_FIREBASE_API_KEY != '' && env.FIREBASE_SERVICE_ACCOUNT != '' && env.APP_OWNER_UID != '' }}
+        run: node scripts/verify-deployed-hash-gate.mjs --stale-guard
 
       # Credential-gated so a fork or unconfigured repo skips the deployed leg
       # instead of failing it (the deployed leg needs the owner secrets). On
