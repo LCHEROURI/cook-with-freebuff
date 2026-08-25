@@ -408,6 +408,18 @@ describe('scripts/verify-live.mjs · live-voice gate [3e] (dictation + active-sc
     expect(connectSection.indexOf('installAppCheckInjection({')).toBeGreaterThan(connectSection.indexOf("send('Network.enable')"));
   });
 
+  it('mints a FRESH admin token per replay-protected request (consume:true on /api/voice/token)', () => {
+    // /api/voice/token verifies with consume:true, so the shared injected
+    // token is consumed by Phase A and Phases B/C + retries would replay it
+    // as 403 APP_CHECK_FAILED. The driver must mint a fresh token per
+    // replay-protected request via the admin SDK (Codex P1, PR #178).
+    expect(DRIVER).toContain("import { getAppCheck } from 'firebase-admin/app-check';");
+    expect(DRIVER).toContain("const APP_ID = process.env.NEXT_PUBLIC_FIREBASE_APP_ID ?? '';");
+    expect(DRIVER).toContain('const mintVoiceToken = async () => {');
+    expect(DRIVER).toContain('getAppCheck(adminApp).createToken(APP_ID)');
+    expect(DRIVER).toContain('mintToken: mintVoiceToken');
+  });
+
   it('threads the minted admin App Check token into the voice-driver env', () => {
     expect(LIVE).toContain("spawnSync('node', ['scripts/drive-live-voice.mjs', '--app', APP, '--probe-prefix', `${PROBE_PREFIX}voice-`, '--out', `/tmp/verify-live-voice-${t}-${attempt}`], {");
     expect(LIVE).toContain("env: { ...process.env, VERIFY_APP_CHECK_TOKEN: appCheckToken ?? '' },");

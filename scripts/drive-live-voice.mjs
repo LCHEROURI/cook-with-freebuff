@@ -40,6 +40,7 @@ import { resolve as resolvePath } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { initializeApp, cert, getApps } from 'firebase-admin/app';
 import { getFirestore } from 'firebase-admin/firestore';
+import { getAppCheck } from 'firebase-admin/app-check';
 import { installAppCheckInjection } from './drive-cdp-app-check.mjs';
 import { evaluateVoiceBlob } from './voice-blob-verdict.mjs';
 import { phaseCLatency, latencyViolations, isTranscriptionFrame, isReplyFrame } from './phase-c-latency.mjs';
@@ -128,6 +129,18 @@ const SPOKEN_PROMPT = 'chicken, rice and onion, for four people';
 // request would be 403'd by enforcement; the driver injects this token into
 // same-origin /api/* requests at the CDP level (see drive-cdp-app-check.mjs).
 const VERIFY_APP_CHECK_TOKEN = process.env.VERIFY_APP_CHECK_TOKEN ?? '';
+// The deployed web app id — needed to mint FRESH tokens for the replay-
+// protected /api/voice/token route: it verifies with consume:true, so a
+// single shared token would be consumed by Phase A and replayed as 403 by
+// Phases B/C and any retry.
+const APP_ID = process.env.NEXT_PUBLIC_FIREBASE_APP_ID ?? '';
+const mintVoiceToken = async () => {
+  const apps = getApps();
+  const adminApp = apps[0];
+  if (!APP_ID || !adminApp) return VERIFY_APP_CHECK_TOKEN;
+  const { token: fresh } = await getAppCheck(adminApp).createToken(APP_ID);
+  return fresh;
+};
 
 const API_KEY = process.env.NEXT_PUBLIC_FIREBASE_API_KEY;
 const OWNER_UID = process.env.APP_OWNER_UID;
@@ -470,8 +483,10 @@ async function connectCdp(port) {
   };
   await send('Network.enable');
   // Arm the App Check header injection in EVERY phase session so the page's
-  // own gated requests are attested before any navigation happens.
-  installAppCheckInjection({ ws, send, app: APP, token: VERIFY_APP_CHECK_TOKEN, note });
+  // own gated requests are attested before any navigation happens. The
+  // replay-protected /api/voice/token route gets a freshly minted token per
+  // request (consume:true — a shared token is consumed by the first call).
+  installAppCheckInjection({ ws, send, app: APP, token: VERIFY_APP_CHECK_TOKEN, mintToken: mintVoiceToken, note });
   return { ws, send, evaluate, screenshot, networkEvents };
 }
 // CDP may deliver WS frames base64 — decode first so matching never depends on

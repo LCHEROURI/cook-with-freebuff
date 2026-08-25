@@ -97,6 +97,87 @@ describe('scripts/drive-cdp-app-check.mjs — headless App Check header injectio
     expect(send).toHaveBeenCalledWith('Fetch.continueRequest', { requestId: 'r2' });
   });
 
+  it('mints a FRESH token for a replay-protected /api/voice/token request when mintToken is provided', async () => {
+    // /api/voice/token verifies with consume:true — a single shared token is
+    // consumed by the first call, and later phases/retries would replay it as
+    // 403 APP_CHECK_FAILED. Each replay-protected request must get its own
+    // freshly minted token.
+    const send = vi.fn().mockResolvedValue(undefined);
+    let handler: ((event: { data: string }) => void) | undefined;
+    const ws = fakeWs({ addEventListener: (_event: string, fn: (e: { data: string }) => void) => { handler = fn; } });
+    const mintToken = vi.fn().mockResolvedValue('fresh-token-1');
+    installAppCheckInjection({ ws, send, app: 'https://cook.example.com', token: 'shared-token', mintToken });
+    send.mockClear();
+
+    await handler!({ data: JSON.stringify({
+      method: 'Fetch.requestPaused',
+      params: { requestId: 'v1', request: { url: 'https://cook.example.com/api/voice/token', headers: {} } },
+    }) });
+
+    expect(mintToken).toHaveBeenCalledTimes(1);
+    const [, params] = send.mock.calls[0];
+    const headers = (params.headers as Array<{ name: string; value: string }>).map((h) => [h.name.toLowerCase(), h.value]);
+    expect(headers).toContainEqual(['x-firebase-appcheck', 'fresh-token-1']);
+    expect(headers).not.toContainEqual(['x-firebase-appcheck', 'shared-token']);
+  });
+
+  it('mints a fresh token for /api/vision/scan too (the other consume:true route)', async () => {
+    const send = vi.fn().mockResolvedValue(undefined);
+    let handler: ((event: { data: string }) => void) | undefined;
+    const ws = fakeWs({ addEventListener: (_event: string, fn: (e: { data: string }) => void) => { handler = fn; } });
+    const mintToken = vi.fn().mockResolvedValue('fresh-token-2');
+    installAppCheckInjection({ ws, send, app: 'https://cook.example.com', token: 'shared-token', mintToken });
+    send.mockClear();
+
+    await handler!({ data: JSON.stringify({
+      method: 'Fetch.requestPaused',
+      params: { requestId: 'v2', request: { url: 'https://cook.example.com/api/vision/scan', headers: {} } },
+    }) });
+
+    expect(mintToken).toHaveBeenCalledTimes(1);
+    const [, params] = send.mock.calls[0];
+    const headers = (params.headers as Array<{ name: string; value: string }>).map((h) => [h.name.toLowerCase(), h.value]);
+    expect(headers).toContainEqual(['x-firebase-appcheck', 'fresh-token-2']);
+  });
+
+  it('uses the shared reusable token for NON-consumed routes even when mintToken is provided', async () => {
+    const send = vi.fn().mockResolvedValue(undefined);
+    let handler: ((event: { data: string }) => void) | undefined;
+    const ws = fakeWs({ addEventListener: (_event: string, fn: (e: { data: string }) => void) => { handler = fn; } });
+    const mintToken = vi.fn().mockResolvedValue('fresh-token-3');
+    installAppCheckInjection({ ws, send, app: 'https://cook.example.com', token: 'shared-token', mintToken });
+    send.mockClear();
+
+    await handler!({ data: JSON.stringify({
+      method: 'Fetch.requestPaused',
+      params: { requestId: 'c1', request: { url: 'https://cook.example.com/api/cook', headers: {} } },
+    }) });
+
+    expect(mintToken).not.toHaveBeenCalled();
+    const [, params] = send.mock.calls[0];
+    const headers = (params.headers as Array<{ name: string; value: string }>).map((h) => [h.name.toLowerCase(), h.value]);
+    expect(headers).toContainEqual(['x-firebase-appcheck', 'shared-token']);
+  });
+
+  it('falls back to the shared token when mintToken rejects (attestation must never crash the driver)', async () => {
+    const send = vi.fn().mockResolvedValue(undefined);
+    let handler: ((event: { data: string }) => void) | undefined;
+    const ws = fakeWs({ addEventListener: (_event: string, fn: (e: { data: string }) => void) => { handler = fn; } });
+    const mintToken = vi.fn().mockRejectedValue(new Error('mint down'));
+    installAppCheckInjection({ ws, send, app: 'https://cook.example.com', token: 'shared-token', mintToken });
+    send.mockClear();
+
+    await handler!({ data: JSON.stringify({
+      method: 'Fetch.requestPaused',
+      params: { requestId: 'v3', request: { url: 'https://cook.example.com/api/voice/token', headers: {} } },
+    }) });
+
+    expect(send).toHaveBeenCalledTimes(1);
+    const [, params] = send.mock.calls[0];
+    const headers = (params.headers as Array<{ name: string; value: string }>).map((h) => [h.name.toLowerCase(), h.value]);
+    expect(headers).toContainEqual(['x-firebase-appcheck', 'shared-token']);
+  });
+
   it('returns a handler that can be removed (idempotent cleanup)', () => {
     const send = vi.fn().mockResolvedValue(undefined);
     const ws = fakeWs();

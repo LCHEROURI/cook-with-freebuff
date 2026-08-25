@@ -17,17 +17,27 @@
 // through untouched. Any existing x-firebase-appcheck header on an
 // intercepted request is REPLACED — a stale SDK token must never win over
 // the admin token.
+//
+// Replay-protected routes (verified with consume:true — /api/voice/token,
+// /api/vision/scan) MUST NOT reuse the shared token: the first call consumes
+// it and every later phase/retry would replay a consumed token into 403
+// APP_CHECK_FAILED. When the caller supplies a mintToken() callback, those
+// routes get a freshly minted token per request; the shared reusable token
+// still covers every ordinary (non-consumed) route.
 // ============================================================================
+
+/** Replay-protected App Check routes (server verifies with consume: true). */
+export const REPLAY_PROTECTED_API_PATHS = ['/api/voice/token', '/api/vision/scan'];
 
 /**
  * Arm CDP Fetch interception that adds the admin App Check token to the
  * driver browser's same-origin /api/* requests.
  *
- * @param {{ ws: WebSocket, send: (method: string, params?: object) => Promise<unknown>, app: string, token: string, note?: (m: string) => void }} opts
+ * @param {{ ws: WebSocket, send: (method: string, params?: object) => Promise<unknown>, app: string, token: string, mintToken?: () => Promise<string>, note?: (m: string) => void }} opts
  * @returns {((event: MessageEvent) => void) | null} the installed message
  *   handler (for cleanup), or null when no token was supplied.
  */
-export function installAppCheckInjection({ ws, send, app, token, note = () => {} }) {
+export function installAppCheckInjection({ ws, send, app, token, mintToken, note = () => {} }) {
   if (!token) return null;
   let host;
   try {
@@ -40,7 +50,7 @@ export function installAppCheckInjection({ ws, send, app, token, note = () => {}
     patterns: [{ urlPattern: `*://${host}/api/*`, requestStage: 'Request' }],
   }).catch(() => {});
 
-  const handler = (event) => {
+  const handler = async (event) => {
     let m;
     try {
       m = JSON.parse(event.data);
@@ -53,11 +63,24 @@ export function installAppCheckInjection({ ws, send, app, token, note = () => {}
     const url = request?.url ?? '';
     if (url.startsWith(`${app}/api/`)) {
       // continueRequest replaces the ENTIRE header set — re-send every
-      // existing header (minus any stale appcheck) plus the admin token.
+      // existing header (minus any stale appcheck) plus the token.
       const headers = Object.entries(request.headers ?? {})
         .filter(([name]) => name.toLowerCase() !== 'x-firebase-appcheck')
         .map(([name, value]) => ({ name, value }));
-      headers.push({ name: 'X-Firebase-AppCheck', value: token });
+      // Replay-protected routes get a FRESH token per request; everything
+      // else reuses the long-lived shared token. A mint failure falls back to
+      // the shared token — attestation must never crash the driver (the 403
+      // the server then returns is the honest, visible failure).
+      let value = token;
+      try {
+        const path = new URL(url).pathname;
+        if (mintToken && REPLAY_PROTECTED_API_PATHS.some((p) => path.startsWith(p))) {
+          value = await mintToken();
+        }
+      } catch {
+        value = token;
+      }
+      headers.push({ name: 'X-Firebase-AppCheck', value });
       send('Fetch.continueRequest', { requestId, headers }).catch(() => {});
     } else {
       send('Fetch.continueRequest', { requestId }).catch(() => {});
