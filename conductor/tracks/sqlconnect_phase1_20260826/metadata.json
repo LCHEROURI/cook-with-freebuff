@@ -4,16 +4,19 @@
   "type": "feature",
   "status": "in-progress",
   "created": "2026-08-26T18:40:00Z",
-  "updated": "2026-08-26T18:40:00Z",
-  "current_phase": 1,
+  "updated": "2026-08-26T20:48:00Z",
+  "current_phase": 2,
   "current_task": null,
   "phases": {
     "total": 3,
     "completed": 1
   },
   "tasks": {
-    "total": 8,
+    "total": 14,
     "completed": 4
   },
-  "commits": []
+  "commits": [
+    "f21ae74: docs(sqlconnect): add SQL Connect track and migration scope (0005)",
+    "20808a3: feat(sqlconnect): provision Data Connect scaffold and add track + scope docs"
+  ]
 }

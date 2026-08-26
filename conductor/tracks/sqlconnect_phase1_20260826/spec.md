@@ -45,8 +45,10 @@ to the running application, which keeps using Firestore.
 2. Configure `dataconnect.yaml`: `serviceId`, `location: us-central1`
    (matching App Hosting), `schemaValidation: STRICT`, and the Cloud SQL
    datasource.
-3. Configure `connector.yaml` with `nodeAdminSdk` generation targeted at a
-   server-only directory (e.g. `lib/server/dataconnect`).
+3. Configure `connector.yaml` with `adminNodeSdk` generation targeted at a
+   server-only directory (e.g. `lib/server/dataconnect`). (Current
+   firebase-tools uses `adminNodeSdk`; older docs and the SQL Connect skill
+   call it `nodeAdminSdk`.)
 
 ### FR2 — Schema
 

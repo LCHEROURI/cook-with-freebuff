@@ -46,11 +46,11 @@ SDK at `lib/server/dataconnect`.
   package `@cook-with-freebuff/dataconnect-admin`
 - web SDK generation removed (server-only per scope doc 0005)
 
-Naming reconciliation: the skill and scope doc call the key `nodeAdminSdk`, but
-current firebase-tools (15.28.1) writes and reads `adminNodeSdk` (verified in
-`init/features/dataconnect/sdk.js` and `commands/dataconnect-sdk-generate.js`).
-The connector.yaml uses the tool's real key. Scope doc 0005 uses the skill's
-older name; no functional impact, noted for the doc reconciliation pass.
+Naming reconciliation: the skill and older docs call the key `nodeAdminSdk`,
+but current firebase-tools (15.28.1) writes and reads `adminNodeSdk` (verified
+in `init/features/dataconnect/sdk.js` and `commands/dataconnect-sdk-generate.js`).
+The connector.yaml uses the tool's real key, and scope doc 0005 plus this
+track's spec and plan now use `adminNodeSdk` too (reconciled in the docs PR).
 
 ## Task 1.3 — emulator ports
 

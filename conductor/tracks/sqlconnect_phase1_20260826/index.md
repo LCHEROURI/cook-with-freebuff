@@ -3,7 +3,7 @@
 - App: `cook-with-freebuff`
 - Track ID: `sqlconnect_phase1_20260826`
 - Type: feature
-- Status: pending
+- Status: in progress
 - [Specification](spec.md)
 - [Implementation plan](plan.md)
 - [Metadata](metadata.json)

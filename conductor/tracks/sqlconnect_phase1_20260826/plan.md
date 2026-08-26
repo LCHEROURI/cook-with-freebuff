@@ -1,9 +1,9 @@
-# Plan: sqlconnect_phase1_20260826 — [ ] Pending
+# Plan: sqlconnect_phase1_20260826 — [~] In progress
 
 ## Phase 1: Provision the service
 
 - [x] Task 1.1: Run `npx -y firebase-tools@latest init dataconnect` against the project id in `.firebaserc` (`portfolio-app-freebuff2`; `.freebuff/` is gitignored) and commit the generated `dataconnect/` scaffold and `firebase.json` updates
-- [x] Task 1.2: Configure `dataconnect.yaml` (serviceId, us-central1, STRICT validation, Cloud SQL datasource) and `connector.yaml` (nodeAdminSdk to `lib/server/dataconnect`)
+- [x] Task 1.2: Configure `dataconnect.yaml` (serviceId, us-central1, STRICT validation, Cloud SQL datasource) and `connector.yaml` (adminNodeSdk to `lib/server/dataconnect`)
 - [x] Task 1.3: Add the Data Connect emulator ports (9399, 9939) to the `emulators` block and confirm the existing Firestore/Auth emulators still boot
 - [x] Task 1.4: Conductor - User Manual Verification 'Provision the service' (see `phase-1-verification.md`)
 
@@ -32,7 +32,7 @@
 - [ ] Task 3.1: Boot the Data Connect emulator (`emulators:start --only dataconnect`) with the local PostgreSQL instance accepting connections
 - [ ] Task 3.2: Run the smoke: insert a `Recipe` with a JSONB `ingredients` payload, read it back by id, upsert a `DietaryProfile`, and exercise the version-guarded session update plus a marker join
 - [ ] Task 3.3: Record the smoke output and any schema porting notes in `phase-3-verification.md`
-- [ ] Task 3.4: Run `npm run check` to confirm no application regression, then land the track through the branch + PR path
+- [ ] Task 3.4: Run `npm run check` to confirm no application regression, then land Phases 2-3 through the branch + PR path (Phase 1's scaffold and track docs land first via the initial docs PR)
 - [ ] Task 3.5: Conductor - User Manual Verification 'Emulator proof'
 
 ### Phase 3 verification
