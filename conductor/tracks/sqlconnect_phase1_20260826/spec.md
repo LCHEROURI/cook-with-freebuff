@@ -39,7 +39,9 @@ to the running application, which keeps using Firestore.
 ### FR1 — Service scaffold
 
 1. Run `npx -y firebase-tools@latest init dataconnect` against the project
-   recorded in `.freebuff/project-id`.
+   recorded in `.firebaserc` (default `portfolio-app-freebuff2`). Note that
+   `.freebuff/` is gitignored, so `.freebuff/project-id` is not a valid
+   fresh-checkout source.
 2. Configure `dataconnect.yaml`: `serviceId`, `location: us-central1`
    (matching App Hosting), `schemaValidation: STRICT`, and the Cloud SQL
    datasource.

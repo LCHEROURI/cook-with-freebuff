@@ -29,8 +29,11 @@ Consequences for SQL Connect:
   call it `nodeAdminSdk`), not the web SDK.
 - The existing store interfaces are already the seam. A
   `sqlConnectStores` implementation replacing `firestoreStores` in
-  `stores.ts` leaves the agent, tool, session-service, and API layers
-  untouched.
+  `stores.ts` leaves the agent, tool, session-service, and most API
+  layers untouched. One exception: `/api/status/route.ts` and
+  `scripts/record-verify-status.mjs` read the `deploy_status` docs
+  directly through `getAdminDb()`, so the DeployStatus migration below
+  includes re-pointing those two call sites at the store.
 - Authorization stays at the API layer (existing owner-token minting, App
   Check, and session optimistic concurrency in `updateSession`). SQL Connect
   operations run with admin credentials, so `@auth(level: NO_ACCESS)` for
@@ -54,7 +57,7 @@ Consequences for SQL Connect:
 | `dietary_profiles` | `DietaryProfile` | `userId` | userId | get/upsert by userId |
 | `agent_tool_logs` | `AgentToolLog` | `id` | id, userId, sessionId, tool, at, correlationId | append-only |
 | `correlation_markers` | marker docs | base64url(id) + legacy raw id | — | idempotency: has/mark/clear, TTL sweep |
-| `deploy_status` | `verify_live` + `last_external` docs | fixed ids | — | single-slot reads by `/status` |
+| `deploy_status` | `verify_live` + `last_external` + `flake_streak` docs (two shapes) | fixed ids | — | single-slot reads by `/status` |
 
 Nested structures inside `Recipe` — `ingredients`, `prepSteps`,
 `cookingSteps`, `equipment`, `dietaryTags`, `allergens`, `safetyNotes`,
@@ -71,7 +74,9 @@ every query filters on it.
 ```graphql
 type Recipe @table(key: "id") @index(fields: ["userId"]) {
   id: String!
-  userId: String!
+  # userId is nullable: recipeSchema declares it optional and historical
+  # recipes were persisted without it (generation predates ownership).
+  userId: String
   title: String!
   description: String
   servings: Int!
@@ -209,17 +214,24 @@ type CorrelationMarker @table(key: "key") {
   markedAt: Timestamp!
 }
 
-# Single-slot deploy status: one row per slot (verify_live, last_external).
-# Mirrors the doc-pair semantics of record-verify-status.mjs; a newer write
-# overwrites the slot, so the /status page always shows the newest result.
+# Single-slot deploy status: one row per slot (verify_live, last_external,
+# flake_streak). Mirrors the doc semantics of record-verify-status.mjs and the
+# weekly flake-escalation step; a newer write overwrites the slot, so the
+# /status page always shows the newest result. The verify_live/last_external
+# rows use verdict/commitSha/reason/source; the flake_streak row (different
+# shape, same collection) uses active/recurringCount/signature/ranAt/runUrl —
+# nullable columns keep the single table faithful to the single collection.
 type DeployStatus @table(key: "slot") {
-  slot: String!                   # 'verify_live' | 'last_external'
-  verdict: String!
-  commitSha: String!
+  slot: String!                   # 'verify_live' | 'last_external' | 'flake_streak'
+  verdict: String
+  commitSha: String
   reason: String
-  runUrl: String
   source: String
   recordedAt: Timestamp!
+  active: Boolean                 # flake_streak row only
+  recurringCount: Int             # flake_streak row only
+  signature: String               # flake_streak row only
+  runUrl: String
 }
 
 enum SessionPhase { IDLE COLLECTING_INGREDIENTS CONFIRMING_INGREDIENTS COLLECTING_REQUIREMENTS GENERATING_RECIPE VALIDATING_RECIPE RECIPE_READY PREP_GUIDANCE COOKING_GUIDANCE PLATING WAITING_FOR_TIMER PAUSED SUBSTITUTION_REQUIRED USER_CORRECTION SAFETY_WARNING COMPLETED ERROR_RECOVERY }
@@ -306,9 +318,11 @@ disappear — Postgres uniqueness does that work.
 
 ### 5. Deploy status stays single-slot
 
-`deploy_status` keyed by `slot` mirrors the doc-pair semantics exactly: the
-recorder upserts `verify_live` / `last_external`, newest write wins, `/status`
-reads the slot. No behavioral change.
+`deploy_status` keyed by `slot` mirrors the collection semantics exactly: the
+recorder upserts `verify_live` / `last_external` and the flake-escalation step
+writes `flake_streak`, newest write wins per slot, `/status` reads the slots.
+The flake_streak shape (active/recurringCount/signature/ranAt/runUrl) lives in
+nullable columns on the same row type. No behavioral change.
 
 ### 6. No real-time subscriptions, no vector/full-text search in v1
 

@@ -1,0 +1,12 @@
+specVersion: "v1"
+serviceId: "cook-with-freebuff"
+location: "us-central1"
+schemas:
+  - source: "./schema"
+    datasource:
+      postgresql:
+        database: "fdcdb"
+        cloudSql:
+          instanceId: "cook-with-freebuff-fdc"
+        schemaValidation: "STRICT" # STRICT mode makes Postgres schema match Data Connect exactly.
+connectorDirs: ["./example"]

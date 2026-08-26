@@ -2,7 +2,7 @@
 
 ## Phase 1: Provision the service
 
-- [x] Task 1.1: Run `npx -y firebase-tools@latest init dataconnect` against the project id in `.freebuff/project-id` and commit the generated `dataconnect/` scaffold and `firebase.json` updates
+- [x] Task 1.1: Run `npx -y firebase-tools@latest init dataconnect` against the project id in `.firebaserc` (`portfolio-app-freebuff2`; `.freebuff/` is gitignored) and commit the generated `dataconnect/` scaffold and `firebase.json` updates
 - [x] Task 1.2: Configure `dataconnect.yaml` (serviceId, us-central1, STRICT validation, Cloud SQL datasource) and `connector.yaml` (nodeAdminSdk to `lib/server/dataconnect`)
 - [x] Task 1.3: Add the Data Connect emulator ports (9399, 9939) to the `emulators` block and confirm the existing Firestore/Auth emulators still boot
 - [x] Task 1.4: Conductor - User Manual Verification 'Provision the service' (see `phase-1-verification.md`)
