@@ -32,6 +32,7 @@ const SPARE_DRILL_NIGHTLY = readFileSync('.github/workflows/spare-drill-nightly.
 const GUARD_DRILLS_WEEKLY = readFileSync('.github/workflows/guard-drills-weekly.yml', 'utf8');
 const BRANCH_TIDY = readFileSync('.github/workflows/branch-tidy-weekly.yml', 'utf8');
 const COMPARE_WEEKLY = readFileSync('.github/workflows/compare-live-weekly.yml', 'utf8');
+const DEPLOY_HEALTH_WEEKLY = readFileSync('.github/workflows/deploy-health-weekly.yml', 'utf8');
 
 // The verify step's gating `if:` — the five inputs must ALL be present for
 // the deep gates to run (a missing one skips-not-fails, but only on forks;
@@ -1389,7 +1390,80 @@ describe('.github/workflows/guard-drills-weekly.yml · Sunday-night spare + boun
     // Only contents: read — the preflight never dispatches or uploads.
     expect(preflightSection).toMatch(/permissions:\n\s+contents: read/);
     expect(preflightSection).not.toContain('actions: write');
-    // The dispatch chain must start from the preflight.
-    expect(GUARD_DRILLS_WEEKLY).toMatch(/spare-drill:[\s\S]*?needs:\s*preflight/);
+  // The dispatch chain must start from the preflight.
+  expect(GUARD_DRILLS_WEEKLY).toMatch(/spare-drill:[\s\S]*?needs:\s*preflight/);
+});
+
+describe('.github/workflows/deploy-health-weekly.yml · scheduled deploy-health probe', () => {
+  // The post-deploy verify:live only exercises the host right after a
+  // rollout — on a quiet week nothing proves the live stack still works.
+  // This schedule runs the SAME gate on a clock and posts the verdict (step
+  // summary + status doc), so drift surfaces without waiting for a deploy.
+  it('runs Wednesdays 06:30 UTC in a free slot and supports manual dispatch', () => {
+    // Slot map (each workflow's contract test pins its own slot):
+    //   mon       06:00  (mic-regression + branch-tidy)
+    //   tue       06:30  (mic-trend)
+    //   thu       06:30  (compare-live)
+    //   sat       06:30  (marker-cleanup)
+    //   daily     07:00  (codex-review-monitor)
+    //   daily     08:00  (spare-drill-nightly)
+    //   sun       22:00  (guard-drills)
+    // Wednesday 06:30 contests nothing — fail CI here so a move is deliberate.
+    expect(DEPLOY_HEALTH_WEEKLY).toMatch(/cron:\s*['"`]?\s*30\s+6\s+\*\s+\*\s+3\s*['"`]?/);
+    expect(DEPLOY_HEALTH_WEEKLY).toContain('workflow_dispatch:');
   });
+
+  it('shares the live-voice-probe concurrency group so probes queue, never overlap', () => {
+    // Same production owner, same /cook active session as ci.yml's
+    // verify-live job and mic-regression.yml — one shared group is the
+    // collision guard this repo actually needed (Codex P2, PR #98).
+    expect(DEPLOY_HEALTH_WEEKLY).toContain('group: live-voice-probe');
+    expect(DEPLOY_HEALTH_WEEKLY).toContain('cancel-in-progress: false');
+  });
+
+  it('keeps the loud secret guard for scheduled runs and the five-input gate on the probe', () => {
+    const job = DEPLOY_HEALTH_WEEKLY.slice(DEPLOY_HEALTH_WEEKLY.indexOf('weekly-health:'));
+    // A missing credential on a scheduled canonical run must FAIL, not skip —
+    // a skipped health check masquerades as a healthy week.
+    expect(job).toContain("github.event_name == 'schedule'");
+    expect(job).toMatch(/Fail loudly if a verify secret is missing[\s\S]*?exit 1/);
+    // The probe itself is gated on all five inputs so forks skip cleanly.
+    expect(job).toContain(FIVE_INPUTS_GATE);
+  });
+
+  it('smoke-tests the host first and runs the identical post-deploy gate command', () => {
+    const job = DEPLOY_HEALTH_WEEKLY.slice(DEPLOY_HEALTH_WEEKLY.indexOf('weekly-health:'));
+    // Pre-flight before the ~20-30 min run: canonical 200 + build-info sha,
+    // with the SERVED sha captured for truthful recording.
+    expect(job).toContain('Pre-flight smoke (app up + build-info answers)');
+    expect(job).toContain('echo "served_sha=$sha" >> "$GITHUB_OUTPUT"');
+    // Identical gate to ci.yml's verify-live step — a green week means the
+    // same thing as a green deploy.
+    expect(job).toContain('run: npm run verify:live -- --require-app-check-enforced');
+    expect(job).toContain('browser-actions/setup-chrome@v2');
+    // Smoke must precede the probe.
+    expect(job.indexOf('Pre-flight smoke')).toBeLessThan(job.indexOf('Verify deployed app end to end'));
+  });
+
+  it('posts the result to the run summary AND the status page, always-recording red weeks', () => {
+    const job = DEPLOY_HEALTH_WEEKLY.slice(DEPLOY_HEALTH_WEEKLY.indexOf('weekly-health:'));
+    const recordGates = [
+      'Post the result to the run summary',
+      'Record verify:live result for the status page',
+    ];
+    for (const step of recordGates) {
+      const at = job.indexOf(step);
+      expect(at).toBeGreaterThan(-1);
+      // always() + ran-gate: a red run is recorded too, but a skipped
+      // pre-flight never overwrites the last real result (same semantics as
+      // ci.yml's recorder). The `if:` follows the step name.
+      expect(job.slice(at, at + 220)).toContain('always() && (steps.verify.outcome ==');
+    }
+    // Verdict comes from VERIFY_LIVE_VERDICT so 'external' survives.
+    expect(job).toContain('${VERIFY_LIVE_VERDICT:-');
+    // Records the SERVED sha (fallback trigger ref) and tags the source.
+    expect(job).toContain("steps.smoke.outputs.served_sha || github.sha");
+    expect(job).toContain('--source "scheduled-weekly"');
+  });
+});
 });

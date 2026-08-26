@@ -833,6 +833,23 @@
   color: var(--color-text);
 }
 
+/* Quantity prefix + name in each ingredient row — the quantity reads in the
+   accent color (like the recipe detail page) so "4 pieces" separates from
+   "chicken thighs" at a glance. The row is flex with a gap so the spans
+   never run together ("4 pieceschicken thighs"). */
+.quantity {
+  color: var(--color-accent);
+}
+
+.name {
+  color: var(--color-text);
+}
+
+.list li {
+  display: flex;
+  gap: 0.5rem;
+}
+
 /* ── Voice form (mic + input + send) ─────────────────────────────────────── */
 .voiceForm {
   display: flex;

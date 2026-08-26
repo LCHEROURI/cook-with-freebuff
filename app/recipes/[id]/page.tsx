@@ -21,6 +21,7 @@ import { VoiceInputButton } from '@/components/VoiceInputButton';
 import RecipeRowMeta from '../../cook/RecipeRowMeta';
 import { scaleRecipe } from '../recipe-scaler';
 import { parseServings } from '../servings-parser';
+import { formatIngredientQuantityPrefix, formatIngredientNameSuffix } from '@/lib/recipe/format';
 import { RecipeReadAloudButton, RecipeReadAll } from './RecipeReadAloudButton';
 import type { Recipe } from '@/lib/domain/types';
 
@@ -33,18 +34,6 @@ const formatSeconds = (s: number): string => {
   const m = Math.floor(s / 60);
   const r = s % 60;
   return m > 0 ? `${m}m ${r}s` : `${r}s`;
-};
-
-/**
- * Format a scaled quantity for display: whole numbers stay whole, and the
- * quarter steps render as ¼/½/¾ (spec 0003 D3). scaleRecipe already rounds to
- * the nearest ¼, so this only ever sees {0, 0.25, 0.5, 0.75} fractions.
- */
-const formatQuantity = (q: number): string => {
-  const whole = Math.floor(q);
-  const frac = Math.round((q - whole) * 4) / 4;
-  const fraction = frac === 0.25 ? '¼' : frac === 0.5 ? '½' : frac === 0.75 ? '¾' : '';
-  return whole === 0 ? (fraction || '0') : `${whole}${fraction}`;
 };
 
 /**
@@ -317,14 +306,8 @@ export default function RecipeDetailPage() {
         <ul className={styles.list}>
           {displayRecipe.ingredients.map((ing) => (
             <li key={ing.id} className={styles.ingredient}>
-              <span className={styles.quantity}>
-                {ing.quantity != null && ing.unit ? `${formatQuantity(ing.quantity)} ${ing.unit}` : ing.quantity != null ? formatQuantity(ing.quantity) : ''}
-              </span>
-              <span className={styles.name}>
-                {ing.name}
-                {ing.preparation ? `, ${ing.preparation}` : ''}
-                {ing.optional ? ' (optional)' : ''}
-              </span>
+              <span className={styles.quantity}>{formatIngredientQuantityPrefix(ing)}</span>
+              <span className={styles.name}>{formatIngredientNameSuffix(ing)}</span>
             </li>
           ))}
         </ul>

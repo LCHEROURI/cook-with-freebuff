@@ -270,6 +270,17 @@ export function useGeminiLive(opts: UseGeminiLiveOptions = {}) {
     setError(null);
   }, []);
 
+  // A new cooking session must start with a blank conversation — the previous
+  // session's last agent reply (e.g. "Done — next: Enjoy your meal!") must
+  // not linger over the first step of the new one. Also resets the turn
+  // index so the next turn lands at 0 again.
+  const clearTurns = useCallback(() => {
+    pendingRef.current = null;
+    nextTurnIndexRef.current = 0;
+    turnsRef.current = [];
+    setTurns([]);
+  }, []);
+
   // Mark activity (a spoken turn, a reply, a tool call, a tap) — resets the
   // silence watchdog so the awaiting state only appears after REAL quiet.
   const markActivity = useCallback(() => {
@@ -452,6 +463,7 @@ export function useGeminiLive(opts: UseGeminiLiveOptions = {}) {
     awaiting,
     toggle,
     stop,
+    clearTurns,
     sendText,
     clearError,
     getDiagnostics,

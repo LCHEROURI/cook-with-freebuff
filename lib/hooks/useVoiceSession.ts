@@ -29,6 +29,11 @@ export function useVoiceSession(opts: UseVoiceSessionOptions = {}) {
     set(nextVoiceStatus(statusRef.current, event));
   }, [set]);
 
+  // A new cooking session must start with a blank conversation — the previous
+  // session's last agent reply (e.g. "Done — next: Enjoy your meal!") must
+  // not linger over the first step of the new one.
+  const clearTranscript = useCallback(() => setTranscript([]), []);
+
   // Honest offline state until the endpoint responds.
   useEffect(() => {
     let cancelled = false;
@@ -87,5 +92,5 @@ export function useVoiceSession(opts: UseVoiceSessionOptions = {}) {
     [endpoint, opts, set, transition],
   );
 
-  return { status, transcript, send, setStatus: set };
+  return { status, transcript, send, setStatus: set, clearTranscript };
 }
