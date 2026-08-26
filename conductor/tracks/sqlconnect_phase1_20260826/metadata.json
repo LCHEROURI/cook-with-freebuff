@@ -1,0 +1,19 @@
+{
+  "id": "sqlconnect_phase1_20260826",
+  "title": "SQL Connect Phase 1 — provision and validate",
+  "type": "feature",
+  "status": "in-progress",
+  "created": "2026-08-26T18:40:00Z",
+  "updated": "2026-08-26T18:40:00Z",
+  "current_phase": 1,
+  "current_task": null,
+  "phases": {
+    "total": 3,
+    "completed": 1
+  },
+  "tasks": {
+    "total": 8,
+    "completed": 4
+  },
+  "commits": []
+}
