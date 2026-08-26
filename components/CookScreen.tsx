@@ -346,13 +346,13 @@ export function CookScreen({
         <ul className={styles.list}>
           {snap.availableIngredients.length > 0
             ? snap.availableIngredients.map((ing) => (
-                <li key={ing.id}>
+                <li key={ing.id} className={styles.ingredientRow}>
                   <span className={styles.quantity}>{formatIngredientQuantityPrefix(ing)}</span>
                   <span className={styles.name}>{formatIngredientNameSuffix(ing)}</span>
                 </li>
               ))
             : snap.recipe?.ingredients.map((ing) => (
-                <li key={ing.id}>
+                <li key={ing.id} className={styles.ingredientRow}>
                   <span className={styles.quantity}>{formatIngredientQuantityPrefix(ing)}</span>
                   <span className={styles.name}>{formatIngredientNameSuffix(ing)}</span>
                 </li>

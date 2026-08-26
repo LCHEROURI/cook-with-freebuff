@@ -836,7 +836,9 @@
 /* Quantity prefix + name in each ingredient row — the quantity reads in the
    accent color (like the recipe detail page) so "4 pieces" separates from
    "chicken thighs" at a glance. The row is flex with a gap so the spans
-   never run together ("4 pieceschicken thighs"). */
+   never run together ("4 pieceschicken thighs"). Scoped to the ingredient
+   rows ONLY (their own class): the Full recipe disclosure reuses styles.list
+   as an <ol>, and flex would strip its ordered-list markers. */
 .quantity {
   color: var(--color-accent);
 }
@@ -845,7 +847,7 @@
   color: var(--color-text);
 }
 
-.list li {
+.ingredientRow {
   display: flex;
   gap: 0.5rem;
 }

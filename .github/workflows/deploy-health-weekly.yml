@@ -93,6 +93,14 @@ jobs:
       # ~20-30 min verify run. Also captures the SERVED sha — the weekly
       # probe records what the host serves, not what the schedule triggered
       # on, so a stalled rollout is reported as exactly that.
+      #
+      # The served sha must ALSO match the intended revision (github.sha, the
+      # default-branch head the schedule fired on): a stalled host serving old
+      # probe and cleanup behavior must never be exercised by the write-capable
+      # verify:live run, so a mismatch fails the pre-flight and the probe is
+      # gated on this step's success (same convention as AGENTS.md — production
+      # proof scripts must not run until /api/build-info reports the intended
+      # guarded revision).
       - name: Pre-flight smoke (app up + build-info answers)
         id: smoke
         if: ${{ env.NEXT_PUBLIC_FIREBASE_API_KEY != '' && env.FIREBASE_SERVICE_ACCOUNT != '' && env.APP_OWNER_UID != '' && env.GOOGLE_AI_API_KEY != '' && env.NEXT_PUBLIC_FIREBASE_APP_ID != '' }}
@@ -116,7 +124,15 @@ jobs:
             echo "::error::weekly pre-flight: /api/build-info answered but reported no commitSha (raw: ${body:0:120})"
             exit 1
           fi
+          # Capture the SERVED sha FIRST — a stalled host still gets its truth
+          # recorded on the status page even though the probe does not run.
           echo "served_sha=$sha" >> "$GITHUB_OUTPUT"
+          if [ "$sha" != "${{ github.sha }}" ]; then
+            echo "::error::weekly pre-flight: host serves ${sha:0:12} but the intended revision is ${{ github.sha }} — a stalled rollout; the write-capable probe will NOT run against old probe/cleanup behavior"
+            echo "VERIFY_LIVE_VERDICT=failure" >> "$GITHUB_ENV"
+            echo "VERIFY_LIVE_REASON=stalled rollout: host serves ${sha:0:12}, expected ${{ github.sha }}" >> "$GITHUB_ENV"
+            exit 1
+          fi
           echo "weekly pre-flight: canonical 200, host serves commit ${sha:0:12} — verify:live preconditions met"
 
       # Chrome for verify:live's UI drivers (headless CDP), same as ci.yml.
@@ -128,11 +144,17 @@ jobs:
 
       # The full end-to-end gate against the canonical host — identical to
       # the post-deploy run including --require-app-check-enforced, so a
-      # green week means the same thing as a green deploy.
+      # green week means the same thing as a green deploy. Gated on the
+      # smoke step's SUCCESS (not just the secrets): a stale host never runs
+      # the write-capable probe. Also widens the model_source startup-log
+      # window (--model-source-window-min 10080, one week) so a warm host
+      # booted days ago still has its startup lines in scope — the 30-minute
+      # deploy-window default would fail all five role checks on a no-deploy
+      # week despite the app working.
       - name: Verify deployed app end to end (verify:live)
         id: verify
-        if: ${{ env.NEXT_PUBLIC_FIREBASE_API_KEY != '' && env.FIREBASE_SERVICE_ACCOUNT != '' && env.APP_OWNER_UID != '' && env.GOOGLE_AI_API_KEY != '' && env.NEXT_PUBLIC_FIREBASE_APP_ID != '' }}
-        run: npm run verify:live -- --require-app-check-enforced
+        if: ${{ steps.smoke.outcome == 'success' && env.NEXT_PUBLIC_FIREBASE_API_KEY != '' && env.FIREBASE_SERVICE_ACCOUNT != '' && env.APP_OWNER_UID != '' && env.GOOGLE_AI_API_KEY != '' && env.NEXT_PUBLIC_FIREBASE_APP_ID != '' }}
+        run: npm run verify:live -- --require-app-check-enforced --model-source-window-min 10080
         env:
           VERIFY_BASE_URL: https://cook-with-freebuff--portfolio-app-freebuff2.us-central1.hosted.app
           CHROME_PATH: ${{ steps.chrome.outputs.chrome-path }}
@@ -144,10 +166,12 @@ jobs:
 
       # Post the result where a human looks first: the run summary carries the
       # verdict (from VERIFY_LIVE_VERDICT — verify:live writes it via GITHUB_ENV
-      # so the distinct 'external' state survives), the served commit, and the
-      # deep-dive links. Runs ALWAYS so a red week posts its own summary too.
+      # so the distinct 'external' state survives; the smoke sets it to failure
+      # on a stalled rollout), the served commit, and the deep-dive links. Runs
+      # ALWAYS so a red week — including a stalled host that never reached the
+      # probe — posts its own summary too.
       - name: Post the result to the run summary
-        if: ${{ always() && (steps.verify.outcome == 'success' || steps.verify.outcome == 'failure') }}
+        if: ${{ always() && (steps.verify.outcome == 'success' || steps.verify.outcome == 'failure' || steps.smoke.outcome == 'failure') }}
         run: |
           {
             echo "## Weekly deploy health — $(date -u +%Y-%m-%d)"
@@ -162,11 +186,12 @@ jobs:
 
       # Record the verdict to Firestore for the public /status page — same
       # recorder, same single-slot doc semantics as ci.yml (always-record so a
-      # red probe stays visible; only runs when verify:live actually RAN so a
-      # skipped pre-flight never overwrites the last real result). --commit is
-      # the SERVED sha captured by the smoke step (fallback to the trigger
-      # ref), and --source scheduled-weekly tags the probe distinctly from a
-      # deploy gate on the /status page.
+      # red probe stays visible; a stalled host that failed the pre-flight is
+      # recorded with the smoke's failure verdict instead of being lost, since
+      # a red week must stay visible). --commit is the SERVED sha captured by
+      # the smoke step (fallback to the trigger ref), and --source
+      # scheduled-weekly tags the probe distinctly from a deploy gate on the
+      # /status page.
       - name: Record verify:live result for the status page
-        if: ${{ always() && (steps.verify.outcome == 'success' || steps.verify.outcome == 'failure') }}
+        if: ${{ always() && (steps.verify.outcome == 'success' || steps.verify.outcome == 'failure' || steps.smoke.outcome == 'failure') }}
         run: node scripts/record-verify-status.mjs --verdict "${VERIFY_LIVE_VERDICT:-${{ steps.verify.outcome }}}" --commit "${{ steps.smoke.outputs.served_sha || github.sha }}" --run-url "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" --reason "${VERIFY_LIVE_REASON:-}" --source "scheduled-weekly"

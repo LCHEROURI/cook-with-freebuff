@@ -1437,9 +1437,19 @@ describe('.github/workflows/deploy-health-weekly.yml · scheduled deploy-health 
     // with the SERVED sha captured for truthful recording.
     expect(job).toContain('Pre-flight smoke (app up + build-info answers)');
     expect(job).toContain('echo "served_sha=$sha" >> "$GITHUB_OUTPUT"');
+    // The served sha must match the intended revision (github.sha) BEFORE the
+    // write-capable probe runs — a stalled host must never be exercised
+    // through old probe/cleanup behavior (AGENTS.md: proof scripts must not
+    // run until build-info reports the intended guarded revision).
+    expect(job).toContain('host serves ${sha:0:12} but the intended revision is');
+    expect(job).toContain('write-capable probe will NOT run against old probe/cleanup behavior');
+    expect(job).toContain('VERIFY_LIVE_VERDICT=failure');
     // Identical gate to ci.yml's verify-live step — a green week means the
-    // same thing as a green deploy.
-    expect(job).toContain('run: npm run verify:live -- --require-app-check-enforced');
+    // same thing as a green deploy — PLUS the smoke-success gate (a stale
+    // host never reaches the probe) and the widened model-source window so a
+    // warm host's startup lines stay in scope on a no-deploy week.
+    expect(job).toContain("steps.smoke.outcome == 'success'");
+    expect(job).toContain('run: npm run verify:live -- --require-app-check-enforced --model-source-window-min 10080');
     expect(job).toContain('browser-actions/setup-chrome@v2');
     // Smoke must precede the probe.
     expect(job.indexOf('Pre-flight smoke')).toBeLessThan(job.indexOf('Verify deployed app end to end'));
@@ -1454,9 +1464,10 @@ describe('.github/workflows/deploy-health-weekly.yml · scheduled deploy-health 
     for (const step of recordGates) {
       const at = job.indexOf(step);
       expect(at).toBeGreaterThan(-1);
-      // always() + ran-gate: a red run is recorded too, but a skipped
-      // pre-flight never overwrites the last real result (same semantics as
-      // ci.yml's recorder). The `if:` follows the step name.
+      // always() + ran-gate: a red run is recorded too — and so is a stalled
+      // host that failed the pre-flight (the smoke's VERIFY_LIVE_VERDICT=
+      // failure makes the red week visible instead of silently skipped). The
+      // `if:` follows the step name.
       expect(job.slice(at, at + 220)).toContain('always() && (steps.verify.outcome ==');
     }
     // Verdict comes from VERIFY_LIVE_VERDICT so 'external' survives.

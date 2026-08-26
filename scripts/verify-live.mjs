@@ -716,7 +716,14 @@ try {
     if (!mintRes.ok || !mintBody.access_token) {
       fail(`model_source smoke: OAuth mint failed (HTTP ${mintRes.status}) — ${j(mintBody).slice(0, 160)}`);
     }
-    const LOG_WINDOW_MIN = 30;
+    // The default 30-minute window fits the post-deploy case: the deploy job
+    // waited for the revision, whose boot just happened. The weekly
+    // deploy-health probe (deploy-health-weekly.yml) passes a WIDER window
+    // (--model-source-window-min 10080, one week) because on a no-deploy week
+    // the host has been warm for hours or days — no fresh startup lines exist
+    // and the smoke would fail all five roles despite the app working. The
+    // commit scoping below still ties the entries to the deployed revision.
+    const LOG_WINDOW_MIN = Number(flag('--model-source-window-min', '30')) || 30;
     const windowStart = new Date(Date.now() - LOG_WINDOW_MIN * 60_000).toISOString();
     // GITHUB_SHA is set by Actions (the same sha wait-for-deploy-sha asserted
     // before this run); a manual local run has no sha, so the window-wide

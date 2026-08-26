@@ -19,6 +19,14 @@ describe('formatIngredientQuantity', () => {
     expect(formatIngredientQuantity(1.5)).toBe('1½');
   });
 
+  it('rounds the TOTAL before splitting, so a near-whole carries into the whole part', () => {
+    // CookScreen's availableIngredients reach this formatter unrounded — a
+    // fraction like 0.9 must render as 1, never as 0 with a discarded carry.
+    expect(formatIngredientQuantity(0.9)).toBe('1');
+    expect(formatIngredientQuantity(1.9)).toBe('2');
+    expect(formatIngredientQuantity(1.6)).toBe('1½');
+  });
+
   it('renders zero with the fraction when there is no whole part', () => {
     expect(formatIngredientQuantity(0.75)).toBe('¾');
   });

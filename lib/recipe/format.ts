@@ -11,12 +11,16 @@ import type { Ingredient } from '../domain/types';
 
 /**
  * Format a quantity for display: whole numbers stay whole, and the quarter
- * steps render as ¼/½/¾ (spec 0003 D3). Scaling already rounds to the nearest
- * ¼, so this only ever sees {0, 0.25, 0.5, 0.75} fractions.
+ * steps render as ¼/½/¾ (spec 0003 D3). Rounding happens on the TOTAL first
+ * (nearest ¼), then the rounded value is split into whole and fraction — so
+ * 0.9 renders as 1 and 1.9 as 2, never as 0 / 1 with a discarded carry
+ * (scaleRecipe already rounds, but CookScreen's availableIngredients reach
+ * this formatter unrounded).
  */
 export function formatIngredientQuantity(q: number): string {
-  const whole = Math.floor(q);
-  const frac = Math.round((q - whole) * 4) / 4;
+  const rounded = Math.round(q * 4) / 4;
+  const whole = Math.floor(rounded);
+  const frac = rounded - whole;
   const fraction = frac === 0.25 ? '¼' : frac === 0.5 ? '½' : frac === 0.75 ? '¾' : '';
   return whole === 0 ? (fraction || '0') : `${whole}${fraction}`;
 }
