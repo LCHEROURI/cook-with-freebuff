@@ -193,6 +193,16 @@ describe('verify:live · [2b.2] model_source log smoke', () => {
     expect(VERIFY_LIVE).toContain('jsonPayload.commit="');
   });
 
+  it('lets the weekly probe widen the startup-log window so a warm host passes', () => {
+    // The 30-minute default fits the post-deploy case (the revision's boot
+    // just happened). The weekly deploy-health probe passes
+    // --model-source-window-min 10080 (one week): on a no-deploy week the
+    // host has been warm for hours or days, so a 30-minute window would find
+    // no startup lines and fail all five roles despite the app working.
+    expect(VERIFY_LIVE).toContain("Number(flag('--model-source-window-min', '30'))");
+    expect(VERIFY_LIVE).toContain('const LOG_WINDOW_MIN = Number(flag');
+  });
+
   it('keeps checking the remaining roles after a missing entry instead of crashing the verifier', () => {
     // fail() records and continues (it never throws), so the missing-entry
     // branch must guard the deref that follows: a TypeError would skip every

@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import styles from '@/app/cook/page.module.css';
+import { formatIngredientQuantityPrefix, formatIngredientNameSuffix } from '@/lib/recipe/format';
 import { VoiceIndicator } from './VoiceIndicator';
 import { formatPausedAgo, type ActiveTimerInfo, type GuideSnapshot } from '@/lib/domain/guide';
 import type { AgentTurn, VoiceStatus } from '@/lib/agent';
@@ -344,8 +345,18 @@ export function CookScreen({
         <summary>Ingredients</summary>
         <ul className={styles.list}>
           {snap.availableIngredients.length > 0
-            ? snap.availableIngredients.map((ing) => <li key={ing.id}>{ing.name}</li>)
-            : snap.recipe?.ingredients.map((ing) => <li key={ing.id}>{ing.name}</li>) ?? <li>No ingredients listed.</li>}
+            ? snap.availableIngredients.map((ing) => (
+                <li key={ing.id} className={styles.ingredientRow}>
+                  <span className={styles.quantity}>{formatIngredientQuantityPrefix(ing)}</span>
+                  <span className={styles.name}>{formatIngredientNameSuffix(ing)}</span>
+                </li>
+              ))
+            : snap.recipe?.ingredients.map((ing) => (
+                <li key={ing.id} className={styles.ingredientRow}>
+                  <span className={styles.quantity}>{formatIngredientQuantityPrefix(ing)}</span>
+                  <span className={styles.name}>{formatIngredientNameSuffix(ing)}</span>
+                </li>
+              )) ?? <li>No ingredients listed.</li>}
         </ul>
       </details>
 

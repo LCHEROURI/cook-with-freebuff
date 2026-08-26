@@ -1,0 +1,197 @@
+name: Deploy health (weekly verify:live)
+
+# Weekly health probe of the DEPLOYED app, independent of any new commit.
+# The post-deploy verify:live in ci.yml only ever exercises the host right
+# after a rollout — on a quiet week nothing proves the live stack still works
+# (Gemini credits drained, App Hosting cold-start regression, certificate or
+# IAM drift all surface days later, at the NEXT deploy). This schedule runs
+# the SAME gate against the canonical host on a clock and posts the result:
+#   - a GitHub step summary (verdict + reason + served commit + run link),
+#   - the Firestore status doc via scripts/record-verify-status.mjs, so the
+#     public /status page shows the freshest verification regardless of deploys
+#     (--source scheduled-weekly distinguishes the probe from a deploy gate).
+#
+# Event notes:
+#   - `schedule` runs on the default branch only. The secret guard fires on
+#     the canonical repo for scheduled runs (a missing credential must fail
+#     loudly, not silently skip the probe); manual dispatches stay exempt
+#     (operator-initiated, skipped steps are visible to the operator).
+#   - No wait-for-deploy-sha: there is no rollout here. The smoke step
+#     instead captures the commit the host ACTUALLY serves, and that sha —
+#     not the trigger ref — is what gets recorded on the status page, so a
+#     week where main moved but the host stalled is reported truthfully.
+#   - Concurrency `live-voice-probe` is SHARED with ci.yml's verify-live job
+#     and mic-regression.yml: all three drive the SAME production owner
+#     through the same /cook active session, so they must queue, never
+#     overlap (the cross-probe collision this repo has actually seen).
+#   - The verify step is gated on the full five-secret set, so forks /
+#     unconfigured repos skip cleanly instead of burning a 20–30 min run.
+
+on:
+  schedule:
+    - cron: '30 6 * * 3' # Wednesdays 06:30 UTC — clear of mon/tue/thu/sat 06:00–06:30 slots
+  workflow_dispatch:
+
+concurrency:
+  group: live-voice-probe
+  cancel-in-progress: false
+
+jobs:
+  weekly-health:
+    name: Verify deployed app on a clock (verify:live)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    permissions:
+      contents: read
+
+    env:
+      NEXT_PUBLIC_FIREBASE_API_KEY: ${{ secrets.NEXT_PUBLIC_FIREBASE_API_KEY }}
+      FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+      APP_OWNER_UID: ${{ secrets.APP_OWNER_UID }}
+      GOOGLE_AI_API_KEY: ${{ secrets.GOOGLE_AI_API_KEY }}
+      NEXT_PUBLIC_FIREBASE_APP_ID: ${{ secrets.NEXT_PUBLIC_FIREBASE_APP_ID }}
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v5
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      # Same loud-guard pattern as ci.yml's verify-live job, scoped to the
+      # scheduled case: on the canonical repo a missing credential fails the
+      # run instead of skipping the probe (a skipped health check would
+      # masquerade as a healthy week).
+      - name: Fail loudly if a verify secret is missing (scheduled run)
+        if: ${{ github.event_name == 'schedule' && github.repository == 'LCHEROURI/cook-with-freebuff' && (env.NEXT_PUBLIC_FIREBASE_API_KEY == '' || env.FIREBASE_SERVICE_ACCOUNT == '' || env.APP_OWNER_UID == '' || env.GOOGLE_AI_API_KEY == '' || env.NEXT_PUBLIC_FIREBASE_APP_ID == '') }}
+        run: |
+          echo "::error::Required GitHub Actions secret(s) missing for the weekly deploy-health probe:"
+          [ -z "$NEXT_PUBLIC_FIREBASE_API_KEY" ] && echo "  - NEXT_PUBLIC_FIREBASE_API_KEY (mints the owner ID token for verify:live)"
+          [ -z "$FIREBASE_SERVICE_ACCOUNT" ] && echo "  - FIREBASE_SERVICE_ACCOUNT (seeds the owner recipe + mints the owner custom token)"
+          [ -z "$APP_OWNER_UID" ] && echo "  - APP_OWNER_UID (the owner Firebase Auth uid verify:live signs in as)"
+          [ -z "$GOOGLE_AI_API_KEY" ] && echo "  - GOOGLE_AI_API_KEY (the Gemini provider the agent turn must answer with)"
+          [ -z "$NEXT_PUBLIC_FIREBASE_APP_ID" ] && echo "  - NEXT_PUBLIC_FIREBASE_APP_ID (mints the App Check token for verify:live)"
+          echo "Add them under GitHub -> Settings -> Secrets and variables -> Actions, then re-run this job."
+          exit 1
+        env:
+          NEXT_PUBLIC_FIREBASE_API_KEY: ${{ secrets.NEXT_PUBLIC_FIREBASE_API_KEY }}
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+          APP_OWNER_UID: ${{ secrets.APP_OWNER_UID }}
+          GOOGLE_AI_API_KEY: ${{ secrets.GOOGLE_AI_API_KEY }}
+          NEXT_PUBLIC_FIREBASE_APP_ID: ${{ secrets.NEXT_PUBLIC_FIREBASE_APP_ID }}
+
+      # Pre-flight, same fail-fast pattern as ci.yml's post-deploy smoke: the
+      # two cheapest facts about the host (canonical URL answers 200,
+      # /api/build-info serves a real commitSha) before committing to a
+      # ~20-30 min verify run. Also captures the SERVED sha — the weekly
+      # probe records what the host serves, not what the schedule triggered
+      # on, so a stalled rollout is reported as exactly that.
+      #
+      # The served sha must ALSO match the intended revision (github.sha, the
+      # default-branch head the schedule fired on): a stalled host serving old
+      # probe and cleanup behavior must never be exercised by the write-capable
+      # verify:live run, so a mismatch fails the pre-flight and the probe is
+      # gated on this step's success (same convention as AGENTS.md — production
+      # proof scripts must not run until /api/build-info reports the intended
+      # guarded revision).
+      - name: Pre-flight smoke (app up + build-info answers)
+        id: smoke
+        if: ${{ env.NEXT_PUBLIC_FIREBASE_API_KEY != '' && env.FIREBASE_SERVICE_ACCOUNT != '' && env.APP_OWNER_UID != '' && env.GOOGLE_AI_API_KEY != '' && env.NEXT_PUBLIC_FIREBASE_APP_ID != '' }}
+        run: |
+          set -euo pipefail
+          base="https://cook-with-freebuff--portfolio-app-freebuff2.us-central1.hosted.app"
+          code="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 15 "$base")" || {
+            echo "::error::weekly pre-flight: canonical URL did not answer (curl exit $?) — the deployed app is not reachable"
+            exit 1
+          }
+          if [ "$code" != "200" ]; then
+            echo "::error::weekly pre-flight: canonical URL answered HTTP $code (expected 200) — the deployed app is not reachable"
+            exit 1
+          fi
+          body="$(curl -sS --max-time 15 "$base/api/build-info")" || {
+            echo "::error::weekly pre-flight: /api/build-info did not answer (curl exit $?) — the API hop is broken"
+            exit 1
+          }
+          sha="$(printf '%s' "$body" | sed -n 's/.*"commitSha":"\([^"]*\)".*/\1/p')"
+          if [ -z "$sha" ]; then
+            echo "::error::weekly pre-flight: /api/build-info answered but reported no commitSha (raw: ${body:0:120})"
+            exit 1
+          fi
+          # Capture the SERVED sha FIRST — a stalled host still gets its truth
+          # recorded on the status page even though the probe does not run.
+          echo "served_sha=$sha" >> "$GITHUB_OUTPUT"
+          if [ "$sha" != "${{ github.sha }}" ]; then
+            echo "::error::weekly pre-flight: host serves ${sha:0:12} but the intended revision is ${{ github.sha }} — a stalled rollout; the write-capable probe will NOT run against old probe/cleanup behavior"
+            echo "VERIFY_LIVE_VERDICT=failure" >> "$GITHUB_ENV"
+            echo "VERIFY_LIVE_REASON=stalled rollout: host serves ${sha:0:12}, expected ${{ github.sha }}" >> "$GITHUB_ENV"
+            exit 1
+          fi
+          echo "weekly pre-flight: canonical 200, host serves commit ${sha:0:12} — verify:live preconditions met"
+
+      # Chrome for verify:live's UI drivers (headless CDP), same as ci.yml.
+      - name: Install Chrome for the UI drivers
+        id: chrome
+        uses: browser-actions/setup-chrome@v2
+        with:
+          chrome-version: stable
+
+      # The full end-to-end gate against the canonical host — identical to
+      # the post-deploy run including --require-app-check-enforced, so a
+      # green week means the same thing as a green deploy. Gated on the
+      # smoke step's SUCCESS (not just the secrets): a stale host never runs
+      # the write-capable probe. Also widens the model_source startup-log
+      # window (--model-source-window-min 10080, one week) so a warm host
+      # booted days ago still has its startup lines in scope — the 30-minute
+      # deploy-window default would fail all five role checks on a no-deploy
+      # week despite the app working.
+      - name: Verify deployed app end to end (verify:live)
+        id: verify
+        if: ${{ steps.smoke.outcome == 'success' && env.NEXT_PUBLIC_FIREBASE_API_KEY != '' && env.FIREBASE_SERVICE_ACCOUNT != '' && env.APP_OWNER_UID != '' && env.GOOGLE_AI_API_KEY != '' && env.NEXT_PUBLIC_FIREBASE_APP_ID != '' }}
+        run: npm run verify:live -- --require-app-check-enforced --model-source-window-min 10080
+        env:
+          VERIFY_BASE_URL: https://cook-with-freebuff--portfolio-app-freebuff2.us-central1.hosted.app
+          CHROME_PATH: ${{ steps.chrome.outputs.chrome-path }}
+          NEXT_PUBLIC_FIREBASE_API_KEY: ${{ secrets.NEXT_PUBLIC_FIREBASE_API_KEY }}
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+          APP_OWNER_UID: ${{ secrets.APP_OWNER_UID }}
+          GOOGLE_AI_API_KEY: ${{ secrets.GOOGLE_AI_API_KEY }}
+          NEXT_PUBLIC_FIREBASE_APP_ID: ${{ secrets.NEXT_PUBLIC_FIREBASE_APP_ID }}
+
+      # Post the result where a human looks first: the run summary carries the
+      # verdict (from VERIFY_LIVE_VERDICT — verify:live writes it via GITHUB_ENV
+      # so the distinct 'external' state survives; the smoke sets it to failure
+      # on a stalled rollout), the served commit, and the deep-dive links. Runs
+      # ALWAYS so a red week — including a stalled host that never reached the
+      # probe — posts its own summary too.
+      - name: Post the result to the run summary
+        if: ${{ always() && (steps.verify.outcome == 'success' || steps.verify.outcome == 'failure' || steps.smoke.outcome == 'failure') }}
+        run: |
+          {
+            echo "## Weekly deploy health — $(date -u +%Y-%m-%d)"
+            echo ""
+            echo "| | |"
+            echo "|---|---|"
+            echo "| Verdict | **${VERIFY_LIVE_VERDICT:-${{ steps.verify.outcome }}}** |"
+            echo "| Host serves | \`${{ steps.smoke.outputs.served_sha }}\` |"
+            echo "| Reason | ${VERIFY_LIVE_REASON:-none} |"
+            echo "| Probe | \`npm run verify:live -- --require-app-check-enforced\` (scheduled-weekly) |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # Record the verdict to Firestore for the public /status page — same
+      # recorder, same single-slot doc semantics as ci.yml (always-record so a
+      # red probe stays visible; a stalled host that failed the pre-flight is
+      # recorded with the smoke's failure verdict instead of being lost, since
+      # a red week must stay visible). --commit is the SERVED sha captured by
+      # the smoke step (fallback to the trigger ref), and --source
+      # scheduled-weekly tags the probe distinctly from a deploy gate on the
+      # /status page.
+      - name: Record verify:live result for the status page
+        if: ${{ always() && (steps.verify.outcome == 'success' || steps.verify.outcome == 'failure' || steps.smoke.outcome == 'failure') }}
+        run: node scripts/record-verify-status.mjs --verdict "${VERIFY_LIVE_VERDICT:-${{ steps.verify.outcome }}}" --commit "${{ steps.smoke.outputs.served_sha || github.sha }}" --run-url "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" --reason "${VERIFY_LIVE_REASON:-}" --source "scheduled-weekly"
