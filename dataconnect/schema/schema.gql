@@ -263,5 +263,8 @@ type DeployStatus @table(key: "slot") {
   active: Boolean # flake_streak row only
   recurringCount: Int # flake_streak row only
   signature: String # flake_streak row only
+  # The streak weeks rendered by /status (status.route.ts reads `weeks` off the
+  # flake_streak doc: "2026-08-03 → 2026-08-17 · 3-week streak").
+  weeks: [String!]
   runUrl: String
 }

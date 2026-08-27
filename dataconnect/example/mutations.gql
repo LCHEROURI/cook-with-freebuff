@@ -166,11 +166,13 @@ mutation DeleteCookingSession($id: String!) @auth(level: NO_ACCESS) {
   cookingSession_delete(id: $id)
 }
 
-# Optimistic-concurrency update: only applies when the stored version equals
-# the caller's expected version, and bumps it. When the version has moved, the
-# filtered update matches no row, the @check fails, and the mutation aborts
-# with the conflict message — the SQL Connect form of the Firestore
-# transaction + version guard in repositories.ts updateSession.
+# Optimistic-concurrency update for transitions that carry NO correlation
+# marker: only applies when the stored version equals the caller's expected
+# version, and bumps it. When the version has moved, the filtered update
+# matches no row, the @check fails, and the mutation aborts with the conflict
+# message — the SQL Connect form of the Firestore transaction + version guard
+# in repositories.ts updateSession. The marker-carrying variant is
+# UpdateSessionWithMarker below.
 mutation UpdateSession(
   $id: String!
   $expectedVersion: Int!
@@ -216,6 +218,77 @@ mutation UpdateSession(
       completedAt: $completedAt
     }
   ) @check(expr: "this != null", message: "Session version conflict or missing")
+}
+
+# The marker-carrying transition (PR #58 invariant, lib/server/AGENTS.md): the
+# correlation marker write and rollback clear ride the SAME transaction as the
+# session update — never a separate write that can fail after commit. SQL
+# Connect transaction steps are unconditional, so the repository picks this
+# mutation exactly when a marker is involved and passes every marker variable
+# with a real value: $markerKey/$markerRawId/$markedAt for the write, and
+# $clearMarkerKey for the rollback clear. When there is nothing to clear, the
+# repository passes the reserved empty key "" — a delete that matches no row
+# is a no-op, so the step stays harmless.
+mutation UpdateSessionWithMarker(
+  $id: String!
+  $expectedVersion: Int!
+  $status: SessionStatus
+  $currentPhase: SessionPhase
+  $currentPrepStepIndex: Int
+  $currentCookingStepIndex: Int
+  $previousState: Any
+  $resumableState: Any
+  $activeTimerIds: [String!]
+  $availableIngredients: Any
+  $recoveryContext: Any
+  $pendingSubstitution: String
+  $pendingPantryItems: Any
+  $lastActivityAt: Timestamp
+  $pausedAt: Timestamp
+  $completedAt: Timestamp
+  $markerKey: String!
+  $markerRawId: String!
+  $markedAt: Timestamp!
+  $clearMarkerKey: String!
+) @auth(level: NO_ACCESS) @transaction {
+  session_ver: cookingSession_update(
+    first: {
+      where: {
+        _and: [
+          { id: { eq: $id } },
+          { version: { eq: $expectedVersion } }
+        ]
+      }
+    },
+    data: {
+      version_update: { inc: 1 }
+      status: $status
+      currentPhase: $currentPhase
+      currentPrepStepIndex: $currentPrepStepIndex
+      currentCookingStepIndex: $currentCookingStepIndex
+      previousState: $previousState
+      resumableState: $resumableState
+      activeTimerIds: $activeTimerIds
+      availableIngredients: $availableIngredients
+      recoveryContext: $recoveryContext
+      pendingSubstitution: $pendingSubstitution
+      pendingPantryItems: $pendingPantryItems
+      lastActivityAt: $lastActivityAt
+      pausedAt: $pausedAt
+      completedAt: $completedAt
+    }
+  ) @check(expr: "this != null", message: "Session version conflict or missing")
+  marker_write: correlationMarker_upsert(
+    data: {
+      key: $markerKey
+      rawId: $markerRawId
+      legacyRawId: null
+      markedAt: $markedAt
+    }
+  )
+  marker_clear: correlationMarker_delete(
+    first: { where: { key: { eq: $clearMarkerKey } } }
+  )
 }
 
 # ── Session events and timers ────────────────────────────────────────────────
@@ -286,23 +359,22 @@ mutation UpdateCookingTimer(
   )
 }
 
-# Shift every RUNNING timer for a session by the same offset (elapsedMs) —
-# the SQL Connect expression of the Firestore rebase-on-resume batch. A
-# filtered update rewrites each matched row atomically in one transaction.
+# Shift every RUNNING timer for a session by the same OFFSET (elapsedMs),
+# preserving each timer's own endsAt — the SQL Connect expression of the
+# Firestore rebase-on-resume batch in repositories.rebaseActiveTimers
+# (`endsAt: current.endsAt + elapsedMs`). This is deliberately Native SQL:
+# the GraphQL layer cannot express it because Timestamp_Duration is
+# @fdc_forbiddenAsVariableType (the offset can't be a parameter) and an
+# absolute `endsAt` assignment would collapse timers with different endsAt to
+# one deadline (the Codex P1 finding). A single UPDATE is atomic, matching the
+# Firestore batch's all-or-nothing rebase.
 mutation RebaseTimers(
   $sessionId: String!
-  $endsAt: Timestamp!
-) @auth(level: NO_ACCESS) @transaction {
-  cookingTimer_updateMany(
-    where: {
-      _and: [
-        { sessionId: { eq: $sessionId } },
-        { status: { eq: RUNNING } }
-      ]
-    },
-    data: {
-      endsAt: $endsAt
-    }
+  $offsetMs: Int!
+) @auth(level: NO_ACCESS) {
+  rebaseTimers: _execute(
+    sql: "UPDATE cooking_timers SET ends_at = ends_at + ($1 * interval '1 millisecond') WHERE session_id = $2 AND status = 'RUNNING'",
+    params: [$offsetMs, $sessionId]
   )
 }
 
@@ -436,6 +508,7 @@ mutation UpsertDeployStatus(
   $active: Boolean
   $recurringCount: Int
   $signature: String
+  $weeks: [String!]
   $runUrl: String
 ) @auth(level: NO_ACCESS) {
   deployStatus_upsert(
@@ -449,6 +522,7 @@ mutation UpsertDeployStatus(
       active: $active
       recurringCount: $recurringCount
       signature: $signature
+      weeks: $weeks
       runUrl: $runUrl
     }
   )

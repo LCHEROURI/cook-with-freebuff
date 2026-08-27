@@ -307,12 +307,19 @@ mutation UpdateSession($id: String!, $partial: CookingSession_Update!, $expected
 }
 ```
 
-The marker set/clear (correlation_markers) joins the same `@transaction` via
-`response` binding, preserving the PR #58 invariant (transition and marker
-commit together, rollback pause and clear commit together). The version-conflict
-error surfaces through the `@check` message, which the repository maps back to
-the existing `Session ${id} version conflict` error the session service and its
-tests already expect.
+The marker set/clear (correlation_markers) joins the same `@transaction`,
+preserving the PR #58 invariant (transition and marker commit together,
+rollback pause and clear commit together). SQL Connect transaction steps are
+unconditional (a step whose required variables are null aborts the whole
+transaction — verified against the emulator), so the port splits into two
+mutations the repository picks by the optional marker parameter: `UpdateSession`
+for transitions without a correlation id, and `UpdateSessionWithMarker`
+(session update + marker upsert + rollback clear in one transaction) when a
+marker is involved; an empty-string clear key deletes no row, keeping that
+step a harmless no-op. The version-conflict error surfaces through the
+`@check` message, which the repository maps back to the existing
+`Session ${id} version conflict` error the session service and its tests
+already expect.
 
 ### 4. Correlation markers get simpler
 

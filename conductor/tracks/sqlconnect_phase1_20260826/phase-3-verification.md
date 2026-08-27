@@ -22,8 +22,14 @@ launchctl is TCC-blocked on ~/Documents), logging to
 and enum from `schema/schema.gql` (recipe with jsonb
 ingredients/prep_steps/cooking_steps and integer servings, dietary_profile
 with integer default_servings and text[] allergies, correlation_marker with
-the unique legacy_raw_id index, deploy_status with nullable flake columns,
-pantry_item and grocery_item with double precision quantity, all 8 enums).
+the unique legacy_raw_id index, deploy_status with nullable flake columns and
+the weeks array, pantry_item and grocery_item with double precision quantity,
+all 8 enums).
+
+Tooling note: the launch script pins `firebase-tools@15.28.2` because a
+stale npx cache resolves bare `firebase-tools` to 15.24.0, whose emulator
+binary (3.4.16) lags the registry pin (3.4.18) and fights the compile's
+cache.
 
 ## Task 3.2 — the smoke
 
@@ -39,7 +45,7 @@ Runner: `.freebuff/smoke-phase3.mjs` (gitignored, like the other helpers):
 DATA_CONNECT_EMULATOR_HOST=127.0.0.1:9399 node .freebuff/smoke-phase3.mjs
 ```
 
-Result: 12/12 checks passed.
+Result: 20/21 checks passed, 1 documented skip.
 
 1. Recipe: `saveRecipe` (upsert) with a JSONB `ingredients` payload
    (`[{ name: 'pasta', quantity: 0.5, unit: 'cup' }]`), read back via
@@ -55,15 +61,42 @@ Result: 12/12 checks passed.
      `data-connect/query-error Session version conflict or missing (aborted)
      (rolled back)`; the session still reads back at `version: 2` with the
      stale status not applied. The @check conflict guard works end to end.
-4. Correlation marker: `upsertCorrelationMarker` (base64url key) then
-   `getCorrelationMarker` reads it back — the idempotency-marker join path.
+4. Marker join (Codex P1, PR #58 invariant): `updateSessionWithMarker` writes
+   the marker in the SAME transaction as the session update; a plain
+   `updateSession` with no marker still succeeds; the rollback path clears the
+   original marker and writes its own rollback marker in one transaction.
+5. RebaseTimers (Codex P1): rewritten as Native SQL
+   (`ends_at = ends_at + (offset_ms * interval '1 millisecond')`), which the
+   GraphQL layer cannot express (`Timestamp_Duration` is forbidden as a
+   variable). DOCUMENTED SKIP: the local emulator cannot execute ANY
+   parameterized native-SQL DML — even a trivial
+   `UPDATE cooking_timers SET label = $1 WHERE id IS NOT NULL` fails with the
+   masked PGLite error `unexpected message 'E'; expected ReadyForQuery`
+   (firebase-tools emulator defect; the emulator's own GraphQL-generated DML
+   works fine). The rebase is verified by `dataconnect:compile` validation
+   and by mirroring `repositories.rebaseActiveTimers` exactly; runtime
+   execution is exercised in the parity phase against Cloud SQL.
+6. Per-ID reads (Codex P2): `getPantryItem`, `getLeftover`,
+   `getGroceryItem` each round-trip by id — the store contracts in
+   `lib/server/tools/types.ts` (`getItem`/`getLeftover`/`getGroceryItem`).
+7. DeployStatus flake_streak (Codex P2): `weeks` array round-trips
+   (`['2026-08-03','2026-08-10','2026-08-17']`) alongside `active`,
+   `recurringCount`, `signature` — the shape `/status` renders.
 
 ## Task 3.3 — record (this file)
 
-Smoke output and the schema porting notes are recorded above. The only porting
-note beyond the Phase 2 doc: the admin SDK's emulator switch is the standard
-`DATA_CONNECT_EMULATOR_HOST` env var — no code change needed to point the
-generated SDK at the emulator.
+Smoke output and the schema porting notes are recorded above. Porting notes
+beyond the Phase 2 doc:
+
+- The admin SDK's emulator switch is the standard `DATA_CONNECT_EMULATOR_HOST`
+  env var — no code change needed to point the generated SDK at the emulator.
+- SQL Connect transaction steps are unconditional: a step whose required
+  variables are null (or absent) aborts the whole transaction, so optional
+  marker writes cannot live in one fixed mutation — hence the two-mutation
+  split documented in the scope doc and phase-2-verification.md.
+- Native SQL `_execute` DML cannot be exercised in the local emulator (PGLite
+  defect above); it is validated by `dataconnect:compile` and runs on Cloud
+  SQL in production.
 
 ## Remaining (Tasks 3.4, 3.5)
 
@@ -74,7 +107,8 @@ generated SDK at the emulator.
 ## Phase 3 verification checklist
 
 - Emulator smoke output recorded with recipe/dietary-profile/session results.
-  Confirmed (12/12 above).
+  Confirmed (20/21 above, rebase documented-skip with the emulator defect
+  recorded).
 - `npm run check` green; no application source files changed. Pending (3.4).
 - Track metadata and registry reflect completion. Partially updated (3.1-3.3
   ticked; completion follows the landing).

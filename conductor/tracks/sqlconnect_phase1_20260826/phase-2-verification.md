@@ -100,3 +100,29 @@ schema carries `Float`, matching the emulator's `double precision`.
   @transaction, emulator-created tables listed above).
 - The scope doc and the schema port agree on every table and enum. Confirmed
   after the Float-quantity reconciliation in 0005.
+
+## Codex review corrections (PR #184 gate, 2026-08-27)
+
+The Codex P1 gate reviewed the initial port and raised four findings, all
+valid; each was fixed in the same PR and re-proven against the emulator:
+
+1. P1 — RebaseTimers collapsed every RUNNING timer to one absolute `endsAt`.
+   The Firestore rebase shifts each timer by the same OFFSET
+   (`endsAt: current.endsAt + elapsedMs`), preserving per-timer differences.
+   Rewrote as Native SQL `_execute`
+   (`ends_at = ends_at + (offset_ms * interval '1 millisecond')`): the
+   GraphQL layer cannot express it because `Timestamp_Duration` is
+   `@fdc_forbiddenAsVariableType`. A single UPDATE is atomic, matching the
+   Firestore batch.
+2. P1 — the correlation marker did not ride the session-update transaction.
+   SQL Connect transaction steps are unconditional (null-bound steps abort),
+   so the port split into `UpdateSession` (no marker) and
+   `UpdateSessionWithMarker` (session + marker write/clear, one transaction);
+   the repository picks by the optional marker parameter. The empty-string
+   clear key deletes no row (harmless no-op). Scope doc 0005 updated.
+3. P2 — the connector lacked the per-ID reads the store contracts require
+   (`getItem`/`getLeftover`/`getGroceryItem` in `lib/server/tools/types.ts`).
+   Added `GetPantryItem`, `GetLeftover`, `GetGroceryItem`.
+4. P2 — `DeployStatus` lacked the flake_streak `weeks` array that
+   `app/api/status/route.ts` reads and `/status` renders. Added `weeks:
+   [String!]` to the table and both the upsert mutation and the read query.

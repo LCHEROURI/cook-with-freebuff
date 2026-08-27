@@ -177,6 +177,53 @@ query GetActiveTimers($sessionId: String!) @auth(level: NO_ACCESS) {
 
 # ── Pantry, leftovers, grocery ───────────────────────────────────────────────
 
+# Per-ID reads mirror the store contracts in lib/server/tools/types.ts
+# (getItem / getLeftover / getGroceryItem) — the repository layer needs a
+# single-row fetch, not just the user-scoped lists.
+query GetPantryItem($id: String!) @auth(level: NO_ACCESS) {
+  pantryItem(id: $id) {
+    id
+    userId
+    name
+    quantity
+    unit
+    confidence
+    source
+    lastConfirmedAt
+    expirationDate
+    notes
+  }
+}
+
+query GetLeftover($id: String!) @auth(level: NO_ACCESS) {
+  leftover(id: $id) {
+    id
+    userId
+    recipeId
+    title
+    servings
+    completedAt
+    storedAt
+    status
+    notes
+  }
+}
+
+query GetGroceryItem($id: String!) @auth(level: NO_ACCESS) {
+  groceryItem(id: $id) {
+    id
+    userId
+    name
+    quantity
+    unit
+    source
+    status
+    pantryItemId
+    createdAt
+    updatedAt
+  }
+}
+
 query ListPantryItems($userId: String!) @auth(level: NO_ACCESS) {
   pantryItems(where: { userId: { eq: $userId } }) {
     id
@@ -247,6 +294,7 @@ query GetDeployStatus($slot: String!) @auth(level: NO_ACCESS) {
     active
     recurringCount
     signature
+    weeks
     runUrl
   }
 }
