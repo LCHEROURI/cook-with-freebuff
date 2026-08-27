@@ -64,6 +64,7 @@ Stored in `docs/specs/NNNN-title.md`. Current: 0001 App Hosting primary host, 00
 - [scripts/AGENTS.md](scripts/AGENTS.md): deploy-verification drivers, the Codex review pipeline, and the landing path conventions
 - [components/AGENTS.md](components/AGENTS.md): presentational client components (CookScreen, voice indicator, starter tour) and their accessibility conventions
 - [lib/server/AGENTS.md](lib/server/AGENTS.md): Firestore repositories, the session-service state machine, the tool registry, and server-only wiring
+- [dataconnect/AGENTS.md](dataconnect/AGENTS.md): the Firebase SQL Connect (Data Connect) twin of the Firestore data layer — migrations target it, the running app still uses Firestore
 - [app/AGENTS.md](app/AGENTS.md): pages and API routes, the shared auth pattern, and the route-handler conventions
 - [STATE_MACHINE.md](STATE_MACHINE.md): cooking session phase machine and state transitions
 - [VOICE_ARCHITECTURE.md](VOICE_ARCHITECTURE.md): realtime voice provider abstraction and Gemini Live integration
