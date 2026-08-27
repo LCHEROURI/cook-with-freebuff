@@ -7,6 +7,7 @@
 
 import 'server-only';
 import * as repo from './repositories';
+import * as sqlconnect from './sqlconnect-stores';
 import { SessionService } from './session-service';
 import type { SessionStore } from './session-service';
 import type {
@@ -21,6 +22,30 @@ import type {
 } from './tools/types';
 import { registerGeminiProviders } from '../ai/register';
 import { resolveGeminiModel, logModelResolutionSources, type GeminiModelRole } from './model-config';
+
+// ── Cutover seam (spec 0005 phase 3) ─────────────────────────────────────────
+//
+// STORES_ON_SQLCONNECT lists the stores served by the SQL Connect twin,
+// comma separated (e.g. "recipes,pantry,dietaryProfiles"). Absent or empty
+// means every store stays on Firestore — today's behavior, byte for byte.
+// Collections cut over read-mostly first (deploy status, profiles, pantry,
+// grocery, leftovers, recipes), then events, timers, and sessions last.
+//
+// The seam exists so a collection flips with ONE config value and zero call
+// site edits: the store interfaces are identical, so the agent, tool, and
+// session-service layers cannot tell which backend answered. Cross-store
+// references (a SQL Connect session's timers still on Firestore) are a
+// cutover-ordering concern, owned by the phase 3 plan — not by this seam.
+const SQLCONNECT_STORE_NAMES = new Set(
+  (process.env.STORES_ON_SQLCONNECT ?? '')
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean),
+);
+
+function pick<T>(store: string, firestoreImpl: T, sqlconnectImpl: T): T {
+  return SQLCONNECT_STORE_NAMES.has(store) ? sqlconnectImpl : firestoreImpl;
+}
 
 // Register concrete AI providers (no-op when GOOGLE_AI_API_KEY is missing).
 // Model names resolve from Firebase Remote Config first, then env, then the
@@ -92,8 +117,10 @@ export const firestoreGroceryStore: GroceryStore = {
   deleteGroceryItem: (id) => repo.deleteGroceryItem(id),
 };
 
-/** Singleton session service over Firestore with durable markers. */
-export const productionSessionService = new SessionService(firestoreSessionStore);
+/** Singleton session service over the selected session store with durable markers. */
+export const productionSessionService = new SessionService(
+  pick('sessions', firestoreSessionStore, sqlconnect.sqlconnectSessionStore),
+);
 
 /** Build a ToolContext for an authenticated user. */
 export function buildProductionContext(
@@ -104,12 +131,16 @@ export function buildProductionContext(
     userId,
     correlationId,
     sessionService: productionSessionService,
-    timerStore: firestoreTimerStore,
-    logStore: firestoreLogStore,
-    recipeStore: firestoreRecipeStore,
-    pantryStore: firestorePantryStore,
-    dietaryProfileStore: firestoreDietaryProfileStore,
-    leftoverStore: firestoreLeftoverStore,
-    groceryStore: firestoreGroceryStore,
+    timerStore: pick('timers', firestoreTimerStore, sqlconnect.sqlconnectTimerStore),
+    logStore: pick('logs', firestoreLogStore, sqlconnect.sqlconnectLogStore),
+    recipeStore: pick('recipes', firestoreRecipeStore, sqlconnect.sqlconnectRecipeStore),
+    pantryStore: pick('pantry', firestorePantryStore, sqlconnect.sqlconnectPantryStore),
+    dietaryProfileStore: pick(
+      'dietaryProfiles',
+      firestoreDietaryProfileStore,
+      sqlconnect.sqlconnectDietaryProfileStore,
+    ),
+    leftoverStore: pick('leftovers', firestoreLeftoverStore, sqlconnect.sqlconnectLeftoverStore),
+    groceryStore: pick('grocery', firestoreGroceryStore, sqlconnect.sqlconnectGroceryStore),
   };
 }

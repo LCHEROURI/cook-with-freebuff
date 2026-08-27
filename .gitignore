@@ -26,6 +26,8 @@ yarn-error.log*
 # Firebase emulator logs (created by `npm run emulators`)
 firebase-debug.log
 firestore-debug.log
+dataconnect-debug.log
+pglite-debug.log
 ui-debug.log
 pubsub-debug.log
 auth-debug.log
