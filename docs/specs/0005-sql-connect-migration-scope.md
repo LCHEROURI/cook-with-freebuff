@@ -1,7 +1,7 @@
 # Firebase SQL Connect migration — Scope
 
 **Date**: 2026-08-26
-**Status**: In Progress (Phase 1 scaffold landed on main via PR #182; Phase 2 schema/operations compile green via `dataconnect:compile`; the running app still uses Firestore — no cutover yet)
+**Status**: In Progress (Phase 1 scaffold landed on main via PR #182; Phase 2 schema/operations merged via PR #184 with emulator proof and a contract test pinned for the session concurrency guard via PR #185; the running app still uses Firestore — no cutover yet)
 
 ## Overview
 
