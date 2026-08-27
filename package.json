@@ -13,7 +13,6 @@
     "check": "npm run typecheck && npm run lint && npm run test && npm run build",
     "test:watch": "vitest",
     "test:emulator": "RUN_EMULATOR_TESTS=1 vitest run --no-file-parallelism lib/server/rollback-resume.emulator.test.ts scripts/cleanup-correlation-markers.emulator.test.ts scripts/firestore-rules-harness.emulator.test.ts",
-    "test:sqlconnect": "RUN_SQLCONNECT_EMULATOR_TESTS=1 vitest run --no-file-parallelism lib/server/sqlconnect-stores.emulator.test.ts",
     "test:rules": "RUN_EMULATOR_TESTS=1 vitest run --no-file-parallelism scripts/firestore-rules*.emulator.test.ts",
     "cleanup:markers": "node --import ./scripts/stub-server-only.mjs --import tsx scripts/cleanup-correlation-markers.ts",
     "tidy:branches": "node scripts/tidy-branches.mjs",
@@ -40,7 +39,6 @@
     "land:pr": "node scripts/land-pr.mjs"
   },
   "dependencies": {
-    "@cook-with-freebuff/dataconnect-admin": "file:lib/server/dataconnect",
     "@google/generative-ai": "^0.24.1",
     "firebase": "^11.0.0",
     "firebase-admin": "^13.0.0",
