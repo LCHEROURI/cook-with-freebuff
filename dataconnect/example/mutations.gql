@@ -9,12 +9,15 @@
 #     a @check conflict guard — the SQL Connect expression of the Firestore
 #     optimistic-concurrency update in lib/server/repositories.ts
 #     (updateSession). The version-conflict surfaces through the @check
-#     message, which the repository maps back to the existing
+#     message; the SQL Connect repository is not written yet, and the future
+#     repository must map it back to the existing
 #     "Session ${id} version conflict" error the session service expects.
-#   • RebaseTimers is a @transaction that shifts every RUNNING timer's endsAt
-#     by the same offset — the SQL Connect version of the Firestore batch
-#     rebase on resume. A filtered update is an atomic rewrite of the row, so
-#     a single expression handles the whole rebase.
+#   • RebaseTimers is a single Native SQL _execute UPDATE that shifts every
+#     RUNNING timer's endsAt by the same offset: the SQL Connect version of
+#     the Firestore batch rebase on resume. One UPDATE statement is atomic in
+#     Postgres, matching the batch's all-or-nothing rebase. GraphQL cannot
+#     express it because the per-row shift needs Timestamp_Duration, which
+#     SQL Connect forbids as a variable.
 
 # ── Recipes ──────────────────────────────────────────────────────────────────
 
