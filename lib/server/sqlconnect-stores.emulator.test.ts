@@ -206,6 +206,46 @@ describe.skipIf(!emulatorUp)('SQL Connect store twin · Data Connect emulator', 
     ).rejects.toThrow(/version conflict/i);
   });
 
+  it('rolls the marker writes back when the guarded update aborts (transaction atomicity)', async () => {
+    const store = stores.sqlconnectSessionStore;
+    const service = new sessionServiceModule.SessionService(store);
+    const cid = uid('cid');
+    const session = await service.createSession('emulator-user', { correlationId: cid });
+
+    // A successful unmarked bump moves the version forward, so the marked
+    // update below carries a genuinely stale expectedVersion.
+    await store.updateSession(
+      session.id,
+      { status: 'PAUSED', pausedAt: Date.now() },
+      session.version,
+    );
+    const staleVersion = session.version;
+
+    // Now a marked transition that loses the race: the @check version guard
+    // fails INSIDE the mutation, so the mark and the clear must abort with
+    // it. A regression that moved the marker writes out of the guarded
+    // transaction would still land them on the conflict — leaving a phantom
+    // marker a retry could double-consume and a cleared marker a resume
+    // path still depends on.
+    const doomedMarker = uid('doomed');
+    await expect(
+      store.updateSession(
+        session.id,
+        { status: 'ACTIVE', currentPhase: 'CONFIRMING_INGREDIENTS' },
+        staleVersion,
+        { mark: doomedMarker, clear: cid },
+      ),
+    ).rejects.toThrow(/version conflict/i);
+
+    // Full rollback, verified on real rows: the session is untouched, the
+    // doomed marker never existed, and the cleared marker is still present.
+    expect(await store.hasCorrelationMarker(doomedMarker)).toBe(false);
+    expect(await store.hasCorrelationMarker(cid)).toBe(true);
+    const reloaded = await store.getSession(session.id);
+    expect(reloaded?.version).toBe(staleVersion + 1);
+    expect(reloaded?.status).toBe('PAUSED');
+  });
+
   it('round-trips a timer completion through the twin', async () => {
     const store = stores.sqlconnectTimerStore;
     const startedAt = Date.now();
