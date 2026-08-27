@@ -35,6 +35,23 @@ function mutationText(src: string, name: string): string {
   throw new Error(`unbalanced braces while extracting ${name}`);
 }
 
+/**
+ * Extract the version-guard filter block: the `where: { ... }` that holds the
+ * `_and` array in the session update. The caller asserts on this whole block
+ * rather than on independent substrings, so a change from `_and` to `_or`
+ * (which would update a session when EITHER the id or version matches, and
+ * silently defeat optimistic concurrency) fails the contract test.
+ */
+function versionGuardFilter(text: string): string {
+  const whereIdx = text.indexOf('where: {');
+  expect(whereIdx, `${text.split('\n')[0]} lost its where block`).toBeGreaterThanOrEqual(0);
+  const andIdx = text.indexOf('_and: [', whereIdx);
+  expect(andIdx, `${text.split('\n')[0]} lost the _and conjunction`).toBeGreaterThanOrEqual(0);
+  const close = text.indexOf(']', andIdx);
+  expect(close, `${text.split('\n')[0]} lost the _and array close`).toBeGreaterThanOrEqual(0);
+  return text.slice(whereIdx, close + 1);
+}
+
 describe('dataconnect session-update concurrency contract', () => {
   for (const mutation of ['UpdateSession', 'UpdateSessionWithMarker']) {
     const text = mutationText(MUTATIONS, mutation);
@@ -48,10 +65,16 @@ describe('dataconnect session-update concurrency contract', () => {
     });
 
     it(`${mutation} keeps the version-guarded filtered update`, () => {
-      // The write must match BOTH the id and the expected version, and bump
-      // the version — dropping any of these breaks optimistic concurrency.
-      expect(text).toContain('id: { eq: $id }');
-      expect(text).toContain('version: { eq: $expectedVersion }');
+      // The write must match BOTH the id and the expected version (AND, never
+      // OR — an _or filter would update a session when either matches), and
+      // bump the version — dropping any of these breaks optimistic
+      // concurrency. The whole filter block is asserted, not the two
+      // predicates independently, so the conjunction itself is pinned.
+      const filter = versionGuardFilter(text);
+      expect(filter).toContain('_and: [');
+      expect(filter).toContain('{ id: { eq: $id } }');
+      expect(filter).toContain('{ version: { eq: $expectedVersion } }');
+      expect(filter).not.toContain('_or');
       expect(text).toContain('version_update: { inc: 1 }');
     });
 
