@@ -36,6 +36,9 @@ storage-debug.log
 # Firebase emulator export/import data (seeded local dev data)
 emulator-data/
 
+# Firebase Data Connect emulator runtime artifacts (generated schema + local Postgres data)
+dataconnect/.dataconnect/
+
 # local env files
 .env*.local
 
