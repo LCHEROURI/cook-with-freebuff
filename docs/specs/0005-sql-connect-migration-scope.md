@@ -1,7 +1,7 @@
 # Firebase SQL Connect migration — Scope
 
 **Date**: 2026-08-26
-**Status**: Proposed (read-only scoping; nothing built, nothing deployed)
+**Status**: In Progress (Phase 1 scaffold landed on main via PR #182; Phase 2 schema/operations compile green via `dataconnect:compile`; the running app still uses Firestore — no cutover yet)
 
 ## Overview
 
@@ -146,7 +146,7 @@ type PantryItem @table(key: "id") @index(fields: ["userId", "expirationDate"]) {
   id: String!
   userId: String!
   name: String!
-  quantity: Int
+  quantity: Float   # fractional-capable (zod quantity is z.number(), not int)
   unit: String
   confidence: Float!
   source: PantryItemSource!
@@ -171,7 +171,7 @@ type GroceryItem @table(key: "id") @index(fields: ["userId", "status"]) {
   id: String!
   userId: String!
   name: String!
-  quantity: Int
+  quantity: Float   # fractional-capable (see PantryItem)
   unit: String
   source: GroceryItemSource!
   status: GroceryItemStatus!
@@ -247,6 +247,14 @@ enum GroceryItemStatus { OPEN BOUGHT DISMISSED }
 The enums copy `lib/domain/types.ts` value-for-value. Timestamps stay `EpochMs`
 on the wire (the domain type is `number`) — `Timestamp` in SQL Connect renders
 as an instant; the repository layer converts, exactly as it does today.
+
+Numeric scalar mapping follows the zod schemas in `lib/domain/schemas.ts`:
+`servings` (recipe, leftover, dietary defaultServings) is integer-constrained
+(`z.number().int()`), so it is `Int`; `quantity` on `pantry_items` and
+`grocery_list` is not int-constrained (`z.number()`, and the agent parses
+"1/2 cup" as 0.5), so it is `Float`; `confidence` (0..1) is `Float`. This was
+reconciled during the Phase 2 schema port — the scope originally said `Int`
+for `quantity`, which would have truncated fractional pantry/grocery amounts.
 
 ## Key decisions
 

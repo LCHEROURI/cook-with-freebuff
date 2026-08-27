@@ -1,78 +1,275 @@
-# Example queries for a simple movie app.
+# cook-with-freebuff — SQL Connect queries
+#
+# Every operation is @auth(level: NO_ACCESS): the app is server-only, all
+# access goes through the Node Admin SDK behind lib/server/repositories.ts,
+# and the app's owner-token + App Check auth stays at the API layer. See
+# docs/specs/0005-sql-connect-migration-scope.md — "the server is the only
+# principal".
+#
+# userId is passed as a variable (not auth.uid_expr) precisely because this is
+# the server-mediated path: the repository authenticates the caller at the API
+# layer and drives the store with admin credentials, so per-user filtering is
+# itself the data-boundary (matching the store interfaces).
 
-# @auth() directives control who can call each operation.
-# Anyone should be able to list all movies, so the auth level is set to PUBLIC
-query ListMovies @auth(level: PUBLIC, insecureReason: "Anyone can list all movies.") {
-  movies {
+# ── Recipes ──────────────────────────────────────────────────────────────────
+
+query GetRecipe($id: String!) @auth(level: NO_ACCESS) {
+  recipe(id: $id) {
     id
+    userId
     title
-    imageUrl
-    genre
+    description
+    servings
+    estimatedPrepMinutes
+    estimatedCookMinutes
+    totalMinutes
+    ingredients
+    prepSteps
+    cookingSteps
+    equipment
+    dietaryTags
+    allergens
+    safetyNotes
+    proteinCategories
+    preferences
+    generatedAt
+    updatedAt
   }
 }
 
-# List all users, only admins should be able to list all users, so we use NO_ACCESS
-query ListUsers @auth(level: NO_ACCESS) {
-  users {
+query ListRecipes($userId: String!) @auth(level: NO_ACCESS) {
+  recipes(where: { userId: { eq: $userId } }) {
     id
-    username
-  }
-}
-
-# Logged in users can list all their reviews and movie titles associated with the review
-# Since the query uses the uid of the current authenticated user, we set auth level to USER
-query ListUserReviews @auth(level: USER) {
-  user(key: { id_expr: "auth.uid" }) {
-    id
-    username
-    # <field>_on_<foreign_key_field> makes it easy to grab info from another table
-    # Here, we use it to grab all the reviews written by the user.
-    reviews: reviews_on_user {
-      rating
-      reviewDate
-      reviewText
-      movie {
-        id
-        title
-      }
-    }
-  }
-}
-
-# Get movie by id
-query GetMovieById($id: UUID!) @auth(level: PUBLIC, insecureReason: "Anyone can get a movie by id.") {
-  movie(id: $id) {
-    id
+    userId
     title
-    imageUrl
-    genre
-    metadata: movieMetadata_on_movie {
-      rating
-      releaseYear
-      description
-    }
-    reviews: reviews_on_movie {
-      reviewText
-      reviewDate
-      rating
-      user {
-        id
-        username
-      }
-    }
+    description
+    servings
+    estimatedPrepMinutes
+    estimatedCookMinutes
+    totalMinutes
+    ingredients
+    prepSteps
+    cookingSteps
+    equipment
+    dietaryTags
+    allergens
+    safetyNotes
+    proteinCategories
+    preferences
+    generatedAt
+    updatedAt
   }
 }
 
-# Search for movies, actors, and reviews
-query SearchMovie($titleInput: String, $genre: String) @auth(level: PUBLIC, insecureReason: "Anyone can search for movies.") {
-  movies(
+# ── Cooking sessions ─────────────────────────────────────────────────────────
+
+query GetCookingSession($id: String!) @auth(level: NO_ACCESS) {
+  cookingSession(id: $id) {
+    id
+    userId
+    recipeId
+    status
+    currentPhase
+    currentPrepStepIndex
+    currentCookingStepIndex
+    previousState
+    resumableState
+    activeTimerIds
+    availableIngredients
+    recoveryContext
+    pendingSubstitution
+    pendingPantryItems
+    startedAt
+    lastActivityAt
+    pausedAt
+    completedAt
+    version
+  }
+}
+
+# The active session is the newest ACTIVE or PAUSED session for a user.
+query GetActiveSession($userId: String!) @auth(level: NO_ACCESS) {
+  cookingSessions(
     where: {
-      _and: [{ genre: { eq: $genre } }, { title: { contains: $titleInput } }]
+      _and: [
+        { userId: { eq: $userId } },
+        { status: { in: [ACTIVE, PAUSED] } }
+      ]
+    },
+    orderBy: [{ lastActivityAt: DESC }],
+    limit: 1
+  ) {
+    id
+    userId
+    recipeId
+    status
+    currentPhase
+    currentPrepStepIndex
+    currentCookingStepIndex
+    previousState
+    resumableState
+    activeTimerIds
+    availableIngredients
+    recoveryContext
+    pendingSubstitution
+    pendingPantryItems
+    startedAt
+    lastActivityAt
+    pausedAt
+    completedAt
+    version
+  }
+}
+
+query GetSessionEvents($sessionId: String!) @auth(level: NO_ACCESS) {
+  cookingSessionEvents(
+    where: { sessionId: { eq: $sessionId } },
+    orderBy: [{ at: ASC }]
+  ) {
+    id
+    sessionId
+    userId
+    type
+    data
+    at
+    correlationId
+  }
+}
+
+# ── Timers ───────────────────────────────────────────────────────────────────
+
+query GetCookingTimer($id: String!) @auth(level: NO_ACCESS) {
+  cookingTimer(id: $id) {
+    id
+    userId
+    sessionId
+    label
+    durationSeconds
+    startedAt
+    endsAt
+    status
+    stepId
+    completedAt
+  }
+}
+
+query GetActiveTimers($sessionId: String!) @auth(level: NO_ACCESS) {
+  cookingTimers(
+    where: {
+      _and: [
+        { sessionId: { eq: $sessionId } },
+        { status: { eq: RUNNING } }
+      ]
     }
   ) {
     id
+    userId
+    sessionId
+    label
+    durationSeconds
+    startedAt
+    endsAt
+    status
+    stepId
+    completedAt
+  }
+}
+
+# ── Pantry, leftovers, grocery ───────────────────────────────────────────────
+
+query ListPantryItems($userId: String!) @auth(level: NO_ACCESS) {
+  pantryItems(where: { userId: { eq: $userId } }) {
+    id
+    userId
+    name
+    quantity
+    unit
+    confidence
+    source
+    lastConfirmedAt
+    expirationDate
+    notes
+  }
+}
+
+query ListLeftovers($userId: String!) @auth(level: NO_ACCESS) {
+  leftovers(where: { userId: { eq: $userId } }) {
+    id
+    userId
+    recipeId
     title
-    genre
-    imageUrl
+    servings
+    completedAt
+    storedAt
+    status
+    notes
+  }
+}
+
+query ListGroceryItems($userId: String!) @auth(level: NO_ACCESS) {
+  groceryItems(where: { userId: { eq: $userId } }) {
+    id
+    userId
+    name
+    quantity
+    unit
+    source
+    status
+    pantryItemId
+    createdAt
+    updatedAt
+  }
+}
+
+# ── Dietary profile, deploy status, tool logs, markers ───────────────────────
+
+query GetDietaryProfile($userId: String!) @auth(level: NO_ACCESS) {
+  dietaryProfile(first: { where: { userId: { eq: $userId } } }) {
+    userId
+    allergies
+    dietaryRestrictions
+    dislikedIngredients
+    preferredCuisines
+    defaultServings
+    preferredEquipment
+    updatedAt
+  }
+}
+
+query GetDeployStatus($slot: String!) @auth(level: NO_ACCESS) {
+  deployStatus(first: { where: { slot: { eq: $slot } } }) {
+    slot
+    verdict
+    commitSha
+    reason
+    source
+    recordedAt
+    active
+    recurringCount
+    signature
+    runUrl
+  }
+}
+
+query GetAgentToolLog($id: String!) @auth(level: NO_ACCESS) {
+  agentToolLog(id: $id) {
+    id
+    userId
+    sessionId
+    tool
+    sanitizedArguments
+    result
+    latencyMs
+    at
+    correlationId
+  }
+}
+
+query GetCorrelationMarker($key: String!) @auth(level: NO_ACCESS) {
+  correlationMarker(first: { where: { key: { eq: $key } } }) {
+    key
+    rawId
+    legacyRawId
+    markedAt
   }
 }

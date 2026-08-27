@@ -1,33 +1,503 @@
-# Example mutations for a simple movie app
+# cook-with-freebuff — SQL Connect mutations
+#
+# Every mutation runs with @auth(level: NO_ACCESS) — the Node Admin SDK is the
+# only caller, and the app's owner-token + App Check authorization stays at
+# the API layer (see docs/specs/0005-sql-connect-migration-scope.md).
+#
+# Concurrency and atomicity:
+#   • UpdateSession is a @transaction with a filtered update on `version` and
+#     a @check conflict guard — the SQL Connect expression of the Firestore
+#     optimistic-concurrency update in lib/server/repositories.ts
+#     (updateSession). The version-conflict surfaces through the @check
+#     message, which the repository maps back to the existing
+#     "Session ${id} version conflict" error the session service expects.
+#   • RebaseTimers is a @transaction that shifts every RUNNING timer's endsAt
+#     by the same offset — the SQL Connect version of the Firestore batch
+#     rebase on resume. A filtered update is an atomic rewrite of the row, so
+#     a single expression handles the whole rebase.
 
-# Create a movie based on user input
-mutation CreateMovie($title: String!, $genre: String!, $imageUrl: String!)
-@auth(level: USER_EMAIL_VERIFIED, insecureReason: "Any email verified users can create a new movie.") {
-  movie_insert(data: { title: $title, genre: $genre, imageUrl: $imageUrl })
-}
+# ── Recipes ──────────────────────────────────────────────────────────────────
 
-# Upsert (update or insert) a user's username based on their auth.uid
-mutation UpsertUser($username: String!) @auth(level: USER) {
-  # The "auth.uid" server value ensures that users can only register their own user.
-  user_upsert(data: { id_expr: "auth.uid", username: $username })
-}
-
-# Add a review for a movie
-mutation AddReview($movieId: UUID!, $rating: Int!, $reviewText: String!)
-@auth(level: USER) {
-  review_upsert(
+mutation InsertRecipe(
+  $id: String!
+  $userId: String
+  $title: String!
+  $description: String
+  $servings: Int!
+  $estimatedPrepMinutes: Int!
+  $estimatedCookMinutes: Int!
+  $totalMinutes: Int!
+  $ingredients: Any!
+  $prepSteps: Any!
+  $cookingSteps: Any!
+  $equipment: [String!]!
+  $dietaryTags: [String!]!
+  $allergens: [String!]!
+  $safetyNotes: [String!]!
+  $proteinCategories: [String!]
+  $preferences: Any
+  $generatedAt: Timestamp!
+  $updatedAt: Timestamp!
+) @auth(level: NO_ACCESS) {
+  recipe_insert(
     data: {
-      userId_expr: "auth.uid"
-      movieId: $movieId
-      rating: $rating
-      reviewText: $reviewText
-      # reviewDate defaults to today in the schema. No need to set it manually.
+      id: $id
+      userId: $userId
+      title: $title
+      description: $description
+      servings: $servings
+      estimatedPrepMinutes: $estimatedPrepMinutes
+      estimatedCookMinutes: $estimatedCookMinutes
+      totalMinutes: $totalMinutes
+      ingredients: $ingredients
+      prepSteps: $prepSteps
+      cookingSteps: $cookingSteps
+      equipment: $equipment
+      dietaryTags: $dietaryTags
+      allergens: $allergens
+      safetyNotes: $safetyNotes
+      proteinCategories: $proteinCategories
+      preferences: $preferences
+      generatedAt: $generatedAt
+      updatedAt: $updatedAt
     }
   )
 }
 
-# Logged in user can delete their review for a movie
-mutation DeleteReview($movieId: UUID!) @auth(level: USER) {
-  # The "auth.uid" server value ensures that users can only delete their own reviews.
-  review_delete(key: { userId_expr: "auth.uid", movieId: $movieId })
+mutation SaveRecipe(
+  $id: String!
+  $userId: String
+  $title: String!
+  $description: String
+  $servings: Int!
+  $estimatedPrepMinutes: Int!
+  $estimatedCookMinutes: Int!
+  $totalMinutes: Int!
+  $ingredients: Any!
+  $prepSteps: Any!
+  $cookingSteps: Any!
+  $equipment: [String!]!
+  $dietaryTags: [String!]!
+  $allergens: [String!]!
+  $safetyNotes: [String!]!
+  $proteinCategories: [String!]
+  $preferences: Any
+  $generatedAt: Timestamp!
+  $updatedAt: Timestamp!
+) @auth(level: NO_ACCESS) {
+  recipe_upsert(
+    data: {
+      id: $id
+      userId: $userId
+      title: $title
+      description: $description
+      servings: $servings
+      estimatedPrepMinutes: $estimatedPrepMinutes
+      estimatedCookMinutes: $estimatedCookMinutes
+      totalMinutes: $totalMinutes
+      ingredients: $ingredients
+      prepSteps: $prepSteps
+      cookingSteps: $cookingSteps
+      equipment: $equipment
+      dietaryTags: $dietaryTags
+      allergens: $allergens
+      safetyNotes: $safetyNotes
+      proteinCategories: $proteinCategories
+      preferences: $preferences
+      generatedAt: $generatedAt
+      updatedAt: $updatedAt
+    }
+  )
+}
+
+mutation DeleteRecipe($id: String!) @auth(level: NO_ACCESS) {
+  recipe_delete(id: $id)
+}
+
+# ── Cooking sessions ─────────────────────────────────────────────────────────
+
+mutation InsertCookingSession(
+  $id: String!
+  $userId: String!
+  $recipeId: String
+  $status: SessionStatus!
+  $currentPhase: SessionPhase!
+  $currentPrepStepIndex: Int!
+  $currentCookingStepIndex: Int!
+  $previousState: Any
+  $resumableState: Any
+  $activeTimerIds: [String!]!
+  $availableIngredients: Any!
+  $recoveryContext: Any
+  $pendingSubstitution: String
+  $pendingPantryItems: Any
+  $startedAt: Timestamp!
+  $lastActivityAt: Timestamp!
+  $pausedAt: Timestamp
+  $completedAt: Timestamp
+  $version: Int!
+) @auth(level: NO_ACCESS) {
+  cookingSession_insert(
+    data: {
+      id: $id
+      userId: $userId
+      recipeId: $recipeId
+      status: $status
+      currentPhase: $currentPhase
+      currentPrepStepIndex: $currentPrepStepIndex
+      currentCookingStepIndex: $currentCookingStepIndex
+      previousState: $previousState
+      resumableState: $resumableState
+      activeTimerIds: $activeTimerIds
+      availableIngredients: $availableIngredients
+      recoveryContext: $recoveryContext
+      pendingSubstitution: $pendingSubstitution
+      pendingPantryItems: $pendingPantryItems
+      startedAt: $startedAt
+      lastActivityAt: $lastActivityAt
+      pausedAt: $pausedAt
+      completedAt: $completedAt
+      version: $version
+    }
+  )
+}
+
+mutation DeleteCookingSession($id: String!) @auth(level: NO_ACCESS) {
+  cookingSession_delete(id: $id)
+}
+
+# Optimistic-concurrency update: only applies when the stored version equals
+# the caller's expected version, and bumps it. When the version has moved, the
+# filtered update matches no row, the @check fails, and the mutation aborts
+# with the conflict message — the SQL Connect form of the Firestore
+# transaction + version guard in repositories.ts updateSession.
+mutation UpdateSession(
+  $id: String!
+  $expectedVersion: Int!
+  $status: SessionStatus
+  $currentPhase: SessionPhase
+  $currentPrepStepIndex: Int
+  $currentCookingStepIndex: Int
+  $previousState: Any
+  $resumableState: Any
+  $activeTimerIds: [String!]
+  $availableIngredients: Any
+  $recoveryContext: Any
+  $pendingSubstitution: String
+  $pendingPantryItems: Any
+  $lastActivityAt: Timestamp
+  $pausedAt: Timestamp
+  $completedAt: Timestamp
+) @auth(level: NO_ACCESS) @transaction {
+  session_ver: cookingSession_update(
+    first: {
+      where: {
+        _and: [
+          { id: { eq: $id } },
+          { version: { eq: $expectedVersion } }
+        ]
+      }
+    },
+    data: {
+      version_update: { inc: 1 }
+      status: $status
+      currentPhase: $currentPhase
+      currentPrepStepIndex: $currentPrepStepIndex
+      currentCookingStepIndex: $currentCookingStepIndex
+      previousState: $previousState
+      resumableState: $resumableState
+      activeTimerIds: $activeTimerIds
+      availableIngredients: $availableIngredients
+      recoveryContext: $recoveryContext
+      pendingSubstitution: $pendingSubstitution
+      pendingPantryItems: $pendingPantryItems
+      lastActivityAt: $lastActivityAt
+      pausedAt: $pausedAt
+      completedAt: $completedAt
+    }
+  ) @check(expr: "this != null", message: "Session version conflict or missing")
+}
+
+# ── Session events and timers ────────────────────────────────────────────────
+
+mutation InsertSessionEvent(
+  $id: String!
+  $sessionId: String!
+  $userId: String!
+  $type: SessionEventType!
+  $data: Any!
+  $at: Timestamp!
+  $correlationId: String
+) @auth(level: NO_ACCESS) {
+  cookingSessionEvent_insert(
+    data: {
+      id: $id
+      sessionId: $sessionId
+      userId: $userId
+      type: $type
+      data: $data
+      at: $at
+      correlationId: $correlationId
+    }
+  )
+}
+
+mutation InsertCookingTimer(
+  $id: String!
+  $userId: String!
+  $sessionId: String!
+  $label: String!
+  $durationSeconds: Int!
+  $startedAt: Timestamp!
+  $endsAt: Timestamp!
+  $status: TimerStatus!
+  $stepId: String
+  $completedAt: Timestamp
+) @auth(level: NO_ACCESS) {
+  cookingTimer_insert(
+    data: {
+      id: $id
+      userId: $userId
+      sessionId: $sessionId
+      label: $label
+      durationSeconds: $durationSeconds
+      startedAt: $startedAt
+      endsAt: $endsAt
+      status: $status
+      stepId: $stepId
+      completedAt: $completedAt
+    }
+  )
+}
+
+mutation UpdateCookingTimer(
+  $id: String!
+  $status: TimerStatus
+  $endedAt: Timestamp
+  $endsAt: Timestamp
+) @auth(level: NO_ACCESS) {
+  cookingTimer_update(
+    id: $id,
+    data: {
+      status: $status
+      completedAt: $endedAt
+      endsAt: $endsAt
+    }
+  )
+}
+
+# Shift every RUNNING timer for a session by the same offset (elapsedMs) —
+# the SQL Connect expression of the Firestore rebase-on-resume batch. A
+# filtered update rewrites each matched row atomically in one transaction.
+mutation RebaseTimers(
+  $sessionId: String!
+  $endsAt: Timestamp!
+) @auth(level: NO_ACCESS) @transaction {
+  cookingTimer_updateMany(
+    where: {
+      _and: [
+        { sessionId: { eq: $sessionId } },
+        { status: { eq: RUNNING } }
+      ]
+    },
+    data: {
+      endsAt: $endsAt
+    }
+  )
+}
+
+# ── Pantry, leftovers, grocery ───────────────────────────────────────────────
+
+mutation UpsertPantryItem(
+  $id: String!
+  $userId: String!
+  $name: String!
+  $quantity: Float
+  $unit: String
+  $confidence: Float!
+  $source: PantryItemSource!
+  $lastConfirmedAt: Timestamp!
+  $expirationDate: Timestamp
+  $notes: String
+) @auth(level: NO_ACCESS) {
+  pantryItem_upsert(
+    data: {
+      id: $id
+      userId: $userId
+      name: $name
+      quantity: $quantity
+      unit: $unit
+      confidence: $confidence
+      source: $source
+      lastConfirmedAt: $lastConfirmedAt
+      expirationDate: $expirationDate
+      notes: $notes
+    }
+  )
+}
+
+mutation DeletePantryItem($id: String!) @auth(level: NO_ACCESS) {
+  pantryItem_delete(id: $id)
+}
+
+mutation UpsertLeftover(
+  $id: String!
+  $userId: String!
+  $recipeId: String
+  $title: String!
+  $servings: Int!
+  $completedAt: Timestamp!
+  $storedAt: Timestamp!
+  $status: LeftoverStatus!
+  $notes: String
+) @auth(level: NO_ACCESS) {
+  leftover_upsert(
+    data: {
+      id: $id
+      userId: $userId
+      recipeId: $recipeId
+      title: $title
+      servings: $servings
+      completedAt: $completedAt
+      storedAt: $storedAt
+      status: $status
+      notes: $notes
+    }
+  )
+}
+
+mutation UpsertGroceryItem(
+  $id: String!
+  $userId: String!
+  $name: String!
+  $quantity: Float
+  $unit: String
+  $source: GroceryItemSource!
+  $status: GroceryItemStatus!
+  $pantryItemId: String
+  $createdAt: Timestamp!
+  $updatedAt: Timestamp!
+) @auth(level: NO_ACCESS) {
+  groceryItem_upsert(
+    data: {
+      id: $id
+      userId: $userId
+      name: $name
+      quantity: $quantity
+      unit: $unit
+      source: $source
+      status: $status
+      pantryItemId: $pantryItemId
+      createdAt: $createdAt
+      updatedAt: $updatedAt
+    }
+  )
+}
+
+mutation DeleteGroceryItem($id: String!) @auth(level: NO_ACCESS) {
+  groceryItem_delete(id: $id)
+}
+
+# ── Dietary profile, deploy status, tool logs, markers ───────────────────────
+
+mutation UpsertDietaryProfile(
+  $userId: String!
+  $allergies: [String!]!
+  $dietaryRestrictions: [String!]!
+  $dislikedIngredients: [String!]!
+  $preferredCuisines: [String!]!
+  $defaultServings: Int
+  $preferredEquipment: [String!]!
+  $updatedAt: Timestamp!
+) @auth(level: NO_ACCESS) {
+  dietaryProfile_upsert(
+    data: {
+      userId: $userId
+      allergies: $allergies
+      dietaryRestrictions: $dietaryRestrictions
+      dislikedIngredients: $dislikedIngredients
+      preferredCuisines: $preferredCuisines
+      defaultServings: $defaultServings
+      preferredEquipment: $preferredEquipment
+      updatedAt: $updatedAt
+    }
+  )
+}
+
+# Single-slot upsert: newest write wins per slot, mirroring the Firestore
+# deploy_status doc semantics behind /status.
+mutation UpsertDeployStatus(
+  $slot: String!
+  $verdict: String
+  $commitSha: String
+  $reason: String
+  $source: String
+  $recordedAt: Timestamp!
+  $active: Boolean
+  $recurringCount: Int
+  $signature: String
+  $runUrl: String
+) @auth(level: NO_ACCESS) {
+  deployStatus_upsert(
+    data: {
+      slot: $slot
+      verdict: $verdict
+      commitSha: $commitSha
+      reason: $reason
+      source: $source
+      recordedAt: $recordedAt
+      active: $active
+      recurringCount: $recurringCount
+      signature: $signature
+      runUrl: $runUrl
+    }
+  )
+}
+
+mutation InsertAgentToolLog(
+  $id: String!
+  $userId: String!
+  $sessionId: String
+  $tool: String!
+  $sanitizedArguments: Any!
+  $result: Any!
+  $latencyMs: Int!
+  $at: Timestamp!
+  $correlationId: String
+) @auth(level: NO_ACCESS) {
+  agentToolLog_insert(
+    data: {
+      id: $id
+      userId: $userId
+      sessionId: $sessionId
+      tool: $tool
+      sanitizedArguments: $sanitizedArguments
+      result: $result
+      latencyMs: $latencyMs
+      at: $at
+      correlationId: $correlationId
+    }
+  )
+}
+
+# Idempotency markers join the session transaction via response binding so the
+# transition and marker commit together (PR #58 invariant).
+mutation UpsertCorrelationMarker(
+  $key: String!
+  $rawId: String!
+  $legacyRawId: String
+  $markedAt: Timestamp!
+) @auth(level: NO_ACCESS) {
+  correlationMarker_upsert(
+    data: {
+      key: $key
+      rawId: $rawId
+      legacyRawId: $legacyRawId
+      markedAt: $markedAt
+    }
+  )
+}
+
+mutation DeleteCorrelationMarker($key: String!) @auth(level: NO_ACCESS) {
+  correlationMarker_delete(first: { where: { key: { eq: $key } } })
 }

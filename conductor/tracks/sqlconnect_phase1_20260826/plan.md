@@ -15,11 +15,11 @@
 
 ## Phase 2: Schema and operations
 
-- [ ] Task 2.1: Write `schema/schema.gql` porting all 11 tables and 8 enums from the scope doc, keeping `String!` keys and `userId` indexes
-- [ ] Task 2.2: Write `connector/queries.gql` and `connector/mutations.gql` per the spec (NO_ACCESS auth, upserts, the version-guarded session `@transaction`, timer-rebase `@transaction`)
-- [ ] Task 2.3: Run `npx -y firebase-tools@latest dataconnect:compile` until it exits 0 with no errors
-- [ ] Task 2.4: Review the generated schema in `.dataconnect/schema/main/` and reconcile any drift with the scope doc
-- [ ] Task 2.5: Conductor - User Manual Verification 'Schema and operations'
+- [x] Task 2.1: Write `schema/schema.gql` porting all 11 tables and 8 enums from the scope doc, keeping `String!` keys and `userId` indexes
+- [x] Task 2.2: Write `connector/queries.gql` and `connector/mutations.gql` per the spec (NO_ACCESS auth, upserts, the version-guarded session `@transaction`, timer-rebase `@transaction`)
+- [x] Task 2.3: Run `npx -y firebase-tools@latest dataconnect:compile` until it exits 0 with no errors
+- [x] Task 2.4: Review the generated schema in `.dataconnect/schema/main/` and reconcile any drift with the scope doc
+- [x] Task 2.5: Conductor - User Manual Verification 'Schema and operations' (see `phase-2-verification.md`)
 
 ### Phase 2 verification
 
@@ -29,9 +29,9 @@
 
 ## Phase 3: Emulator proof
 
-- [ ] Task 3.1: Boot the Data Connect emulator (`emulators:start --only dataconnect`) with the local PostgreSQL instance accepting connections
-- [ ] Task 3.2: Run the smoke: insert a `Recipe` with a JSONB `ingredients` payload, read it back by id, upsert a `DietaryProfile`, and exercise the version-guarded session update plus a marker join
-- [ ] Task 3.3: Record the smoke output and any schema porting notes in `phase-3-verification.md`
+- [x] Task 3.1: Boot the Data Connect emulator (`emulators:start --only dataconnect`) with the local PostgreSQL instance accepting connections
+- [x] Task 3.2: Run the smoke: insert a `Recipe` with a JSONB `ingredients` payload, read it back by id, upsert a `DietaryProfile`, and exercise the version-guarded session update plus a marker join
+- [x] Task 3.3: Record the smoke output and any schema porting notes in `phase-3-verification.md`
 - [ ] Task 3.4: Run `npm run check` to confirm no application regression, then land Phases 2-3 through the branch + PR path (Phase 1's scaffold and track docs land first via the initial docs PR)
 - [ ] Task 3.5: Conductor - User Manual Verification 'Emulator proof'
 
