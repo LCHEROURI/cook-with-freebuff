@@ -346,14 +346,14 @@ mutation InsertCookingTimer(
 mutation UpdateCookingTimer(
   $id: String!
   $status: TimerStatus
-  $endedAt: Timestamp
+  $completedAt: Timestamp
   $endsAt: Timestamp
 ) @auth(level: NO_ACCESS) {
   cookingTimer_update(
     id: $id,
     data: {
       status: $status
-      completedAt: $endedAt
+      completedAt: $completedAt
       endsAt: $endsAt
     }
   )
