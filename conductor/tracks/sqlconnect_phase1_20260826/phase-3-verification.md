@@ -1,6 +1,6 @@
 # Phase 3 Verification: Emulator proof
 
-Status: In progress (Tasks 3.1-3.3 complete; 3.4 and 3.5 pending).
+Status: Complete (Tasks 3.1-3.5 done).
 Date: 2026-08-27.
 
 ## Task 3.1 — emulator boot
@@ -98,17 +98,24 @@ beyond the Phase 2 doc:
   defect above); it is validated by `dataconnect:compile` and runs on Cloud
   SQL in production.
 
-## Remaining (Tasks 3.4, 3.5)
+## Tasks 3.4 and 3.5 — landing and manual verification
 
-- Task 3.4: `npm run check` to confirm no application regression, then land
-  Phases 2-3 through the branch + PR path.
-- Task 3.5: Conductor user manual verification.
+- Task 3.4: `npm run check` green (131 files, 1725 tests) with no application
+  source files changed; Phases 2-3 landed through the branch + PR path
+  (schema/operations + verification docs via #184, concurrency contract test
+  via #185).
+- Task 3.5: Conductor user manual verification — this file records the emulator
+  smoke output above (recipe insert/read, dietary-profile upsert, the
+  version-guarded session update with its stale-version abort, the marker
+  join, and the documented native-SQL rebase skip), the gate is green, and
+  the track registry/metadata now report completion.
 
 ## Phase 3 verification checklist
 
 - Emulator smoke output recorded with recipe/dietary-profile/session results.
   Confirmed (20/21 above, rebase documented-skip with the emulator defect
   recorded).
-- `npm run check` green; no application source files changed. Pending (3.4).
-- Track metadata and registry reflect completion. Partially updated (3.1-3.3
-  ticked; completion follows the landing).
+- `npm run check` green; no application source files changed. Confirmed
+  (Task 3.4, via #184/#185).
+- Track metadata and registry reflect completion. Confirmed (Tasks 3.1-3.5
+  ticked, track marked done).
