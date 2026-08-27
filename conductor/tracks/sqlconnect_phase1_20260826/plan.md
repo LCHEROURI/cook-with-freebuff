@@ -1,4 +1,4 @@
-# Plan: sqlconnect_phase1_20260826 — [~] In progress
+# Plan: sqlconnect_phase1_20260826 — [x] Done
 
 ## Phase 1: Provision the service
 
@@ -33,7 +33,7 @@
 - [x] Task 3.2: Run the smoke: insert a `Recipe` with a JSONB `ingredients` payload, read it back by id, upsert a `DietaryProfile`, and exercise the version-guarded session update plus a marker join
 - [x] Task 3.3: Record the smoke output and any schema porting notes in `phase-3-verification.md`
 - [x] Task 3.4: Run `npm run check` to confirm no application regression, then land Phases 2-3 through the branch + PR path (Phase 1's scaffold and track docs land first via the initial docs PR)
-- [ ] Task 3.5: Conductor - User Manual Verification 'Emulator proof'
+- [x] Task 3.5: Conductor - User Manual Verification 'Emulator proof' (see `phase-3-verification.md`)
 
 ### Phase 3 verification
 
