@@ -96,8 +96,8 @@ schema carries `Float`, matching the emulator's `double precision`.
 
 - `dataconnect:compile` exits 0. Confirmed.
 - Generated schema shows all 11 tables and the transaction/check wiring.
-  Confirmed (`UpdateSession` @transaction + @check, `RebaseTimers`
-  @transaction, emulator-created tables listed above).
+  Confirmed (`UpdateSession` @transaction + @check, emulator-created tables
+  listed above; `RebaseTimers` was later rewritten per correction 1 below).
 - The scope doc and the schema port agree on every table and enum. Confirmed
   after the Float-quantity reconciliation in 0005.
 
