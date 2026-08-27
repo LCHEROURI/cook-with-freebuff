@@ -176,6 +176,7 @@ mutation DeleteCookingSession($id: String!) @auth(level: NO_ACCESS) {
 mutation UpdateSession(
   $id: String!
   $expectedVersion: Int!
+  $recipeId: String
   $status: SessionStatus
   $currentPhase: SessionPhase
   $currentPrepStepIndex: Int
@@ -202,6 +203,7 @@ mutation UpdateSession(
     },
     data: {
       version_update: { inc: 1 }
+      recipeId: $recipeId
       status: $status
       currentPhase: $currentPhase
       currentPrepStepIndex: $currentPrepStepIndex
@@ -229,9 +231,17 @@ mutation UpdateSession(
 # $clearMarkerKey for the rollback clear. When there is nothing to clear, the
 # repository passes the reserved empty key "" — a delete that matches no row
 # is a no-op, so the step stays harmless.
+#
+# A correlated createSession marks TWO ids in one transaction (the derived
+# `idle-><cid>` transition id plus the original request id), so the sibling
+# mutation UpdateSessionWithTwoMarkers below carries a second marker upsert
+# step for exactly that case. (Upserting the SAME key twice in one transaction
+# is NOT harmless here: the emulator aborts the duplicate, verified 2026-08-27,
+# so single-mark transitions must use this one-slot mutation.)
 mutation UpdateSessionWithMarker(
   $id: String!
   $expectedVersion: Int!
+  $recipeId: String
   $status: SessionStatus
   $currentPhase: SessionPhase
   $currentPrepStepIndex: Int
@@ -262,6 +272,7 @@ mutation UpdateSessionWithMarker(
     },
     data: {
       version_update: { inc: 1 }
+      recipeId: $recipeId
       status: $status
       currentPhase: $currentPhase
       currentPrepStepIndex: $currentPrepStepIndex
@@ -284,6 +295,86 @@ mutation UpdateSessionWithMarker(
       rawId: $markerRawId
       legacyRawId: null
       markedAt: $markedAt
+    }
+  )
+  marker_clear: correlationMarker_delete(
+    first: { where: { key: { eq: $clearMarkerKey } } }
+  )
+}
+
+# The two-marker transition (correlated session creation): the derived
+# `idle-><cid>` id and the original request id both ride the SAME transaction
+# as the session update, so a retried create can never spawn a second session
+# (the Codex P1 behind the service's additionalMarks). The two keys must be
+# DISTINCT: upserting one key twice in one transaction aborts on the emulator.
+mutation UpdateSessionWithTwoMarkers(
+  $id: String!
+  $expectedVersion: Int!
+  $recipeId: String
+  $status: SessionStatus
+  $currentPhase: SessionPhase
+  $currentPrepStepIndex: Int
+  $currentCookingStepIndex: Int
+  $previousState: Any
+  $resumableState: Any
+  $activeTimerIds: [String!]
+  $availableIngredients: Any
+  $recoveryContext: Any
+  $pendingSubstitution: String
+  $pendingPantryItems: Any
+  $lastActivityAt: Timestamp
+  $pausedAt: Timestamp
+  $completedAt: Timestamp
+  $markerKeyA: String!
+  $markerRawIdA: String!
+  $markedAtA: Timestamp!
+  $markerKeyB: String!
+  $markerRawIdB: String!
+  $markedAtB: Timestamp!
+  $clearMarkerKey: String!
+) @auth(level: NO_ACCESS) @transaction {
+  session_ver: cookingSession_update(
+    first: {
+      where: {
+        _and: [
+          { id: { eq: $id } },
+          { version: { eq: $expectedVersion } }
+        ]
+      }
+    },
+    data: {
+      version_update: { inc: 1 }
+      recipeId: $recipeId
+      status: $status
+      currentPhase: $currentPhase
+      currentPrepStepIndex: $currentPrepStepIndex
+      currentCookingStepIndex: $currentCookingStepIndex
+      previousState: $previousState
+      resumableState: $resumableState
+      activeTimerIds: $activeTimerIds
+      availableIngredients: $availableIngredients
+      recoveryContext: $recoveryContext
+      pendingSubstitution: $pendingSubstitution
+      pendingPantryItems: $pendingPantryItems
+      lastActivityAt: $lastActivityAt
+      pausedAt: $pausedAt
+      completedAt: $completedAt
+    }
+  ) @check(expr: "this != null", message: "Session version conflict or missing")
+  marker_write_a: correlationMarker_upsert(
+    data: {
+      key: $markerKeyA
+      rawId: $markerRawIdA
+      legacyRawId: null
+      markedAt: $markedAtA
+    }
+  )
+  marker_write_b: correlationMarker_upsert(
+    data: {
+      key: $markerKeyB
+      rawId: $markerRawIdB
+      legacyRawId: null
+      markedAt: $markedAtB
     }
   )
   marker_clear: correlationMarker_delete(

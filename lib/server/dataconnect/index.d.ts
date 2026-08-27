@@ -685,6 +685,7 @@ export interface UpdateSessionData {
 export interface UpdateSessionVariables {
   id: string;
   expectedVersion: number;
+  recipeId?: string | null;
   status?: SessionStatus | null;
   currentPhase?: SessionPhase | null;
   currentPrepStepIndex?: number | null;
@@ -710,6 +711,7 @@ export interface UpdateSessionWithMarkerData {
 export interface UpdateSessionWithMarkerVariables {
   id: string;
   expectedVersion: number;
+  recipeId?: string | null;
   status?: SessionStatus | null;
   currentPhase?: SessionPhase | null;
   currentPrepStepIndex?: number | null;
@@ -727,6 +729,40 @@ export interface UpdateSessionWithMarkerVariables {
   markerKey: string;
   markerRawId: string;
   markedAt: TimestampString;
+  clearMarkerKey: string;
+}
+
+export interface UpdateSessionWithTwoMarkersData {
+  session_ver?: CookingSession_Key | null;
+  marker_write_a: CorrelationMarker_Key;
+  marker_write_b: CorrelationMarker_Key;
+  marker_clear?: CorrelationMarker_Key | null;
+}
+
+export interface UpdateSessionWithTwoMarkersVariables {
+  id: string;
+  expectedVersion: number;
+  recipeId?: string | null;
+  status?: SessionStatus | null;
+  currentPhase?: SessionPhase | null;
+  currentPrepStepIndex?: number | null;
+  currentCookingStepIndex?: number | null;
+  previousState?: unknown | null;
+  resumableState?: unknown | null;
+  activeTimerIds?: string[] | null;
+  availableIngredients?: unknown | null;
+  recoveryContext?: unknown | null;
+  pendingSubstitution?: string | null;
+  pendingPantryItems?: unknown | null;
+  lastActivityAt?: TimestampString | null;
+  pausedAt?: TimestampString | null;
+  completedAt?: TimestampString | null;
+  markerKeyA: string;
+  markerRawIdA: string;
+  markedAtA: TimestampString;
+  markerKeyB: string;
+  markerRawIdB: string;
+  markedAtB: TimestampString;
   clearMarkerKey: string;
 }
 
@@ -858,6 +894,11 @@ export function updateSession(vars: UpdateSessionVariables, options?: OperationO
 export function updateSessionWithMarker(dc: DataConnect, vars: UpdateSessionWithMarkerVariables, options?: OperationOptions): Promise<ExecuteOperationResponse<UpdateSessionWithMarkerData>>;
 /** Generated Node Admin SDK operation action function for the 'UpdateSessionWithMarker' Mutation. Allow users to pass in custom DataConnect instances. */
 export function updateSessionWithMarker(vars: UpdateSessionWithMarkerVariables, options?: OperationOptions): Promise<ExecuteOperationResponse<UpdateSessionWithMarkerData>>;
+
+/** Generated Node Admin SDK operation action function for the 'UpdateSessionWithTwoMarkers' Mutation. Allow users to execute without passing in DataConnect. */
+export function updateSessionWithTwoMarkers(dc: DataConnect, vars: UpdateSessionWithTwoMarkersVariables, options?: OperationOptions): Promise<ExecuteOperationResponse<UpdateSessionWithTwoMarkersData>>;
+/** Generated Node Admin SDK operation action function for the 'UpdateSessionWithTwoMarkers' Mutation. Allow users to pass in custom DataConnect instances. */
+export function updateSessionWithTwoMarkers(vars: UpdateSessionWithTwoMarkersVariables, options?: OperationOptions): Promise<ExecuteOperationResponse<UpdateSessionWithTwoMarkersData>>;
 
 /** Generated Node Admin SDK operation action function for the 'InsertSessionEvent' Mutation. Allow users to execute without passing in DataConnect. */
 export function insertSessionEvent(dc: DataConnect, vars: InsertSessionEventVariables, options?: OperationOptions): Promise<ExecuteOperationResponse<InsertSessionEventData>>;

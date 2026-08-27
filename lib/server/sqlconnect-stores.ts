@@ -241,6 +241,7 @@ async function enforceImmutablesThenUpsert<T extends object, V>(args: {
 
 /** Session fields the connector's UpdateSession mutations accept. */
 const SESSION_UPDATABLE_FIELDS = [
+  'recipeId',
   'status',
   'currentPhase',
   'currentPrepStepIndex',
@@ -332,9 +333,9 @@ export const sqlconnectSessionStore: SessionStore = {
       ? (Array.isArray(marker.mark) ? marker.mark : [marker.mark])
       : [];
     const distinctMarks = [...new Set(marks)];
-    if (distinctMarks.length > 1) {
+    if (distinctMarks.length > 2) {
       throw new Error(
-        'updateSession supports at most one correlation marker per transition (the connector carries a single marker write)',
+        'updateSession supports at most two correlation markers per transition (the connector carries one- and two-marker mutations; the service marks at most the derived transition id and the request id)',
       );
     }
     if (marker?.clear && distinctMarks.length === 0) {
@@ -343,23 +344,29 @@ export const sqlconnectSessionStore: SessionStore = {
       );
     }
 
-    // lastActivityAt is stamped per update, exactly like the Firestore twin.
+    // The connector's update data writes ONLY the fields this partial carries:
+    // absent keys stay undefined (the SDK omits them from the request, and the
+    // emulator-verified semantics leave such columns untouched), while an
+    // explicit null clears the column. Coercing absent fields to null would
+    // clobber unrelated state on every small update.
     const updateVars = {
       id,
       expectedVersion,
+      recipeId: validatedPartial.recipeId,
       status: validatedPartial.status as unknown as dc.SessionStatus | undefined,
       currentPhase: validatedPartial.currentPhase as unknown as dc.SessionPhase | undefined,
       currentPrepStepIndex: validatedPartial.currentPrepStepIndex,
       currentCookingStepIndex: validatedPartial.currentCookingStepIndex,
-      previousState: validatedPartial.previousState ?? null,
-      resumableState: validatedPartial.resumableState ?? null,
-      activeTimerIds: validatedPartial.activeTimerIds ?? null,
-      availableIngredients: validatedPartial.availableIngredients ?? null,
-      recoveryContext: validatedPartial.recoveryContext ?? null,
-      pendingSubstitution: validatedPartial.pendingSubstitution ?? null,
-      pendingPantryItems: validatedPartial.pendingPantryItems ?? null,
-      pausedAt: isoOpt(validatedPartial.pausedAt) ?? null,
-      completedAt: isoOpt(validatedPartial.completedAt) ?? null,
+      previousState: validatedPartial.previousState,
+      resumableState: validatedPartial.resumableState,
+      activeTimerIds: validatedPartial.activeTimerIds,
+      availableIngredients: validatedPartial.availableIngredients,
+      recoveryContext: validatedPartial.recoveryContext,
+      pendingSubstitution: validatedPartial.pendingSubstitution,
+      pendingPantryItems: validatedPartial.pendingPantryItems,
+      pausedAt: isoOpt(validatedPartial.pausedAt),
+      completedAt: isoOpt(validatedPartial.completedAt),
+      // lastActivityAt is stamped per update, exactly like the Firestore twin.
       lastActivityAt: iso(now()),
     };
 
@@ -370,7 +377,28 @@ export const sqlconnectSessionStore: SessionStore = {
         `Session ${id} version conflict: expected ${expectedVersion}, got a concurrent update`,
       );
 
-    if (distinctMarks.length === 1) {
+    // Dispatch by distinct mark count; every variant commits the session
+    // update and its markers in ONE transaction. The two-marker variant
+    // exists because upserting the SAME key twice in one transaction aborts
+    // on the emulator (verified 2026-08-27) — the keys must be distinct.
+    const clearKey = marker?.clear ? markerKey(marker.clear) : '';
+    const conflictOrOk = (res: { data?: { session_ver?: unknown } | null }) => {
+      if (!res.data?.session_ver) throw conflict();
+    };
+    if (distinctMarks.length === 2) {
+      const [a, b] = distinctMarks;
+      const res = await dc.updateSessionWithTwoMarkers({
+        ...updateVars,
+        markerKeyA: markerKey(a),
+        markerRawIdA: a,
+        markedAtA: iso(now()),
+        markerKeyB: markerKey(b),
+        markerRawIdB: b,
+        markedAtB: iso(now()),
+        clearMarkerKey: clearKey,
+      });
+      conflictOrOk(res);
+    } else if (distinctMarks.length === 1) {
       const mark = distinctMarks[0];
       const res = await dc.updateSessionWithMarker({
         ...updateVars,
@@ -378,19 +406,24 @@ export const sqlconnectSessionStore: SessionStore = {
         markerRawId: mark,
         markedAt: iso(now()),
         // Empty key deletes no row (the connector's clear is a no-op for '').
-        clearMarkerKey: marker?.clear ? markerKey(marker.clear) : '',
+        clearMarkerKey: clearKey,
       });
-      if (!res.data?.session_ver) throw conflict();
+      conflictOrOk(res);
     } else {
       const res = await dc.updateSession(updateVars);
-      if (!res.data?.session_ver) throw conflict();
+      conflictOrOk(res);
     }
 
     // Same shape the Firestore transaction returns: the merged row this
     // update produced (the DB bumps version and took our lastActivityAt).
+    // Undefined-valued keys from the strict partial are stripped so they
+    // cannot shadow the current row's values in the merged result.
+    const applied = Object.fromEntries(
+      Object.entries(validatedPartial).filter(([, v]) => v !== undefined),
+    ) as Partial<CookingSession>;
     return {
       ...current,
-      ...validatedPartial,
+      ...applied,
       version: expectedVersion + 1,
       lastActivityAt: now(),
     } as CookingSession;
@@ -485,8 +518,11 @@ export const sqlconnectTimerStore: TimerStore = {
     await dc.updateCookingTimer({
       id,
       status: parsedPartial.status as unknown as dc.TimerStatus | undefined,
-      completedAt: isoOpt(parsedPartial.completedAt) ?? null,
-      endsAt: isoOpt(parsedPartial.endsAt) ?? null,
+      // Absent fields stay undefined (omitted from the request, so the
+      // column keeps its value); an explicit null clears. Coercing absent
+      // fields to null would reset endsAt on every completion.
+      completedAt: isoOpt(parsedPartial.completedAt),
+      endsAt: isoOpt(parsedPartial.endsAt),
     });
   },
 

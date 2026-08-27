@@ -26,6 +26,7 @@ vi.mock('./dataconnect', () => ({
   getCorrelationMarker: vi.fn(),
   upsertCorrelationMarker: vi.fn(),
   deleteCorrelationMarker: vi.fn(),
+  updateSessionWithTwoMarkers: vi.fn(),
   insertCookingTimer: vi.fn(),
   getCookingTimer: vi.fn(),
   updateCookingTimer: vi.fn(),
@@ -240,21 +241,38 @@ describe('sqlconnectSessionStore.updateSession — concurrency contract', () => 
     const updated = await sqlconnectSessionStore.updateSession('s1', {
       status: 'PAUSED',
       pausedAt: T0 + 5,
-    }, 2);
-
-    expect(sdk.updateSessionWithMarker).not.toHaveBeenCalled();
-    const vars = vi.mocked(sdk.updateSession).mock.calls[0][0] as unknown as Record<
-  string,
-  unknown
->;
+    }, 2);    expect(sdk.updateSessionWithMarker).not.toHaveBeenCalled();
+    const vars = vi.mocked(sdk.updateSession).mock.calls[0][0] as unknown as Record<string, unknown>;
     expect(vars.expectedVersion).toBe(2);
     expect(vars.status).toBe('PAUSED');
     expect(vars.pausedAt).toBe(iso(T0 + 5));
     expect(typeof vars.lastActivityAt).toBe('string');
+    // Fields the partial did not carry are OMITTED (never coerced to null):
+    // the emulator-verified contract is that absent update vars leave their
+    // columns untouched, so a one-field update cannot clobber the row.
+    expect(vars.previousState).toBeUndefined();
+    expect(vars.resumableState).toBeUndefined();
+    expect(vars.recipeId).toBeUndefined();
+    expect(vars.availableIngredients).toBeUndefined();
     // The returned row is the merged state this update produced.
     expect(updated.version).toBe(3);
     expect(updated.status).toBe('PAUSED');
     expect(updated.pausedAt).toBe(T0 + 5);
+  });
+
+  it('persists recipeId when the partial attaches one (guided cooking attach)', async () => {
+    vi.mocked(sdk.getCookingSession).mockResolvedValue(
+      key({ cookingSession: sessionRow() }) as never,
+    );
+    vi.mocked(sdk.updateSession).mockResolvedValue(
+      key({ session_ver: { id: 's1' } }) as never,
+    );
+    const updated = await sqlconnectSessionStore.updateSession('s1', { recipeId: 'r-attached' }, 2);
+    const vars = vi.mocked(sdk.updateSession).mock.calls[0][0] as unknown as Record<string, unknown>;
+    expect(vars.recipeId).toBe('r-attached');
+    expect(vars.status).toBeUndefined();
+    expect(updated.recipeId).toBe('r-attached');
+    expect(updated.version).toBe(3);
   });
 
   it('rides the marker in the SAME mutation, base64url keyed, no-op clear key', async () => {
@@ -278,6 +296,27 @@ describe('sqlconnectSessionStore.updateSession — concurrency contract', () => 
     expect(vars.markerRawId).toBe('pause-1');
     expect(vars.clearMarkerKey).toBe('');
     expect(sdk.updateSession).not.toHaveBeenCalled();
+    expect(sdk.updateSessionWithTwoMarkers).not.toHaveBeenCalled();
+  });
+
+  it('rides TWO distinct markers in one transaction (the correlated create)', async () => {
+    vi.mocked(sdk.getCookingSession).mockResolvedValue(
+      key({ cookingSession: sessionRow() }) as never,
+    );
+    vi.mocked(sdk.updateSessionWithTwoMarkers).mockResolvedValue(
+      key({ session_ver: { id: 's1' } }) as never,
+    );
+    await sqlconnectSessionStore.updateSession('s1', {}, 2, {
+      mark: ['idle->cid-1', 'cid-1'],
+    });
+    const vars = vi.mocked(sdk.updateSessionWithTwoMarkers).mock.calls[0][0] as unknown as Record<
+      string,
+      unknown
+    >;
+    expect(vars.markerKeyA).toBe(markerKey('idle->cid-1'));
+    expect(vars.markerKeyB).toBe(markerKey('cid-1'));
+    expect(sdk.updateSession).not.toHaveBeenCalled();
+    expect(sdk.updateSessionWithMarker).not.toHaveBeenCalled();
   });
 
   it('carries the clear key through the same transaction when a marker clears', async () => {
@@ -308,15 +347,17 @@ describe('sqlconnectSessionStore.updateSession — concurrency contract', () => 
     ).rejects.toThrow(/version conflict/i);
   });
 
-  it('rejects more than one distinct marker (the connector carries one write)', async () => {
+  it('rejects more than two distinct markers (the connector carries two writes)', async () => {
     vi.mocked(sdk.getCookingSession).mockResolvedValue(
       key({ cookingSession: sessionRow() }) as never,
     );
     await expect(
       sqlconnectSessionStore.updateSession('s1', {}, 2, {
-        mark: ['a', 'b'],
+        mark: ['a', 'b', 'c'],
       }),
-    ).rejects.toThrow(/at most one correlation marker/);
+    ).rejects.toThrow(/at most two correlation markers/);
+    expect(sdk.updateSessionWithMarker).not.toHaveBeenCalled();
+    expect(sdk.updateSessionWithTwoMarkers).not.toHaveBeenCalled();
   });
 
   it('rejects clear-only transitions (not expressible in the connector)', async () => {
@@ -442,12 +483,18 @@ describe('sqlconnectTimerStore.updateTimer — write boundary', () => {
       status: 'COMPLETED',
       completedAt: T0 + 61_000,
     });
-    expect(vi.mocked(sdk.updateCookingTimer).mock.calls[0][0]).toEqual({
+    const vars = vi.mocked(sdk.updateCookingTimer).mock.calls[0][0] as unknown as Record<
+      string,
+      unknown
+    >;
+    expect(vars).toEqual({
       id: 't1',
       status: 'COMPLETED',
       completedAt: iso(T0 + 61_000),
-      endsAt: null,
     });
+    // endsAt was not in the partial, so it is OMITTED (not nulled): the
+    // timer's real deadline must survive the completion write.
+    expect(vars.endsAt).toBeUndefined();
   });
 });
 
