@@ -33,8 +33,9 @@ the not yet adopted SQL Connect twin.
   (session update + correlation marker upsert/clear in one transaction). SQL Connect
   transaction steps are unconditional, so a null marker aborts the whole transaction;
   the empty-string clear key keeps the clear step a no-op. Both filter on `_and: [id, version]`
-  and carry a `@check("this != null")` conflict message the repository maps to the existing
-  version-conflict error.
+  and carry a `@check("this != null")` conflict message. The SQL Connect repository is not
+  written yet (the generated SDK is gitignored and the app still runs on Firestore); the
+  future repository must map that `@check` failure to the existing version-conflict error.
 - The timer rebase on resume is an atomic Native SQL `_execute` (`ends_at = ends_at +
   (offset_ms * interval '1 millisecond')`), not a GraphQL filtered update: the per-row
   shift needs `Timestamp_Duration`, which SQL Connect forbids as a variable. The emulator's
