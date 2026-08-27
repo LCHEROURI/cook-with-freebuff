@@ -182,6 +182,26 @@ jobs:
       - name: Run the emulator integration test (marker atomicity)
         run: npm run test:emulator
 
+      # The SQL Connect store twin's integration suite: drives the REAL
+      # generated SDK against a live Data Connect emulator, where transaction
+      # semantics and the @check version guard are enforced by the emulator
+      # itself. Boots and tears down its own emulator (PGLite downloads on
+      # first use); same push-time cadence as the Firestore suite above, so
+      # a connector regression is visible on the main push that caused it.
+      - name: Run the SQL Connect emulator suite (store twin)
+        run: |
+          npx -y firebase-tools@latest emulators:start --only dataconnect \
+            --project demo-cook-with-freebuff > /tmp/dc-emulator.log 2>&1 &
+          DC_PID=$!
+          for i in $(seq 1 60); do
+            if (echo > /dev/tcp/127.0.0.1/9399) 2>/dev/null; then break; fi
+            sleep 2
+          done
+          npm run test:sqlconnect
+          RC=$?
+          kill $DC_PID 2>/dev/null || true
+          exit $RC
+
       - name: Fail loudly if owner credentials are missing
         if: ${{ github.repository == 'LCHEROURI/cook-with-freebuff' && (env.NEXT_PUBLIC_FIREBASE_API_KEY == '' || env.FIREBASE_SERVICE_ACCOUNT == '' || env.APP_OWNER_UID == '') }}
         run: |
