@@ -1,52 +1,270 @@
-# Example schema for simple movie review app
+# cook-with-freebuff — Firebase SQL Connect schema
+#
+# Mirrors docs/specs/0005-sql-connect-migration-scope.md and, through it,
+# lib/domain/types.ts (the single source of truth). Every table keeps a
+# String! primary key preserving current Firestore string ids — no id
+# remapping. userId is indexed everywhere because every query filters on it.
+#
+# Scalar mapping used here:
+#   String  -> Postgres text (nullable unless !)
+#   Int     -> Postgres int (whole numbers only)
+#   Float   -> Postgres double (fractional-capable numbers: quantities, confidence)
+#   Timestamp -> Postgres timestamptz (EpochMs on the wire; repository converts)
+#   Any     -> Postgres jsonb (nested recipe/session bodies, event data, etc.)
 
-# User table is keyed by Firebase Auth UID.
-type User @table {
-  # `@default(expr: "auth.uid")` sets it to Firebase Auth UID during insert and upsert.
-  id: String! @default(expr: "auth.uid")
-  username: String! @col(dataType: "varchar(50)")
-  # The `user: User!` field in the Review table generates the following one-to-many query field.
-  #  reviews_on_user: [Review!]!
-  # The `Review` join table the following many-to-many query field.
-  #  movies_via_Review: [Movie!]!
+# ── Enums (copied value-for-value from lib/domain/types.ts) ──────────────────
+
+enum SessionPhase {
+  IDLE
+  COLLECTING_INGREDIENTS
+  CONFIRMING_INGREDIENTS
+  COLLECTING_REQUIREMENTS
+  GENERATING_RECIPE
+  VALIDATING_RECIPE
+  RECIPE_READY
+  PREP_GUIDANCE
+  COOKING_GUIDANCE
+  PLATING
+  WAITING_FOR_TIMER
+  PAUSED
+  SUBSTITUTION_REQUIRED
+  USER_CORRECTION
+  SAFETY_WARNING
+  COMPLETED
+  ERROR_RECOVERY
 }
 
-# Movie is keyed by a randomly generated UUID.
-type Movie @table {
-  # If you do not pass a 'key' to `@table`, Data Connect automatically adds the following 'id' column.
-  # Feel free to uncomment and customize it.
-  #  id: UUID! @default(expr: "uuidV4()")
+enum SessionStatus {
+  ACTIVE
+  PAUSED
+  COMPLETED
+  ERROR_RECOVERY
+  ABANDONED
+}
+
+enum SessionEventType {
+  SESSION_STARTED
+  INGREDIENT_ADDED
+  INGREDIENT_REMOVED
+  INGREDIENT_CORRECTED
+  RECIPE_GENERATION_STARTED
+  RECIPE_GENERATED
+  RECIPE_VALIDATED
+  RECIPE_VALIDATION_FAILED
+  STEP_STARTED
+  STEP_COMPLETED
+  STEP_REPEATED
+  STEP_REVERSED
+  SESSION_PAUSED
+  SESSION_RESUMED
+  TIMER_STARTED
+  TIMER_COMPLETED
+  TIMER_CANCELLED
+  SUBSTITUTION_REQUESTED
+  SUBSTITUTION_APPLIED
+  SAFETY_WARNING_TRIGGERED
+  PANTRY_ITEM_CONFIRMED
+  ERROR_OCCURRED
+  ERROR_RECOVERED
+  SESSION_COMPLETED
+  LEFTOVER_LOGGED
+  GROCERY_ITEM_ADDED
+  GROCERY_ITEM_REMOVED
+  GROCERY_ITEM_BOUGHT
+  PANTRY_ITEM_EXPIRED
+}
+
+enum TimerStatus {
+  RUNNING
+  COMPLETED
+  CANCELLED
+}
+
+enum PantryItemSource {
+  VOICE
+  MANUAL
+  RECIPE_USAGE
+  BARCODE
+  VISION
+  IMPORT
+}
+
+enum LeftoverStatus {
+  ACTIVE
+  CONSUMED
+}
+
+enum GroceryItemSource {
+  MANUAL
+  PANTRY_DEPLETION
+  EXPIRATION
+}
+
+enum GroceryItemStatus {
+  OPEN
+  BOUGHT
+  DISMISSED
+}
+
+# ── Tables ───────────────────────────────────────────────────────────────────
+
+type Recipe @table(key: "id") @index(fields: ["userId"]) {
+  id: String!
+  # userId is nullable: recipeSchema declares it optional and historical
+  # recipes were persisted without it (generation predates ownership).
+  userId: String
   title: String!
-  imageUrl: String!
-  genre: String
-}
-
-# MovieMetadata is a metadata attached to a Movie.
-# Movie <-> MovieMetadata is a one-to-one relationship
-type MovieMetadata @table {
-  # @unique ensures each Movie can only one MovieMetadata.
-  movie: Movie! @unique
-  # The movie field adds the following foreign key field. Feel free to uncomment and customize it.
-  #  movieId: UUID!
-  rating: Float
-  releaseYear: Int
   description: String
+  servings: Int!
+  estimatedPrepMinutes: Int!
+  estimatedCookMinutes: Int!
+  totalMinutes: Int!
+  # Nested recipe body — JSONB, see "JSONB vs normalized" in the scope doc.
+  ingredients: Any!
+  prepSteps: Any!
+  cookingSteps: Any!
+  equipment: [String!]!
+  dietaryTags: [String!]!
+  allergens: [String!]!
+  safetyNotes: [String!]!
+  proteinCategories: [String!]
+  preferences: Any
+  generatedAt: Timestamp!
+  updatedAt: Timestamp!
 }
 
-# Reviews is a join table between User and Movie.
-# It has a composite primary keys `userUid` and `movieId`.
-# A user can leave reviews for many movies. A movie can have reviews from many users.
-# User  <-> Review is a one-to-many relationship
-# Movie <-> Review is a one-to-many relationship
-# Movie <-> User is a many-to-many relationship
-type Review @table(name: "Reviews", key: ["movie", "user"]) {
-  user: User!
-  # The user field adds the following foreign key field. Feel free to uncomment and customize it.
-  #  userUid: String!
-  movie: Movie!
-  # The movie field adds the following foreign key field. Feel free to uncomment and customize it.
-  #  movieId: UUID!
-  rating: Int
-  reviewText: String
-  reviewDate: Date! @default(expr: "request.time")
+type CookingSession @table(key: "id") @index(fields: ["userId", "status", "lastActivityAt"]) {
+  id: String!
+  userId: String!
+  recipeId: String
+  status: SessionStatus!
+  currentPhase: SessionPhase!
+  currentPrepStepIndex: Int!
+  currentCookingStepIndex: Int!
+  previousState: Any
+  resumableState: Any
+  activeTimerIds: [String!]!
+  availableIngredients: Any!
+  recoveryContext: Any
+  pendingSubstitution: String
+  pendingPantryItems: Any
+  startedAt: Timestamp!
+  lastActivityAt: Timestamp!
+  pausedAt: Timestamp
+  completedAt: Timestamp
+  version: Int! # optimistic-concurrency guard
+}
+
+type CookingSessionEvent @table(key: "id") @index(fields: ["sessionId", "at"]) {
+  id: String!
+  sessionId: String!
+  userId: String!
+  type: SessionEventType!
+  data: Any!
+  at: Timestamp!
+  correlationId: String
+}
+
+type CookingTimer @table(key: "id") @index(fields: ["sessionId", "status"]) {
+  id: String!
+  userId: String!
+  sessionId: String!
+  label: String!
+  durationSeconds: Int!
+  startedAt: Timestamp!
+  endsAt: Timestamp!
+  status: TimerStatus!
+  stepId: String
+  completedAt: Timestamp
+}
+
+type PantryItem @table(key: "id") @index(fields: ["userId", "expirationDate"]) {
+  id: String!
+  userId: String!
+  name: String!
+  # Float, not Int: pantry quantities are fractional-capable (zod declares
+  # quantity as z.number(), and the agent parses "1/2 cup" as 0.5).
+  quantity: Float
+  unit: String
+  confidence: Float!
+  source: PantryItemSource!
+  lastConfirmedAt: Timestamp!
+  expirationDate: Timestamp
+  notes: String
+}
+
+type Leftover @table(key: "id") @index(fields: ["userId", "status"]) {
+  id: String!
+  userId: String!
+  recipeId: String
+  title: String!
+  servings: Int!
+  completedAt: Timestamp!
+  storedAt: Timestamp!
+  status: LeftoverStatus!
+  notes: String
+}
+
+type GroceryItem @table(key: "id") @index(fields: ["userId", "status"]) {
+  id: String!
+  userId: String!
+  name: String!
+  # Float, not Int: grocery quantities are fractional-capable (see PantryItem).
+  quantity: Float
+  unit: String
+  source: GroceryItemSource!
+  status: GroceryItemStatus!
+  pantryItemId: String
+  createdAt: Timestamp!
+  updatedAt: Timestamp!
+}
+
+type DietaryProfile @table(key: "userId") {
+  userId: String!
+  allergies: [String!]!
+  dietaryRestrictions: [String!]!
+  dislikedIngredients: [String!]!
+  preferredCuisines: [String!]!
+  defaultServings: Int
+  preferredEquipment: [String!]!
+  updatedAt: Timestamp!
+}
+
+type AgentToolLog @table(key: "id") @index(fields: ["userId", "at"]) {
+  id: String!
+  userId: String!
+  sessionId: String
+  tool: String!
+  sanitizedArguments: Any!
+  result: Any!
+  latencyMs: Int!
+  at: Timestamp!
+  correlationId: String
+}
+
+# Idempotency markers: the base64url key is deterministic, so it becomes the
+# primary key; the legacy raw-key namespace becomes a nullable unique column.
+type CorrelationMarker @table(key: "key") {
+  key: String! # base64url(correlationId)
+  rawId: String! # the original correlation id
+  legacyRawId: String @unique # non-null only for pre-encoding markers
+  markedAt: Timestamp!
+}
+
+# Single-slot deploy status: one row per slot (verify_live, last_external,
+# flake_streak). Mirrors the doc semantics of record-verify-status.mjs.
+type DeployStatus @table(key: "slot") {
+  slot: String! # 'verify_live' | 'last_external' | 'flake_streak'
+  verdict: String
+  commitSha: String
+  reason: String
+  source: String
+  recordedAt: Timestamp!
+  active: Boolean # flake_streak row only
+  recurringCount: Int # flake_streak row only
+  signature: String # flake_streak row only
+  # The streak weeks rendered by /status (status.route.ts reads `weeks` off the
+  # flake_streak doc: "2026-08-03 → 2026-08-17 · 3-week streak").
+  weeks: [String!]
+  runUrl: String
 }

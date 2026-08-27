@@ -4,16 +4,16 @@
   "type": "feature",
   "status": "in-progress",
   "created": "2026-08-26T18:40:00Z",
-  "updated": "2026-08-26T20:48:00Z",
-  "current_phase": 2,
-  "current_task": null,
+  "updated": "2026-08-27T17:20:00Z",
+  "current_phase": 3,
+  "current_task": 4,
   "phases": {
     "total": 3,
-    "completed": 1
+    "completed": 2
   },
   "tasks": {
     "total": 14,
-    "completed": 4
+    "completed": 12
   },
   "commits": [
     "f21ae74: docs(sqlconnect): add SQL Connect track and migration scope (0005)",
