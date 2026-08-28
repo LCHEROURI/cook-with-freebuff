@@ -115,10 +115,10 @@ export function useLiveDictation(options: UseLiveDictationOptions = {}) {
       // No tools: the model can never act on the spoken prompt — the user
       // reviews the transcribed text in the input before anything happens.
       tools: [],
-      // AUDIO, not TEXT: the constrained Live endpoint rejects TEXT modality
-      // (CLOSED(1007), proven against the live API) — the audio reply is
-      // never used because the session closes on the final transcript.
-      responseModalities: ['AUDIO'],
+      // Dictation needs transcription text, not a spoken model reply. Keeping
+      // the response text-only prevents the starter mic from waiting on an
+      // unused audio playback turn before the final transcript is delivered.
+      responseModalities: ['TEXT'],
     });
     clientRef.current = client;
 

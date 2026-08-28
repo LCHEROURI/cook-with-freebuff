@@ -56,15 +56,28 @@ export type ReadSource = 'primary' | 'secondary';
  * logged loudly (the backfill and the verification queries reconcile drift),
  * and the primary result is returned regardless.
  */
-async function bestEffort(store: string, op: string, run: () => Promise<unknown>): Promise<void> {
+async function bestEffort(
+  store: string,
+  op: string,
+  identity: Record<string, string>,
+  run: () => Promise<unknown>,
+): Promise<void> {
   try {
     await run();
   } catch (err) {
-    console.error(
-      `[dual-write] ${store}.${op}: SQL Connect secondary write failed — ` +
-        'Firestore remains authoritative; the backfill reconciles this row.',
-      err,
-    );
+    // Keep the primary path available, but emit a machine-readable drift
+    // record containing enough identity for the backfill to reconcile the
+    // exact row. Do not include the complete payload: recipes and profiles
+    // can contain user data, and logs are not a durable retry queue.
+    console.error('[dual-write] secondary write failed', {
+      event: 'sqlconnect_dual_write_drift',
+      store,
+      operation: op,
+      ...identity,
+      error: err instanceof Error ? err.message : String(err),
+      primary: 'firestore',
+      action: 'backfill_required',
+    });
   }
 }
 
@@ -118,17 +131,17 @@ export function dualTimerStore(
   return {
     createTimer: async (timer: CookingTimer) => {
       await primary.createTimer(timer);
-      await bestEffort('timers', 'createTimer', () => secondary.createTimer(timer));
+      await bestEffort('timers', 'createTimer', { id: timer.id, sessionId: timer.sessionId }, () => secondary.createTimer(timer));
     },
     getTimer: (id) => reads().getTimer(id),
     updateTimer: async (id, partial) => {
       await primary.updateTimer(id, partial);
-      await bestEffort('timers', 'updateTimer', () => secondary.updateTimer(id, partial));
+      await bestEffort('timers', 'updateTimer', { id }, () => secondary.updateTimer(id, partial));
     },
     listActiveTimers: (sessionId) => reads().listActiveTimers(sessionId),
     rebaseActiveTimers: async (sessionId, elapsedMs) => {
       await primary.rebaseActiveTimers(sessionId, elapsedMs);
-      await bestEffort('timers', 'rebaseActiveTimers', () =>
+      await bestEffort('timers', 'rebaseActiveTimers', { sessionId }, () =>
         secondary.rebaseActiveTimers(sessionId, elapsedMs),
       );
     },
@@ -139,7 +152,7 @@ export function dualLogStore(primary: LogStore, secondary: LogStore): LogStore {
   return {
     createLog: async (log: AgentToolLog) => {
       await primary.createLog(log);
-      await bestEffort('logs', 'createLog', () => secondary.createLog(log));
+      await bestEffort('logs', 'createLog', { id: log.id }, () => secondary.createLog(log));
     },
   };
 }
@@ -153,17 +166,17 @@ export function dualRecipeStore(
   return {
     createRecipe: async (recipe: Recipe) => {
       await primary.createRecipe(recipe);
-      await bestEffort('recipes', 'createRecipe', () => secondary.createRecipe(recipe));
+      await bestEffort('recipes', 'createRecipe', { id: recipe.id, ...(recipe.userId ? { userId: recipe.userId } : {}) }, () => secondary.createRecipe(recipe));
     },
     getRecipe: (id) => reads().getRecipe(id),
     updateRecipe: async (recipe: Recipe) => {
       await primary.updateRecipe(recipe);
-      await bestEffort('recipes', 'updateRecipe', () => secondary.updateRecipe(recipe));
+      await bestEffort('recipes', 'updateRecipe', { id: recipe.id, ...(recipe.userId ? { userId: recipe.userId } : {}) }, () => secondary.updateRecipe(recipe));
     },
     listRecipes: (userId) => reads().listRecipes(userId),
     deleteRecipe: async (id: string) => {
       await primary.deleteRecipe(id);
-      await bestEffort('recipes', 'deleteRecipe', () => secondary.deleteRecipe(id));
+      await bestEffort('recipes', 'deleteRecipe', { id }, () => secondary.deleteRecipe(id));
     },
   };
 }
@@ -179,11 +192,11 @@ export function dualPantryStore(
     getItem: (id) => reads().getItem(id),
     upsertItem: async (item: PantryItem) => {
       await primary.upsertItem(item);
-      await bestEffort('pantry', 'upsertItem', () => secondary.upsertItem(item));
+      await bestEffort('pantry', 'upsertItem', { id: item.id, userId: item.userId }, () => secondary.upsertItem(item));
     },
     deleteItem: async (id: string) => {
       await primary.deleteItem(id);
-      await bestEffort('pantry', 'deleteItem', () => secondary.deleteItem(id));
+      await bestEffort('pantry', 'deleteItem', { id }, () => secondary.deleteItem(id));
     },
   };
 }
@@ -198,7 +211,7 @@ export function dualDietaryProfileStore(
     getProfile: (userId) => reads().getProfile(userId),
     upsertProfile: async (profile: DietaryProfile) => {
       await primary.upsertProfile(profile);
-      await bestEffort('dietaryProfiles', 'upsertProfile', () =>
+      await bestEffort('dietaryProfiles', 'upsertProfile', { userId: profile.userId }, () =>
         secondary.upsertProfile(profile),
       );
     },
@@ -214,13 +227,13 @@ export function dualLeftoverStore(
   return {
     createLeftover: async (leftover: Leftover) => {
       await primary.createLeftover(leftover);
-      await bestEffort('leftovers', 'createLeftover', () => secondary.createLeftover(leftover));
+      await bestEffort('leftovers', 'createLeftover', { id: leftover.id, userId: leftover.userId }, () => secondary.createLeftover(leftover));
     },
     getLeftover: (id) => reads().getLeftover(id),
     listLeftovers: (userId) => reads().listLeftovers(userId),
     updateLeftover: async (id, partial) => {
       await primary.updateLeftover(id, partial);
-      await bestEffort('leftovers', 'updateLeftover', () =>
+      await bestEffort('leftovers', 'updateLeftover', { id }, () =>
         secondary.updateLeftover(id, partial),
       );
     },
@@ -236,19 +249,19 @@ export function dualGroceryStore(
   return {
     createGroceryItem: async (item: GroceryItem) => {
       await primary.createGroceryItem(item);
-      await bestEffort('grocery', 'createGroceryItem', () => secondary.createGroceryItem(item));
+      await bestEffort('grocery', 'createGroceryItem', { id: item.id, userId: item.userId }, () => secondary.createGroceryItem(item));
     },
     getGroceryItem: (id) => reads().getGroceryItem(id),
     listGroceryItems: (userId) => reads().listGroceryItems(userId),
     updateGroceryItem: async (id, partial) => {
       await primary.updateGroceryItem(id, partial);
-      await bestEffort('grocery', 'updateGroceryItem', () =>
+      await bestEffort('grocery', 'updateGroceryItem', { id }, () =>
         secondary.updateGroceryItem(id, partial),
       );
     },
     deleteGroceryItem: async (id: string) => {
       await primary.deleteGroceryItem(id);
-      await bestEffort('grocery', 'deleteGroceryItem', () => secondary.deleteGroceryItem(id));
+      await bestEffort('grocery', 'deleteGroceryItem', { id }, () => secondary.deleteGroceryItem(id));
     },
   };
 }
@@ -275,7 +288,7 @@ export function dualSessionCore(
     getSession: (id) => reads().getSession(id),
     createSession: async (session: CookingSession) => {
       await primary.createSession(session);
-      await bestEffort('sessions', 'createSession', () => secondary.createSession(session));
+      await bestEffort('sessions', 'createSession', { id: session.id, userId: session.userId }, () => secondary.createSession(session));
     },
     updateSession: async (
       id: string,
@@ -284,7 +297,7 @@ export function dualSessionCore(
       marker?: { mark?: string | string[]; clear?: string },
     ): Promise<CookingSession> => {
       const updated = await primary.updateSession(id, partial, expectedVersion, marker);
-      await bestEffort('sessions', 'updateSession', () =>
+      await bestEffort('sessions', 'updateSession', { id }, () =>
         secondary.updateSession(id, partial, expectedVersion, marker),
       );
       return updated;
@@ -295,13 +308,13 @@ export function dualSessionCore(
     hasCorrelationMarker: (id) => reads().hasCorrelationMarker(id),
     markCorrelationMarker: async (id) => {
       await primary.markCorrelationMarker(id);
-      await bestEffort('sessions', 'markCorrelationMarker', () =>
+      await bestEffort('sessions', 'markCorrelationMarker', { markerId: id }, () =>
         secondary.markCorrelationMarker(id),
       );
     },
     clearCorrelationMarker: async (id) => {
       await primary.clearCorrelationMarker(id);
-      await bestEffort('sessions', 'clearCorrelationMarker', () =>
+      await bestEffort('sessions', 'clearCorrelationMarker', { markerId: id }, () =>
         secondary.clearCorrelationMarker(id),
       );
     },
@@ -331,7 +344,7 @@ export function dualEventStore(
     getActiveSession: (userId) => primary.getActiveSession(userId),
     createEvent: async (event: CookingSessionEvent) => {
       await primary.createEvent(event);
-      await bestEffort('events', 'createEvent', () => secondary.createEvent(event));
+      await bestEffort('events', 'createEvent', { id: event.id, sessionId: event.sessionId }, () => secondary.createEvent(event));
     },
     listSessionEvents: (sessionId) => reads().listSessionEvents(sessionId),
     hasCorrelationMarker: (id) => primary.hasCorrelationMarker(id),

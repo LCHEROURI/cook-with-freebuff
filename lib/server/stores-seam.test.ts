@@ -217,7 +217,16 @@ describe('the cutover seam (STORES_DUAL_WRITE / STORES_ON_SQLCONNECT)', () => {
     const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
     const ctx = stores.buildProductionContext('u1');
     await expect(ctx.recipeStore!.createRecipe(RECIPE)).resolves.toBeUndefined();
-    expect(errSpy).toHaveBeenCalledWith(expect.stringContaining('recipes.createRecipe'), expect.any(Error));
+    expect(errSpy).toHaveBeenCalledWith(
+      '[dual-write] secondary write failed',
+      expect.objectContaining({
+        event: 'sqlconnect_dual_write_drift',
+        store: 'recipes',
+        operation: 'createRecipe',
+        id: RECIPE.id,
+        action: 'backfill_required',
+      }),
+    );
     errSpy.mockRestore();
   });
 
