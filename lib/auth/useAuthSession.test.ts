@@ -69,6 +69,10 @@ function makeAuth() {
 let listener: ((user: unknown) => void) | null = null;
 let authHolder: ReturnType<typeof makeAuth> | null = null;
 
+afterEach(() => {
+  vi.useRealTimers();
+});
+
 beforeEach(() => {
   listener = null;
   authHolder = makeAuth();
@@ -79,9 +83,26 @@ beforeEach(() => {
       listener = null;
     };
   });
+  mockOnAuthStateChanged.mockClear();
   mockGetIdToken.mockClear();
   mockSignInWithGoogle.mockReset();
   window.sessionStorage.clear();
+});
+
+describe('useAuthSession · initialization timeout', () => {
+  it('surfaces an actionable error when Firebase never settles', async () => {
+    vi.useFakeTimers();
+    const { result, unmount } = renderHook(() => useAuthSession());
+
+    expect(result.current.state).toBe('loading');
+    await act(async () => {
+      vi.advanceTimersByTime(10000);
+    });
+
+    expect(result.current.state).toBe('error');
+    expect(result.current.error).toContain('taking too long');
+    unmount();
+  });
 });
 
 describe('useAuthSession · getToken awaits the auth settle', () => {
