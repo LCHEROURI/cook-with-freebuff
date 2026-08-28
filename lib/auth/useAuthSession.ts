@@ -141,7 +141,6 @@ export function useAuthSession(): UseAuthSessionResult {
       timedOut = true;
       setState('error');
       setError('Sign in is taking too long. Check your connection and try again.');
-      settleRef.current?.resolve();
     }, AUTH_SETTLE_TIMEOUT_MS);
     if (!auth) {
       if (settled) return;
@@ -155,7 +154,6 @@ export function useAuthSession(): UseAuthSessionResult {
     const unsub = onAuthStateChanged(
       auth,
       (u) => {
-        if (settled) return;
         settled = true;
         clearTimeout(settleTimer);
         setUser(u);

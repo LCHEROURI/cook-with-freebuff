@@ -166,6 +166,28 @@ describe('useAuthSession · getToken awaits the auth settle', () => {
     expect(mockGetIdToken).not.toHaveBeenCalled();
   });
 
+  it('continues tracking sign in and sign out changes after initial auth settles', async () => {
+    const { result } = renderHook(() => useAuthSession());
+    authHolder!.setUser(null);
+    await act(async () => {
+      listener?.(null);
+    });
+    expect(result.current.state).toBe('ready');
+    expect(result.current.user).toBeNull();
+
+    authHolder!.setUser({ uid: 'signed-in' });
+    await act(async () => {
+      listener?.({ uid: 'signed-in' });
+    });
+    expect(result.current.user).toEqual({ uid: 'signed-in' });
+
+    authHolder!.setUser(null);
+    await act(async () => {
+      listener?.(null);
+    });
+    expect(result.current.user).toBeNull();
+  });
+
   it('resolves quickly for later calls after the settle already happened', async () => {
     const { result } = renderHook(() => useAuthSession());
     authHolder!.setUser({ uid: 'u1' });
