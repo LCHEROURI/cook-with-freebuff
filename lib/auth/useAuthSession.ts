@@ -135,9 +135,10 @@ export function useAuthSession(): UseAuthSessionResult {
     const auth = getClientAuth();
     authRef.current = auth;
     let settled = false;
+    let timedOut = false;
     const settleTimer = setTimeout(() => {
       if (settled) return;
-      settled = true;
+      timedOut = true;
       setState('error');
       setError('Sign in is taking too long. Check your connection and try again.');
       settleRef.current?.resolve();
@@ -159,6 +160,7 @@ export function useAuthSession(): UseAuthSessionResult {
         clearTimeout(settleTimer);
         setUser(u);
         setState('ready');
+        if (timedOut) setError(null);
         if (u) {
           // A successful sign-in clears the one-shot reload marker + hint so a
           // later /login visit never shows a stale retry message.

@@ -103,6 +103,26 @@ describe('useAuthSession · initialization timeout', () => {
     expect(result.current.error).toContain('taking too long');
     unmount();
   });
+
+  it('accepts a successful Firebase callback that arrives after the timeout', async () => {
+    vi.useFakeTimers();
+    const { result, unmount } = renderHook(() => useAuthSession());
+
+    await act(async () => {
+      vi.advanceTimersByTime(10000);
+    });
+    expect(result.current.state).toBe('error');
+
+    authHolder!.setUser({ uid: 'late-user' });
+    await act(async () => {
+      listener?.({ uid: 'late-user' });
+    });
+
+    expect(result.current.state).toBe('ready');
+    expect(result.current.user).toEqual({ uid: 'late-user' });
+    expect(result.current.error).toBeNull();
+    unmount();
+  });
 });
 
 describe('useAuthSession · getToken awaits the auth settle', () => {
