@@ -123,9 +123,10 @@ describe('useLiveDictation', () => {
     // The cardinal rule: the dictation session exposes NO tools, so the model
     // can never act on a spoken prompt before the user reviews it.
     expect(Array.isArray(opts.tools) ? opts.tools.length : (opts.tools as readonly unknown[])?.length ?? 0).toBe(0);
-    // Dictation should not wait for a spoken model reply. It needs the text
-    // transcription channel so the final utterance can populate the starter.
-    expect(opts.responseModalities).toEqual(['TEXT']);
+    // The constrained native-audio Live endpoint rejects TEXT modality.
+    // The audio reply is unused because the session closes on the final
+    // input transcription.
+    expect(opts.responseModalities).toEqual(['AUDIO']);
   });
 
   it('goes live on CONNECTED and starts mic capture', async () => {

@@ -69,7 +69,7 @@ async function bestEffort(
     // record containing enough identity for the backfill to reconcile the
     // exact row. Do not include the complete payload: recipes and profiles
     // can contain user data, and logs are not a durable retry queue.
-    console.error('[dual-write] secondary write failed', {
+    console.error(JSON.stringify({
       event: 'sqlconnect_dual_write_drift',
       store,
       operation: op,
@@ -77,7 +77,7 @@ async function bestEffort(
       error: err instanceof Error ? err.message : String(err),
       primary: 'firestore',
       action: 'backfill_required',
-    });
+    }));
   }
 }
 
