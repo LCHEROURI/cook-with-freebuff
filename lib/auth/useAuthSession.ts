@@ -60,6 +60,7 @@ function markReloadedForUnauthorizedDomain(): boolean {
 // popup. The navigation is user-initiated (it happens inside the click
 // handler), so the gesture carries over and the popup needs no second tap.
 const RETRY_PARAM = 'retry';
+const AUTH_SETTLE_TIMEOUT_MS = 10000;
 
 /**
  * Navigate to /login?retry=1 (the page that consumes the flag) and return
@@ -133,7 +134,18 @@ export function useAuthSession(): UseAuthSessionResult {
     }
     const auth = getClientAuth();
     authRef.current = auth;
+    let settled = false;
+    let timedOut = false;
+    const settleTimer = setTimeout(() => {
+      if (settled) return;
+      timedOut = true;
+      setState('error');
+      setError('Sign in is taking too long. Check your connection and try again.');
+    }, AUTH_SETTLE_TIMEOUT_MS);
     if (!auth) {
+      if (settled) return;
+      settled = true;
+      clearTimeout(settleTimer);
       setState('error');
       setError(authErrorMessage('config-missing'));
       settleRef.current.resolve();
@@ -142,8 +154,11 @@ export function useAuthSession(): UseAuthSessionResult {
     const unsub = onAuthStateChanged(
       auth,
       (u) => {
+        settled = true;
+        clearTimeout(settleTimer);
         setUser(u);
         setState('ready');
+        if (timedOut) setError(null);
         if (u) {
           // A successful sign-in clears the one-shot reload marker + hint so a
           // later /login visit never shows a stale retry message.
@@ -153,12 +168,18 @@ export function useAuthSession(): UseAuthSessionResult {
         settleRef.current?.resolve();
       },
       (err) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(settleTimer);
         setState('error');
         setError(authErrorMessage((err as { code?: string })?.code));
         settleRef.current?.resolve();
       },
     );
-    return () => unsub();
+    return () => {
+      clearTimeout(settleTimer);
+      unsub();
+    };
   }, []);
 
   const getToken = useCallback(async (): Promise<string | null> => {
