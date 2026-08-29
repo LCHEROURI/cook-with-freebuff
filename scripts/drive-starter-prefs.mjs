@@ -29,6 +29,7 @@ import { resolve as resolvePath } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { initializeApp, cert, getApps } from 'firebase-admin/app';
 import { getFirestore } from 'firebase-admin/firestore';
+import { installAppCheckInjection } from './drive-cdp-app-check.mjs';
 
 // ── Env loading (process.env wins; .env.local fills gaps) ───────────────────
 function loadEnv() {
@@ -66,6 +67,11 @@ const OWNER_UID = process.env.APP_OWNER_UID;
 const SA_JSON = process.env.FIREBASE_SERVICE_ACCOUNT;
 
 const PROMPT = 'chicken, rice for 4, no peanuts, vegetarian';
+// Admin-minted App Check token supplied by verify-live.mjs. Headless Chrome
+// cannot complete reCAPTCHA v3 attestation, so the page's OWN /api/cook
+// request would be 403'd by enforcement; the driver injects this token into
+// same-origin /api/* requests at the CDP level (see drive-cdp-app-check.mjs).
+const VERIFY_APP_CHECK_TOKEN = process.env.VERIFY_APP_CHECK_TOKEN ?? '';
 
 let failures = 0;
 const ok = (m) => console.log(`  ✓ ${m}`);
@@ -158,6 +164,9 @@ const screenshot = async (name) => {
   writeFileSync(`${OUT}/${name}.png`, Buffer.from(data, 'base64'));
   note(`screenshot: ${name}.png`);
 };
+// Arm App Check header injection BEFORE the page loads, so the page's own
+// gated requests are attested from the very first navigation.
+installAppCheckInjection({ ws, send, app: APP, token: VERIFY_APP_CHECK_TOKEN, note });
 
 // ── 3. Inject the owner session, load /cook, confirm the starter ────────────
 console.log(`\n[3] Injecting owner session → loading ${APP}/cook`);
@@ -240,10 +249,14 @@ const readyState = () =>
     // holds the title + parsed preferences (never a "Your recipes" row). The
     // button carries data-recipe-id so cleanup can delete EXACTLY the recipe
     // this run created (never a newer concurrent run's recipe by heuristic).
-    const btn = document.querySelector('button[aria-label="Start cooking the created recipe"]');
-    if (!btn) return { ready: false, cardText: '', error: '' };
-    const cardText = btn.closest('div')?.innerText?.replace(/\\s+/g, ' ').trim() ?? '';
+    // The alert is read FIRST: a pre-ready failure (e.g. an App Check 403 on
+    // the page's own create_recipe request) must surface immediately instead
+    // of waiting out the 120s loop invisible because the ready button never
+    // appeared.
     const error = document.querySelector('[role="alert"]')?.innerText?.replace(/\\s+/g, ' ').trim() || '';
+    const btn = document.querySelector('button[aria-label="Start cooking the created recipe"]');
+    if (!btn) return { ready: false, cardText: '', error };
+    const cardText = btn.closest('div')?.innerText?.replace(/\\s+/g, ' ').trim() ?? '';
     return { ready: true, cardText, error, recipeId: btn.getAttribute('data-recipe-id') ?? '' };
   })()`);
 

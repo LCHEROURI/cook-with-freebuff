@@ -63,30 +63,79 @@ export const GEMINI_CASCADE_PREFIXES = [
 // /status page can label it instead of showing a bare failure. Matched as a
 // substring of the guard's `fail(...)` message, so the survivor names and idle
 // age in the message never break the classification.
+//
+// This constant is the single source of truth for the spare path (mirror of
+// SIMULATED_REGRESSION_SIGNATURE): verify-live.mjs embeds it in the guard's
+// fail(...) message, the spare/regression comparators derive their FAIL_RE
+// regexes from it via escapeRegExp, and the goldens embed it — so a reworded
+// signature updates one constant and every producer/consumer tracks it.
 export const SPARED_LIVE_SESSION_SIGNATURE =
   'ACTIVE/PAUSED session(s) blocking the UI starter after the archive retry';
+
+// The machine-readable reason value persisted to deploy_status/verify_live and
+// rendered by the /status page. It is the SINGLE source of truth for the
+// reason enum: the classifier returns it, the recorder's Zod schema validates
+// it, and the status page's spared-label check compares against it — so a
+// renamed reason can never desync the label (the cross-file codegen contract
+// in verify-live-classify.test.ts proves all three reference this constant).
+export const SPARED_LIVE_REASON = 'spared-live-session';
+
+// The guard's NOTE line phrases the same blocker differently — it says
+// "blocking the UI starter — archiving and retrying once" (the retry is
+// upcoming), while the fail line says "after the archive retry" (the retry
+// already failed). The shared prefix is the signature minus its " after the
+// archive retry" tail, derived here so a reworded signature updates the note
+// prefix in lockstep too.
+export const BLOCKING_SESSION_PREFIX = SPARED_LIVE_SESSION_SIGNATURE.replace(
+  ' after the archive retry',
+  '',
+);
+
+// The persisted verdict vocabulary — the SINGLE source of truth for the
+// success/failure/external values shared across the whole chain: the
+// classifier returns them as `kind`, verify-live.mjs forwards `verdict.kind`
+// straight into GITHUB_ENV (no pass→success / fail→failure translation
+// anymore), the recorder's Zod schema validates them, and the /status page
+// labels against them. A renamed verdict value updates one constant and every
+// producer/consumer tracks it (the cross-file codegen contract in
+// verify-live-classify.test.ts proves all four reference these constants).
+export const VERDICT_SUCCESS = 'success';
+export const VERDICT_FAILURE = 'failure';
+export const VERDICT_EXTERNAL = 'external';
+
+// The seam's SIMULATED regression message — verify-live.mjs passes THIS
+// constant to fail() when FORCE_VERIFY_LIVE_REGRESSION=true. It is the
+// single source of truth for the drill's evidence shape: the seam
+// (producer), the regression-drill comparator's SEAM_FAIL_RE (verifier), the
+// classifier's no-mask tests, and the committed golden all derive from this
+// one constant, so a reworded message can no longer silently diverge across
+// files. The classifier's no-mask rule (`failures.length === 1`) sits next
+// to it in the same module: a run carrying this message PLUS a spare is
+// exactly the two-failure shape that must record reason=null.
+export const SIMULATED_REGRESSION_SIGNATURE =
+  'SIMULATED regression test — voice driver exercised with FORCE_VERIFY_LIVE_REGRESSION=true to prove sparing never masks a real failure';
 
 /**
  * Classify a verify:live failure set into a verdict.
  *
  * @param {{ failures: string[] }} opts — the verify:live failure messages.
- * @returns {{ kind: 'pass' | 'external' | 'fail', reason?: 'spared-live-session' }}
+ * @returns {{ kind: 'success' | 'failure' | 'external', reason?: 'spared-live-session' }}
  */
 export function classifyVerifyVerdict({ failures }) {
-  if (failures.length === 0) return { kind: 'pass' };
+  if (failures.length === 0) return { kind: VERDICT_SUCCESS };
   const creditsRoot = failures.some(
     (m) => m.startsWith('create_recipe →') && GEMINI_CREDITS_RE.test(m),
   );
   const allCascades = failures.every((m) =>
     GEMINI_CASCADE_PREFIXES.some((p) => m.startsWith(p)),
   );
-  if (creditsRoot && allCascades) return { kind: 'external' };
+  if (creditsRoot && allCascades) return { kind: VERDICT_EXTERNAL };
   // A spared-live-session failure is the ONLY failure in a drill/collision
   // run (the guard fails loudly, then the run reports it). If any OTHER
   // failure is present the run is a real regression — the reason must never
   // mask a genuine failure next to the spare.
   const sparedLive =
     failures.length === 1 && failures[0].includes(SPARED_LIVE_SESSION_SIGNATURE);
-  if (sparedLive) return { kind: 'fail', reason: 'spared-live-session' };
-  return { kind: 'fail' };
+  if (sparedLive) return { kind: VERDICT_FAILURE, reason: SPARED_LIVE_REASON };
+  return { kind: VERDICT_FAILURE };
 }

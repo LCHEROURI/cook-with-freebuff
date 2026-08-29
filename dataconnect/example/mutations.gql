@@ -1,0 +1,671 @@
+# cook-with-freebuff — SQL Connect mutations
+#
+# Every mutation runs with @auth(level: NO_ACCESS) — the Node Admin SDK is the
+# only caller, and the app's owner-token + App Check authorization stays at
+# the API layer (see docs/specs/0005-sql-connect-migration-scope.md).
+#
+# Concurrency and atomicity:
+#   • UpdateSession is a @transaction with a filtered update on `version` and
+#     a @check conflict guard — the SQL Connect expression of the Firestore
+#     optimistic-concurrency update in lib/server/repositories.ts
+#     (updateSession). The version-conflict surfaces through the @check
+#     message; the SQL Connect repository is not written yet, and the future
+#     repository must map it back to the existing
+#     "Session ${id} version conflict" error the session service expects.
+#   • RebaseTimers is a single Native SQL _execute UPDATE that shifts every
+#     RUNNING timer's endsAt by the same offset: the SQL Connect version of
+#     the Firestore batch rebase on resume. One UPDATE statement is atomic in
+#     Postgres, matching the batch's all-or-nothing rebase. GraphQL cannot
+#     express it because the per-row shift needs Timestamp_Duration, which
+#     SQL Connect forbids as a variable.
+
+# ── Recipes ──────────────────────────────────────────────────────────────────
+
+mutation InsertRecipe(
+  $id: String!
+  $userId: String
+  $title: String!
+  $description: String
+  $servings: Int!
+  $estimatedPrepMinutes: Int!
+  $estimatedCookMinutes: Int!
+  $totalMinutes: Int!
+  $ingredients: Any!
+  $prepSteps: Any!
+  $cookingSteps: Any!
+  $equipment: [String!]!
+  $dietaryTags: [String!]!
+  $allergens: [String!]!
+  $safetyNotes: [String!]!
+  $proteinCategories: [String!]
+  $preferences: Any
+  $generatedAt: Timestamp!
+  $updatedAt: Timestamp!
+) @auth(level: NO_ACCESS) {
+  recipe_insert(
+    data: {
+      id: $id
+      userId: $userId
+      title: $title
+      description: $description
+      servings: $servings
+      estimatedPrepMinutes: $estimatedPrepMinutes
+      estimatedCookMinutes: $estimatedCookMinutes
+      totalMinutes: $totalMinutes
+      ingredients: $ingredients
+      prepSteps: $prepSteps
+      cookingSteps: $cookingSteps
+      equipment: $equipment
+      dietaryTags: $dietaryTags
+      allergens: $allergens
+      safetyNotes: $safetyNotes
+      proteinCategories: $proteinCategories
+      preferences: $preferences
+      generatedAt: $generatedAt
+      updatedAt: $updatedAt
+    }
+  )
+}
+
+mutation SaveRecipe(
+  $id: String!
+  $userId: String
+  $title: String!
+  $description: String
+  $servings: Int!
+  $estimatedPrepMinutes: Int!
+  $estimatedCookMinutes: Int!
+  $totalMinutes: Int!
+  $ingredients: Any!
+  $prepSteps: Any!
+  $cookingSteps: Any!
+  $equipment: [String!]!
+  $dietaryTags: [String!]!
+  $allergens: [String!]!
+  $safetyNotes: [String!]!
+  $proteinCategories: [String!]
+  $preferences: Any
+  $generatedAt: Timestamp!
+  $updatedAt: Timestamp!
+) @auth(level: NO_ACCESS) {
+  recipe_upsert(
+    data: {
+      id: $id
+      userId: $userId
+      title: $title
+      description: $description
+      servings: $servings
+      estimatedPrepMinutes: $estimatedPrepMinutes
+      estimatedCookMinutes: $estimatedCookMinutes
+      totalMinutes: $totalMinutes
+      ingredients: $ingredients
+      prepSteps: $prepSteps
+      cookingSteps: $cookingSteps
+      equipment: $equipment
+      dietaryTags: $dietaryTags
+      allergens: $allergens
+      safetyNotes: $safetyNotes
+      proteinCategories: $proteinCategories
+      preferences: $preferences
+      generatedAt: $generatedAt
+      updatedAt: $updatedAt
+    }
+  )
+}
+
+mutation DeleteRecipe($id: String!) @auth(level: NO_ACCESS) {
+  recipe_delete(id: $id)
+}
+
+# ── Cooking sessions ─────────────────────────────────────────────────────────
+
+mutation InsertCookingSession(
+  $id: String!
+  $userId: String!
+  $recipeId: String
+  $status: SessionStatus!
+  $currentPhase: SessionPhase!
+  $currentPrepStepIndex: Int!
+  $currentCookingStepIndex: Int!
+  $previousState: Any
+  $resumableState: Any
+  $activeTimerIds: [String!]!
+  $availableIngredients: Any!
+  $recoveryContext: Any
+  $pendingSubstitution: String
+  $pendingPantryItems: Any
+  $startedAt: Timestamp!
+  $lastActivityAt: Timestamp!
+  $pausedAt: Timestamp
+  $completedAt: Timestamp
+  $version: Int!
+) @auth(level: NO_ACCESS) {
+  cookingSession_insert(
+    data: {
+      id: $id
+      userId: $userId
+      recipeId: $recipeId
+      status: $status
+      currentPhase: $currentPhase
+      currentPrepStepIndex: $currentPrepStepIndex
+      currentCookingStepIndex: $currentCookingStepIndex
+      previousState: $previousState
+      resumableState: $resumableState
+      activeTimerIds: $activeTimerIds
+      availableIngredients: $availableIngredients
+      recoveryContext: $recoveryContext
+      pendingSubstitution: $pendingSubstitution
+      pendingPantryItems: $pendingPantryItems
+      startedAt: $startedAt
+      lastActivityAt: $lastActivityAt
+      pausedAt: $pausedAt
+      completedAt: $completedAt
+      version: $version
+    }
+  )
+}
+
+mutation DeleteCookingSession($id: String!) @auth(level: NO_ACCESS) {
+  cookingSession_delete(id: $id)
+}
+
+# Optimistic-concurrency update for transitions that carry NO correlation
+# marker: only applies when the stored version equals the caller's expected
+# version, and bumps it. When the version has moved, the filtered update
+# matches no row, the @check fails, and the mutation aborts with the conflict
+# message — the SQL Connect form of the Firestore transaction + version guard
+# in repositories.ts updateSession. The marker-carrying variant is
+# UpdateSessionWithMarker below.
+mutation UpdateSession(
+  $id: String!
+  $expectedVersion: Int!
+  $recipeId: String
+  $status: SessionStatus
+  $currentPhase: SessionPhase
+  $currentPrepStepIndex: Int
+  $currentCookingStepIndex: Int
+  $previousState: Any
+  $resumableState: Any
+  $activeTimerIds: [String!]
+  $availableIngredients: Any
+  $recoveryContext: Any
+  $pendingSubstitution: String
+  $pendingPantryItems: Any
+  $lastActivityAt: Timestamp
+  $pausedAt: Timestamp
+  $completedAt: Timestamp
+) @auth(level: NO_ACCESS) @transaction {
+  session_ver: cookingSession_update(
+    first: {
+      where: {
+        _and: [
+          { id: { eq: $id } },
+          { version: { eq: $expectedVersion } }
+        ]
+      }
+    },
+    data: {
+      version_update: { inc: 1 }
+      recipeId: $recipeId
+      status: $status
+      currentPhase: $currentPhase
+      currentPrepStepIndex: $currentPrepStepIndex
+      currentCookingStepIndex: $currentCookingStepIndex
+      previousState: $previousState
+      resumableState: $resumableState
+      activeTimerIds: $activeTimerIds
+      availableIngredients: $availableIngredients
+      recoveryContext: $recoveryContext
+      pendingSubstitution: $pendingSubstitution
+      pendingPantryItems: $pendingPantryItems
+      lastActivityAt: $lastActivityAt
+      pausedAt: $pausedAt
+      completedAt: $completedAt
+    }
+  ) @check(expr: "this != null", message: "Session version conflict or missing")
+}
+
+# The marker-carrying transition (PR #58 invariant, lib/server/AGENTS.md): the
+# correlation marker write and rollback clear ride the SAME transaction as the
+# session update — never a separate write that can fail after commit. SQL
+# Connect transaction steps are unconditional, so the repository picks this
+# mutation exactly when a marker is involved and passes every marker variable
+# with a real value: $markerKey/$markerRawId/$markedAt for the write, and
+# $clearMarkerKey for the rollback clear. When there is nothing to clear, the
+# repository passes the reserved empty key "" — a delete that matches no row
+# is a no-op, so the step stays harmless.
+#
+# A correlated createSession marks TWO ids in one transaction (the derived
+# `idle-><cid>` transition id plus the original request id), so the sibling
+# mutation UpdateSessionWithTwoMarkers below carries a second marker upsert
+# step for exactly that case. (Upserting the SAME key twice in one transaction
+# is NOT harmless here: the emulator aborts the duplicate, verified 2026-08-27,
+# so single-mark transitions must use this one-slot mutation.)
+mutation UpdateSessionWithMarker(
+  $id: String!
+  $expectedVersion: Int!
+  $recipeId: String
+  $status: SessionStatus
+  $currentPhase: SessionPhase
+  $currentPrepStepIndex: Int
+  $currentCookingStepIndex: Int
+  $previousState: Any
+  $resumableState: Any
+  $activeTimerIds: [String!]
+  $availableIngredients: Any
+  $recoveryContext: Any
+  $pendingSubstitution: String
+  $pendingPantryItems: Any
+  $lastActivityAt: Timestamp
+  $pausedAt: Timestamp
+  $completedAt: Timestamp
+  $markerKey: String!
+  $markerRawId: String!
+  $markedAt: Timestamp!
+  $clearMarkerKey: String!
+) @auth(level: NO_ACCESS) @transaction {
+  session_ver: cookingSession_update(
+    first: {
+      where: {
+        _and: [
+          { id: { eq: $id } },
+          { version: { eq: $expectedVersion } }
+        ]
+      }
+    },
+    data: {
+      version_update: { inc: 1 }
+      recipeId: $recipeId
+      status: $status
+      currentPhase: $currentPhase
+      currentPrepStepIndex: $currentPrepStepIndex
+      currentCookingStepIndex: $currentCookingStepIndex
+      previousState: $previousState
+      resumableState: $resumableState
+      activeTimerIds: $activeTimerIds
+      availableIngredients: $availableIngredients
+      recoveryContext: $recoveryContext
+      pendingSubstitution: $pendingSubstitution
+      pendingPantryItems: $pendingPantryItems
+      lastActivityAt: $lastActivityAt
+      pausedAt: $pausedAt
+      completedAt: $completedAt
+    }
+  ) @check(expr: "this != null", message: "Session version conflict or missing")
+  marker_write: correlationMarker_upsert(
+    data: {
+      key: $markerKey
+      rawId: $markerRawId
+      legacyRawId: null
+      markedAt: $markedAt
+    }
+  )
+  marker_clear: correlationMarker_delete(
+    first: { where: { key: { eq: $clearMarkerKey } } }
+  )
+}
+
+# The two-marker transition (correlated session creation): the derived
+# `idle-><cid>` id and the original request id both ride the SAME transaction
+# as the session update, so a retried create can never spawn a second session
+# (the Codex P1 behind the service's additionalMarks). The two keys must be
+# DISTINCT: upserting one key twice in one transaction aborts on the emulator.
+mutation UpdateSessionWithTwoMarkers(
+  $id: String!
+  $expectedVersion: Int!
+  $recipeId: String
+  $status: SessionStatus
+  $currentPhase: SessionPhase
+  $currentPrepStepIndex: Int
+  $currentCookingStepIndex: Int
+  $previousState: Any
+  $resumableState: Any
+  $activeTimerIds: [String!]
+  $availableIngredients: Any
+  $recoveryContext: Any
+  $pendingSubstitution: String
+  $pendingPantryItems: Any
+  $lastActivityAt: Timestamp
+  $pausedAt: Timestamp
+  $completedAt: Timestamp
+  $markerKeyA: String!
+  $markerRawIdA: String!
+  $markedAtA: Timestamp!
+  $markerKeyB: String!
+  $markerRawIdB: String!
+  $markedAtB: Timestamp!
+  $clearMarkerKey: String!
+) @auth(level: NO_ACCESS) @transaction {
+  session_ver: cookingSession_update(
+    first: {
+      where: {
+        _and: [
+          { id: { eq: $id } },
+          { version: { eq: $expectedVersion } }
+        ]
+      }
+    },
+    data: {
+      version_update: { inc: 1 }
+      recipeId: $recipeId
+      status: $status
+      currentPhase: $currentPhase
+      currentPrepStepIndex: $currentPrepStepIndex
+      currentCookingStepIndex: $currentCookingStepIndex
+      previousState: $previousState
+      resumableState: $resumableState
+      activeTimerIds: $activeTimerIds
+      availableIngredients: $availableIngredients
+      recoveryContext: $recoveryContext
+      pendingSubstitution: $pendingSubstitution
+      pendingPantryItems: $pendingPantryItems
+      lastActivityAt: $lastActivityAt
+      pausedAt: $pausedAt
+      completedAt: $completedAt
+    }
+  ) @check(expr: "this != null", message: "Session version conflict or missing")
+  marker_write_a: correlationMarker_upsert(
+    data: {
+      key: $markerKeyA
+      rawId: $markerRawIdA
+      legacyRawId: null
+      markedAt: $markedAtA
+    }
+  )
+  marker_write_b: correlationMarker_upsert(
+    data: {
+      key: $markerKeyB
+      rawId: $markerRawIdB
+      legacyRawId: null
+      markedAt: $markedAtB
+    }
+  )
+  marker_clear: correlationMarker_delete(
+    first: { where: { key: { eq: $clearMarkerKey } } }
+  )
+}
+
+# ── Session events and timers ────────────────────────────────────────────────
+
+mutation InsertSessionEvent(
+  $id: String!
+  $sessionId: String!
+  $userId: String!
+  $type: SessionEventType!
+  $data: Any!
+  $at: Timestamp!
+  $correlationId: String
+) @auth(level: NO_ACCESS) {
+  cookingSessionEvent_insert(
+    data: {
+      id: $id
+      sessionId: $sessionId
+      userId: $userId
+      type: $type
+      data: $data
+      at: $at
+      correlationId: $correlationId
+    }
+  )
+}
+
+mutation InsertCookingTimer(
+  $id: String!
+  $userId: String!
+  $sessionId: String!
+  $label: String!
+  $durationSeconds: Int!
+  $startedAt: Timestamp!
+  $endsAt: Timestamp!
+  $status: TimerStatus!
+  $stepId: String
+  $completedAt: Timestamp
+) @auth(level: NO_ACCESS) {
+  cookingTimer_insert(
+    data: {
+      id: $id
+      userId: $userId
+      sessionId: $sessionId
+      label: $label
+      durationSeconds: $durationSeconds
+      startedAt: $startedAt
+      endsAt: $endsAt
+      status: $status
+      stepId: $stepId
+      completedAt: $completedAt
+    }
+  )
+}
+
+mutation UpdateCookingTimer(
+  $id: String!
+  $status: TimerStatus
+  $completedAt: Timestamp
+  $endsAt: Timestamp
+) @auth(level: NO_ACCESS) {
+  cookingTimer_update(
+    id: $id,
+    data: {
+      status: $status
+      completedAt: $completedAt
+      endsAt: $endsAt
+    }
+  )
+}
+
+# Shift every RUNNING timer for a session by the same OFFSET (elapsedMs),
+# preserving each timer's own endsAt — the SQL Connect expression of the
+# Firestore rebase-on-resume batch in repositories.rebaseActiveTimers
+# (`endsAt: current.endsAt + elapsedMs`). This is deliberately Native SQL:
+# the GraphQL layer cannot express it because Timestamp_Duration is
+# @fdc_forbiddenAsVariableType (the offset can't be a parameter) and an
+# absolute `endsAt` assignment would collapse timers with different endsAt to
+# one deadline (the Codex P1 finding). A single UPDATE is atomic, matching the
+# Firestore batch's all-or-nothing rebase.
+mutation RebaseTimers(
+  $sessionId: String!
+  $offsetMs: Int!
+) @auth(level: NO_ACCESS) {
+  rebaseTimers: _execute(
+    sql: "UPDATE cooking_timers SET ends_at = ends_at + ($1 * interval '1 millisecond') WHERE session_id = $2 AND status = 'RUNNING'",
+    params: [$offsetMs, $sessionId]
+  )
+}
+
+# ── Pantry, leftovers, grocery ───────────────────────────────────────────────
+
+mutation UpsertPantryItem(
+  $id: String!
+  $userId: String!
+  $name: String!
+  $quantity: Float
+  $unit: String
+  $confidence: Float!
+  $source: PantryItemSource!
+  $lastConfirmedAt: Timestamp!
+  $expirationDate: Timestamp
+  $notes: String
+) @auth(level: NO_ACCESS) {
+  pantryItem_upsert(
+    data: {
+      id: $id
+      userId: $userId
+      name: $name
+      quantity: $quantity
+      unit: $unit
+      confidence: $confidence
+      source: $source
+      lastConfirmedAt: $lastConfirmedAt
+      expirationDate: $expirationDate
+      notes: $notes
+    }
+  )
+}
+
+mutation DeletePantryItem($id: String!) @auth(level: NO_ACCESS) {
+  pantryItem_delete(id: $id)
+}
+
+mutation UpsertLeftover(
+  $id: String!
+  $userId: String!
+  $recipeId: String
+  $title: String!
+  $servings: Int!
+  $completedAt: Timestamp!
+  $storedAt: Timestamp!
+  $status: LeftoverStatus!
+  $notes: String
+) @auth(level: NO_ACCESS) {
+  leftover_upsert(
+    data: {
+      id: $id
+      userId: $userId
+      recipeId: $recipeId
+      title: $title
+      servings: $servings
+      completedAt: $completedAt
+      storedAt: $storedAt
+      status: $status
+      notes: $notes
+    }
+  )
+}
+
+mutation UpsertGroceryItem(
+  $id: String!
+  $userId: String!
+  $name: String!
+  $quantity: Float
+  $unit: String
+  $source: GroceryItemSource!
+  $status: GroceryItemStatus!
+  $pantryItemId: String
+  $createdAt: Timestamp!
+  $updatedAt: Timestamp!
+) @auth(level: NO_ACCESS) {
+  groceryItem_upsert(
+    data: {
+      id: $id
+      userId: $userId
+      name: $name
+      quantity: $quantity
+      unit: $unit
+      source: $source
+      status: $status
+      pantryItemId: $pantryItemId
+      createdAt: $createdAt
+      updatedAt: $updatedAt
+    }
+  )
+}
+
+mutation DeleteGroceryItem($id: String!) @auth(level: NO_ACCESS) {
+  groceryItem_delete(id: $id)
+}
+
+# ── Dietary profile, deploy status, tool logs, markers ───────────────────────
+
+mutation UpsertDietaryProfile(
+  $userId: String!
+  $allergies: [String!]!
+  $dietaryRestrictions: [String!]!
+  $dislikedIngredients: [String!]!
+  $preferredCuisines: [String!]!
+  $defaultServings: Int
+  $preferredEquipment: [String!]!
+  $updatedAt: Timestamp!
+) @auth(level: NO_ACCESS) {
+  dietaryProfile_upsert(
+    data: {
+      userId: $userId
+      allergies: $allergies
+      dietaryRestrictions: $dietaryRestrictions
+      dislikedIngredients: $dislikedIngredients
+      preferredCuisines: $preferredCuisines
+      defaultServings: $defaultServings
+      preferredEquipment: $preferredEquipment
+      updatedAt: $updatedAt
+    }
+  )
+}
+
+# Single-slot upsert: newest write wins per slot, mirroring the Firestore
+# deploy_status doc semantics behind /status.
+mutation UpsertDeployStatus(
+  $slot: String!
+  $verdict: String
+  $commitSha: String
+  $reason: String
+  $source: String
+  $recordedAt: Timestamp!
+  $active: Boolean
+  $recurringCount: Int
+  $signature: String
+  $weeks: [String!]
+  $runUrl: String
+) @auth(level: NO_ACCESS) {
+  deployStatus_upsert(
+    data: {
+      slot: $slot
+      verdict: $verdict
+      commitSha: $commitSha
+      reason: $reason
+      source: $source
+      recordedAt: $recordedAt
+      active: $active
+      recurringCount: $recurringCount
+      signature: $signature
+      weeks: $weeks
+      runUrl: $runUrl
+    }
+  )
+}
+
+mutation InsertAgentToolLog(
+  $id: String!
+  $userId: String!
+  $sessionId: String
+  $tool: String!
+  $sanitizedArguments: Any!
+  $result: Any!
+  $latencyMs: Int!
+  $at: Timestamp!
+  $correlationId: String
+) @auth(level: NO_ACCESS) {
+  agentToolLog_insert(
+    data: {
+      id: $id
+      userId: $userId
+      sessionId: $sessionId
+      tool: $tool
+      sanitizedArguments: $sanitizedArguments
+      result: $result
+      latencyMs: $latencyMs
+      at: $at
+      correlationId: $correlationId
+    }
+  )
+}
+
+# Idempotency markers join the session transaction via response binding so the
+# transition and marker commit together (PR #58 invariant).
+mutation UpsertCorrelationMarker(
+  $key: String!
+  $rawId: String!
+  $legacyRawId: String
+  $markedAt: Timestamp!
+) @auth(level: NO_ACCESS) {
+  correlationMarker_upsert(
+    data: {
+      key: $key
+      rawId: $rawId
+      legacyRawId: $legacyRawId
+      markedAt: $markedAt
+    }
+  )
+}
+
+mutation DeleteCorrelationMarker($key: String!) @auth(level: NO_ACCESS) {
+  correlationMarker_delete(first: { where: { key: { eq: $key } } })
+}

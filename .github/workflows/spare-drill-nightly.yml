@@ -3,6 +3,7 @@ name: spare-drill-nightly
 # ─────────────────────────────────────────────────────────────────────────────
 # Nightly spare-drill comparator — runs the existing
 # scripts/guard-spare-drill.mjs end to end on a daily trigger:
+#   0. preflight job replays the spare-drill fixture (earliest drift signal)
 #   1. dispatch ci.yml on main
 #   2. seed the drill-live-session (kept fresh <60s so the guard SPARES it)
 #   3. wait for completion, fetch the verify:live job log
@@ -33,9 +34,47 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # Top-level preflight: replay the spare-drill fixture BEFORE the
+  # comparator's npm ci + ~25 min dispatch, so a golden or regex drift
+  # fails in seconds instead of after the full dispatch+seed+touch+fetch
+  # cycle. Plain node only — no gh, no Firestore, no node_modules — so
+  # there is no npm ci here, and the token needs only contents: read
+  # (the preflight never dispatches or uploads). The per-job gate below
+  # stays as belt-and-suspenders (a fix to the comparator lands without
+  # re-running the dispatch), but the preflight is the earliest signal.
+  preflight:
+    name: Preflight — replay the spare-drill fixture
+    runs-on: ubuntu-latest
+    # The gate is seconds; 5 min is pure headroom.
+    timeout-minutes: 5
+    permissions:
+      contents: read
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v5
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: 22
+
+      - name: Replay the spare-drill fixture (preflight)
+        run: node scripts/guard-spare-drill.mjs --diff scripts/__golden__/spare-drill-log.txt
+
   compare-against-golden:
     name: Compare live spare-path lines against scripts/__golden__/guard-spare-drill.txt
+    needs: preflight
     runs-on: ubuntu-latest
+    # The comparator dispatches ci.yml (`gh workflow run`) and uploads the
+    # captured log, so the token needs actions:write (dispatch + artifacts).
+    # Without it, `gh workflow run` fails silently and the comparator exits
+    # 2 with "workflow dispatched but the new ci.yml run could not be
+    # located" — the root cause of every scheduled nightly failure so far
+    # (verified in nightly runs 32464195233 / 32349774634).
+    permissions:
+      contents: read
+      actions: write
     # Worst case: ci.yml deploy + verify:live + 24 × 15s keep-alive + 30 × 15s
     # completion polls ≈ ~25 min. 35 min gives headroom for queue time.
     timeout-minutes: 35
@@ -49,6 +88,16 @@ jobs:
         with:
           node-version: 22
           cache: npm
+
+      # Fast pre-dispatch gate (mirror of the weekly guard-drills spare
+      # job): replay the comparator's --diff mode against the committed
+      # fixture log BEFORE burning a ~25 min ci.yml dispatch. --diff needs
+      # only plain node (stdlib + local modules — no gh, no Firestore, no
+      # node_modules), so this runs before npm ci. A golden or regex drift
+      # fails here in seconds; without the gate it would surface only
+      # after the full dispatch+seed+touch+fetch cycle.
+      - name: Replay the spare-drill fixture (fast pre-dispatch gate)
+        run: node scripts/guard-spare-drill.mjs --diff scripts/__golden__/spare-drill-log.txt
 
       - name: Install dependencies
         run: npm ci

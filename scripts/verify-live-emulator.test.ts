@@ -108,6 +108,21 @@ describe('verify:live · App Check enforcement probe', () => {
     expect(VERIFY_LIVE).toContain("process.argv.includes('--require-app-check-enforced')");
     expect(VERIFY_LIVE).toContain('App Check enforcement required but the deployed server accepted an unattested request');
   });
+
+  it('pairs the negative probe with an attested authenticated success in required mode', () => {
+    expect(VERIFY_LIVE).toContain('if (REQUIRE_APP_CHECK_ENFORCED) {');
+    expect(VERIFY_LIVE).toContain('const attested = await fetchJson(`${APP}/api/cook`');
+    expect(VERIFY_LIVE).toContain("headers: AUTH");
+    expect(VERIFY_LIVE).toContain("body: JSON.stringify({ action: 'list_recipes' })");
+    expect(VERIFY_LIVE).toContain("attested.status === 200 && attested.body?.success === true");
+    expect(VERIFY_LIVE).toContain('attested authenticated request succeeded');
+  });
+
+  it('mints a fresh App Check token for every single-use route probe', () => {
+    expect(VERIFY_LIVE).toContain('const freshAppCheckAuth = async () =>');
+    expect(VERIFY_LIVE).toContain("fetchJson(`${APP}/api/voice/token`, { method: 'POST', headers: await freshAppCheckAuth() })");
+    expect(VERIFY_LIVE.match(/headers: await freshAppCheckAuth\(\)/g)).toHaveLength(3);
+  });
 });
 
 describe('verify:live · [2b] model resolution proof', () => {
@@ -135,7 +150,7 @@ describe('verify:live · [2b] model resolution proof', () => {
   it('hard-asserts the live-voice model returned by /api/voice/token against Remote Config', () => {
     // A resolver that silently ignores Remote Config and returns the default
     // must fail the gate, not pass unnoticed.
-    expect(VERIFY_LIVE).toContain("fetchJson(`${APP}/api/voice/token`, { method: 'POST', headers: AUTH })");
+    expect(VERIFY_LIVE).toContain("fetchJson(`${APP}/api/voice/token`, { method: 'POST', headers: await freshAppCheckAuth() })");
     expect(VERIFY_LIVE).toContain('returnedModel === rcLive');
     expect(VERIFY_LIVE).toContain('the resolver ignored Remote Config');
   });
@@ -176,6 +191,16 @@ describe('verify:live · [2b.2] model_source log smoke', () => {
     // could satisfy every role while the fresh (broken) revision passes.
     expect(VERIFY_LIVE).toContain("const deployedSha = process.env.GITHUB_SHA ?? '';");
     expect(VERIFY_LIVE).toContain('jsonPayload.commit="');
+  });
+
+  it('lets the weekly probe widen the startup-log window so a warm host passes', () => {
+    // The 30-minute default fits the post-deploy case (the revision's boot
+    // just happened). The weekly deploy-health probe passes
+    // --model-source-window-min 10080 (one week): on a no-deploy week the
+    // host has been warm for hours or days, so a 30-minute window would find
+    // no startup lines and fail all five roles despite the app working.
+    expect(VERIFY_LIVE).toContain("Number(flag('--model-source-window-min', '30'))");
+    expect(VERIFY_LIVE).toContain('const LOG_WINDOW_MIN = Number(flag');
   });
 
   it('keeps checking the remaining roles after a missing entry instead of crashing the verifier', () => {

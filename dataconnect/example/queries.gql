@@ -1,0 +1,323 @@
+# cook-with-freebuff — SQL Connect queries
+#
+# Every operation is @auth(level: NO_ACCESS): the app is server-only, all
+# access goes through the Node Admin SDK behind lib/server/repositories.ts,
+# and the app's owner-token + App Check auth stays at the API layer. See
+# docs/specs/0005-sql-connect-migration-scope.md — "the server is the only
+# principal".
+#
+# userId is passed as a variable (not auth.uid_expr) precisely because this is
+# the server-mediated path: the repository authenticates the caller at the API
+# layer and drives the store with admin credentials, so per-user filtering is
+# itself the data-boundary (matching the store interfaces).
+
+# ── Recipes ──────────────────────────────────────────────────────────────────
+
+query GetRecipe($id: String!) @auth(level: NO_ACCESS) {
+  recipe(id: $id) {
+    id
+    userId
+    title
+    description
+    servings
+    estimatedPrepMinutes
+    estimatedCookMinutes
+    totalMinutes
+    ingredients
+    prepSteps
+    cookingSteps
+    equipment
+    dietaryTags
+    allergens
+    safetyNotes
+    proteinCategories
+    preferences
+    generatedAt
+    updatedAt
+  }
+}
+
+query ListRecipes($userId: String!) @auth(level: NO_ACCESS) {
+  recipes(where: { userId: { eq: $userId } }) {
+    id
+    userId
+    title
+    description
+    servings
+    estimatedPrepMinutes
+    estimatedCookMinutes
+    totalMinutes
+    ingredients
+    prepSteps
+    cookingSteps
+    equipment
+    dietaryTags
+    allergens
+    safetyNotes
+    proteinCategories
+    preferences
+    generatedAt
+    updatedAt
+  }
+}
+
+# ── Cooking sessions ─────────────────────────────────────────────────────────
+
+query GetCookingSession($id: String!) @auth(level: NO_ACCESS) {
+  cookingSession(id: $id) {
+    id
+    userId
+    recipeId
+    status
+    currentPhase
+    currentPrepStepIndex
+    currentCookingStepIndex
+    previousState
+    resumableState
+    activeTimerIds
+    availableIngredients
+    recoveryContext
+    pendingSubstitution
+    pendingPantryItems
+    startedAt
+    lastActivityAt
+    pausedAt
+    completedAt
+    version
+  }
+}
+
+# The active session is the newest ACTIVE or PAUSED session for a user.
+query GetActiveSession($userId: String!) @auth(level: NO_ACCESS) {
+  cookingSessions(
+    where: {
+      _and: [
+        { userId: { eq: $userId } },
+        { status: { in: [ACTIVE, PAUSED] } }
+      ]
+    },
+    orderBy: [{ lastActivityAt: DESC }],
+    limit: 1
+  ) {
+    id
+    userId
+    recipeId
+    status
+    currentPhase
+    currentPrepStepIndex
+    currentCookingStepIndex
+    previousState
+    resumableState
+    activeTimerIds
+    availableIngredients
+    recoveryContext
+    pendingSubstitution
+    pendingPantryItems
+    startedAt
+    lastActivityAt
+    pausedAt
+    completedAt
+    version
+  }
+}
+
+query GetSessionEvents($sessionId: String!) @auth(level: NO_ACCESS) {
+  cookingSessionEvents(
+    where: { sessionId: { eq: $sessionId } },
+    orderBy: [{ at: ASC }]
+  ) {
+    id
+    sessionId
+    userId
+    type
+    data
+    at
+    correlationId
+  }
+}
+
+# ── Timers ───────────────────────────────────────────────────────────────────
+
+query GetCookingTimer($id: String!) @auth(level: NO_ACCESS) {
+  cookingTimer(id: $id) {
+    id
+    userId
+    sessionId
+    label
+    durationSeconds
+    startedAt
+    endsAt
+    status
+    stepId
+    completedAt
+  }
+}
+
+query GetActiveTimers($sessionId: String!) @auth(level: NO_ACCESS) {
+  cookingTimers(
+    where: {
+      _and: [
+        { sessionId: { eq: $sessionId } },
+        { status: { eq: RUNNING } }
+      ]
+    }
+  ) {
+    id
+    userId
+    sessionId
+    label
+    durationSeconds
+    startedAt
+    endsAt
+    status
+    stepId
+    completedAt
+  }
+}
+
+# ── Pantry, leftovers, grocery ───────────────────────────────────────────────
+
+# Per-ID reads mirror the store contracts in lib/server/tools/types.ts
+# (getItem / getLeftover / getGroceryItem) — the repository layer needs a
+# single-row fetch, not just the user-scoped lists.
+query GetPantryItem($id: String!) @auth(level: NO_ACCESS) {
+  pantryItem(id: $id) {
+    id
+    userId
+    name
+    quantity
+    unit
+    confidence
+    source
+    lastConfirmedAt
+    expirationDate
+    notes
+  }
+}
+
+query GetLeftover($id: String!) @auth(level: NO_ACCESS) {
+  leftover(id: $id) {
+    id
+    userId
+    recipeId
+    title
+    servings
+    completedAt
+    storedAt
+    status
+    notes
+  }
+}
+
+query GetGroceryItem($id: String!) @auth(level: NO_ACCESS) {
+  groceryItem(id: $id) {
+    id
+    userId
+    name
+    quantity
+    unit
+    source
+    status
+    pantryItemId
+    createdAt
+    updatedAt
+  }
+}
+
+query ListPantryItems($userId: String!) @auth(level: NO_ACCESS) {
+  pantryItems(where: { userId: { eq: $userId } }) {
+    id
+    userId
+    name
+    quantity
+    unit
+    confidence
+    source
+    lastConfirmedAt
+    expirationDate
+    notes
+  }
+}
+
+query ListLeftovers($userId: String!) @auth(level: NO_ACCESS) {
+  leftovers(where: { userId: { eq: $userId } }) {
+    id
+    userId
+    recipeId
+    title
+    servings
+    completedAt
+    storedAt
+    status
+    notes
+  }
+}
+
+query ListGroceryItems($userId: String!) @auth(level: NO_ACCESS) {
+  groceryItems(where: { userId: { eq: $userId } }) {
+    id
+    userId
+    name
+    quantity
+    unit
+    source
+    status
+    pantryItemId
+    createdAt
+    updatedAt
+  }
+}
+
+# ── Dietary profile, deploy status, tool logs, markers ───────────────────────
+
+query GetDietaryProfile($userId: String!) @auth(level: NO_ACCESS) {
+  dietaryProfile(first: { where: { userId: { eq: $userId } } }) {
+    userId
+    allergies
+    dietaryRestrictions
+    dislikedIngredients
+    preferredCuisines
+    defaultServings
+    preferredEquipment
+    updatedAt
+  }
+}
+
+query GetDeployStatus($slot: String!) @auth(level: NO_ACCESS) {
+  deployStatus(first: { where: { slot: { eq: $slot } } }) {
+    slot
+    verdict
+    commitSha
+    reason
+    source
+    recordedAt
+    active
+    recurringCount
+    signature
+    weeks
+    runUrl
+  }
+}
+
+query GetAgentToolLog($id: String!) @auth(level: NO_ACCESS) {
+  agentToolLog(id: $id) {
+    id
+    userId
+    sessionId
+    tool
+    sanitizedArguments
+    result
+    latencyMs
+    at
+    correlationId
+  }
+}
+
+query GetCorrelationMarker($key: String!) @auth(level: NO_ACCESS) {
+  correlationMarker(first: { where: { key: { eq: $key } } }) {
+    key
+    rawId
+    legacyRawId
+    markedAt
+  }
+}

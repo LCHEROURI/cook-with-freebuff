@@ -114,6 +114,7 @@ describe('PantryService', () => {
     // 4 of 6 thighs consumed → 2 left.
     const chickenAfter = (await store.getItem(chicken.id))!;
     expect(chickenAfter.quantity).toBe(2);
+    expect(chickenAfter.source).toBe('MANUAL');
     // 1 of 1 cup consumed → removed.
     expect(await store.getItem(rice.id)).toBeNull();
     expect(result.adjusted.map((a) => a.name).sort()).toEqual(['chicken thighs', 'rice']);

@@ -45,6 +45,9 @@ Stored in `docs/specs/NNNN-title.md`. Current: 0001 App Hosting primary host, 00
 - Server code lives under `lib/server/` and never imports client code; client code never imports server modules (`server-only` guards enforce this)
 - Every API route resolves the Firebase ID token server side via `resolveUserId` — the client never supplies the user id
 - All Firestore writes are schema validated (Zod) at the repository layer before persisting
+- Quota-bearing routes gate with App Check before authentication, parsing, or quota/provider work; production enforcement fails closed and voice/vision use fresh single-use tokens
+- `firestore.rules` is a shared union: change only Cook clauses, preserve non-Cook union rules byte-for-byte, keep the catch-all deny last, and never deploy before the separately authorized sibling-rules synchronization gate
+- Production proof scripts may write only uniquely prefixed temporary data, must guarantee cleanup, and must not run until `/api/build-info` reports the intended guarded revision
 - Tool calls are the only way the AI model touches state — every tool logs latency and error codes to `agent_tool_logs`
 - Gemini model names resolve from one shared table (`lib/ai/model-roles.ts`) in the order Remote Config, then env var, then hardcoded default, so a model version can change without a deploy; call sites never hardcode a model name
 - Voice flows through hooks (`useVoiceInput`, `useGeminiLive`, `useLiveDictation`); the reusable `VoiceInputButton` (spec 0004) wraps `useVoiceInput` as the transcription entry point on form fields, so no call site touches the raw Web Speech API
@@ -61,6 +64,7 @@ Stored in `docs/specs/NNNN-title.md`. Current: 0001 App Hosting primary host, 00
 - [scripts/AGENTS.md](scripts/AGENTS.md): deploy-verification drivers, the Codex review pipeline, and the landing path conventions
 - [components/AGENTS.md](components/AGENTS.md): presentational client components (CookScreen, voice indicator, starter tour) and their accessibility conventions
 - [lib/server/AGENTS.md](lib/server/AGENTS.md): Firestore repositories, the session-service state machine, the tool registry, and server-only wiring
+- [dataconnect/AGENTS.md](dataconnect/AGENTS.md): the Firebase SQL Connect (Data Connect) twin of the Firestore data layer — migrations target it, the running app still uses Firestore
 - [app/AGENTS.md](app/AGENTS.md): pages and API routes, the shared auth pattern, and the route-handler conventions
 - [STATE_MACHINE.md](STATE_MACHINE.md): cooking session phase machine and state transitions
 - [VOICE_ARCHITECTURE.md](VOICE_ARCHITECTURE.md): realtime voice provider abstraction and Gemini Live integration

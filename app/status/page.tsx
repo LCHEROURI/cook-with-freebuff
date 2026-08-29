@@ -4,6 +4,12 @@ import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import styles from './page.module.css';
 import { useAuthSession } from '@/lib/auth/useAuthSession';
+import {
+  SPARED_LIVE_REASON,
+  VERDICT_EXTERNAL,
+  VERDICT_FAILURE,
+  VERDICT_SUCCESS,
+} from '../../scripts/verify-live-classify.mjs';
 
 interface VerifyLive {
   verdict: string;
@@ -85,26 +91,26 @@ export default function StatusPage() {
     }
   };
 
-  const isSpared = status?.verifyLive?.reason === 'spared-live-session';
+  const isSpared = status?.verifyLive?.reason === SPARED_LIVE_REASON;
   const verdictClass =
-    status?.verifyLive?.verdict === 'success'
+    status?.verifyLive?.verdict === VERDICT_SUCCESS
       ? styles.pass
-      : status?.verifyLive?.verdict === 'failure'
+      : status?.verifyLive?.verdict === VERDICT_FAILURE
         ? isSpared
           ? styles.unknown
           : styles.fail
-        : status?.verifyLive?.verdict === 'external'
+        : status?.verifyLive?.verdict === VERDICT_EXTERNAL
           ? styles.unknown
           : styles.unknown;
 
   const verdictLabel =
-    status?.verifyLive?.verdict === 'success'
+    status?.verifyLive?.verdict === VERDICT_SUCCESS
       ? '✓ Passing'
-      : status?.verifyLive?.verdict === 'failure'
+      : status?.verifyLive?.verdict === VERDICT_FAILURE
         ? isSpared
           ? '✗ Failing — spared live session (intentional)'
           : '✗ Failing'
-        : status?.verifyLive?.verdict === 'external'
+        : status?.verifyLive?.verdict === VERDICT_EXTERNAL
           ? '⚠ External'
           : 'No run recorded yet';
 
@@ -262,9 +268,9 @@ export default function StatusPage() {
               <>
                 <p className={`${styles.verdict} ${verdictClass}`}>{verdictLabel}</p>
                 <p className={styles.cardMeta}>
-                  {status.verifyLive.verdict === 'success'
+                  {status.verifyLive.verdict === VERDICT_SUCCESS
                     ? 'Verified'
-                    : status.verifyLive.verdict === 'external'
+                    : status.verifyLive.verdict === VERDICT_EXTERNAL
                       ? 'External issue (Gemini credits)'
                       : isSpared
                         ? 'Spared a live session — drill/overlap, not a regression'

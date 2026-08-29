@@ -26,6 +26,8 @@ yarn-error.log*
 # Firebase emulator logs (created by `npm run emulators`)
 firebase-debug.log
 firestore-debug.log
+dataconnect-debug.log
+pglite-debug.log
 ui-debug.log
 pubsub-debug.log
 auth-debug.log
@@ -36,6 +38,13 @@ storage-debug.log
 # Firebase emulator export/import data (seeded local dev data)
 emulator-data/
 
+# Firebase Data Connect emulator runtime artifacts (generated schema + local Postgres data)
+dataconnect/.dataconnect/
+
+# The Firebase Data Connect generated SDK IS committed since the repository
+# parity layer (lib/server/sqlconnect-stores.ts) imports it, so CI typechecks
+# against the real surface. Regenerate with `firebase dataconnect:compile`
+# after connector edits and commit the refreshed output.
 # local env files
 .env*.local
 

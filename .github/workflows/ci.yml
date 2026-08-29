@@ -18,8 +18,16 @@ on:
           spare (the guard) and a regression (this seam) — and the
           classifier is pinned to return reason=undefined for that shape.
           Proves sparing NEVER masks a genuine failure run next to it.
-        type: boolean
-        default: false
+        required: false
+        default: 'false'
+      source:
+        description: |
+          Dispatch source tag recorded in deploy_status/verify_live so the
+          status page can distinguish drill runs (spare-drill, boundary-drill,
+          regression-drill) from clean ci.yml runs. Default 'ci' means a
+          push-triggered or manual re-run without drill inputs.
+        required: false
+        default: 'ci'
 
 # One run per branch at a time: a new push to the SAME branch cancels the
 # in-progress run (cancel-in-progress). This is EXPECTED behavior, not a
@@ -143,6 +151,7 @@ jobs:
       NEXT_PUBLIC_FIREBASE_API_KEY: ${{ secrets.NEXT_PUBLIC_FIREBASE_API_KEY }}
       FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
       APP_OWNER_UID: ${{ secrets.APP_OWNER_UID }}
+      NEXT_PUBLIC_FIREBASE_APP_ID: ${{ secrets.NEXT_PUBLIC_FIREBASE_APP_ID }}
 
     steps:
       - name: Check out repository
@@ -173,12 +182,69 @@ jobs:
       - name: Run the emulator integration test (marker atomicity)
         run: npm run test:emulator
 
+      # The SQL Connect store twin's integration suite: drives the REAL
+      # generated SDK against a live Data Connect emulator, where transaction
+      # semantics and the @check version guard are enforced by the emulator
+      # itself. Boots and tears down its own emulator (PGLite downloads on
+      # first use); same push-time cadence as the Firestore suite above, so
+      # a connector regression is visible on the main push that caused it.
+      - name: Run the SQL Connect emulator suite (store twin)
+        run: |
+          # The dataconnect emulator binds port 9399 BEFORE it has imported
+          # and configured the schema (Postgres boot + codegen + install of
+          # the generated SDK can take ~30s on a cold runner), so a bare port
+          # poll lets the suite race a "no schema found for service
+          # \"cook-with-freebuff\"" state (seen on every main push). The
+          # emulator writes its own schema-configured marker to
+          # dataconnect-debug.log (repo cwd, gitignored) — wait on THAT, not
+          # the port, before running the suite.
+          rm -f dataconnect-debug.log
+          npx -y firebase-tools@latest emulators:start --only dataconnect \
+            --project demo-cook-with-freebuff > /tmp/dc-emulator.log 2>&1 &
+          DC_PID=$!
+          for i in $(seq 1 60); do
+            if (echo > /dev/tcp/127.0.0.1/9399) 2>/dev/null; then break; fi
+            sleep 2
+          done
+          for i in $(seq 1 90); do
+            if grep -q "ConfigureEmulator successed" dataconnect-debug.log 2>/dev/null; then
+              echo "SQL Connect emulator schema configured (after $((i * 2))s)"
+              break
+            fi
+            sleep 2
+          done
+          if ! grep -q "ConfigureEmulator successed" dataconnect-debug.log 2>/dev/null; then
+            echo "::error::SQL Connect emulator never configured its schema — tailing logs:"
+            tail -30 dataconnect-debug.log 2>/dev/null || true
+            tail -30 /tmp/dc-emulator.log 2>/dev/null || true
+            kill $DC_PID 2>/dev/null || true
+            exit 1
+          fi
+          npm run test:sqlconnect
+          RC=$?
+          kill $DC_PID 2>/dev/null || true
+          exit $RC
+
       - name: Fail loudly if owner credentials are missing
         if: ${{ github.repository == 'LCHEROURI/cook-with-freebuff' && (env.NEXT_PUBLIC_FIREBASE_API_KEY == '' || env.FIREBASE_SERVICE_ACCOUNT == '' || env.APP_OWNER_UID == '') }}
         run: |
           echo "::error::Owner-credential secrets missing — the emulator-compare smoke cannot run its deployed leg."
           echo "Add NEXT_PUBLIC_FIREBASE_API_KEY, FIREBASE_SERVICE_ACCOUNT and APP_OWNER_UID under GitHub -> Settings -> Secrets and variables -> Actions, then re-run."
           exit 1
+
+      # Served-revision prerequisite for the write-capable deployed leg: the
+      # compare's deployed leg WRITES to the shared production backend (seed +
+      # probe + cleanup) and, with App Check enforcement on, now mints a token
+      # and passes (PR #176). validate's stale-guard runs in a PARALLEL job
+      # this job does not wait for, so re-run the same direction-aware tokenless
+      # gate HERE, immediately before the write: it proves the live host serves
+      # a revision the pushed HEAD descends from — never ahead of or diverged
+      # from it — before the leg mutates or validates anything. Tokenless: the
+      # live commit comes from the host's public /api/build-info, so no new
+      # secret wiring. (Codex P1, PR #176 review.)
+      - name: Verify the served revision before the write-capable compare leg
+        if: ${{ env.NEXT_PUBLIC_FIREBASE_API_KEY != '' && env.FIREBASE_SERVICE_ACCOUNT != '' && env.APP_OWNER_UID != '' }}
+        run: node scripts/verify-deployed-hash-gate.mjs --stale-guard
 
       # Credential-gated so a fork or unconfigured repo skips the deployed leg
       # instead of failing it (the deployed leg needs the owner secrets). On
@@ -346,13 +412,14 @@ jobs:
       # Manual workflow_dispatch re-runs stay exempt (operator-initiated,
       # skipped steps are visible to the operator).
       - name: Fail loudly if a verify secret is missing (main deploy)
-        if: ${{ github.event_name != 'workflow_dispatch' && github.repository == 'LCHEROURI/cook-with-freebuff' && (env.NEXT_PUBLIC_FIREBASE_API_KEY == '' || env.FIREBASE_SERVICE_ACCOUNT == '' || env.APP_OWNER_UID == '' || env.GOOGLE_AI_API_KEY == '') }}
+        if: ${{ github.event_name != 'workflow_dispatch' && github.repository == 'LCHEROURI/cook-with-freebuff' && (env.NEXT_PUBLIC_FIREBASE_API_KEY == '' || env.FIREBASE_SERVICE_ACCOUNT == '' || env.APP_OWNER_UID == '' || env.GOOGLE_AI_API_KEY == '' || env.NEXT_PUBLIC_FIREBASE_APP_ID == '') }}
         run: |
           echo "::error::Required GitHub Actions secret(s) missing on main deploy:"
           [ -z "$NEXT_PUBLIC_FIREBASE_API_KEY" ] && echo "  - NEXT_PUBLIC_FIREBASE_API_KEY (mints the owner ID token for verify:live)"
           [ -z "$FIREBASE_SERVICE_ACCOUNT" ] && echo "  - FIREBASE_SERVICE_ACCOUNT (seeds the owner recipe + mints the owner custom token)"
           [ -z "$APP_OWNER_UID" ] && echo "  - APP_OWNER_UID (the owner Firebase Auth uid verify:live signs in as)"
           [ -z "$GOOGLE_AI_API_KEY" ] && echo "  - GOOGLE_AI_API_KEY (the Gemini provider the agent turn must answer with)"
+          [ -z "$NEXT_PUBLIC_FIREBASE_APP_ID" ] && echo "  - NEXT_PUBLIC_FIREBASE_APP_ID (mints the App Check token for verify:live)"
           echo "Add them under GitHub -> Settings -> Secrets and variables -> Actions, then re-run this job."
           exit 1
         env:
@@ -360,6 +427,7 @@ jobs:
           FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
           APP_OWNER_UID: ${{ secrets.APP_OWNER_UID }}
           GOOGLE_AI_API_KEY: ${{ secrets.GOOGLE_AI_API_KEY }}
+          NEXT_PUBLIC_FIREBASE_APP_ID: ${{ secrets.NEXT_PUBLIC_FIREBASE_APP_ID }}
 
       # The deploy job can exit while the rollout is still building. Prove the
       # host serves the pushed commit (github.sha — what write-commit.mjs
@@ -376,10 +444,10 @@ jobs:
       # the fresh deploy: the canonical URL answers 200 and /api/build-info
       # serves a real commitSha. A broken hop fails here in seconds with the
       # hop named, instead of surfacing half an hour later inside verify:live.
-      # Gated on the same four secrets as verify:live, so a fork that skips
+      # Gated on the same five required inputs as verify:live, so a fork that skips
       # the deep run also skips its pre-flight.
       - name: Post-deploy smoke (app up + build-info answers)
-        if: ${{ env.NEXT_PUBLIC_FIREBASE_API_KEY != '' && env.FIREBASE_SERVICE_ACCOUNT != '' && env.APP_OWNER_UID != '' && env.GOOGLE_AI_API_KEY != '' }}
+        if: ${{ env.NEXT_PUBLIC_FIREBASE_API_KEY != '' && env.FIREBASE_SERVICE_ACCOUNT != '' && env.APP_OWNER_UID != '' && env.GOOGLE_AI_API_KEY != '' && env.NEXT_PUBLIC_FIREBASE_APP_ID != '' }}
         run: |
           set -euo pipefail
           base="https://cook-with-freebuff--portfolio-app-freebuff2.us-central1.hosted.app"
@@ -421,8 +489,8 @@ jobs:
       # pushed commit before this runs.
       - name: Verify deployed app end to end (verify:live)
         id: verify
-        if: ${{ env.NEXT_PUBLIC_FIREBASE_API_KEY != '' && env.FIREBASE_SERVICE_ACCOUNT != '' && env.APP_OWNER_UID != '' && env.GOOGLE_AI_API_KEY != '' }}
-        run: npm run verify:live
+        if: ${{ env.NEXT_PUBLIC_FIREBASE_API_KEY != '' && env.FIREBASE_SERVICE_ACCOUNT != '' && env.APP_OWNER_UID != '' && env.GOOGLE_AI_API_KEY != '' && env.NEXT_PUBLIC_FIREBASE_APP_ID != '' }}
+        run: npm run verify:live -- --require-app-check-enforced
         env:
           VERIFY_BASE_URL: https://cook-with-freebuff--portfolio-app-freebuff2.us-central1.hosted.app
           CHROME_PATH: ${{ steps.chrome.outputs.chrome-path }}
@@ -449,4 +517,4 @@ jobs:
       # paths where verify:live never got far enough to write it.
       - name: Record verify:live result for the status page
         if: ${{ always() && (steps.verify.outcome == 'success' || steps.verify.outcome == 'failure') }}
-        run: node scripts/record-verify-status.mjs --verdict "${VERIFY_LIVE_VERDICT:-${{ steps.verify.outcome }}}" --commit "${{ github.sha }}" --run-url "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" --reason "${VERIFY_LIVE_REASON:-}"
+        run: node scripts/record-verify-status.mjs --verdict "${VERIFY_LIVE_VERDICT:-${{ steps.verify.outcome }}}" --commit "${{ github.sha }}" --run-url "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" --reason "${VERIFY_LIVE_REASON:-}" --source "${{ inputs.source || 'ci' }}"

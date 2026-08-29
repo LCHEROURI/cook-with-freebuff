@@ -10,7 +10,13 @@
 // App Check can't break an existing deploy mid-rollout.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { initializeAppCheck, ReCaptchaV3Provider, getToken, type AppCheck } from 'firebase/app-check';
+import {
+  initializeAppCheck,
+  ReCaptchaV3Provider,
+  getLimitedUseToken,
+  getToken,
+  type AppCheck,
+} from 'firebase/app-check';
 import { getFirebaseApp } from './client';
 
 let initialized = false;
@@ -63,8 +69,20 @@ export async function getAppCheckToken(forceRefresh = false): Promise<string | n
   }
 }
 
-/** Headers to attach to API requests: { 'x-firebase-appcheck': token } or {}. */
+/** Headers for ordinary API requests using reusable App Check tokens. */
 export async function appCheckHeaders(forceRefresh = false): Promise<Record<string, string>> {
   const token = await getAppCheckToken(forceRefresh);
   return token ? { 'x-firebase-appcheck': token } : {};
+}
+
+/** Headers for replay-protected API requests using limited-use App Check tokens. */
+export async function appCheckLimitedUseHeaders(): Promise<Record<string, string>> {
+  const appCheck = getClientAppCheck();
+  if (!appCheck) return {};
+  try {
+    const { token } = await getLimitedUseToken(appCheck);
+    return token ? { 'x-firebase-appcheck': token } : {};
+  } catch {
+    return {};
+  }
 }

@@ -75,6 +75,26 @@ describe('app/api/status/route.ts · authenticated status route', () => {
     expect(ROUTE).toContain('reason: string | null');
   });
 
+  it('maps the optional dispatch source tag through to the payload', () => {
+    // The recorder persists a source tag ('spare-drill', 'boundary-drill',
+    // 'regression-drill') on drill runs; the route passes it through so the
+    // status page can distinguish drill no-mask proofs from genuine
+    // regressions when verdict=failure and reason=null.
+    expect(ROUTE).toContain('source: typeof d.source === \'string\' ? d.source : null');
+    expect(ROUTE).toContain('source: string | null');
+  });
+
+  it('computes isGenuineRegression when failure has no drill source', () => {
+    // A reason=null failure WITHOUT a source tag is a genuine regression —
+    // the no-mask rule only applies to drill runs where a co-occurring
+    // failure is expected. The flag is derived from the doc fields, not
+    // a separate query, so it stays in lockstep with the recorded data.
+    expect(ROUTE).toContain('isGenuineRegression');
+    expect(ROUTE).toContain("verdict === 'failure'");
+    expect(ROUTE).toContain('reason === null');
+    expect(ROUTE).toContain('source === null');
+  });
+
   it('degrades gracefully when the record cannot be read', () => {
     expect(ROUTE).toContain('verifyLive = null');
   });
@@ -94,8 +114,12 @@ describe('app/status/page.tsx · the glance surface', () => {
   it('labels a spared-live-session failure as intentional instead of a bare failure', () => {
     // The guard-spare drill recorded verdict failure with reason
     // spared-live-session — the page must label it as an intentional drill /
-    // overlapping-run collision, not claim a regression.
-    expect(PAGE).toContain('isSpared = status?.verifyLive?.reason === \'spared-live-session\'');
+    // overlapping-run collision, not claim a regression. The reason value
+    // comes from the shared SPARED_LIVE_REASON constant (single source of
+    // truth with the classifier + recorder), never a page-local literal.
+    expect(PAGE).toContain("from '../../scripts/verify-live-classify.mjs'");
+    expect(PAGE).toContain('  SPARED_LIVE_REASON,');
+    expect(PAGE).toContain('isSpared = status?.verifyLive?.reason === SPARED_LIVE_REASON');
     expect(PAGE).toContain("'✗ Failing — spared live session (intentional)'");
     expect(PAGE).toContain("'Spared a live session — drill/overlap, not a regression'");
     expect(PAGE).toContain('isSpared');
@@ -175,9 +199,13 @@ describe('scripts/record-verify-status.mjs · the recorder', () => {
   it('only accepts success|failure|external and fails loudly otherwise', () => {
     // 'external' is the Gemini credits block: the deploy check passed but
     // recipe generation could not run — the /status page renders it distinctly.
-    expect(RECORDER).toContain("verdict !== 'success' && verdict !== 'failure' && verdict !== 'external'");
+    // The three values derive from the shared VERDICT_* constants — never
+    // local literals — so a renamed verdict fails the classifier→recorder→page
+    // chain in lockstep (cross-file codegen contract in
+    // verify-live-classify.test.ts).
+    expect(RECORDER).toContain('verdict !== VERDICT_SUCCESS && verdict !== VERDICT_FAILURE && verdict !== VERDICT_EXTERNAL');
     expect(RECORDER).toContain("verdict must be success|failure|external");
-    expect(RECORDER).toContain('z.enum([\'success\', \'failure\', \'external\']');
+    expect(RECORDER).toContain('z.enum([VERDICT_SUCCESS, VERDICT_FAILURE, VERDICT_EXTERNAL]');
     expect(RECORDER).toContain('process.exit(1)');
   });
 
@@ -194,16 +222,19 @@ describe('scripts/record-verify-status.mjs · the recorder', () => {
   it('pins the last external run to its own doc — only when the verdict is external', () => {
     // The sticky doc must be written ONLY on 'external'; a success/failure run
     // leaves it untouched so the last credits outage survives later green runs.
-    expect(RECORDER).toContain("if (verdict === 'external')");
+    expect(RECORDER).toContain('if (verdict === VERDICT_EXTERNAL)');
     expect(RECORDER).toContain("collection('deploy_status').doc('last_external')");
   });
 
   it('accepts an optional reason and persists it only when valid', () => {
     // --reason is OPTIONAL: an empty/absent value must not persist a stale
     // reason field, and an unknown reason must be rejected by the schema so a
-    // typo can never label a real failure as intentional.
+    // typo can never label a real failure as intentional. The enum derives
+    // from the shared SPARED_LIVE_REASON constant — never a local literal.
+    expect(RECORDER).toContain("from './verify-live-classify.mjs'");
+    expect(RECORDER).toContain('  SPARED_LIVE_REASON,');
     expect(RECORDER).toContain("const reason = flag('--reason', process.env.VERIFY_REASON ?? '');");
     expect(RECORDER).toContain('...(reason ? { reason } : {})');
-    expect(RECORDER).toContain("z.enum(['spared-live-session']).optional()");
+    expect(RECORDER).toContain('z.enum([SPARED_LIVE_REASON]).optional()');
   });
 });

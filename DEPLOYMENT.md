@@ -19,8 +19,10 @@ push/PR ──► GitHub Actions (validate: typecheck · lint · test · build
 
 - **Hosting** — Firebase App Hosting (Cloud Run, SSR). Production branch `main`.
   Canonical URL: `https://cook-with-freebuff--portfolio-app-freebuff2.us-central1.hosted.app`.
-- **Auth / Data** — Firebase Auth + Firestore, shared with the portfolio app under **one union ruleset**
-  (see `firestore.rules`). Both apps deploy the same rules file; keep them in sync in one commit.
+- **Auth / Data** — Firebase Auth + Firestore use **one shared union ruleset**
+  (see `firestore.rules`). A rules release is blocked until the separately
+  maintained sibling rules file is verified byte-identical. This repository's
+  implementation work does not access or modify that sibling application.
 - **Admin SDK** — server-side only, service-account credentials from `FIREBASE_SERVICE_ACCOUNT`
   (inline JSON in `.env.local` / GitHub secret).
 
@@ -29,6 +31,10 @@ push/PR ──► GitHub Actions (validate: typecheck · lint · test · build
 | Variable | Where | Purpose |
 |---|---|---|
 | `NEXT_PUBLIC_FIREBASE_API_KEY` | GitHub secret | Client Firebase auth |
+| `NEXT_PUBLIC_FIREBASE_PROJECT_ID` | App Hosting config, `.env.local` | Canonical shared Firebase project |
+| `NEXT_PUBLIC_FIREBASE_APP_ID` | App Hosting config, GitHub secret, `.env.local` | Expected App Check application identity |
+| `NEXT_PUBLIC_FIREBASE_APP_CHECK_SITE_KEY` | App Hosting secret, `.env.local` | Web attestation site key |
+| `APP_CHECK_ENFORCED` | App Hosting runtime | Production fail-closed switch; must be `1` |
 | `FIREBASE_SERVICE_ACCOUNT` | `.env.local`, GitHub secret | Admin SDK (inline JSON) |
 | `APP_OWNER_UID` | `.env.local`, GitHub secret | Owner identity for verify:live + admin flows |
 | `GOOGLE_AI_API_KEY` | `.env.local`, GitHub secret | Gemini provider (recipe gen, conversation) |
@@ -39,19 +45,24 @@ sync across both stores.
 ## Deploying
 
 ```bash
-# 1. Validate locally
-npm run typecheck && npm test && npm run build
+# 1. Validate locally, including unit/contract/emulator/build gates
+npm run check
+npm run test:rules
+npm run test:emulator
 
-# 2. Land to main (protected — see "Landing changes (strict flow)" below):
+# 2. Confirm the App Hosting site-key secret exists, APP_CHECK_ENFORCED=1,
+#    and the shared union-rules synchronization prerequisite is satisfied.
+
+# 3. Land to main (protected — see "Landing changes (strict flow)" below):
 #    owner   git push origin main                                     # bypass-with-recording
 #    anyone  npm run land:pr -- --message "fix: ..." --wait           # branch + PR + merge-when-green
 
-# 3. CI deploys the main branch to App Hosting (after validate + smoke pass)
+# 4. CI deploys the main branch to App Hosting (after validate + smoke pass)
 
-# 4. CI verifies the deployed app end to end (same run, after the rollout
-#    serves the pushed commit):
-#    npm run verify:live            # seeds owner recipe → guided flow → safety gate →
-                                    # timer → pantry confirm → Gemini turn → cleanup
+# 5. Only after /api/build-info serves that commit, run the enforced route and
+#    authenticated Firestore proofs:
+npm run verify:live -- --require-app-check-enforced
+npm run verify:real-data
 ```
 
 `verify:live` also runs automatically in CI in the same run as every main
@@ -161,6 +172,20 @@ keyed per commit, so the green/skipped runs satisfied the required checks).
 That dance is obsolete: PR-only + auto-merge replaced it, and the owner's
 bypass-with-recording makes the direct push itself unblocked.
 
+## App Check rollout gate
+
+`apphosting.yaml` supplies the App Check site-key secret at build/runtime and
+sets `APP_CHECK_ENFORCED=1` at runtime. The rollout is acceptable only when
+`/api/build-info` reports the intended revision and an unattested quota-route
+request returns 403 `APP_CHECK_FAILED` before authentication/provider work.
+The required live verifier then proves an attested authenticated success.
+
+Do not run either write-capable production probe against a stale revision.
+`verify:live` performs cleanup sweeps and flow writes; `verify:real-data`
+creates an isolated document and temporary Auth users. A stale `/api/build-info`
+SHA or a 401 response to the unattested preflight is a deployment prerequisite
+blocker, not permission to continue.
+
 ## Verify:live contract
 
 `scripts/verify-live.mjs` proves the whole stack against the live App Hosting
@@ -180,14 +205,33 @@ Any failure exits non-zero; the CI job fails, so a broken deploy can't go green.
 
 ```bash
 npm run verify:live                       # deployed default
+npm run verify:live -- --require-app-check-enforced  # release proof
 npm run verify:live -- --app http://localhost:3100   # local dev server
 ```
 
+## Authenticated real-data contract
+
+`npm run verify:real-data` is an explicit production-only proof against the
+canonical shared Firebase project. It refuses emulator hosts and unexpected
+project IDs, mints two unique temporary users, and performs owner create/read/
+update/delete through the client SDK. The second user must receive
+`permission-denied` for read, update, and delete. A `finally` cleanup backstop
+removes the isolated pantry document and both users; logs never include tokens
+or credentials. Run it only after the deployed App Check proof above passes.
+
 ## Firestore rules & indexes
 
-- `firestore.rules` — the **union** ruleset shared with the portfolio app
-  (9 portfolio + 8 kitchen collections, owner-isolated, catch-all deny last).
-  Deploy with `npm run deploy:rules` from the **portfolio** repo (both projects).
+- `firestore.rules` — the shared **union** ruleset. The Cook clauses are
+  owner-isolated, append-only collections stay append-only, server-managed
+  collections remain client-denied, and the catch-all deny stays last.
+- `scripts/firestore-rules-scope.test.ts` pins the non-Cook prefix and catch-all
+  suffix byte-for-byte. Run `npm run test:rules` for the emulator owner matrix
+  and `npm test -- scripts/firestore-rules-scope.test.ts` for the scope lock.
+- **Release prerequisite:** before any rules deployment, use a separately
+  authorized release workflow to copy the final union file to the sibling
+  rules repository and verify the two files are byte-identical. Do not deploy
+  this changed union ruleset while that synchronization is pending. This is a
+  release coordination gate, not permission for this track to edit another app.
 - `firestore.indexes.json` — composite indexes; deploy alongside rules.
 
 ## Rollback
@@ -195,7 +239,11 @@ npm run verify:live -- --app http://localhost:3100   # local dev server
 App Hosting keeps prior rollouts; to roll back, promote a previous rollout via
 the Firebase console (App Hosting → rollouts) or redeploy an earlier commit.
 There is no second host to switch to — the App Hosting rollout history IS the
-rollback surface.
+rollback surface. For an App Check incident, redeploy a reviewed configuration
+with `APP_CHECK_ENFORCED=0` while diagnosis proceeds; do not remove route gates
+or weaken Firestore rules. Re-run the unattested/attested proofs after restoring
+enforcement. Rules rollback must use a previously synchronized complete union
+ruleset, never a Cook-only fragment.
 
 ## Troubleshooting
 
@@ -203,8 +251,10 @@ rollback surface.
 |---|---|---|
 | verify:live fails at seed | `FIREBASE_SERVICE_ACCOUNT` stale/missing | Re-sync all three stores |
 | verify:live fails at Gemini turn | `GOOGLE_AI_API_KEY` missing | Add to GitHub secrets (and `apphosting.yaml` for runtime), redeploy |
+| Unattested quota route returns 401 instead of 403 `APP_CHECK_FAILED` | Stale deployment or enforcement disabled | Confirm `/api/build-info`, site-key secret, app ID, and `APP_CHECK_ENFORCED=1`; redeploy before live writes |
+| Attested route fails `APP_CHECK_FAILED` | Wrong app ID, malformed/replayed token, or missing Admin readiness | Verify App Hosting config and mint a fresh token; voice/vision tokens are single-use |
 | `/api/*` returns 401 | ID token rejected | Check `NEXT_PUBLIC_FIREBASE_API_KEY` matches project |
-| Firestore reads/writes fail client-side | Rules not deployed / drifted | Re-deploy union ruleset from portfolio repo |
+| Firestore reads/writes fail client-side | Rules not deployed / drifted | Verify the sibling synchronization prerequisite, then deploy the canonical union ruleset through the authorized release workflow |
 | CI validate fails at lint | ESLint config drift | `npm run lint` locally first |
 
 ## Docs

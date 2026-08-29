@@ -271,7 +271,7 @@ describe('scripts/verify-live.mjs · starter-flow gate (create → validate → 
     // Retry once: re-query after the archive; clean owner proceeds, a
     // survivor fails loudly named.
     expect(SRC).toContain('archived ${archived} blocking session(s) — retried, owner is clean before the UI starter');
-    expect(SRC).toContain('owner still has ${remaining.length} ACTIVE/PAUSED session(s) blocking the UI starter after the archive retry');
+    expect(SRC).toContain('owner still has ${remaining.length} ${SPARED_LIVE_SESSION_SIGNATURE}');
     expect(SRC).toContain('could not verify a clean owner before the UI starter');
     // The guard must fire AFTER the [3c] settle and IMMEDIATELY before the
     // [3d] driver spawn — nothing (no new stage label) may sit between the
@@ -300,7 +300,7 @@ describe('scripts/verify-live.mjs · starter-flow gate (create → validate → 
     // The survivors embedded in the fail line are describeBlocking output, so
     // the spare line always names the session with its idle age.
     expect(SRC).toContain("const survivors = remaining.map(describeBlocking).join('; ');");
-    expect(SRC).toContain('fail(`owner still has ${remaining.length} ACTIVE/PAUSED session(s) blocking the UI starter after the archive retry: ${survivors}`)');
+    expect(SRC).toContain('fail(`owner still has ${remaining.length} ${SPARED_LIVE_SESSION_SIGNATURE}: ${survivors}`)');
   });
 
   it('renders the spare-path failure with the loud ✗ FAIL prefix the drills record', () => {
@@ -314,10 +314,52 @@ describe('scripts/verify-live.mjs · starter-flow gate (create → validate → 
     // The guard's own message (passed to fail) is the full loud-fail text
     // with the count, the "after the archive retry" phrasing, and the
     // named survivors.
-    expect(SRC).toContain('fail(`owner still has ${remaining.length} ACTIVE/PAUSED session(s) blocking the UI starter after the archive retry: ${survivors}`)');
+    expect(SRC).toContain('fail(`owner still has ${remaining.length} ${SPARED_LIVE_SESSION_SIGNATURE}: ${survivors}`)');
   });
 
   it('keeps the clean-owner ok line for the unblocked path', () => {
     expect(SRC).toContain('no ACTIVE/PAUSED session before the UI starter (clean owner)');
+  });
+
+  it('surfaces a [role="alert"] error BEFORE the ready button — a pre-ready 403 must fail fast, not wait out the 120s loop', () => {
+    // Seen live in post-merge verify:live: production enforcement rejected the
+    // page's own /api/cook request (headless Chrome cannot attest), and the
+    // driver reported "no result after 120s" instead of the real cause.
+    // readyState() only read the alert AFTER finding the ready button, so a
+    // pre-ready error stayed invisible for the whole loop. The alert query
+    // must come FIRST and the missing-button early return must still carry it.
+    const readyStart = DRIVER.indexOf('const readyState = () =>');
+    expect(readyStart).toBeGreaterThan(-1);
+    const readySection = DRIVER.slice(readyStart, DRIVER.indexOf('const typedStarter', readyStart));
+    const alertIdx = readySection.indexOf('[role="alert"]');
+    const btnCheckIdx = readySection.indexOf('if (!btn)');
+    expect(alertIdx).toBeGreaterThan(-1);
+    expect(btnCheckIdx).toBeGreaterThan(-1);
+    expect(alertIdx).toBeLessThan(btnCheckIdx);
+    // The alert is actually read (never a stale ''), and the missing-button
+    // early return must carry the error it just read.
+    expect(readySection).toContain("const error = document.querySelector('[role=\"alert\"]')");
+    expect(readySection).toContain("if (!btn) return { ready: false, cardText: '', error };");
+  });
+
+  it('arms the shared CDP App Check injection when VERIFY_APP_CHECK_TOKEN is set', () => {
+    // Headless Chrome cannot produce reCAPTCHA v3 attestation, so the page's
+    // own /api/cook request is 403'd by enforcement. The durable CI fix:
+    // verify-live.mjs mints an admin App Check token and the driver injects
+    // it into same-origin /api/* requests at the CDP level (Step 6S). This
+    // pins the import + the arm site in the driver.
+    expect(DRIVER).toContain("import { installAppCheckInjection } from './drive-cdp-app-check.mjs';");
+    expect(DRIVER).toContain('const VERIFY_APP_CHECK_TOKEN = process.env.VERIFY_APP_CHECK_TOKEN ?? \'\';');
+    expect(DRIVER).toContain('installAppCheckInjection({');
+    expect(DRIVER).toContain('token: VERIFY_APP_CHECK_TOKEN');
+    // Must be armed before the page loads (before the first Page.navigate).
+    expect(DRIVER.indexOf('installAppCheckInjection({')).toBeLessThan(DRIVER.indexOf("send('Page.navigate'"));
+  });
+
+  it('threads the minted admin App Check token into the starter-driver env', () => {
+    // The token minted for the fetch-based checks must reach the browser
+    // driver so the page's own requests are attested too.
+    expect(SRC).toContain("spawnSync('node', ['scripts/drive-starter-prefs.mjs', '--app', APP, '--probe-prefix', `${PROBE_PREFIX}starter-prefs-`, '--out', `${driverOut}-${attempt}`], {");
+    expect(SRC).toContain("env: { ...process.env, VERIFY_APP_CHECK_TOKEN: appCheckToken ?? '' },");
   });
 });

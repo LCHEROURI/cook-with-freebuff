@@ -86,7 +86,16 @@ import { getAuth } from 'firebase-admin/auth';
 import { getFirestore } from 'firebase-admin/firestore';
 import { getAppCheck } from 'firebase-admin/app-check';
 import { getRemoteConfig } from 'firebase-admin/remote-config';
-import { classifyVerifyVerdict } from './verify-live-classify.mjs';
+import {
+  BLOCKING_SESSION_PREFIX,
+  classifyVerifyVerdict,
+  SIMULATED_REGRESSION_SIGNATURE,
+  SPARED_LIVE_REASON,
+  SPARED_LIVE_SESSION_SIGNATURE,
+  VERDICT_EXTERNAL,
+  VERDICT_FAILURE,
+  VERDICT_SUCCESS,
+} from './verify-live-classify.mjs';
 
 // ── Env loading (process.env wins; .env.local fills the gaps) ───────────────
 function loadEnv() {
@@ -427,7 +436,7 @@ process.on('uncaughtException', (e) => {
 // ── Main flow (try/finally so cleanup ALWAYS runs) ──────────────────────────
 let runExit = 0;
 // The final verdict (computed in `finally`; read by the exit line below).
-let verdict = { kind: 'fail' };
+let verdict = { kind: VERDICT_FAILURE };
 try {
   // Pre-run sweep FIRST — before seeding anything of our own.
   await sweepStaleProbes();
@@ -551,6 +560,21 @@ try {
     'content-type': 'application/json',
     ...(appCheckToken ? { 'X-Firebase-AppCheck': appCheckToken } : {}),
   };
+  const freshAppCheckAuth = async () => {
+    if (EMULATOR || !APP_ID) return AUTH;
+    try {
+      const minted = await getAppCheck(app).createToken(APP_ID);
+      return { ...AUTH, 'X-Firebase-AppCheck': minted.token };
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      if (REQUIRE_APP_CHECK_ENFORCED) {
+        fail(`App Check single-use token mint failed — ${message}`);
+      } else {
+        note(`App Check single-use token NOT minted — ${message} (monitor mode continues unattested)`);
+      }
+      return AUTH;
+    }
+  };
 
   // ── 2a. App Check enforcement probe ─────────────────────────────────────
   // Prove the deployed server ENFORCES App Check, not just accepts it. A valid
@@ -578,6 +602,19 @@ try {
       fail(`App Check enforcement required but the deployed server accepted an unattested request (HTTP ${noAppCheck.status}) — set APP_CHECK_ENFORCED=1`);
     } else {
       note(`App Check in monitor mode — unattested request returned HTTP ${noAppCheck.status} (not blocked)`);
+    }
+
+    if (REQUIRE_APP_CHECK_ENFORCED) {
+      const attested = await fetchJson(`${APP}/api/cook`, {
+        method: 'POST',
+        headers: AUTH,
+        body: JSON.stringify({ action: 'list_recipes' }),
+      });
+      if (attested.status === 200 && attested.body?.success === true) {
+        note('App Check proof — attested authenticated request succeeded');
+      } else {
+        fail(`App Check attested authenticated request failed (HTTP ${attested.status}) — ${j(attested.body?.error ?? attested.body)}`);
+      }
     }
   }
 
@@ -624,7 +661,7 @@ try {
     }
     // Hard-assert the one observable role via the deployed token route: the
     // model the route returned is the one the live-voice client connects with.
-    const tokenProbe = await fetchJson(`${APP}/api/voice/token`, { method: 'POST', headers: AUTH });
+    const tokenProbe = await fetchJson(`${APP}/api/voice/token`, { method: 'POST', headers: await freshAppCheckAuth() });
     const returnedModel = tokenProbe.body?.data?.model;
     const rcLive = rcParams['live_voice_model'];
     if (typeof returnedModel !== 'string' || returnedModel.length === 0) {
@@ -679,7 +716,14 @@ try {
     if (!mintRes.ok || !mintBody.access_token) {
       fail(`model_source smoke: OAuth mint failed (HTTP ${mintRes.status}) — ${j(mintBody).slice(0, 160)}`);
     }
-    const LOG_WINDOW_MIN = 30;
+    // The default 30-minute window fits the post-deploy case: the deploy job
+    // waited for the revision, whose boot just happened. The weekly
+    // deploy-health probe (deploy-health-weekly.yml) passes a WIDER window
+    // (--model-source-window-min 10080, one week) because on a no-deploy week
+    // the host has been warm for hours or days — no fresh startup lines exist
+    // and the smoke would fail all five roles despite the app working. The
+    // commit scoping below still ties the entries to the deployed revision.
+    const LOG_WINDOW_MIN = Number(flag('--model-source-window-min', '30')) || 30;
     const windowStart = new Date(Date.now() - LOG_WINDOW_MIN * 60_000).toISOString();
     // GITHUB_SHA is set by Actions (the same sha wait-for-deploy-sha asserted
     // before this run); a manual local run has no sha, so the window-wide
@@ -1157,7 +1201,9 @@ try {
     spawnSync('node', ['scripts/drive-starter-prefs.mjs', '--app', APP, '--probe-prefix', `${PROBE_PREFIX}starter-prefs-`, '--out', `${driverOut}-${attempt}`], {
       encoding: 'utf8',
       timeout: 300_000, // Gemini generation + Chrome launch on cold serverless
-      env: process.env,
+      // The minted admin App Check token lets the browser driver attest the
+      // page's OWN requests (headless Chrome cannot complete reCAPTCHA v3).
+      env: { ...process.env, VERIFY_APP_CHECK_TOKEN: appCheckToken ?? '' },
     });
   // ── 3c½. Pre-stage guard: the UI starter must see a CLEAN owner ────────────
   // Fires IMMEDIATELY BEFORE the driver spawn — the last thing the script does
@@ -1204,7 +1250,7 @@ try {
       ok('no ACTIVE/PAUSED session before the UI starter (clean owner)');
     } else {
       const names = blocking.map(describeBlocking).join('; ');
-      note(`owner has ${blocking.length} ACTIVE/PAUSED session(s) blocking the UI starter — archiving and retrying once: ${names}`);
+      note(`owner has ${blocking.length} ${BLOCKING_SESSION_PREFIX} — archiving and retrying once: ${names}`);
       let archived = 0;
       for (const d of blocking) {
         const archivedOne = await db.runTransaction(async (tx) => {
@@ -1232,7 +1278,7 @@ try {
         ok(`archived ${archived} blocking session(s) — retried, owner is clean before the UI starter`);
       } else {
         const survivors = remaining.map(describeBlocking).join('; ');
-        fail(`owner still has ${remaining.length} ACTIVE/PAUSED session(s) blocking the UI starter after the archive retry: ${survivors}`);
+        fail(`owner still has ${remaining.length} ${SPARED_LIVE_SESSION_SIGNATURE}: ${survivors}`);
       }
     }
   } catch (e) {
@@ -1244,7 +1290,11 @@ try {
   // failures.length === 2; the classifier MUST return reason=undefined
   // in that shape — sparing NEVER masks a genuine failure next to it.
   if (process.env.FORCE_VERIFY_LIVE_REGRESSION === 'true') {
-    fail('SIMULATED regression test — voice driver exercised with FORCE_VERIFY_LIVE_REGRESSION=true to prove sparing never masks a real failure');
+    // Single source of truth: the message is the exported
+    // SIMULATED_REGRESSION_SIGNATURE (verify-live-classify.mjs), shared with
+    // the regression-drill comparator and the classifier tests — a reworded
+    // message updates one constant, never this literal.
+    fail(SIMULATED_REGRESSION_SIGNATURE);
   }
   let driver = runDriver(1);
   let driverLog = `${driver.stdout ?? ''}\n${driver.stderr ?? ''}`;
@@ -1295,7 +1345,9 @@ try {
     spawnSync('node', ['scripts/drive-live-voice.mjs', '--app', APP, '--probe-prefix', `${PROBE_PREFIX}voice-`, '--out', `/tmp/verify-live-voice-${t}-${attempt}`], {
       encoding: 'utf8',
       timeout: 420_000, // two Chrome launches + two Gemini Live sessions
-      env: process.env,
+      // The minted admin App Check token lets the browser driver attest the
+      // page's OWN requests (headless Chrome cannot complete reCAPTCHA v3).
+      env: { ...process.env, VERIFY_APP_CHECK_TOKEN: appCheckToken ?? '' },
     });
   let voiceDriver = runVoiceDriver(1);
   let voiceLog = `${voiceDriver.stdout ?? ''}\n${voiceDriver.stderr ?? ''}`;
@@ -1539,7 +1591,7 @@ try {
   // never flake the post-deploy gate.
   console.log(`\n[4d] Vision scan proof: validation + structured result (${APP}/api/vision/scan)`);
   const missingImage = await fetchJson(`${APP}/api/vision/scan`, {
-    method: 'POST', headers: AUTH,
+    method: 'POST', headers: await freshAppCheckAuth(),
     body: JSON.stringify({}),
   });
   missingImage.status === 400 && missingImage.body?.error?.code === 'MISSING_IMAGE'
@@ -1547,7 +1599,7 @@ try {
     : fail(`expected 400 MISSING_IMAGE, got ${missingImage.status} ${j(missingImage.body)}`);
 
   const scanRes = await fetchJson(`${APP}/api/vision/scan`, {
-    method: 'POST', headers: AUTH,
+    method: 'POST', headers: await freshAppCheckAuth(),
     body: JSON.stringify({ image: VISION_FIXTURE_IMAGE }),
     timeoutMs: 60_000, // cold serverless boot + model latency
   });
@@ -1592,10 +1644,10 @@ try {
   // set is classified. The Gemini prepayment-credits block is EXTERNAL: the
   // deployed app is healthy, the billing is not, so the deploy check passes
   // with a distinct report instead of a misleading red.
-  verdict = runExit === 0 ? classifyVerifyVerdict({ failures }) : { kind: 'fail' };
-  if (verdict.kind === 'pass') {
+  verdict = runExit === 0 ? classifyVerifyVerdict({ failures }) : { kind: VERDICT_FAILURE };
+  if (verdict.kind === VERDICT_SUCCESS) {
     console.error(`\nRESULT: PASS`);
-  } else if (verdict.kind === 'external') {
+  } else if (verdict.kind === VERDICT_EXTERNAL) {
     console.error(
       `\n⚠ EXTERNAL: Gemini API prepayment credits are depleted (429) — recipe generation and its ` +
         `downstream stages cannot run. The deployed app itself is healthy; this is a billing issue, not a ` +
@@ -1609,16 +1661,24 @@ try {
   // would otherwise make steps.verify.outcome == 'success' and the /status
   // page would claim full verification. GITHUB_ENV is set on Actions runners
   // only; locally this is a no-op.
-  const recordVerdict = verdict.kind === 'pass' ? 'success' : verdict.kind === 'external' ? 'external' : 'failure';
+  // verdict.kind IS the persisted verdict vocabulary now (the classifier
+  // returns the VERDICT_* constants, so no pass→success / fail→failure
+  // translation is needed). Forward it as-is.
+  const recordVerdict = verdict.kind;
   if (process.env.GITHUB_ENV) {
     writeFileSync(process.env.GITHUB_ENV, `VERIFY_LIVE_VERDICT=${recordVerdict}\n`, { flag: 'a' });
     // Distinguish an INTENTIONAL spare-path failure (a drill or an
     // overlapping-run collision — the guard spared a genuinely live session)
-    // from a real regression, so the /status page can label it.
-    if (verdict.reason) {
-      writeFileSync(process.env.GITHUB_ENV, `VERIFY_LIVE_REASON=${verdict.reason}\n`, { flag: 'a' });
+    // from a real regression, so the /status page can label it. The written
+    // value derives from SPARED_LIVE_REASON (the single source of truth), and
+    // the guard requires the classifier's reason to EQUAL that constant — a
+    // future reason literal added to the classifier can never silently flow
+    // into GITHUB_ENV; it would be dropped here and fail the recorder's Zod
+    // enum instead.
+    if (verdict.reason === SPARED_LIVE_REASON) {
+      writeFileSync(process.env.GITHUB_ENV, `VERIFY_LIVE_REASON=${SPARED_LIVE_REASON}\n`, { flag: 'a' });
     }
   }
   await cleanup();
 }
-process.exit(verdict.kind === 'fail' ? 1 : 0);
+process.exit(verdict.kind === VERDICT_FAILURE ? 1 : 0);

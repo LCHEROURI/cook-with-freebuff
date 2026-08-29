@@ -40,6 +40,8 @@ import { resolve as resolvePath } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { initializeApp, cert, getApps } from 'firebase-admin/app';
 import { getFirestore } from 'firebase-admin/firestore';
+import { getAppCheck } from 'firebase-admin/app-check';
+import { installAppCheckInjection } from './drive-cdp-app-check.mjs';
 import { evaluateVoiceBlob } from './voice-blob-verdict.mjs';
 import { phaseCLatency, latencyViolations, isTranscriptionFrame, isReplyFrame } from './phase-c-latency.mjs';
 import { emptyPhaseCSummary, extractCapturedAt, extractComparisonDiagnostics, OUTCOME, PHASE_C_OUTCOME_MARKER } from './phase-c-summary.mjs';
@@ -122,6 +124,23 @@ const SILENCE_WAV = '/tmp/live-voice-silence.wav';
 // sweep the other's session).
 const PROBE_PREFIX = flag('--probe-prefix', 'verify-live-voice-');
 const SPOKEN_PROMPT = 'chicken, rice and onion, for four people';
+// Admin-minted App Check token supplied by verify-live.mjs. Headless Chrome
+// cannot complete reCAPTCHA v3 attestation, so the page's OWN /api/voice/token
+// request would be 403'd by enforcement; the driver injects this token into
+// same-origin /api/* requests at the CDP level (see drive-cdp-app-check.mjs).
+const VERIFY_APP_CHECK_TOKEN = process.env.VERIFY_APP_CHECK_TOKEN ?? '';
+// The deployed web app id — needed to mint FRESH tokens for the replay-
+// protected /api/voice/token route: it verifies with consume:true, so a
+// single shared token would be consumed by Phase A and replayed as 403 by
+// Phases B/C and any retry.
+const APP_ID = process.env.NEXT_PUBLIC_FIREBASE_APP_ID ?? '';
+const mintVoiceToken = async () => {
+  const apps = getApps();
+  const adminApp = apps[0];
+  if (!APP_ID || !adminApp) return VERIFY_APP_CHECK_TOKEN;
+  const { token: fresh } = await getAppCheck(adminApp).createToken(APP_ID);
+  return fresh;
+};
 
 const API_KEY = process.env.NEXT_PUBLIC_FIREBASE_API_KEY;
 const OWNER_UID = process.env.APP_OWNER_UID;
@@ -173,7 +192,15 @@ if (!exchange.idToken || !exchange.refreshToken) {
 const tokenPayload = JSON.parse(Buffer.from(exchange.idToken.split('.')[1], 'base64url').toString());
 const expiresAt = Date.now() + parseInt(exchange.expiresIn, 10) * 1000;
 ok(`owner idToken minted for ${tokenPayload.sub} (${tokenPayload.email ?? 'owner'})`);
-const AUTH = { authorization: `Bearer ${exchange.idToken}`, 'content-type': 'application/json' };
+// The driver's OWN /api/cook calls (seed launch in Phase B/C) are gated by
+// App Check enforcement just like the page's — measured live: a bare AUTH
+// got 403 "App Check token missing" and the active screen never rendered.
+// Carry the same admin-minted token the CDP injection uses for the page.
+const AUTH = {
+  authorization: `Bearer ${exchange.idToken}`,
+  'content-type': 'application/json',
+  ...(VERIFY_APP_CHECK_TOKEN ? { 'X-Firebase-AppCheck': VERIFY_APP_CHECK_TOKEN } : {}),
+};
 
 const getAdminDb = () => {
   const apps = getApps();
@@ -463,6 +490,11 @@ async function connectCdp(port) {
     note(`screenshot: ${name}.png`);
   };
   await send('Network.enable');
+  // Arm the App Check header injection in EVERY phase session so the page's
+  // own gated requests are attested before any navigation happens. The
+  // replay-protected /api/voice/token route gets a freshly minted token per
+  // request (consume:true — a shared token is consumed by the first call).
+  installAppCheckInjection({ ws, send, app: APP, token: VERIFY_APP_CHECK_TOKEN, mintToken: mintVoiceToken, note });
   return { ws, send, evaluate, screenshot, networkEvents };
 }
 // CDP may deliver WS frames base64 — decode first so matching never depends on

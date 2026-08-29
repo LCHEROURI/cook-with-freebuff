@@ -1,11 +1,24 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import {
+  BLOCKING_SESSION_PREFIX,
   classifyVerifyVerdict,
   GEMINI_CASCADE_PREFIXES,
   GEMINI_CREDITS_SIGNATURES,
+  SIMULATED_REGRESSION_SIGNATURE,
+  SPARED_LIVE_REASON,
   SPARED_LIVE_SESSION_SIGNATURE,
+  VERDICT_EXTERNAL,
+  VERDICT_FAILURE,
+  VERDICT_SUCCESS,
 } from './verify-live-classify.mjs';
+import {
+  renderArchiveOkLine,
+  renderNoteLine,
+  renderResultLine,
+  renderSeamFailLine,
+  renderSpareFailLine,
+} from './drill-evidence-render.mjs';
 
 // ============================================================================
 // scripts/verify-live-classify.test.ts — lock the Gemini-credits EXTERNAL
@@ -49,11 +62,11 @@ const cascadeFailures = [
 
 describe('scripts/verify-live-classify.mjs · behavior', () => {
   it('classifies a credits-blocked run as EXTERNAL (root + every failure a Gemini cascade)', () => {
-    expect(classifyVerifyVerdict({ failures: cascadeFailures }).kind).toBe('external');
+    expect(classifyVerifyVerdict({ failures: cascadeFailures }).kind).toBe(VERDICT_EXTERNAL);
   });
 
   it('passes an empty failure set', () => {
-    expect(classifyVerifyVerdict({ failures: [] }).kind).toBe('pass');
+    expect(classifyVerifyVerdict({ failures: [] }).kind).toBe(VERDICT_SUCCESS);
   });
 
   it('labels a lone spared-live-session failure with the intentional-fail reason', () => {
@@ -68,7 +81,7 @@ describe('scripts/verify-live-classify.mjs · behavior', () => {
         'owner still has 1 ACTIVE/PAUSED session(s) blocking the UI starter after the archive retry: drill-li… (COLLECTING_INGREDIENTS, chicken_rice_onion_001, 8s idle)',
       ],
     });
-    expect(spared.kind).toBe('fail');
+    expect(spared.kind).toBe(VERDICT_FAILURE);
     expect(spared.reason).toBe('spared-live-session');
   });
 
@@ -82,7 +95,7 @@ describe('scripts/verify-live-classify.mjs · behavior', () => {
         'live voice driver → exit 1. Tail: boom',
       ],
     });
-    expect(v.kind).toBe('fail');
+    expect(v.kind).toBe(VERDICT_FAILURE);
     expect(v.reason).toBeUndefined();
   });
 
@@ -96,10 +109,10 @@ describe('scripts/verify-live-classify.mjs · behavior', () => {
     const v = classifyVerifyVerdict({
       failures: [
         'owner still has 1 ACTIVE/PAUSED session(s) blocking the UI starter after the archive retry: drill-li… (COLLECTING_INGREDIENTS, chicken_rice_onion_001, 8s idle)',
-        'SIMULATED regression test — voice driver exercised with FORCE_VERIFY_LIVE_REGRESSION=true to prove sparing never masks a real failure',
+        SIMULATED_REGRESSION_SIGNATURE,
       ],
     });
-    expect(v.kind).toBe('fail');
+    expect(v.kind).toBe(VERDICT_FAILURE);
     expect(v.reason).toBeUndefined();
   });
 
@@ -108,7 +121,7 @@ describe('scripts/verify-live-classify.mjs · behavior', () => {
     const v = classifyVerifyVerdict({
       failures: [creditsRoot, 'serve stage → HTTP 502 on /api/build-info'],
     });
-    expect(v.kind).toBe('fail');
+    expect(v.kind).toBe(VERDICT_FAILURE);
   });
 
   it('fails when the create_recipe root carries no credits signature (a real engine error)', () => {
@@ -118,14 +131,14 @@ describe('scripts/verify-live-classify.mjs · behavior', () => {
         'constraints view: missing “details expanded” in the driver log',
       ],
     });
-    expect(v.kind).toBe('fail');
+    expect(v.kind).toBe(VERDICT_FAILURE);
   });
 
   it('fails on cascade-only failures without the create_recipe credits root', () => {
     const v = classifyVerifyVerdict({
       failures: ['voice driver: missing “spoken prompt filled the input” in the driver log'],
     });
-    expect(v.kind).toBe('fail');
+    expect(v.kind).toBe(VERDICT_FAILURE);
   });
 
   it('keeps the credits phrase intact end to end even when it sits past the old 800-char cut', () => {
@@ -148,7 +161,7 @@ describe('scripts/verify-live-classify.mjs · behavior', () => {
     const root = `create_recipe → 400 ${serialized}`;
     expect(
       classifyVerifyVerdict({ failures: [root, 'voice driver: missing “x” in the driver log'] }).kind,
-    ).toBe('external');
+    ).toBe(VERDICT_EXTERNAL);
   });
 });
 
@@ -173,7 +186,7 @@ describe('scripts/verify-live-classify.mjs · mutation-proof allowlists', () => 
       expect(
         classifyVerifyVerdict({ failures: [root, 'voice driver: missing “x” in the driver log'] }).kind,
         `signature “${sig}” must classify external`,
-      ).toBe('external');
+      ).toBe(VERDICT_EXTERNAL);
     }
   });
 
@@ -186,7 +199,7 @@ describe('scripts/verify-live-classify.mjs · mutation-proof allowlists', () => 
     const v = classifyVerifyVerdict({
       failures: [genericQuotaRoot, 'voice driver: missing “x” in the driver log'],
     });
-    expect(v.kind).toBe('fail');
+    expect(v.kind).toBe(VERDICT_FAILURE);
   });
 
   it('pins the cascade prefix allowlist — a failure outside it stays FAIL', () => {
@@ -239,16 +252,37 @@ describe('scripts/verify-live-classify.mjs · spared signature is mutation-proof
     ];
     for (const m of mutations) {
       const v = classifyVerifyVerdict({ failures: [m.mutated] });
-      expect(v.kind, `${m.name}: kind must stay plain fail`).toBe('fail');
+      expect(v.kind, `${m.name}: kind must stay plain fail`).toBe(VERDICT_FAILURE);
       expect(v.reason, `${m.name}: reason must NOT be spared-live-session`).toBeUndefined();
     }
   });
 });
 
+// The guard spare-fail template extraction, factored out so the mutation
+// drill below can prove it FAILS on a renamed guard message by invoking this
+// exact assertion (same discipline as the string-input / env-threading
+// factored helpers — an independent check would keep passing if this
+// extraction were later weakened or removed). Returns the raw template
+// (e.g. `fail(\`owner still has …\`)`) for callers that render it; on a
+// non-match the assertion throws, and callers can rely on the non-null return.
+const extractGuardSpareFailTemplate = (source: string): string => {
+  const m = source.match(
+    /fail\(`owner still has \$\{remaining\.length\} \$\{SPARED_LIVE_SESSION_SIGNATURE\}: \$\{survivors\}`\)/,
+  );
+  expect(m, 'the guard spare-fail template must be present in verify-live.mjs').not.toBeNull();
+  return m?.[0] ?? '';
+};
+
 describe('scripts/verify-live.mjs · wiring (the gate actually uses the classification)', () => {
   it('imports classifyVerifyVerdict and computes the verdict in the finally block', () => {
-    expect(LIVE).toContain("import { classifyVerifyVerdict } from './verify-live-classify.mjs';");
-    expect(LIVE).toContain('verdict = runExit === 0 ? classifyVerifyVerdict({ failures }) : { kind: \'fail\' };');
+    // The import carries every shared constant (classifier, seam message,
+    // and both spare-path message pieces) — verify-live.mjs embeds them in
+    // its fail(...)/note(...) calls rather than hard-coding the literals.
+    expect(LIVE).toContain("} from './verify-live-classify.mjs';");
+    expect(LIVE).toContain('BLOCKING_SESSION_PREFIX,');
+    expect(LIVE).toContain('SIMULATED_REGRESSION_SIGNATURE,');
+    expect(LIVE).toContain('SPARED_LIVE_SESSION_SIGNATURE,');
+    expect(LIVE).toContain('verdict = runExit === 0 ? classifyVerifyVerdict({ failures }) : { kind: VERDICT_FAILURE };');
   });
 
   it('the [3b] create_recipe failure carries the FULL untruncated body, not any slice', () => {
@@ -263,7 +297,7 @@ describe('scripts/verify-live.mjs · wiring (the gate actually uses the classifi
   });
 
   it('exits 0 on the external verdict and prints the distinct EXTERNAL report', () => {
-    expect(LIVE).toContain('process.exit(verdict.kind === \'fail\' ? 1 : 0);');
+    expect(LIVE).toContain('process.exit(verdict.kind === VERDICT_FAILURE ? 1 : 0);');
     expect(LIVE).toContain('RESULT: EXTERNAL (Gemini credits — deploy check passes)');
     expect(LIVE).toContain('⚠ EXTERNAL: Gemini API prepayment credits are depleted (429)');
   });
@@ -273,7 +307,9 @@ describe('scripts/verify-live.mjs · wiring (the gate actually uses the classifi
     // recorder would persist 'success' and /status would claim full
     // verification. verify-live must forward the mapped verdict (external /
     // success / failure) through GITHUB_ENV for the record step to read.
-    expect(LIVE).toContain("const recordVerdict = verdict.kind === 'pass' ? 'success' : verdict.kind === 'external' ? 'external' : 'failure';");
+    // verdict.kind IS the persisted verdict vocabulary now — the classifier
+    // returns the VERDICT_* constants, so no translation is needed.
+    expect(LIVE).toContain('const recordVerdict = verdict.kind;');
     expect(LIVE).toContain('process.env.GITHUB_ENV');
     expect(LIVE).toContain('writeFileSync(process.env.GITHUB_ENV');
   });
@@ -286,15 +322,642 @@ describe('scripts/verify-live.mjs · wiring (the gate actually uses the classifi
     // spare would break the round-trip proof.
     const seamIdx = LIVE.indexOf('FORCE_VERIFY_LIVE_REGRESSION');
     expect(seamIdx).toBeGreaterThan(-1);
-    // Must read the env var, branch on === 'true', and call fail() — same shape
-    // as the other guards in this file.
+    // Must read the env var, branch on === 'true', and call fail() with the
+    // SHARED constant — never a hard-coded literal (single source of truth;
+    // the codegen contract below pins golden === constant).
     expect(LIVE).toContain("if (process.env.FORCE_VERIFY_LIVE_REGRESSION === 'true')");
-    expect(LIVE).toContain("fail('SIMULATED regression test — voice driver exercised with FORCE_VERIFY_LIVE_REGRESSION=true to prove sparing never masks a real failure')");
+    expect(LIVE).toContain('fail(SIMULATED_REGRESSION_SIGNATURE)');
+    expect(LIVE).toContain("} from './verify-live-classify.mjs';");
+    expect(LIVE).toContain('SIMULATED_REGRESSION_SIGNATURE,');
     // Position: must sit AFTER the guard's `fail(\`owner still has`, so a
     // spared live session can pair with the simulated regression. (The guard
     // block at the archive-retry path is the only producer of a spare failure.)
     const spareFailIdx = LIVE.indexOf('owner still has ');
     expect(spareFailIdx).toBeGreaterThan(-1);
     expect(seamIdx).toBeGreaterThan(spareFailIdx);
+  });
+
+  it('pins the third drill evidence shape — the source-produced spare + seam pair must record reason=null', () => {
+    // The no-mask guarantee is a CONTRACT between the drill seam
+    // (verify-live.mjs) and the classifier (verify-live-classify.mjs). The
+    // seam message is the exported SIMULATED_REGRESSION_SIGNATURE (single
+    // source of truth — the wiring pin above proves the seam passes THIS
+    // constant to fail()); the guard's spare-fail template is extracted from
+    // the source so a rename there is caught by the extraction itself.
+
+    // 1. The seam message — the shared constant, by construction.
+
+    // 2. The guard's spare-fail template — extracted verbatim via the shared
+    //    helper (whose mutation drill proves a renamed guard message is
+    //    caught) and rendered with the real drill payload (run 32429029312:
+    //    one live blocker at 13s idle). The rendered line must still carry
+    //    the load-bearing signature, or the pair would be unlabeled for the
+    //    WRONG reason (a missed match instead of the no-mask rule).
+    const guardTemplate = extractGuardSpareFailTemplate(LIVE);
+    const spareLine = guardTemplate
+      .replace('fail(`', '')
+      .replace('`)', '')
+      .replace('${remaining.length}', '1')
+      // The guard template now embeds the exported constant — expand it so
+      // the rendered line carries the signature's actual text.
+      .replace('${SPARED_LIVE_SESSION_SIGNATURE}', SPARED_LIVE_SESSION_SIGNATURE)
+      .replace('${survivors}', 'drill-li… (COLLECTING_INGREDIENTS, chicken_rice_onion_001, 13s idle)');
+    expect(spareLine).toContain(SPARED_LIVE_SESSION_SIGNATURE);
+
+    // 3. Positive control: the rendered spare ALONE is a genuine spared
+    //    failure. This proves the template is faithful — the pair below is
+    //    unlabeled only BECAUSE a second failure sits next to it.
+    expect(classifyVerifyVerdict({ failures: [spareLine] }).reason).toBe('spared-live-session');
+
+    // 4. The third-drill shape: spare + simulated regression → plain fail,
+    //    and the reason must be undefined — sparing NEVER masks a real
+    //    failure. (Live drill 32429029312 recorded exactly this: RESULT:
+    //    FAIL (2) → verdict failure, reason null.)
+    const v = classifyVerifyVerdict({ failures: [spareLine, SIMULATED_REGRESSION_SIGNATURE] });
+    expect(v.kind).toBe(VERDICT_FAILURE);
+    expect(v.reason).toBeUndefined();
+  });
+
+  it('proves the guard spare-fail extraction catches a renamed guard message (mutation)', () => {
+    // The extraction must have discriminating power, not pass vacuously.
+    // Mutate ONLY the guard's fail(...) template in an in-memory copy of the
+    // REAL verify-live.mjs source (never on disk) and invoke the ACTUAL
+    // extraction (extractGuardSpareFailTemplate) on it: it must throw. If a
+    // future edit weakens or removes the extraction, this mutation test goes
+    // red with it instead of passing on an independent check.
+
+    // Direction 1 — reword the action verb: a renamed guard message must be
+    // caught by the extraction itself.
+    const reworded = LIVE.replace(
+      "fail(`owner still has ${remaining.length} ${SPARED_LIVE_SESSION_SIGNATURE}: ${survivors}`)",
+      "fail(`owner keeps ${remaining.length} ${SPARED_LIVE_SESSION_SIGNATURE}: ${survivors}`)",
+    );
+    expect(reworded, 'the reword mutation must actually land').not.toBe(LIVE);
+    expect(() => extractGuardSpareFailTemplate(reworded)).toThrow();
+
+    // Direction 2 — inline the literal instead of the constant reference
+    // (reverting to the pre-consolidation shape): the extraction must
+    // REQUIRE the constant reference, so a single-source-of-truth break is
+    // caught even though the produced message text is identical.
+    const inlined = LIVE.replace(
+      "fail(`owner still has ${remaining.length} ${SPARED_LIVE_SESSION_SIGNATURE}: ${survivors}`)",
+      'fail(`owner still has ${remaining.length} ACTIVE/PAUSED session(s) blocking the UI starter after the archive retry: ${survivors}`)',
+    );
+    expect(inlined, 'the inline mutation must actually land').not.toBe(LIVE);
+    expect(() => extractGuardSpareFailTemplate(inlined)).toThrow();
+  });
+});
+
+describe('scripts/verify-live-classify.mjs · the seam message is one source of truth (codegen)', () => {
+  // The seam's SIMULATED message used to live as separate literals in
+  // verify-live.mjs (the fail() call), guard-regression-drill.mjs (the
+  // SEAM_FAIL_RE), the golden, and the tests — four copies that could
+  // silently diverge. Now the exported constant is the single source of
+  // truth; these pins prove every consumer derives from it and nothing
+  // hard-codes a second copy.
+
+  it('exports the exact SIMULATED regression message as the constant', () => {
+    expect(SIMULATED_REGRESSION_SIGNATURE).toBe(
+      'SIMULATED regression test — voice driver exercised with FORCE_VERIFY_LIVE_REGRESSION=true to prove sparing never masks a real failure',
+    );
+  });
+
+  it('verify-live.mjs emits the constant — never a hard-coded literal', () => {
+    // The seam must pass the exported constant to fail(). A future edit that
+    // inlines the literal again (or rewords it here without updating the
+    // constant) breaks this pin.
+    expect(LIVE).toContain('fail(SIMULATED_REGRESSION_SIGNATURE)');
+    expect(LIVE).toContain("} from './verify-live-classify.mjs';");
+    expect(LIVE).toContain('SIMULATED_REGRESSION_SIGNATURE,');
+    expect(LIVE).not.toContain("fail('SIMULATED regression test");
+  });
+
+  it('the regression comparator derives its seam regex from the constant', () => {
+    const DRILL = readFileSync('scripts/guard-regression-drill.mjs', 'utf8');
+    expect(DRILL).toContain("import {\n  BLOCKING_SESSION_PREFIX,");
+    expect(DRILL).toContain('SIMULATED_REGRESSION_SIGNATURE,');
+    expect(DRILL).toContain('SPARED_LIVE_SESSION_SIGNATURE,');
+    expect(DRILL).toContain("} from './verify-live-classify.mjs';");
+    // The regex must be built from the constant — not a hard-coded alternation
+    // of the message. escapeRegExp + template literal is the canonical shape.
+    expect(DRILL).toMatch(/escapeRegExp\(SIMULATED_REGRESSION_SIGNATURE\)/);
+    expect(DRILL).not.toContain('SIMULATED regression test — voice driver exercised');
+  });
+
+  it('the committed golden seam line equals ✗ FAIL: + the constant', () => {
+    const golden = readFileSync('scripts/__golden__/guard-regression-drill.txt', 'utf8');
+    const seamLine = golden.split('\n').find((l) => l.includes('SIMULATED regression test'));
+    expect(seamLine).toBe(`✗ FAIL: ${SIMULATED_REGRESSION_SIGNATURE}`);
+  });
+
+  it('the classifier no-mask rule and the seam constant live in the same module (one home for the drill shape)', () => {
+    const CLASSIFY = readFileSync('scripts/verify-live-classify.mjs', 'utf8');
+    expect(CLASSIFY).toContain('export const SIMULATED_REGRESSION_SIGNATURE');
+    expect(CLASSIFY).toContain('failures.length === 1 && failures[0].includes(SPARED_LIVE_SESSION_SIGNATURE)');
+    expect(CLASSIFY.indexOf('SIMULATED_REGRESSION_SIGNATURE')).toBeLessThan(CLASSIFY.indexOf('classifyVerifyVerdict'));
+  });
+});
+
+describe('scripts/verify-live-classify.mjs · the spare path is one source of truth (codegen)', () => {
+  // Mirror of the seam-message consolidation: the spare signature used to
+  // live as separate literals in verify-live.mjs's fail(...)/note(...), the
+  // comparators' NOTE_RE/FAIL_RE regexes, the goldens, and the tests. Now
+  // SPARED_LIVE_SESSION_SIGNATURE (and its derived BLOCKING_SESSION_PREFIX
+  // head) are the single source of truth — these pins prove every consumer
+  // derives from them and the goldens embed them.
+
+  it('derives BLOCKING_SESSION_PREFIX from the signature (the note shares only its head)', () => {
+    expect(BLOCKING_SESSION_PREFIX).toBe(
+      'ACTIVE/PAUSED session(s) blocking the UI starter',
+    );
+    expect(BLOCKING_SESSION_PREFIX).not.toContain('after the archive retry');
+    expect(`${BLOCKING_SESSION_PREFIX} after the archive retry`).toBe(SPARED_LIVE_SESSION_SIGNATURE);
+  });
+
+  it('verify-live.mjs embeds the constants in note(...) and fail(...) — no hard-coded literals', () => {
+    expect(LIVE).toContain('note(`owner has ${blocking.length} ${BLOCKING_SESSION_PREFIX} — archiving and retrying once: ${names}`)');
+    expect(LIVE).toContain('fail(`owner still has ${remaining.length} ${SPARED_LIVE_SESSION_SIGNATURE}: ${survivors}`)');
+    expect(LIVE).not.toContain('owner has ${blocking.length} ACTIVE/PAUSED session(s) blocking the UI starter — archiving');
+    expect(LIVE).not.toContain('fail(`owner still has ${remaining.length} ACTIVE/PAUSED session(s) blocking the UI starter after the archive retry');
+  });
+
+  it('the spare/regression comparators derive their regexes from the constants', () => {
+    // The FAIL/SPARE_FAIL regexes must be built from the exported signature
+    // and the NOTE regexes from the derived prefix — via new RegExp + a
+    // template literal + escapeRegExp(constant), never a hard-coded literal.
+    // (The exact `\s` spellings are exercised by the comparator tests' --diff
+    // replays, which prove the derived regexes still extract the fixtures.)
+    for (const f of ['guard-spare-drill.mjs', 'guard-regression-drill.mjs']) {
+      const src = readFileSync(`scripts/${f}`, 'utf8');
+      expect(src).toContain('new RegExp(`^');
+      expect(src).toContain('escapeRegExp(SPARED_LIVE_SESSION_SIGNATURE)');
+      expect(src).not.toContain('ACTIVE/PAUSED session(s) blocking the UI starter after the archive retry');
+    }
+    for (const f of ['guard-spare-drill.mjs', 'guard-boundary-drill.mjs', 'guard-regression-drill.mjs']) {
+      const src = readFileSync(`scripts/${f}`, 'utf8');
+      expect(src).toContain('new RegExp(`^');
+      expect(src).toContain('escapeRegExp(BLOCKING_SESSION_PREFIX)');
+      expect(src).not.toContain('ACTIVE/PAUSED session(s) blocking the UI starter');
+    }
+  });
+
+  it('the goldens embed the constants — a reworded signature fails the lockstep', () => {
+    for (const g of ['guard-spare-drill.txt', 'guard-boundary-drill.txt', 'guard-regression-drill.txt']) {
+      const golden = readFileSync(`scripts/__golden__/${g}`, 'utf8');
+      const noteLine = golden.split('\n').find((l) => l.startsWith('- owner has'));
+      expect(noteLine).toBe(`- owner has <N> ${BLOCKING_SESSION_PREFIX} — archiving and retrying once: <ID>… (<PHASE>, <RECIPE>, <IDLE>s idle)`);
+    }
+    for (const g of ['guard-spare-drill.txt', 'guard-regression-drill.txt']) {
+      const golden = readFileSync(`scripts/__golden__/${g}`, 'utf8');
+      // Match the actual fail line (starts with ✗ FAIL:) — the goldens' header
+      // comments also mention 'owner still has' and would be picked up by a
+      // plain includes() scan.
+      const failLine = golden.split('\n').find((l) => l.startsWith('✗ FAIL:'));
+      expect(failLine).toBe(`✗ FAIL: owner still has <N> ${SPARED_LIVE_SESSION_SIGNATURE}: <ID>… (<PHASE>, <RECIPE>, <IDLE>s idle)`);
+    }
+  });
+
+  it('the golden NOTE/FAIL lines derive from the shared renderer module — with source-template lockstep', () => {
+    // The goldens' NOTE/FAIL lines now derive from drill-evidence-render.mjs
+    // (the ONE code path: the comparators' expand/regenerate steps AND the
+    // goldens' derivation both call renderNoteLine/renderSpareFailLine). The
+    // source templates in verify-live.mjs are still extracted below as a
+    // LOCKSTEP check — the guard's own note(...)/fail(...) templates, rendered
+    // through the same prefixes, must equal the renderer's output, so a
+    // reworded producer (e.g. "owner still has" renamed) fails here AND in
+    // the comparator's regex extraction.
+    const noteTemplateMatch = LIVE.match(
+      /note\(`owner has \$\{blocking\.length\} \$\{BLOCKING_SESSION_PREFIX\} — archiving and retrying once: \$\{names\}`\)/,
+    );
+    expect(noteTemplateMatch, 'the guard note template must be present in verify-live.mjs').not.toBeNull();
+    // The fail template comes from the shared extractGuardSpareFailTemplate
+    // helper (same code path the evidence-shape test and the mutation drill
+    // exercise), so a renamed guard message is caught everywhere at once.
+    const failTemplate = extractGuardSpareFailTemplate(LIVE);
+
+    // Derive the golden placeholders through the SHARED renderers.
+    const goldenNote = renderNoteLine({
+      n: '<N>', id: '<ID>', phase: '<PHASE>', recipe: '<RECIPE>', idle: '<IDLE>',
+    });
+    const goldenFail = renderSpareFailLine({
+      n: '<N>', id: '<ID>', phase: '<PHASE>', recipe: '<RECIPE>', idle: '<IDLE>',
+    });
+
+    // Lockstep: the guard's own templates must render to exactly the
+    // renderer's lines (the renderer is the canonical shape, the producer
+    // must match it).
+    const sourceNote = `- ${noteTemplateMatch![0]
+      .replace('note(`', '')
+      .replace('`)', '')
+      .replace('${blocking.length}', '<N>')
+      .replace('${BLOCKING_SESSION_PREFIX}', BLOCKING_SESSION_PREFIX)
+      .replace('${names}', '<ID>… (<PHASE>, <RECIPE>, <IDLE>s idle)')}`;
+    const sourceFail = `✗ FAIL: ${failTemplate
+      .replace('fail(`', '')
+      .replace('`)', '')
+      .replace('${remaining.length}', '<N>')
+      .replace('${SPARED_LIVE_SESSION_SIGNATURE}', SPARED_LIVE_SESSION_SIGNATURE)
+      .replace('${survivors}', '<ID>… (<PHASE>, <RECIPE>, <IDLE>s idle)')}`;
+    expect(sourceNote, 'verify-live.mjs note template must match the shared renderer').toBe(goldenNote);
+    expect(sourceFail, 'verify-live.mjs fail template must match the shared renderer').toBe(goldenFail);
+
+    // The committed goldens must equal the renderer-derived lines.
+    for (const g of ['guard-spare-drill.txt', 'guard-boundary-drill.txt', 'guard-regression-drill.txt']) {
+      const golden = readFileSync(`scripts/__golden__/${g}`, 'utf8');
+      const noteLine = golden.split('\n').find((l) => l.startsWith('- owner has'));
+      expect(noteLine, `${g}: NOTE line must equal the renderer output`).toBe(goldenNote);
+    }
+    for (const g of ['guard-spare-drill.txt', 'guard-regression-drill.txt']) {
+      const golden = readFileSync(`scripts/__golden__/${g}`, 'utf8');
+      const failLine = golden.split('\n').find((l) => l.startsWith('✗ FAIL:'));
+      expect(failLine, `${g}: FAIL line must equal the renderer output`).toBe(goldenFail);
+    }
+  });
+
+  it('the boundary golden archive-OK line derives from the guard ok() renderer + the PROBE_GRACE_MS sweep settle message', () => {
+    // The boundary golden's second evidence line (`✓ archived <N> blocking
+    // session(s) — retried, owner is clean before the UI starter`) was only
+    // ever pinned as a literal in guard-boundary-drill.test.ts — it never
+    // derived from what verify-live.mjs actually EMITS, so a renamed guard
+    // ok(...) message would break the comparator's OK_RE extraction while the
+    // golden silently kept the old text. This test closes that gap: the
+    // archive-OK line must equal the guard's own ok() template rendered
+    // through the ok() renderer prefix (the `✓ ` — never a hard-coded literal
+    // in the archive call), and the pre-run sweep's PROBE_GRACE_MS settle
+    // message (the `↳ pre-run sweep:` line that archives stale probes past
+    // PROBE_GRACE_MS) must derive from its source console.log template too.
+
+    // 1. The ok() renderer — the source of the `✓ ` prefix. The guard's
+    //    archive call passes only the message; the checkmark comes from the
+    //    renderer, so inlining `✓ ` into the ok(...) call (a literal) fails
+    //    this pin.
+    const okRendererMatch = LIVE.match(/const ok = \(m\) => console\.log\(`  ✓ \$\{m\}`\);/);
+    expect(okRendererMatch, 'the ok() renderer must be present in verify-live.mjs').not.toBeNull();
+    const checkMark = (okRendererMatch![0].match(/✓/) ?? ['✓'])[0];
+
+    // 2. The archive-OK message derives from the SHARED renderer module
+    //    (the same renderArchiveOkLine the boundary comparator's expandOk
+    //    calls) with ${archived} → <N>.
+    const archiveOkGolden = renderArchiveOkLine({ n: '<N>' });
+
+    //    Lockstep: the guard's own ok(...) template, rendered through the
+    //    ok() renderer prefix, must equal the shared renderer's line.
+    const archiveTemplateMatch = LIVE.match(
+      /ok\(`archived \$\{archived\} blocking session\(s\) — retried, owner is clean before the UI starter`\)/,
+    );
+    expect(archiveTemplateMatch, 'the guard archive ok() template must be present in verify-live.mjs').not.toBeNull();
+    const sourceArchiveOk = `${checkMark} ${archiveTemplateMatch![0]
+      .replace('ok(`', '')
+      .replace('`)', '')
+      .replace('${archived}', '<N>')}`;
+    expect(sourceArchiveOk, 'verify-live.mjs archive ok() template must match the shared renderer').toBe(archiveOkGolden);
+
+    // The committed boundary golden's archive-OK line must equal the
+    // source-derived line (the comparator strips leading spaces, so the
+    // renderer's two-space indent never reaches the golden).
+    const boundaryGolden = readFileSync('scripts/__golden__/guard-boundary-drill.txt', 'utf8');
+    const okLine = boundaryGolden.split('\n').find((l) => l.startsWith('✓ archived'));
+    expect(okLine, 'boundary golden: archive-OK line must equal the source template').toBe(archiveOkGolden);
+
+    // 3. The PROBE_GRACE_MS settle message — the pre-run sweep's
+    //    `↳ pre-run sweep:` line, the only message that reports the
+    //    PROBE_GRACE_MS-based sweep (archived stale probes / deleted orphaned
+    //    recipes). Derive it from its source console.log template so a renamed
+    //    sweep phrasing fails the extraction instead of drifting silently.
+    const sweepTemplateMatch = LIVE.match(
+      /console\.log\(`  ↳ pre-run sweep: archived \$\{archived\} stale probe session\(s\), deleted \$\{deletes\.length\} orphaned probe recipe\(s\)`\)/,
+    );
+    expect(sweepTemplateMatch, 'the pre-run sweep settle template must be present in verify-live.mjs').not.toBeNull();
+    const sweepDerived = sweepTemplateMatch![0]
+      .replace('console.log(`', '')
+      .replace('`)', '')
+      .replace('${archived}', '<N>')
+      .replace('${deletes.length}', '<N>');
+    expect(sweepDerived).toBe(
+      '  ↳ pre-run sweep: archived <N> stale probe session(s), deleted <N> orphaned probe recipe(s)',
+    );
+
+    // Mutation drills — both directions load-bearing:
+    //   • reword the guard's archive message → the archive template
+    //     extraction fails (the comparator's OK_RE would stop matching too),
+    //   • inline the `✓ ` into the ok(...) call instead of the renderer → the
+    //     renderer pin fails even though the emitted text is byte-identical.
+    const rewordedArchive = LIVE.replace(
+      'ok(`archived ${archived} blocking session(s) — retried, owner is clean before the UI starter`)',
+      'ok(`archived ${archived} blocking session(s) — retried, owner is clean, UI starter ready`)',
+    );
+    expect(rewordedArchive, 'the archive reword mutation must actually land').not.toBe(LIVE);
+    expect(rewordedArchive).not.toContain('ok(`archived ${archived} blocking session(s) — retried, owner is clean before the UI starter`)');
+    expect(rewordedArchive.match(/ok\(`archived \$\{archived\} blocking session\(s\) — retried, owner is clean before the UI starter`\)/)).toBeNull();
+
+    const inlinedCheck = LIVE.replace('const ok = (m) => console.log(`  ✓ ${m}`);', 'const ok = (m) => console.log(`  ${m}`);').replace(
+      'ok(`archived ${archived} blocking session(s) — retried, owner is clean before the UI starter`)',
+      'ok(`✓ archived ${archived} blocking session(s) — retried, owner is clean before the UI starter`)',
+    );
+    expect(inlinedCheck, 'the inline-checkmark mutation must actually land').not.toBe(LIVE);
+    expect(inlinedCheck).not.toContain('const ok = (m) => console.log(`  ✓ ${m}`);');
+    expect(inlinedCheck.match(/const ok = \(m\) => console\.log\(`  ✓ \$\{m\}`\);/)).toBeNull();
+
+    // The pins are the guards.
+    expect(LIVE).toContain('const ok = (m) => console.log(`  ✓ ${m}`);');
+    expect(LIVE).toContain('ok(`archived ${archived} blocking session(s) — retried, owner is clean before the UI starter`)');
+    expect(okLine).toBe(archiveOkGolden);
+  });
+
+  it('the golden seam + RESULT lines derive from the shared renderer module — with source-template lockstep', () => {
+    // The regression golden's last two evidence lines are fully static (no
+    // drill-run variants): the seam's SIMULATED regression FAIL and the
+    // RESULT count line proving exactly TWO failures. Both now derive from
+    // drill-evidence-render.mjs (renderSeamFailLine / renderResultLine — the
+    // same code path the regression comparator's regenerate step calls), and
+    // verify-live.mjs's own producers are extracted below as a LOCKSTEP
+    // check: a reworded seam message or a renamed RESULT phrasing fails the
+    // extraction AND the golden must follow in lockstep.
+
+    // 1. The seam FAIL line = the fail() renderer prefix (`✗ FAIL: ` after
+    //    the comparator trims) + the exported constant. The seam call itself
+    //    passes the SHARED constant — the wiring pins above already assert
+    //    `fail(SIMULATED_REGRESSION_SIGNATURE)`.
+    const seamGolden = renderSeamFailLine();
+
+    // 2. The RESULT line = the console.error template rendered for the
+    //    drill's two-failure shape: runExit === 0 (no crash) and
+    //    failures.length === 2 (spare + seam). Extract the source template
+    //    verbatim so a renamed RESULT phrasing is caught by the extraction
+    //    itself, then assert the extracted line equals the shared renderer's.
+    const resultTemplateMatch = LIVE.match(
+      /console\.error\(`\\nRESULT: FAIL \(\$\{runExit !== 0 \? 'crash' : failures\.length\}\)`\)/,
+    );
+    expect(resultTemplateMatch, 'the RESULT print template must be present in verify-live.mjs').not.toBeNull();
+    const resultGolden = renderResultLine(2);
+    const sourceResult = resultTemplateMatch![0]
+      .replace('console.error(`', '')
+      .replace('`)', '')
+      .replace('\\n', '')
+      .replace("${runExit !== 0 ? 'crash' : failures.length}", '2');
+    expect(sourceResult, 'verify-live.mjs RESULT template must match the shared renderer').toBe(resultGolden);
+
+    // The committed regression golden must equal both renderer-derived lines.
+    const golden = readFileSync('scripts/__golden__/guard-regression-drill.txt', 'utf8');
+    const goldenLines = golden.split('\n');
+    const seamLine = goldenLines.find((l) => l.startsWith('✗ FAIL: SIMULATED'));
+    expect(seamLine, 'regression golden: seam line must equal the renderer output').toBe(seamGolden);
+    const resultLine = goldenLines.find((l) => l.startsWith('RESULT: FAIL'));
+    expect(resultLine, 'regression golden: RESULT line must equal the renderer output').toBe(resultGolden);
+
+    // Load-bearing check — rename the RESULT template in an in-memory copy:
+    // the extraction must fail (the derivation would produce the old golden
+    // text and the committed golden would drift silently).
+    const renamedResult = LIVE.replace('RESULT: FAIL', 'RESULT: FLAKE');
+    expect(renamedResult, 'the RESULT rename mutation must actually land').not.toContain('RESULT: FAIL');
+    expect(renamedResult).toContain('RESULT: FLAKE');
+    expect(renamedResult.match(
+      /console\.error\(`\\nRESULT: FAIL \(\$\{runExit !== 0 \? 'crash' : failures\.length\}\)`\)/,
+    )).toBeNull();
+
+    // And the seam direction — inline the seam message literal instead of the
+    // constant: the wiring pin above (fail(SIMULATED_REGRESSION_SIGNATURE))
+    // is what catches that; assert it here too so the derivation is proven
+    // load-bearing in both directions.
+    expect(LIVE).toContain('fail(SIMULATED_REGRESSION_SIGNATURE)');
+  });
+});
+
+describe('scripts/verify-live-classify.mjs · the reason value is one source of truth (cross-file)', () => {
+  // The reason enum value 'spared-live-session' used to live as three
+  // independent literals: the classifier's return, the recorder's Zod schema,
+  // and the /status page's isSpared check. A rename in one would silently
+  // desync the label (page never marks a spared drill intentional, or marks a
+  // bare failure as spared). SPARED_LIVE_REASON is now the single source of
+  // truth; these pins prove every consumer derives from it and nothing
+  // hard-codes a second copy.
+
+  const RECORDER = readFileSync('scripts/record-verify-status.mjs', 'utf8');
+  const PAGE = readFileSync('app/status/page.tsx', 'utf8');
+  const LIVE = readFileSync('scripts/verify-live.mjs', 'utf8');
+
+  it('exports the exact reason value as the constant', () => {
+    expect(SPARED_LIVE_REASON).toBe('spared-live-session');
+  });
+
+  it('the classifier returns the constant — never a hard-coded literal', () => {
+    // The module source must reference the constant in the spared branch.
+    expect(readFileSync('scripts/verify-live-classify.mjs', 'utf8')).toContain(
+      'if (sparedLive) return { kind: VERDICT_FAILURE, reason: SPARED_LIVE_REASON };',
+    );
+  });
+
+  it('verify-live.mjs writes GITHUB_ENV from the constant — never a producer-side literal', () => {
+    // The producer is the LAST unpinned consumer: it wrote `verdict.reason`
+    // through without ever referencing the constant, so a future classifier
+    // edit could have shipped a new reason literal straight into GITHUB_ENV.
+    // Now it must import the constant, guard on equality with it (a reason
+    // value the classifier does not derive from the constant is DROPPED, and
+    // the recorder's Zod enum rejects it downstream), and write the constant's
+    // exact text.
+    expect(LIVE).toContain("from './verify-live-classify.mjs'");
+    expect(LIVE).toContain('  SPARED_LIVE_REASON,');
+    expect(LIVE).toContain('if (verdict.reason === SPARED_LIVE_REASON) {');
+    expect(LIVE).toContain('`VERIFY_LIVE_REASON=${SPARED_LIVE_REASON}\\n`');
+    expect(LIVE).not.toContain('VERIFY_LIVE_REASON=spared-live-session');
+    expect(LIVE).not.toContain('`VERIFY_LIVE_REASON=${verdict.reason}\\n`');
+  });
+
+  it('the recorder validates the reason against the constant — never a local literal', () => {
+    expect(RECORDER).toContain("from './verify-live-classify.mjs'");
+    expect(RECORDER).toContain('  SPARED_LIVE_REASON,');
+    expect(RECORDER).toContain('z.enum([SPARED_LIVE_REASON]).optional()');
+    expect(RECORDER).not.toContain("z.enum(['spared-live-session'])");
+  });
+
+  it('the /status page checks the reason against the constant — never a page-local literal', () => {
+    expect(PAGE).toContain("from '../../scripts/verify-live-classify.mjs'");
+    expect(PAGE).toContain('  SPARED_LIVE_REASON,');
+    expect(PAGE).toContain('isSpared = status?.verifyLive?.reason === SPARED_LIVE_REASON');
+    expect(PAGE).not.toContain("reason === 'spared-live-session'");
+  });
+
+  it('a renamed reason desyncs loudly: exact-value pin + literal-free pins fire together (mutation)', () => {
+    // Direction 1 — rename the constant value in an in-memory copy of the
+    // classifier: the exact-value pin above is what catches it (all consumers
+    // reference the constant, so only a deliberate value change surfaces).
+    const reworded = readFileSync('scripts/verify-live-classify.mjs', 'utf8').replace(
+      "export const SPARED_LIVE_REASON = 'spared-live-session';",
+      "export const SPARED_LIVE_REASON = 'spared-live-session-renamed';",
+    );
+    expect(reworded, 'the reword mutation must actually land').not.toContain(
+      "export const SPARED_LIVE_REASON = 'spared-live-session';",
+    );
+    expect(reworded).toContain("export const SPARED_LIVE_REASON = 'spared-live-session-renamed';");
+
+    // Direction 2 — revert the recorder to a local literal: the literal-free
+    // pin above must fail.
+    const recorderInlined = RECORDER.replace('z.enum([SPARED_LIVE_REASON]).optional()', "z.enum(['spared-live-session']).optional()");
+    expect(recorderInlined, 'the recorder inline mutation must actually land').not.toContain(
+      'z.enum([SPARED_LIVE_REASON]).optional()',
+    );
+    expect(recorderInlined).toContain("z.enum(['spared-live-session']).optional()");
+
+    // Direction 3 — revert the page to a local literal: the page pin must fail.
+    const pageInlined = PAGE.replace('reason === SPARED_LIVE_REASON', "reason === 'spared-live-session'");
+    expect(pageInlined, 'the page inline mutation must actually land').not.toContain(
+      'reason === SPARED_LIVE_REASON',
+    );
+    expect(pageInlined).toContain("reason === 'spared-live-session'");
+
+    // Direction 4 — revert the producer's GITHUB_ENV write to pass the raw
+    // verdict reason through (the pre-consolidation shape): the producer pin
+    // must fail even though the classifier still returns the constant, because
+    // the write no longer derives from SPARED_LIVE_REASON.
+    const producerPassed = LIVE.replace(
+      'if (verdict.reason === SPARED_LIVE_REASON) {',
+      'if (verdict.reason) {',
+    ).replace('`VERIFY_LIVE_REASON=${SPARED_LIVE_REASON}\\n`', '`VERIFY_LIVE_REASON=${verdict.reason}\\n`');
+    expect(producerPassed, 'the producer revert mutation must actually land').not.toContain(
+      'if (verdict.reason === SPARED_LIVE_REASON) {',
+    );
+    expect(producerPassed).toContain('`VERIFY_LIVE_REASON=${verdict.reason}\\n`');
+
+    // Direction 5 — inline the literal in the producer's write: the
+    // literal-free pin must fail.
+    const producerInlined = LIVE.replace('`VERIFY_LIVE_REASON=${SPARED_LIVE_REASON}\\n`', '`VERIFY_LIVE_REASON=spared-live-session\\n`');
+    expect(producerInlined, 'the producer inline mutation must actually land').not.toContain(
+      '`VERIFY_LIVE_REASON=${SPARED_LIVE_REASON}\\n`',
+    );
+    expect(producerInlined).toContain('VERIFY_LIVE_REASON=spared-live-session');
+
+    // The pins are the guards: assert each mutation breaks its corresponding
+    // literal-free contract. (These are the same assertions the tests above
+    // run against the unmutated sources, so weakening them here would also
+    // weaken the live pins — same discipline as the string-input drills.)
+    expect(recorderInlined).not.toContain('z.enum([SPARED_LIVE_REASON]).optional()');
+    expect(recorderInlined).toContain("z.enum(['spared-live-session']).optional()");
+    expect(pageInlined).not.toContain('reason === SPARED_LIVE_REASON');
+    expect(pageInlined).toContain("reason === 'spared-live-session'");
+    expect(producerPassed).not.toContain('if (verdict.reason === SPARED_LIVE_REASON) {');
+    expect(producerPassed).toContain('`VERIFY_LIVE_REASON=${verdict.reason}\\n`');
+    expect(producerInlined).not.toContain('`VERIFY_LIVE_REASON=${SPARED_LIVE_REASON}\\n`');
+    expect(producerInlined).toContain('VERIFY_LIVE_REASON=spared-live-session');
+    expect(SPARED_LIVE_REASON).toBe('spared-live-session');
+  });
+});
+
+describe('scripts/verify-live-classify.mjs · the verdict vocabulary is one source of truth (cross-file)', () => {
+  // The success/failure/external values used to live as two disconnected
+  // vocabularies: the classifier's internal kind was 'pass'/'external'/'fail'
+  // and the persisted verdict was 'success'/'failure'/'external', bridged by a
+  // hand-written mapping in verify-live.mjs. VERDICT_SUCCESS / VERDICT_FAILURE /
+  // VERDICT_EXTERNAL are now the single vocabulary: the classifier returns
+  // them as kind, verify-live.mjs forwards verdict.kind as-is (no mapping),
+  // the recorder validates them, and the status page labels against them.
+  // These pins prove every consumer derives from the constants and the
+  // translation layer is gone.
+
+  const CLASSIFIER = readFileSync('scripts/verify-live-classify.mjs', 'utf8');
+  const RECORDER = readFileSync('scripts/record-verify-status.mjs', 'utf8');
+  const PAGE = readFileSync('app/status/page.tsx', 'utf8');
+  const LIVE = readFileSync('scripts/verify-live.mjs', 'utf8');
+
+  it('exports the exact verdict values as the constants', () => {
+    expect(VERDICT_SUCCESS).toBe('success');
+    expect(VERDICT_FAILURE).toBe('failure');
+    expect(VERDICT_EXTERNAL).toBe('external');
+  });
+
+  it('the classifier returns the constants — never the old pass/fail kind vocabulary', () => {
+    expect(CLASSIFIER).toContain('return { kind: VERDICT_SUCCESS };');
+    expect(CLASSIFIER).toContain('return { kind: VERDICT_EXTERNAL };');
+    expect(CLASSIFIER).toContain('return { kind: VERDICT_FAILURE, reason: SPARED_LIVE_REASON };');
+    expect(CLASSIFIER).toContain('return { kind: VERDICT_FAILURE };');
+    // The old vocabulary is gone from the classifier's returns.
+    expect(CLASSIFIER).not.toContain("return { kind: 'pass' };");
+    expect(CLASSIFIER).not.toContain("return { kind: 'fail' };");
+    expect(CLASSIFIER).not.toContain("return { kind: 'external' };");
+  });
+
+  it('verify-live.mjs forwards verdict.kind as-is — no pass→success / fail→failure mapping', () => {
+    expect(LIVE).toContain('const recordVerdict = verdict.kind;');
+    expect(LIVE).not.toContain("verdict.kind === 'pass' ? 'success'");
+    expect(LIVE).not.toContain("? 'external' : 'failure'");
+    expect(LIVE).toContain('verdict.kind === VERDICT_SUCCESS');
+    expect(LIVE).toContain('verdict.kind === VERDICT_EXTERNAL');
+    expect(LIVE).toContain('process.exit(verdict.kind === VERDICT_FAILURE ? 1 : 0);');
+  });
+
+  it('the recorder validates against the constants — never local literals', () => {
+    expect(RECORDER).toContain("from './verify-live-classify.mjs'");
+    expect(RECORDER).toContain('  VERDICT_EXTERNAL,');
+    expect(RECORDER).toContain('z.enum([VERDICT_SUCCESS, VERDICT_FAILURE, VERDICT_EXTERNAL])');
+    expect(RECORDER).toContain('verdict !== VERDICT_SUCCESS && verdict !== VERDICT_FAILURE && verdict !== VERDICT_EXTERNAL');
+    expect(RECORDER).toContain('if (verdict === VERDICT_EXTERNAL)');
+    expect(RECORDER).not.toContain("z.enum(['success', 'failure', 'external'])");
+    expect(RECORDER).not.toContain("if (verdict === 'external')");
+  });
+
+  it('the /status page labels against the constants — never page-local literals', () => {
+    expect(PAGE).toContain("from '../../scripts/verify-live-classify.mjs'");
+    expect(PAGE).toContain('  VERDICT_EXTERNAL,');
+    expect(PAGE).toContain('status?.verifyLive?.verdict === VERDICT_SUCCESS');
+    expect(PAGE).toContain('status?.verifyLive?.verdict === VERDICT_FAILURE');
+    expect(PAGE).toContain('status?.verifyLive?.verdict === VERDICT_EXTERNAL');
+    expect(PAGE).not.toContain("=== 'success'");
+    expect(PAGE).not.toContain("=== 'failure'");
+    expect(PAGE).not.toContain("=== 'external'");
+  });
+
+  it('a renamed verdict desyncs loudly: exact-value pin + literal-free pins fire together (mutation)', () => {
+    // Direction 1 — rename one constant value in an in-memory copy of the
+    // classifier: the exact-value pin above is what catches it (all consumers
+    // reference the constant, so only a deliberate value change surfaces).
+    const reworded = CLASSIFIER.replace(
+      "export const VERDICT_FAILURE = 'failure';",
+      "export const VERDICT_FAILURE = 'failed';",
+    );
+    expect(reworded, 'the reword mutation must actually land').not.toContain(
+      "export const VERDICT_FAILURE = 'failure';",
+    );
+    expect(reworded).toContain("export const VERDICT_FAILURE = 'failed';");
+
+    // Direction 2 — revert the recorder to a local literal: the literal-free
+    // pin must fail.
+    const recorderInlined = RECORDER.replace(
+      'z.enum([VERDICT_SUCCESS, VERDICT_FAILURE, VERDICT_EXTERNAL])',
+      "z.enum(['success', 'failure', 'external'])",
+    );
+    expect(recorderInlined, 'the recorder inline mutation must actually land').not.toContain(
+      'z.enum([VERDICT_SUCCESS, VERDICT_FAILURE, VERDICT_EXTERNAL])',
+    );
+    expect(recorderInlined).toContain("z.enum(['success', 'failure', 'external'])");
+
+    // Direction 3 — revert the page to a local literal: the page pin must fail.
+    // (replaceAll: the page compares VERDICT_FAILURE in both the class and the
+    // label ternaries, so a single replace would leave one literal behind.)
+    const pageInlined = PAGE.replaceAll('=== VERDICT_FAILURE', "=== 'failure'");
+    expect(pageInlined, 'the page inline mutation must actually land').not.toContain('=== VERDICT_FAILURE');
+    expect(pageInlined).toContain("=== 'failure'");
+
+    // Direction 4 — restore the hand-written mapping in verify-live.mjs: the
+    // no-mapping pin must fail.
+    const mappingRestored = LIVE.replace(
+      'const recordVerdict = verdict.kind;',
+      "const recordVerdict = verdict.kind === 'pass' ? 'success' : verdict.kind === 'external' ? 'external' : 'failure';",
+    );
+    expect(mappingRestored, 'the mapping-restore mutation must actually land').not.toContain(
+      'const recordVerdict = verdict.kind;',
+    );
+    expect(mappingRestored).toContain("verdict.kind === 'pass' ? 'success'");
+
+    // The pins are the guards — same discipline as the reason-value drills.
+    expect(reworded).not.toContain("export const VERDICT_FAILURE = 'failure';");
+    expect(reworded).toContain("export const VERDICT_FAILURE = 'failed';");
+    expect(recorderInlined).not.toContain('z.enum([VERDICT_SUCCESS, VERDICT_FAILURE, VERDICT_EXTERNAL])');
+    expect(recorderInlined).toContain("z.enum(['success', 'failure', 'external'])");
+    expect(pageInlined).not.toContain('=== VERDICT_FAILURE');
+    expect(pageInlined).toContain("=== 'failure'");
+    expect(mappingRestored).not.toContain('const recordVerdict = verdict.kind;');
+    expect(mappingRestored).toContain("verdict.kind === 'pass' ? 'success'");
+    expect(VERDICT_SUCCESS).toBe('success');
+    expect(VERDICT_FAILURE).toBe('failure');
+    expect(VERDICT_EXTERNAL).toBe('external');
   });
 });

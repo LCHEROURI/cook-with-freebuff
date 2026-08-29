@@ -592,11 +592,15 @@ function selfHealCancelledRun() {
   }
 
   const gateRuns = runs
-    .filter((r) => r.name === 'Codex review gate')
+    .filter((r) => r.name === 'Codex review gate' && healedEvents.has(r.event ?? 'pull_request'))
     .sort((a, b) => (a.created_at > b.created_at ? -1 : 1));
-  if (!gateRuns.some((r) => r.conclusion === 'cancelled')) return;
-  const toRerun = gateRuns.find((r) => r.conclusion === 'success' || r.conclusion === 'failure');
-  if (!toRerun) return;
+  const latestCancelledIndex = gateRuns.findIndex((r) => r.conclusion === 'cancelled');
+  if (latestCancelledIndex === -1) return;
+  const latestCompletedIndex = gateRuns.findIndex(
+    (r) => r.conclusion === 'success' || r.conclusion === 'failure',
+  );
+  if (latestCompletedIndex === -1 || latestCompletedIndex < latestCancelledIndex) return;
+  const toRerun = gateRuns[latestCompletedIndex];
 
   try {
     runQuiet(gh(`--method POST "repos/${repo}/actions/runs/${toRerun.id}/rerun"`));

@@ -14,7 +14,7 @@ import { useVoiceInput } from '@/lib/hooks/useVoiceInput';
 import { useGeminiLive, shouldAutoFallbackToWebSpeech } from '@/lib/hooks/useGeminiLive';
 import { useLiveDictation } from '@/lib/hooks/useLiveDictation';
 import { useCookingSession } from '@/lib/hooks/useCookingSession';
-import { appCheckHeaders } from '@/lib/firebase/app-check';
+import { appCheckHeaders, appCheckLimitedUseHeaders } from '@/lib/firebase/app-check';
 
 export default function CookPage() {
   const router = useRouter();
@@ -185,7 +185,7 @@ export default function CookPage() {
       const token = await auth.getToken();
       const res = await fetch('/api/vision/scan', {
         method: 'POST',
-        headers: { 'content-type': 'application/json', ...(token ? { authorization: `Bearer ${token}` } : {}), ...(await appCheckHeaders(true)) },
+        headers: { 'content-type': 'application/json', ...(token ? { authorization: `Bearer ${token}` } : {}), ...(await appCheckLimitedUseHeaders()) },
         body: JSON.stringify({ image: dataUri }),
       });
       const body = await res.json() as {
@@ -247,9 +247,18 @@ export default function CookPage() {
   const [filterProtein, setFilterProtein] = useState<string>('');
   const [startingId, setStartingId] = useState<string | null>(null);
 
+  // auth.getToken is the STABLE session-identity choke point (see
+  // useAuthSession): the `auth` result object itself is a fresh literal every
+  // render, so keying this callback on `auth` gave it a new identity on every
+  // render — and since the effect below depends on this callback while the
+  // fetch updates state, the page looped /api/cook list_recipes forever
+  // without user action. getToken is referentially stable across renders AND
+  // encodes sign-in state (null token when signed out), so it is the complete,
+  // correct identity for this request.
+  const getAuthToken = auth.getToken;
   const fetchRecipes = useCallback(async (protein?: string) => {
     try {
-      const token = await auth.getToken();
+      const token = await getAuthToken();
       const res = await fetch('/api/cook', {
         method: 'POST',
         headers: { 'content-type': 'application/json', ...(token ? { authorization: `Bearer ${token}` } : {}), ...(await appCheckHeaders()) },
@@ -264,7 +273,7 @@ export default function CookPage() {
     } catch {
       setRecipes({ status: 'error', items: [] });
     }
-  }, [auth]);
+  }, [getAuthToken]);
 
   // Fetch the list whenever the starter (no active session) is on screen.
   useEffect(() => {
@@ -358,6 +367,24 @@ export default function CookPage() {
     }
   }, [auth.state, auth.user, router]);
 
+  // A new session must start with a blank conversation: the previous
+  // session's last agent reply (e.g. "Done — next: Enjoy your meal!") must
+  // not linger over the first step of the new one. The snapshot's sessionId
+  // is the session boundary — when it changes, both turn stores are cleared.
+  const lastSessionIdRef = useRef<string | undefined>(undefined);
+  useEffect(() => {
+    const sessionId = snap?.sessionId;
+    if (sessionId === lastSessionIdRef.current) return;
+    // Ignore the very first value (undefined → first snapshot) — there is
+    // nothing to clear yet and the effect must not race the initial load.
+    if (lastSessionIdRef.current !== undefined) {
+      voice.clearTranscript();
+      live.clearTurns();
+    }
+    lastSessionIdRef.current = sessionId;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [snap?.sessionId]);
+
   // Keep the screen in sync with voice-driven changes (e.g. "done" spoken) —
   // whether the turn came through /api/agent (typed/Web Speech) or the Live
   // session (tool-driven state changes like pantry adds / step completion).
@@ -374,7 +401,11 @@ export default function CookPage() {
     if (voiceInput.listening) {
       voice.setStatus('LISTENING');
     }
-  }, [voiceInput.listening, voice.setStatus]);
+    // voice.setStatus is a stable useCallback; the effect should only react
+    // to the mic toggling, not to the voice object identity changing every
+    // render (same convention as the other narrow effects in this file).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [voiceInput.listening]);
 
   // Live-mode caption: no interim transcripts come from the Live API, so the
   // caption reflects the honest capture/thinking state instead. When the

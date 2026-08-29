@@ -160,6 +160,31 @@ describe('CookScreen', () => {
     expect(html).toContain('Sear the chicken four minutes');
   });
 
+  it('renders ingredient quantities with the names in the disclosure', () => {
+    // The ingredient carries quantity + unit — the disclosure must show
+    // "4 pieces chicken thighs", never a bare name.
+    const html = render(snapshot());
+    expect(html).toContain('4 pieces');
+    expect(html).toContain('chicken thighs');
+  });
+
+  it('renders the availableIngredients list with quantities when the session has them', () => {
+    const html = render(
+      snapshot({
+        availableIngredients: [
+          { id: 'i1', name: 'chicken thighs', quantity: 4, unit: 'pieces', optional: false },
+          { id: 'i2', name: 'rice', quantity: 1, unit: 'cup', optional: false },
+          { id: 'i3', name: 'salt', quantity: null, unit: null, optional: true },
+        ],
+      }),
+    );
+    expect(html).toContain('4 pieces');
+    expect(html).toContain('1 cup');
+    // Unknown quantity renders the bare name — never invented.
+    expect(html).toContain('salt');
+    expect(html).not.toContain('null');
+  });
+
   it('surfaces the agent\'s last spoken response on screen (not just spoken)', () => {
     // The user must SEE what the app understood and said — a silent reply
     // leaves the screen looking stuck at "One moment…".

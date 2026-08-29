@@ -12,7 +12,9 @@
     "test": "vitest run",
     "check": "npm run typecheck && npm run lint && npm run test && npm run build",
     "test:watch": "vitest",
-    "test:emulator": "RUN_EMULATOR_TESTS=1 vitest run --no-file-parallelism lib/server/rollback-resume.emulator.test.ts scripts/cleanup-correlation-markers.emulator.test.ts",
+    "test:emulator": "RUN_EMULATOR_TESTS=1 BACKEND_CONTRACT=firestore vitest run --no-file-parallelism lib/server/rollback-resume.emulator.test.ts scripts/cleanup-correlation-markers.emulator.test.ts scripts/firestore-rules-harness.emulator.test.ts lib/server/store-backend-contract.emulator.test.ts",
+    "test:sqlconnect": "RUN_SQLCONNECT_EMULATOR_TESTS=1 BACKEND_CONTRACT=sqlconnect vitest run --no-file-parallelism lib/server/sqlconnect-stores.emulator.test.ts lib/server/store-backend-contract.emulator.test.ts",
+    "test:rules": "RUN_EMULATOR_TESTS=1 vitest run --no-file-parallelism scripts/firestore-rules*.emulator.test.ts",
     "cleanup:markers": "node --import ./scripts/stub-server-only.mjs --import tsx scripts/cleanup-correlation-markers.ts",
     "tidy:branches": "node scripts/tidy-branches.mjs",
     "refresh:mic-trend": "node scripts/refresh-mic-trend.mjs",
@@ -24,6 +26,7 @@
     "verify:live:emulator": "node scripts/verify-live-emulator.mjs",
     "verify:live:compare": "node scripts/verify-live-compare.mjs",
     "verify:live:compare:emulator": "node scripts/verify-live-compare-emulator.mjs",
+    "verify:real-data": "node scripts/verify-real-data.mjs --confirm-production",
     "verify:deployed-hash": "node scripts/verify-deployed-hash-gate.mjs",
     "verify:gate-fail-proof": "node scripts/verify-teeth-proofs.mjs gate-fail",
     "verify:stale-guard-proof": "node scripts/verify-teeth-proofs.mjs stale-guard",
@@ -46,6 +49,7 @@
     "zod": "^3.24.0"
   },
   "devDependencies": {
+    "@firebase/rules-unit-testing": "^4.0.1",
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/react": "^16.3.2",
     "@testing-library/user-event": "^14.6.4",

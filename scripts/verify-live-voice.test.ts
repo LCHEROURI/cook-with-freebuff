@@ -388,4 +388,55 @@ describe('scripts/verify-live.mjs · live-voice gate [3e] (dictation + active-sc
     expect(DRIVER).toContain('PHASE_C_OUTCOME_MARKER');
     expect(DRIVER).toContain('console.log(`${PHASE_C_OUTCOME_MARKER} ${summary.outcome}`)');
   });
+
+  it('arms the shared CDP App Check injection inside connectCdp (every phase session is attested)', () => {
+    // The page's own POST /api/voice/token would otherwise be 403'd by
+    // production enforcement: headless Chrome cannot complete reCAPTCHA v3
+    // attestation. The durable CI fix (Step 6S) injects the admin-minted
+    // token into same-origin /api/* requests at the CDP level. Because the
+    // injection is armed inside connectCdp, every phase session (A/B/C) gets
+    // it — not just the first.
+    expect(DRIVER).toContain("import { installAppCheckInjection } from './drive-cdp-app-check.mjs';");
+    expect(DRIVER).toContain("const VERIFY_APP_CHECK_TOKEN = process.env.VERIFY_APP_CHECK_TOKEN ?? '';");
+    expect(DRIVER).toContain('installAppCheckInjection({');
+    expect(DRIVER).toContain('token: VERIFY_APP_CHECK_TOKEN');
+    const connectStart = DRIVER.indexOf('async function connectCdp');
+    expect(connectStart).toBeGreaterThan(-1);
+    const connectSection = DRIVER.slice(connectStart, DRIVER.indexOf('\n// CDP may deliver WS frames base64', connectStart));
+    expect(connectSection).toContain('installAppCheckInjection({');
+    // Armed after Network.enable and before any navigation happens.
+    expect(connectSection.indexOf('installAppCheckInjection({')).toBeGreaterThan(connectSection.indexOf("send('Network.enable')"));
+  });
+
+  it('mints a FRESH admin token per replay-protected request (consume:true on /api/voice/token)', () => {
+    // /api/voice/token verifies with consume:true, so the shared injected
+    // token is consumed by Phase A and Phases B/C + retries would replay it
+    // as 403 APP_CHECK_FAILED. The driver must mint a fresh token per
+    // replay-protected request via the admin SDK (Codex P1, PR #178).
+    expect(DRIVER).toContain("import { getAppCheck } from 'firebase-admin/app-check';");
+    expect(DRIVER).toContain("const APP_ID = process.env.NEXT_PUBLIC_FIREBASE_APP_ID ?? '';");
+    expect(DRIVER).toContain('const mintVoiceToken = async () => {');
+    expect(DRIVER).toContain('getAppCheck(adminApp).createToken(APP_ID)');
+    expect(DRIVER).toContain('mintToken: mintVoiceToken');
+  });
+
+  it('attests the driver own /api/cook launch calls (AUTH carries the admin App Check token)', () => {
+    // Measured live (post-#178 diagnostic run): the CDP injection attests the
+    // PAGE's requests (Phase A dictation passes), but the driver's OWN Node
+    // fetch to /api/cook (action: 'launch', Phase B [3b] and Phase C) used a
+    // bare AUTH and was 403'd by enforcement — "App Check token missing" — so
+    // the active screen never rendered and LISTENING was never reached (the
+    // 420s CI timeout). The driver-side AUTH must carry the same admin token.
+    expect(DRIVER).toContain('const AUTH = {');
+    expect(DRIVER).toContain("...(VERIFY_APP_CHECK_TOKEN ? { 'X-Firebase-AppCheck': VERIFY_APP_CHECK_TOKEN } : {})");
+    // Both launch fetches (Phase B [3b] and Phase C) ride AUTH.
+    expect(DRIVER).toContain("const launch = await fetch(`${APP}/api/cook`, {");
+    expect(DRIVER).toContain("method: 'POST', headers: AUTH,");
+    expect(DRIVER).toContain("const launchC = await fetch(`${APP}/api/cook`, {");
+  });
+
+  it('threads the minted admin App Check token into the voice-driver env', () => {
+    expect(LIVE).toContain("spawnSync('node', ['scripts/drive-live-voice.mjs', '--app', APP, '--probe-prefix', `${PROBE_PREFIX}voice-`, '--out', `/tmp/verify-live-voice-${t}-${attempt}`], {");
+    expect(LIVE).toContain("env: { ...process.env, VERIFY_APP_CHECK_TOKEN: appCheckToken ?? '' },");
+  });
 });

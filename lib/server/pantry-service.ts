@@ -252,7 +252,7 @@ export class PantryService {
     }
 
     const after = match.quantity - needed;
-    await this.pantryStore.upsertItem({ ...match, quantity: after, source: 'RECIPE_USAGE' });
+    await this.pantryStore.upsertItem({ ...match, quantity: after });
     await this.logEvent(options?.sessionId, 'INGREDIENT_CORRECTED', {
       itemId: match.id,
       name: match.name,

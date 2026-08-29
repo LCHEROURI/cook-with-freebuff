@@ -30,6 +30,11 @@ export async function GET(request: Request) {
     // Optional sub-field distinguishing an INTENTIONAL spare-path failure
     // (drill / overlapping-run collision) from a real regression.
     reason: string | null;
+    // Dispatch source tag ('ci', 'spare-drill', 'boundary-drill',
+    // 'regression-drill'). Only present on drill runs; absent on clean
+    // ci.yml runs. Lets the status page flag a reason=null failure that
+    // did NOT originate from a drill as a genuine regression.
+    source: string | null;
   };
   const toVerifyRecord = (d: Record<string, unknown>): VerifyRecord => ({
     verdict: typeof d.verdict === 'string' ? d.verdict : '',
@@ -37,6 +42,7 @@ export async function GET(request: Request) {
     ranAt: typeof d.ranAt === 'string' ? d.ranAt : '',
     runUrl: typeof d.runUrl === 'string' ? d.runUrl : '',
     reason: typeof d.reason === 'string' ? d.reason : null,
+    source: typeof d.source === 'string' ? d.source : null,
   });
 
   type FlakeStreakRecord = {
@@ -82,6 +88,14 @@ export async function GET(request: Request) {
     }
   }
 
+  // Genuine regression check: a failure with reason=null that did NOT come
+  // from a drill dispatch is a real regression — the no-mask rule only
+  // applies to drill runs where a co-occurring failure is expected.
+  const isGenuineRegression =
+    verifyLive?.verdict === 'failure' &&
+    verifyLive?.reason === null &&
+    verifyLive?.source === null;
+
   return NextResponse.json({
     commitSha: process.env.NEXT_PUBLIC_APP_COMMIT_SHA ?? '',
     builtAt: process.env.NEXT_PUBLIC_APP_BUILT_AT ?? '',
@@ -89,5 +103,6 @@ export async function GET(request: Request) {
     verifyLive,
     lastExternal,
     flakeStreak,
+    isGenuineRegression,
   });
 }

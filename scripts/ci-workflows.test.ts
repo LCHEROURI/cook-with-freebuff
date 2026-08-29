@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
 // ============================================================================
@@ -32,12 +32,13 @@ const SPARE_DRILL_NIGHTLY = readFileSync('.github/workflows/spare-drill-nightly.
 const GUARD_DRILLS_WEEKLY = readFileSync('.github/workflows/guard-drills-weekly.yml', 'utf8');
 const BRANCH_TIDY = readFileSync('.github/workflows/branch-tidy-weekly.yml', 'utf8');
 const COMPARE_WEEKLY = readFileSync('.github/workflows/compare-live-weekly.yml', 'utf8');
+const DEPLOY_HEALTH_WEEKLY = readFileSync('.github/workflows/deploy-health-weekly.yml', 'utf8');
 
-// The verify step's gating `if:` — the four secrets must ALL be present for
+// The verify step's gating `if:` — the five inputs must ALL be present for
 // the deep gates to run (a missing one skips-not-fails, but only on forks;
 // the loud guard below turns that skip into a failure on main deploys).
-const FOUR_SECRETS_GATE =
-  "if: ${{ env.NEXT_PUBLIC_FIREBASE_API_KEY != '' && env.FIREBASE_SERVICE_ACCOUNT != '' && env.APP_OWNER_UID != '' && env.GOOGLE_AI_API_KEY != '' }}";
+const FIVE_INPUTS_GATE =
+  "if: ${{ env.NEXT_PUBLIC_FIREBASE_API_KEY != '' && env.FIREBASE_SERVICE_ACCOUNT != '' && env.APP_OWNER_UID != '' && env.GOOGLE_AI_API_KEY != '' && env.NEXT_PUBLIC_FIREBASE_APP_ID != '' }}";
 // Plain concatenation on purpose: a template literal containing the `${{`
 // GitHub expression syntax would parse as a nested interpolation and throw.
 const SECRET_WIRING = (name: string) => name + ': ${{ secrets.' + name + ' }}';
@@ -196,8 +197,34 @@ describe('.github/workflows/ci.yml · deploy-apphosting job', () => {
     expect(smokeBlock).toContain('NEXT_PUBLIC_FIREBASE_API_KEY');
     expect(smokeBlock).toContain('FIREBASE_SERVICE_ACCOUNT');
     expect(smokeBlock).toContain('APP_OWNER_UID');
+    // App Check is enforced in production: the smoke's driver mints its own
+    // attestation token, so the job env must map the app id or every
+    // quota-bearing leg of the compare 403s with APP_CHECK_FAILED.
+    expect(smokeBlock).toContain(
+      'NEXT_PUBLIC_FIREBASE_APP_ID: ${{ secrets.NEXT_PUBLIC_FIREBASE_APP_ID }}',
+    );
     expect(smokeBlock).toContain("github.repository == 'LCHEROURI/cook-with-freebuff'");
     expect(smokeBlock).toContain('npm run verify:live:compare:emulator');
+  });
+
+  it('verifies the served revision BEFORE the write-capable deployed leg of the compare', () => {
+    // The compare's deployed leg WRITES to the shared production backend
+    // (seed + probe + cleanup) and now passes App Check (it mints a token via
+    // NEXT_PUBLIC_FIREBASE_APP_ID). validate's stale-guard runs in a parallel
+    // job the emulator-compare job does not wait for, so the same
+    // direction-aware tokenless gate must run HERE, immediately before the
+    // smoke: the write-capable leg can never run against a live host that is
+    // ahead of or diverged from the pushed HEAD. (Codex P1, PR #176 review.)
+    const smokeStart = CI.indexOf('\n  emulator-compare:');
+    const smokeBlock = CI.slice(smokeStart, CI.indexOf('\n  deploy-apphosting:', smokeStart));
+    const prereqIdx = smokeBlock.indexOf('Verify the served revision before the write-capable compare leg');
+    expect(prereqIdx).toBeGreaterThan(0);
+    const prereqBlock = smokeBlock.slice(prereqIdx);
+    expect(prereqBlock).toContain('node scripts/verify-deployed-hash-gate.mjs --stale-guard');
+    // The prerequisite must run BEFORE the write-capable smoke, and be gated
+    // on the same credentials (a fork that skips the leg also skips the check).
+    expect(prereqBlock.indexOf('Run the emulator-compare smoke')).toBeGreaterThan(0);
+    expect(prereqBlock).toContain("env.NEXT_PUBLIC_FIREBASE_API_KEY != '' && env.FIREBASE_SERVICE_ACCOUNT != '' && env.APP_OWNER_UID != ''");
   });
 
   it('retries the deploy on a 409 queue-conflict with backoff (never on other errors)', () => {
@@ -226,6 +253,40 @@ describe('.github/workflows/ci.yml · deploy-apphosting job', () => {
     expect(deployBlock).toContain('if: ${{ env.FIREBASE_TOKEN != \'\' }}');
   });
 });
+
+// The string-input contract for the force_verify_live_regression drill
+// input, factored out so the mutation drill below can prove it FAILS on a
+// reverted boolean input by invoking this exact assertion (same discipline
+// as the verify-live-cleanup mutation proofs — an independent check would
+// keep passing if this assertion were later weakened or removed).
+const expectStringDrillInput = (workflowSource: string) => {
+  const inputsBlock = workflowSource.slice(workflowSource.indexOf('workflow_dispatch:'));
+  const inputsEnd = inputsBlock.indexOf('\nconcurrency:');
+  const inputs = inputsBlock.slice(0, inputsEnd);
+  expect(inputs).toContain('force_verify_live_regression:');
+  // String input (NOT type: boolean) so `inputs.force_verify_live_regression == 'true'`
+  // matches under every dispatch method — a boolean-typed input exposes a JSON
+  // boolean and `true == 'true'` is false in GitHub expressions, which left the
+  // env empty in all three dispatch attempts (32266697726/32267874575/32268919307).
+  expect(inputs).not.toMatch(/type: boolean/);
+  expect(inputs).toMatch(/default: 'false'/);
+};
+
+// The env-threading contract for the FORCE_VERIFY_LIVE_REGRESSION drill env,
+// factored out so the mutation drill below can prove it FAILS on a hard-coded
+// or dropped-input mutation by invoking this exact assertion (same discipline
+// as expectStringDrillInput — an independent check would keep passing if this
+// assertion were later weakened or removed).
+const expectDrillEnvThreading = (workflowSource: string) => {
+  const verifyStepStart = workflowSource.indexOf('name: Verify deployed app end to end (verify:live)');
+  const verifyStepEnd = workflowSource.indexOf('\n      - name:', verifyStepStart + 1);
+  const verifyStep = workflowSource.slice(verifyStepStart, verifyStepEnd === -1 ? workflowSource.length : verifyStepEnd);
+  expect(verifyStep).toContain('FORCE_VERIFY_LIVE_REGRESSION');
+  // The env must READ inputs.force_verify_live_regression — never a literal.
+  expect(verifyStep).toMatch(/FORCE_VERIFY_LIVE_REGRESSION:\s*\$\{\{\s*inputs\.force_verify_live_regression/);
+  // Must default to empty string so the seam stays inert on push runs.
+  expect(verifyStep).toMatch(/==\s*'true'\s*&&\s*'true'\s*\|\|\s*''/);
+};
 
 describe('.github/workflows/ci.yml · post-deploy verify:live needs-edge', () => {
   // verify:live moved INTO ci.yml as a needs-edge of deploy-apphosting (the
@@ -290,7 +351,7 @@ describe('.github/workflows/ci.yml · post-deploy verify:live needs-edge', () =>
     expect(smokeBlock).toContain('"$base/api/build-info"');
     // Gated identically to verify:live, so a fork that skips the deep run also
     // skips its pre-flight (both stay skip-not-fail on forks).
-    expect(smokeBlock).toContain(FOUR_SECRETS_GATE);
+    expect(smokeBlock).toContain(FIVE_INPUTS_GATE);
     expect(smokeBlock).toContain('exit 1'); // loud failure, never a silent skip
     expect(smokeBlock).toContain('::error::'); // names the failing hop in the log
     // "Needs nothing new": the smoke must not introduce a secret wiring or an
@@ -312,34 +373,30 @@ describe('.github/workflows/ci.yml · post-deploy verify:live needs-edge', () =>
   it('targets the canonical App Hosting URL for verify:live', () => {
     const verifyStepStart = verifyBlock.indexOf('name: Verify deployed app end to end (verify:live)');
     const verifyStepBlock = verifyBlock.slice(verifyStepStart);
-    expect(verifyStepBlock).toContain('run: npm run verify:live');
-    expect(verifyStepBlock).toContain(FOUR_SECRETS_GATE);
+    expect(verifyStepBlock).toContain('run: npm run verify:live -- --require-app-check-enforced');
+    expect(verifyStepBlock).toContain(FIVE_INPUTS_GATE);
     expect(verifyStepBlock).toContain('VERIFY_BASE_URL: https://cook-with-freebuff--portfolio-app-freebuff2.us-central1.hosted.app');
     // No second-host env anymore — verify:live's [4b] stage was collapsed.
     expect(verifyStepBlock).not.toContain('VERIFY_APPHOSTING_URL');
   });
 
-  it('wires all four secrets into the job env, the loud guard, AND the verify step env (3 wirings each)', () => {
+  it('wires all five required inputs into the job env, loud guard, and verify step (3 wirings each)', () => {
     for (const name of [
       'NEXT_PUBLIC_FIREBASE_API_KEY',
       'FIREBASE_SERVICE_ACCOUNT',
       'APP_OWNER_UID',
       'GOOGLE_AI_API_KEY',
+      'NEXT_PUBLIC_FIREBASE_APP_ID',
     ]) {
       expect(verifyBlock.match(new RegExp(SECRET_WIRING(name).replace(/[$\\{\\}]/g, '\\$&'), 'g'))).toHaveLength(3);
     }
   });
 
-  it('wires NEXT_PUBLIC_FIREBASE_APP_ID into the job env and the verify step env only (2 wirings, no guard)', () => {
-    // The app id attests the driver via App Check, but attestation is
-    // best-effort until App Check is provisioned — so it rides the job + step
-    // env and is NOT part of the loud guard (a missing one must not redden a
-    // monitor-mode deploy).
-    const wiring = new RegExp(SECRET_WIRING('NEXT_PUBLIC_FIREBASE_APP_ID').replace(/[$\\{\\}]/g, '\\$&'), 'g');
-    expect(verifyBlock.match(wiring)).toHaveLength(2);
+  it('makes the App Check app id a loud main-deploy prerequisite', () => {
     const guardStart = verifyBlock.indexOf('name: Fail loudly if a verify secret is missing (main deploy)');
     const guardBlock = verifyBlock.slice(guardStart, verifyBlock.indexOf('name: Wait for the App Hosting rollout'));
-    expect(guardBlock).not.toContain('NEXT_PUBLIC_FIREBASE_APP_ID');
+    expect(guardBlock).toContain('NEXT_PUBLIC_FIREBASE_APP_ID');
+    expect(guardBlock).toContain('mints the App Check token for verify:live');
   });
 
   it('records the verify:live verdict to Firestore after the verify step (runs even on failure)', () => {
@@ -367,6 +424,11 @@ describe('.github/workflows/ci.yml · post-deploy verify:live needs-edge', () =>
     // failure. Empty-default: a normal run passes an empty reason that the
     // recorder omits from the doc.
     expect(verifyBlock).toContain('--reason "${VERIFY_LIVE_REASON:-}"');
+    // The recorder receives the dispatch source tag (inputs.source, default
+    // 'ci') so the status page can distinguish drill runs from clean runs
+    // when verdict=failure and reason=null — a genuine regression has no
+    // source field, while a drill no-mask proof carries the drill name.
+    expect(verifyBlock).toContain("--source \"${{ inputs.source || 'ci' }}\"");
     // Negative: the record step must not introduce another secret wiring.
     const recordStart = verifyBlock.indexOf('name: Record verify:live result for the status page');
     const recordBlock = verifyBlock.slice(recordStart);
@@ -390,25 +452,87 @@ describe('.github/workflows/ci.yml · post-deploy verify:live needs-edge', () =>
 
   it('exposes the force_verify_live_regression drill input and threads it through to the verify:live step', () => {
     // Third drill: combine a guard spare with a synthetic real regression.
-    // The input must be a boolean, default false (so push + scheduled runs are
-    // unaffected), and the verify:live step must read inputs.force_verify_live_regression
-    // — never a literal 'true' — so the seam stays inert by default. A future
-    // edit that drops the input or hard-codes the env would silently disarm
-    // the round-trip proof.
-    const inputsBlock = CI.slice(CI.indexOf('workflow_dispatch:'));
-    const inputsEnd = inputsBlock.indexOf('\nconcurrency:');
-    const inputs = inputsBlock.slice(0, inputsEnd);
-    expect(inputs).toContain('force_verify_live_regression:');
-    expect(inputs).toMatch(/type: boolean/);
-    expect(inputs).toMatch(/default: false/);
+    // The input must be a STRING defaulting to 'false' (so push + scheduled
+    // runs are unaffected AND `inputs.force_verify_live_regression == 'true'`
+    // matches under every dispatch method), and the verify:live step must
+    // read inputs.force_verify_live_regression — never a literal 'true' — so
+    // the seam stays inert by default. A future edit that drops the input,
+    // reverts it to type: boolean, or hard-codes the env would silently
+    // disarm the round-trip proof.
+    expectStringDrillInput(CI);
+    expectDrillEnvThreading(CI);
+  });
 
-    const verifyStepStart = CI.indexOf('name: Verify deployed app end to end (verify:live)');
-    const verifyStepEnd = CI.indexOf('\n      - name:', verifyStepStart + 1);
-    const verifyStep = CI.slice(verifyStepStart, verifyStepEnd === -1 ? CI.length : verifyStepEnd);
-    expect(verifyStep).toContain('FORCE_VERIFY_LIVE_REGRESSION');
-    expect(verifyStep).toMatch(/FORCE_VERIFY_LIVE_REGRESSION:\s*\$\{\{\s*inputs\.force_verify_live_regression/);
-    // Must default to empty string so the seam stays inert on push runs.
-    expect(verifyStep).toMatch(/==\s*'true'\s*&&\s*'true'\s*\|\|\s*''/);
+  it('proves the string-input pin catches a reverted boolean input (mutation)', () => {
+    // The string-input pin must have discriminating power, not pass
+    // vacuously. Mutate ONLY the input declaration in an in-memory copy of
+    // the REAL workflow source (never on disk) — revert it to the old
+    // type: boolean shape that left FORCE_VERIFY_LIVE_REGRESSION empty under
+    // every dispatch method (32266697726/32267874575/32268919307) — and
+    // invoke the ACTUAL contract assertion (expectStringDrillInput) on the
+    // mutated copy: it must throw, i.e. fail. If a future edit weakens or
+    // removes the pin, this mutation test goes red with it instead of
+    // passing on an independent check.
+    // Direction 1 — the full historical revert (type: boolean + default:
+    // false, the exact shape that left the env empty in every dispatch).
+    const reverted = CI.replace(
+      "        required: false\n        default: 'false'",
+      '        type: boolean\n        default: false',
+    );
+    expect(reverted, 'the boolean revert must actually land').not.toBe(CI);
+    expect(() => expectStringDrillInput(reverted)).toThrow();
+
+    // Direction 2 — reintroduce ONLY type: boolean while keeping the string
+    // default. This breaks just the `not.toMatch(/type: boolean/)` pin, so a
+    // future edit that deletes THAT single assertion flips this leg green
+    // and the mutation test goes red with it — each pin is individually
+    // load-bearing, not just the pair.
+    const reintroduced = CI.replace(
+      "        required: false\n        default: 'false'",
+      "        type: boolean\n        default: 'false'",
+    );
+    expect(reintroduced, 'the boolean reintroduction must actually land').not.toBe(CI);
+    expect(() => expectStringDrillInput(reintroduced)).toThrow();
+  });
+
+  it('proves the env-threading pin catches a hard-coded or dropped-input mutation', () => {
+    // The env expression must read inputs.force_verify_live_regression AND
+    // keep the `== 'true' && 'true' || ''` shape — a hard-coded 'true' would
+    // make the seam fire on EVERY push (breaking the push-run inertness),
+    // and a dropped input would silently disarm the drill. Mutate ONLY the
+    // env line in in-memory copies of the REAL workflow source (never on
+    // disk) and invoke the ACTUAL contract assertion (expectDrillEnvThreading)
+    // on each: it must throw. Each direction breaks exactly one pin so a
+    // future edit that deletes a single assertion flips the corresponding
+    // leg green and this mutation test goes red with it.
+
+    // Direction 1 — hard-coded 'true': the env no longer reads the input at
+    // all and the seam would fire on every run. Breaks both pins.
+    const hardcoded = CI.replace(
+      "FORCE_VERIFY_LIVE_REGRESSION: ${{ inputs.force_verify_live_regression == 'true' && 'true' || '' }}",
+      "FORCE_VERIFY_LIVE_REGRESSION: 'true'",
+    );
+    expect(hardcoded, 'the hard-coded mutation must actually land').not.toBe(CI);
+    expect(() => expectDrillEnvThreading(hardcoded)).toThrow();
+
+    // Direction 2 — dropped input: the expression reads a DIFFERENT input,
+    // keeping the `== 'true' && 'true' || ''` shape. Breaks ONLY the
+    // inputs-reference pin.
+    const droppedInput = CI.replace(
+      "inputs.force_verify_live_regression == 'true'",
+      "inputs.force_crash_no_summary == 'true'",
+    );
+    expect(droppedInput, 'the dropped-input mutation must actually land').not.toBe(CI);
+    expect(() => expectDrillEnvThreading(droppedInput)).toThrow();
+
+    // Direction 3 — truthy shape: drops the `== 'true'` comparison while
+    // still reading the input. Breaks ONLY the expression-shape pin.
+    const truthy = CI.replace(
+      "FORCE_VERIFY_LIVE_REGRESSION: ${{ inputs.force_verify_live_regression == 'true' && 'true' || '' }}",
+      "FORCE_VERIFY_LIVE_REGRESSION: ${{ inputs.force_verify_live_regression && 'true' || '' }}",
+    );
+    expect(truthy, 'the truthy-shape mutation must actually land').not.toBe(CI);
+    expect(() => expectDrillEnvThreading(truthy)).toThrow();
   });
 });
 
@@ -1002,14 +1126,74 @@ describe('.github/workflows/spare-drill-nightly.yml · nightly spare-path golden
     expect(SPARE_DRILL_NIGHTLY).toContain('/tmp/vlive-guard-spare-drill.log');
     expect(SPARE_DRILL_NIGHTLY).toContain('retention-days: 14');
   });
+
+  it('grants actions:write so the comparator can actually dispatch ci.yml', () => {
+    // The comparator dispatches ci.yml via `gh workflow run`, which needs
+    // actions:write on the token. Before this block existed the job's
+    // GITHUB_TOKEN was silently read-only (repo default), so EVERY
+    // scheduled nightly failed with "workflow dispatched but the new
+    // ci.yml run could not be located" (runs 32464195233 / 32349774634)
+    // — the 403 from gh workflow run is swallowed by the comparator's
+    // gh() helper, leaving the run-discovery loop empty. A future edit
+    // that removes or narrows this block re-breaks the dispatch on the
+    // first overnight run — fail CI here instead.
+    expect(SPARE_DRILL_NIGHTLY).toMatch(/permissions:\n\s+contents: read\n\s+actions: write/);
+  });
+
+  it('replays the spare-drill fixture as a fast pre-dispatch gate before npm ci', () => {
+    // Mirror of the weekly's gate (guard-drills-weekly.yml): the
+    // comparator's --diff mode against the committed fixture log burns
+    // seconds (plain node — no gh, no Firestore, no node_modules) instead
+    // of a ~25 min ci.yml dispatch, so a golden or regex drift fails here
+    // before the comparator ever dispatches. The gate must sit BEFORE
+    // `npm ci` (that's what makes it fast — no dependency install) and
+    // must point at the log fixture, not the golden. The comparator must
+    // follow npm ci — the gate line embeds the same script path (plus
+    // --diff), so a bare indexOf would match the gate itself and pass
+    // vacuously.
+    const gate = 'node scripts/guard-spare-drill.mjs --diff scripts/__golden__/spare-drill-log.txt';
+    expect(SPARE_DRILL_NIGHTLY).toContain(gate);
+    const gateIdx = SPARE_DRILL_NIGHTLY.indexOf(gate);
+    const npmCiIdx = SPARE_DRILL_NIGHTLY.indexOf('run: npm ci');
+    expect(gateIdx).toBeGreaterThan(-1);
+    expect(npmCiIdx).toBeGreaterThan(gateIdx);
+    const comparatorIdx = SPARE_DRILL_NIGHTLY.indexOf('node scripts/guard-spare-drill.mjs', npmCiIdx);
+    expect(comparatorIdx).toBeGreaterThan(npmCiIdx);
+  });
+
+  it('runs the spare-drill fixture once in a top-level preflight before the comparator job', () => {
+    // Mirror of the weekly's preflight (guard-drills-weekly.yml): the
+    // earliest SHARED signal for this nightly's single gate. One job
+    // replays the spare fixture before the comparator's npm ci + ~25 min
+    // dispatch, so a golden or regex drift fails in seconds instead of
+    // after the full dispatch+seed+touch+fetch cycle. The comparator job
+    // must start from it (needs: preflight), and the preflight must run
+    // plain node only — no npm ci and no actions:write, because it never
+    // dispatches or uploads. The per-job gate stays as belt-and-suspenders.
+    const preflightStart = SPARE_DRILL_NIGHTLY.indexOf('preflight:');
+    expect(preflightStart).toBeGreaterThan(-1);
+    const comparatorStart = SPARE_DRILL_NIGHTLY.indexOf('compare-against-golden:', preflightStart);
+    expect(comparatorStart).toBeGreaterThan(preflightStart);
+    const preflightSection = SPARE_DRILL_NIGHTLY.slice(preflightStart, comparatorStart);
+    expect(preflightSection).toContain(
+      'node scripts/guard-spare-drill.mjs --diff scripts/__golden__/spare-drill-log.txt',
+    );
+    // Plain node only — no dependency install in the preflight.
+    expect(preflightSection).not.toContain('run: npm ci');
+    // Only contents: read — the preflight never dispatches or uploads.
+    expect(preflightSection).toMatch(/permissions:\n\s+contents: read/);
+    expect(preflightSection).not.toContain('actions: write');
+    // The comparator job must start from the preflight.
+    expect(SPARE_DRILL_NIGHTLY).toMatch(/compare-against-golden:[\s\S]*?needs:\s*preflight/);
+  });
 });
 
-describe('.github/workflows/guard-drills-weekly.yml · Sunday-night spare + boundary comparators', () => {
+describe('.github/workflows/guard-drills-weekly.yml · Sunday-night spare + boundary + regression comparators', () => {
   // The daily spare-drill-nightly runs only the spare comparator — drift
-  // on the boundary (archive-path) shape would surface only via a manual
-  // dispatch. This weekly runs both comparators sequentially so a future
-  // failure on either side shows up the next Monday morning with the
-  // captured log pinned as a 90-day artifact.
+  // on the boundary (archive-path) or regression (no-mask) shapes would
+  // surface only via a manual dispatch. This weekly runs all three
+  // comparators sequentially so a future failure on any side shows up the
+  // next Monday morning with the captured log pinned as a 90-day artifact.
 
   it('runs Sundays at 22:00 UTC and supports manual dispatch', () => {
     // 22:00 UTC Sunday sits clear of every existing nightly:
@@ -1043,6 +1227,57 @@ describe('.github/workflows/guard-drills-weekly.yml · Sunday-night spare + boun
     expect(GUARD_DRILLS_WEEKLY).toContain('NEXT_PUBLIC_FIREBASE_APP_ID: ${{ secrets.NEXT_PUBLIC_FIREBASE_APP_ID }}');
   });
 
+  it('grants actions:write on EVERY job so each comparator can dispatch ci.yml', () => {
+    // Same root cause as the nightly (see the spare-drill-nightly
+    // describe): each comparator dispatches ci.yml via `gh workflow run`,
+    // which needs actions:write. The jobs' GITHUB_TOKEN was silently
+    // read-only (repo default) until these blocks existed — the first
+    // manual weekly dispatch (32477234630) failed in the spare leg with
+    // "workflow dispatched but the new ci.yml run could not be located",
+    // cascading skips to the boundary and regression legs. All three
+    // jobs must carry the block — a drop on any one leg re-breaks that
+    // leg's dispatch on the next Sunday night.
+    for (const job of ['spare-drill', 'boundary-drill', 'regression-drill']) {
+      const jobStart = GUARD_DRILLS_WEEKLY.indexOf(`${job}:`);
+      expect(jobStart, `job ${job} must exist`).toBeGreaterThan(-1);
+      const jobSection = GUARD_DRILLS_WEEKLY.slice(jobStart);
+      expect(jobSection).toMatch(/permissions:\n\s+contents: read\n\s+actions: write/);
+    }
+  });
+
+  it('keeps drill-live-session.mjs TRACKED so the comparators can seed in CI checkouts', () => {
+    // The comparators seed/touch/delete the drill session by shelling out
+    // to scripts/drill-live-session.mjs. It used to live in the gitignored
+    // .freebuff/ scratch dir — absent from every CI checkout — so after the
+    // dispatch-permission fix, the weekly failed again at the seed step
+    // with "Cannot find module .freebuff/drill-live-session.mjs" (weekly
+    // 32477679149). The helper must stay tracked in scripts/ AND all three
+    // comparators must reference that path — a move back to a gitignored
+    // path silently breaks every scheduled drill.
+    expect(existsSync('scripts/drill-live-session.mjs')).toBe(true);
+    expect(readFileSync('.gitignore', 'utf8')).toMatch(/^\.freebuff\/$/m);
+    for (const script of ['guard-spare-drill.mjs', 'guard-boundary-drill.mjs', 'guard-regression-drill.mjs']) {
+      const src = readFileSync(`scripts/${script}`, 'utf8');
+      expect(src).toContain("resolve(ROOT, 'scripts/drill-live-session.mjs')");
+      expect(src).not.toContain('.freebuff/drill-live-session');
+    }
+  });
+
+  it('seeds delete-first so a leaked session never blocks the next drill run', () => {
+    // The --seed helper refuses when the drill-live-session doc already
+    // exists ("already exists — delete first"). A failed drill run used to
+    // leak the doc — cleanup ran only on the happy path — and the NEXT run's
+    // seed died with exit 1 (nightly re-run 32482323556). Each comparator
+    // must therefore --delete (tolerates absence) immediately before
+    // --seed, making the seed idempotent and the leak self-healing. A
+    // future edit that drops the delete-first line re-breaks the next run
+    // after any drill failure.
+    for (const script of ['guard-spare-drill.mjs', 'guard-boundary-drill.mjs', 'guard-regression-drill.mjs']) {
+      const src = readFileSync(`scripts/${script}`, 'utf8');
+      expect(src).toContain("['--delete']);\n    runNodeWithEnv(resolve(ROOT, 'scripts/drill-live-session.mjs'), ['--seed']);");
+    }
+  });
+
   it('runs the boundary comparator AFTER the spare via needs:', () => {
     // Why sequential: each comparator dispatches its own ci.yml on main.
     // If both jobs ran in parallel, ci.yml's concurrency group (cancel-
@@ -1065,12 +1300,181 @@ describe('.github/workflows/guard-drills-weekly.yml · Sunday-night spare + boun
 
   it('archives both captured logs at 90 days so a quarterly review sees the full Sunday-night set', () => {
     // The daily upload keeps 14 days; the weekly rolls them forward so
-    // the 3-month drift review has a clean capture set. Both captured
+    // the 3-month drift review has a clean capture set. All three captured
     // log paths must be uploaded — drop one and a future drift on that
     // side has no recoverable evidence.
     expect(GUARD_DRILLS_WEEKLY).toContain('actions/upload-artifact@v4');
     expect(GUARD_DRILLS_WEEKLY).toContain('/tmp/vlive-guard-spare-drill.log');
     expect(GUARD_DRILLS_WEEKLY).toContain('/tmp/vlive-guard-boundary-drill.log');
+    expect(GUARD_DRILLS_WEEKLY).toContain('/tmp/vlive-guard-regression-drill.log');
     expect(GUARD_DRILLS_WEEKLY).toContain('retention-days: 90');
   });
+
+  it('runs the regression comparator THIRD (after boundary via needs:) with the full credential set', () => {
+    // The regression drill is the no-mask proof: dispatch ci.yml WITH
+    // force_verify_live_regression=true so the run carries two failures,
+    // then diff the evidence lines AND assert the recorded reason is null.
+    // It must run after boundary-drill (needs:) so the three sequential
+    // ci.yml dispatches never cancel each other (ci.yml's concurrency
+    // group cancels in_progress runs).
+    expect(GUARD_DRILLS_WEEKLY).toContain('node scripts/guard-regression-drill.mjs');
+    expect(GUARD_DRILLS_WEEKLY).toMatch(/regression-drill:[\s\S]*?needs:\s*boundary-drill/);
+    const regressionStart = GUARD_DRILLS_WEEKLY.indexOf('regression-drill:');
+    const needsIdx = GUARD_DRILLS_WEEKLY.indexOf('needs: boundary-drill', regressionStart);
+    const scriptIdx = GUARD_DRILLS_WEEKLY.indexOf('node scripts/guard-regression-drill.mjs', regressionStart);
+    expect(needsIdx).toBeGreaterThan(-1);
+    expect(scriptIdx).toBeGreaterThan(needsIdx);
+    // The regression job gets the same five credentials as the other legs
+    // (gh for dispatch/log fetch, Firestore for the no-mask assertion).
+    const regressionJob = GUARD_DRILLS_WEEKLY.slice(regressionStart);
+    expect(regressionJob).toContain('GH_TOKEN: ${{ github.token }}');
+    expect(regressionJob).toContain('APP_OWNER_UID: ${{ secrets.APP_OWNER_UID }}');
+    expect(regressionJob).toContain('FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}');
+    expect(regressionJob).toContain('NEXT_PUBLIC_FIREBASE_API_KEY: ${{ secrets.NEXT_PUBLIC_FIREBASE_API_KEY }}');
+    expect(regressionJob).toContain('NEXT_PUBLIC_FIREBASE_APP_ID: ${{ secrets.NEXT_PUBLIC_FIREBASE_APP_ID }}');
+  });
+
+  it('replays each comparator fixture as a fast pre-dispatch gate before npm ci', () => {
+    // The gates burn seconds (plain node --diff against the committed
+    // fixture log — no gh, no Firestore, no node_modules) instead of a
+    // ~25 min ci.yml dispatch: a golden or regex drift fails here before
+    // the comparator ever dispatches. Each job must run its OWN fixture
+    // (the spare golden's placeholder lines are absorbed by buildExpected,
+    // so a cross-wired fixture would pass vacuously), the gate must sit
+    // BEFORE `npm ci` (that's what makes it fast — no dependency install),
+    // and the fixture path must point at the log fixture, not the golden.
+    const gates = [
+      ['spare-drill', 'node scripts/guard-spare-drill.mjs --diff scripts/__golden__/spare-drill-log.txt'],
+      ['boundary-drill', 'node scripts/guard-boundary-drill.mjs --diff scripts/__golden__/boundary-drill-log.txt'],
+      ['regression-drill', 'node scripts/guard-regression-drill.mjs --diff scripts/__golden__/regression-drill-log.txt'],
+    ];
+    for (const [job, gate] of gates) {
+      const jobStart = GUARD_DRILLS_WEEKLY.indexOf(`${job}:`);
+      const jobSection = GUARD_DRILLS_WEEKLY.slice(jobStart);
+      expect(jobSection).toContain(gate);
+      const gateIdx = jobSection.indexOf(gate);
+      const npmCiIdx = jobSection.indexOf('run: npm ci');
+      const comparatorIdx = jobSection.indexOf(`node scripts/guard-${job === 'spare-drill' ? 'spare' : job === 'boundary-drill' ? 'boundary' : 'regression'}-drill.mjs`, npmCiIdx);
+      expect(gateIdx).toBeGreaterThan(-1);
+      expect(npmCiIdx).toBeGreaterThan(gateIdx);
+      // Search for the comparator AFTER npm ci — the gate line embeds the
+      // same script path (plus --diff), so a bare indexOf would match the
+      // gate itself and pass vacuously.
+      expect(comparatorIdx).toBeGreaterThan(npmCiIdx);
+    }
+  });
+
+  it('runs all three fixture gates once in a top-level preflight before the dispatch chain', () => {
+    // The per-job gates are belt-and-suspenders; the preflight is the
+    // earliest SHARED signal: one job replays all three fixtures before
+    // the spare leg's npm ci + ~25 min dispatch, so a shared golden or
+    // regex drift fails in ~30s instead of after the first dispatch (and
+    // cascading skips to boundary + regression). The chain must start
+    // from it (spare-drill needs: preflight), and the preflight must run
+    // the gates with plain node only — no npm ci and no actions:write,
+    // because it never dispatches or uploads.
+    const preflightStart = GUARD_DRILLS_WEEKLY.indexOf('preflight:');
+    expect(preflightStart).toBeGreaterThan(-1);
+    const spareStart = GUARD_DRILLS_WEEKLY.indexOf('spare-drill:', preflightStart);
+    expect(spareStart).toBeGreaterThan(preflightStart);
+    const preflightSection = GUARD_DRILLS_WEEKLY.slice(preflightStart, spareStart);
+    for (const gate of [
+      'node scripts/guard-spare-drill.mjs --diff scripts/__golden__/spare-drill-log.txt',
+      'node scripts/guard-boundary-drill.mjs --diff scripts/__golden__/boundary-drill-log.txt',
+      'node scripts/guard-regression-drill.mjs --diff scripts/__golden__/regression-drill-log.txt',
+    ]) {
+      expect(preflightSection).toContain(gate);
+    }
+    // Plain node only — no dependency install in the preflight.
+    expect(preflightSection).not.toContain('run: npm ci');
+    // Only contents: read — the preflight never dispatches or uploads.
+    expect(preflightSection).toMatch(/permissions:\n\s+contents: read/);
+    expect(preflightSection).not.toContain('actions: write');
+  // The dispatch chain must start from the preflight.
+  expect(GUARD_DRILLS_WEEKLY).toMatch(/spare-drill:[\s\S]*?needs:\s*preflight/);
+});
+
+describe('.github/workflows/deploy-health-weekly.yml · scheduled deploy-health probe', () => {
+  // The post-deploy verify:live only exercises the host right after a
+  // rollout — on a quiet week nothing proves the live stack still works.
+  // This schedule runs the SAME gate on a clock and posts the verdict (step
+  // summary + status doc), so drift surfaces without waiting for a deploy.
+  it('runs Wednesdays 06:30 UTC in a free slot and supports manual dispatch', () => {
+    // Slot map (each workflow's contract test pins its own slot):
+    //   mon       06:00  (mic-regression + branch-tidy)
+    //   tue       06:30  (mic-trend)
+    //   thu       06:30  (compare-live)
+    //   sat       06:30  (marker-cleanup)
+    //   daily     07:00  (codex-review-monitor)
+    //   daily     08:00  (spare-drill-nightly)
+    //   sun       22:00  (guard-drills)
+    // Wednesday 06:30 contests nothing — fail CI here so a move is deliberate.
+    expect(DEPLOY_HEALTH_WEEKLY).toMatch(/cron:\s*['"`]?\s*30\s+6\s+\*\s+\*\s+3\s*['"`]?/);
+    expect(DEPLOY_HEALTH_WEEKLY).toContain('workflow_dispatch:');
+  });
+
+  it('shares the live-voice-probe concurrency group so probes queue, never overlap', () => {
+    // Same production owner, same /cook active session as ci.yml's
+    // verify-live job and mic-regression.yml — one shared group is the
+    // collision guard this repo actually needed (Codex P2, PR #98).
+    expect(DEPLOY_HEALTH_WEEKLY).toContain('group: live-voice-probe');
+    expect(DEPLOY_HEALTH_WEEKLY).toContain('cancel-in-progress: false');
+  });
+
+  it('keeps the loud secret guard for scheduled runs and the five-input gate on the probe', () => {
+    const job = DEPLOY_HEALTH_WEEKLY.slice(DEPLOY_HEALTH_WEEKLY.indexOf('weekly-health:'));
+    // A missing credential on a scheduled canonical run must FAIL, not skip —
+    // a skipped health check masquerades as a healthy week.
+    expect(job).toContain("github.event_name == 'schedule'");
+    expect(job).toMatch(/Fail loudly if a verify secret is missing[\s\S]*?exit 1/);
+    // The probe itself is gated on all five inputs so forks skip cleanly.
+    expect(job).toContain(FIVE_INPUTS_GATE);
+  });
+
+  it('smoke-tests the host first and runs the identical post-deploy gate command', () => {
+    const job = DEPLOY_HEALTH_WEEKLY.slice(DEPLOY_HEALTH_WEEKLY.indexOf('weekly-health:'));
+    // Pre-flight before the ~20-30 min run: canonical 200 + build-info sha,
+    // with the SERVED sha captured for truthful recording.
+    expect(job).toContain('Pre-flight smoke (app up + build-info answers)');
+    expect(job).toContain('echo "served_sha=$sha" >> "$GITHUB_OUTPUT"');
+    // The served sha must match the intended revision (github.sha) BEFORE the
+    // write-capable probe runs — a stalled host must never be exercised
+    // through old probe/cleanup behavior (AGENTS.md: proof scripts must not
+    // run until build-info reports the intended guarded revision).
+    expect(job).toContain('host serves ${sha:0:12} but the intended revision is');
+    expect(job).toContain('write-capable probe will NOT run against old probe/cleanup behavior');
+    expect(job).toContain('VERIFY_LIVE_VERDICT=failure');
+    // Identical gate to ci.yml's verify-live step — a green week means the
+    // same thing as a green deploy — PLUS the smoke-success gate (a stale
+    // host never reaches the probe) and the widened model-source window so a
+    // warm host's startup lines stay in scope on a no-deploy week.
+    expect(job).toContain("steps.smoke.outcome == 'success'");
+    expect(job).toContain('run: npm run verify:live -- --require-app-check-enforced --model-source-window-min 10080');
+    expect(job).toContain('browser-actions/setup-chrome@v2');
+    // Smoke must precede the probe.
+    expect(job.indexOf('Pre-flight smoke')).toBeLessThan(job.indexOf('Verify deployed app end to end'));
+  });
+
+  it('posts the result to the run summary AND the status page, always-recording red weeks', () => {
+    const job = DEPLOY_HEALTH_WEEKLY.slice(DEPLOY_HEALTH_WEEKLY.indexOf('weekly-health:'));
+    const recordGates = [
+      'Post the result to the run summary',
+      'Record verify:live result for the status page',
+    ];
+    for (const step of recordGates) {
+      const at = job.indexOf(step);
+      expect(at).toBeGreaterThan(-1);
+      // always() + ran-gate: a red run is recorded too — and so is a stalled
+      // host that failed the pre-flight (the smoke's VERIFY_LIVE_VERDICT=
+      // failure makes the red week visible instead of silently skipped). The
+      // `if:` follows the step name.
+      expect(job.slice(at, at + 220)).toContain('always() && (steps.verify.outcome ==');
+    }
+    // Verdict comes from VERIFY_LIVE_VERDICT so 'external' survives.
+    expect(job).toContain('${VERIFY_LIVE_VERDICT:-');
+    // Records the SERVED sha (fallback trigger ref) and tags the source.
+    expect(job).toContain("steps.smoke.outputs.served_sha || github.sha");
+    expect(job).toContain('--source "scheduled-weekly"');
+  });
+});
 });

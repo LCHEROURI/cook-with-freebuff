@@ -123,9 +123,9 @@ describe('useLiveDictation', () => {
     // The cardinal rule: the dictation session exposes NO tools, so the model
     // can never act on a spoken prompt before the user reviews it.
     expect(Array.isArray(opts.tools) ? opts.tools.length : (opts.tools as readonly unknown[])?.length ?? 0).toBe(0);
-    // AUDIO, not TEXT — the constrained Live endpoint rejects TEXT modality
-    // (CLOSED(1007)); the audio reply is unused because the session closes on
-    // the final transcript.
+    // The constrained native-audio Live endpoint rejects TEXT modality.
+    // The audio reply is unused because the session closes on the final
+    // input transcription.
     expect(opts.responseModalities).toEqual(['AUDIO']);
   });
 

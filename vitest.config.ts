@@ -12,7 +12,12 @@ export default defineConfig({
   test: {
     globals: true,
     environment: 'node',
+    env: {
+      // Keep CI retry metadata from leaking into hermetic unit tests. Tests
+      // that exercise rerun behavior explicitly override this value.
+      GITHUB_RUN_ATTEMPT: '1',
+    },
     include: ['**/*.test.ts', '**/*.test.tsx'],
-    exclude: ['node_modules', '.next'],
+    exclude: ['**/node_modules/**', '**/.next/**', '**/.freebuff/**'],
   },
 });

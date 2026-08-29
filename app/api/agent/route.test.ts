@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { NextResponse } from 'next/server';
 import { POST } from './route';
 import { SessionService, InMemorySessionStore } from '@/lib/server/session-service';
 import { InMemoryTimerStore, InMemoryLogStore, InMemoryRecipeStore } from '@/lib/server/tools';
@@ -10,9 +11,11 @@ vi.mock('@/lib/server/app-check', () => ({ gateAppCheck: vi.fn(async () => null)
 
 import { resolveUserId } from '@/lib/server/admin';
 import { buildProductionContext } from '@/lib/server/stores';
+import { gateAppCheck } from '@/lib/server/app-check';
 
 const mockResolve = resolveUserId as ReturnType<typeof vi.fn>;
 const mockBuild = buildProductionContext as ReturnType<typeof vi.fn>;
+const mockGate = gateAppCheck as ReturnType<typeof vi.fn>;
 
 function testContext(userId: string): ToolContext {
   const store = new InMemorySessionStore();
@@ -28,8 +31,22 @@ function testContext(userId: string): ToolContext {
 describe('POST /api/agent', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockGate.mockResolvedValue(null);
     mockResolve.mockResolvedValue('user-1');
     mockBuild.mockImplementation((userId: string) => testContext(userId));
+  });
+
+  it('returns an App Check block before auth or provider context work', async () => {
+    mockGate.mockResolvedValueOnce(new NextResponse(null, { status: 403 }));
+    const res = await POST(new Request('http://localhost/api/agent', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: 'Bearer fake-token' },
+      body: JSON.stringify({ utterance: 'hello' }),
+    }));
+
+    expect(res.status).toBe(403);
+    expect(mockResolve).not.toHaveBeenCalled();
+    expect(mockBuild).not.toHaveBeenCalled();
   });
 
   it('returns 401 without a valid token', async () => {
