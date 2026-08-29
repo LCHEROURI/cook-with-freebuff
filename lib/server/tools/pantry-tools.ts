@@ -78,7 +78,7 @@ export const addPantryItemTool: ToolDefinition = {
   description: 'Add an item to the user\'s pantry (source VOICE by default). Persists immediately.',
   inputSchema: z.object({
     name: z.string().min(1),
-    quantity: z.number().positive().optional(),
+    quantity: z.number().nonnegative().optional(),
     unit: z.string().optional(),
     sessionId: z.string().optional(),
   }),
@@ -123,7 +123,7 @@ export const updatePantryItemTool: ToolDefinition = {
   description: 'Correct a pantry item\'s quantity, unit, notes, or expirationDate (epoch ms; null clears the field).',
   inputSchema: z.object({
     itemId: z.string().min(1),
-    quantity: z.number().positive().nullable().optional(),
+    quantity: z.number().nonnegative().nullable().optional(),
     unit: z.string().nullable().optional(),
     notes: z.string().nullable().optional(),
     expirationDate: z.number().int().positive().nullable().optional(),
