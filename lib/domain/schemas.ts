@@ -29,7 +29,7 @@ export const correlationIdSchema = z
 export const ingredientSchema = z.object({
   id: z.string().min(1),
   name: z.string().min(1),
-  quantity: z.number().positive().nullable(),
+  quantity: z.number().nonnegative().nullable(),
   unit: z.string().nullable(),
   preparation: z.string().optional(),
   condition: z.string().optional(),
@@ -195,7 +195,7 @@ export const cookingSessionSchema = z.object({
     .array(z.object({
       itemId: z.string().min(1),
       name: z.string().min(1),
-      quantity: z.number().positive().optional(),
+      quantity: z.number().nonnegative().optional(),
       unit: z.string().optional(),
     }))
     .optional(),
@@ -277,7 +277,7 @@ export const pantryItemSchema = z.object({
   id: z.string().min(1),
   userId: z.string().min(1),
   name: z.string().min(1),
-  quantity: z.number().positive().optional(),
+  quantity: z.number().nonnegative().optional(),
   unit: z.string().optional(),
   confidence: z.number().min(0).max(1),
   source: pantryItemSourceSchema,
@@ -311,7 +311,7 @@ export const groceryItemSchema = z.object({
   id: z.string().min(1),
   userId: z.string().min(1),
   name: z.string().min(1),
-  quantity: z.number().positive().optional(),
+  quantity: z.number().nonnegative().optional(),
   unit: z.string().optional(),
   source: groceryItemSourceSchema,
   status: groceryItemStatusSchema,

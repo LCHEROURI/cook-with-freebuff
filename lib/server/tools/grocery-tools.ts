@@ -50,7 +50,7 @@ export const addGroceryItemTool: ToolDefinition = {
   description: 'Add something to the grocery list (deduped: an already-open line for the same item is left alone).',
   inputSchema: z.object({
     name: z.string().min(1).max(200),
-    quantity: z.number().positive().optional(),
+    quantity: z.number().nonnegative().optional(),
     unit: z.string().max(50).optional(),
   }),
   async handler(ctx, args) {
