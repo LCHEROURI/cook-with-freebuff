@@ -54,12 +54,14 @@ Stored in `docs/specs/NNNN-title.md`. Current: 0001 App Hosting primary host, 00
 - Components use controlled inputs with `useState`, not `react-hook-form`
 - Tests use `// @vitest-environment jsdom` pragma on component files; default environment is `node`
 - Probe cleanup grace durations are declared per driver (`scripts/verify-live.mjs`, `scripts/drive-live-voice.mjs`) with a rationale comment at each declaration, and the shared 15 minute seed grace is pinned identical across both files by the lockstep contract in `scripts/verify-live-cleanup.test.ts`; never introduce a shared constants module (spec 0002)
+- For meaningful development decisions, failures, regressions, major review findings, security discoveries, or reusable patterns, run `skills/progressive-distillation/SKILL.md` before closing the task. Distilled principles may add stricter guidance, but must never weaken or override existing project safety, CI, security, deployment, or repository rules.
 
 ## Context files
 
 - [ARCHITECTURE.md](ARCHITECTURE.md): layered architecture, request flow, and the Mermaid diagram
 - [DATA_MODEL.md](DATA_MODEL.md): domain types, schemas, and Firestore collection layout
 - [AGENT_TOOLS.md](AGENT_TOOLS.md): tool registry and the model's structured tool calling surface
+- [skills/progressive-distillation/SKILL.md](skills/progressive-distillation/SKILL.md): experiential reflection workflow that converts meaningful development outcomes into reusable principles, experiments, and automation candidates
 - [lib/ai/AGENTS.md](lib/ai/AGENTS.md): AI provider boundary, model resolution, and structured JSON conventions
 - [scripts/AGENTS.md](scripts/AGENTS.md): deploy-verification drivers, the Codex review pipeline, and the landing path conventions
 - [components/AGENTS.md](components/AGENTS.md): presentational client components (CookScreen, voice indicator, starter tour) and their accessibility conventions
