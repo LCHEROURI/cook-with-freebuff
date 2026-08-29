@@ -1,0 +1,24 @@
+{
+  "id": "sqlconnect_phase1_20260826",
+  "title": "SQL Connect Phase 1 — provision and validate",
+  "type": "feature",
+  "status": "done",
+  "created": "2026-08-26T18:40:00Z",
+  "updated": "2026-08-27T19:03:21Z",
+  "current_phase": 3,
+  "current_task": 5,
+  "phases": {
+    "total": 3,
+    "completed": 3
+  },
+  "tasks": {
+    "total": 14,
+    "completed": 14
+  },
+  "commits": [
+    "f21ae74: docs(sqlconnect): add SQL Connect track and migration scope (0005)",
+    "20808a3: feat(sqlconnect): provision Data Connect scaffold and add track + scope docs",
+    "82b0893: feat(sqlconnect): port schema and operations to SQL Connect, prove them in the emulator (#184)",
+    "f52f17b: test(sqlconnect): pin the session-update concurrency contract (#185)"
+  ]
+}

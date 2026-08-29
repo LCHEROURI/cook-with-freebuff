@@ -1,0 +1,6 @@
+connectorId: example
+generate:
+  adminNodeSdk:
+    - outputDir: ../../lib/server/dataconnect
+      package: "@cook-with-freebuff/dataconnect-admin"
+      packageJsonDir: ../..

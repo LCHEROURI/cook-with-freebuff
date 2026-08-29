@@ -182,6 +182,49 @@ jobs:
       - name: Run the emulator integration test (marker atomicity)
         run: npm run test:emulator
 
+      # The SQL Connect store twin's integration suite: drives the REAL
+      # generated SDK against a live Data Connect emulator, where transaction
+      # semantics and the @check version guard are enforced by the emulator
+      # itself. Boots and tears down its own emulator (PGLite downloads on
+      # first use); same push-time cadence as the Firestore suite above, so
+      # a connector regression is visible on the main push that caused it.
+      - name: Run the SQL Connect emulator suite (store twin)
+        run: |
+          # The dataconnect emulator binds port 9399 BEFORE it has imported
+          # and configured the schema (Postgres boot + codegen + install of
+          # the generated SDK can take ~30s on a cold runner), so a bare port
+          # poll lets the suite race a "no schema found for service
+          # \"cook-with-freebuff\"" state (seen on every main push). The
+          # emulator writes its own schema-configured marker to
+          # dataconnect-debug.log (repo cwd, gitignored) — wait on THAT, not
+          # the port, before running the suite.
+          rm -f dataconnect-debug.log
+          npx -y firebase-tools@latest emulators:start --only dataconnect \
+            --project demo-cook-with-freebuff > /tmp/dc-emulator.log 2>&1 &
+          DC_PID=$!
+          for i in $(seq 1 60); do
+            if (echo > /dev/tcp/127.0.0.1/9399) 2>/dev/null; then break; fi
+            sleep 2
+          done
+          for i in $(seq 1 90); do
+            if grep -q "ConfigureEmulator successed" dataconnect-debug.log 2>/dev/null; then
+              echo "SQL Connect emulator schema configured (after $((i * 2))s)"
+              break
+            fi
+            sleep 2
+          done
+          if ! grep -q "ConfigureEmulator successed" dataconnect-debug.log 2>/dev/null; then
+            echo "::error::SQL Connect emulator never configured its schema — tailing logs:"
+            tail -30 dataconnect-debug.log 2>/dev/null || true
+            tail -30 /tmp/dc-emulator.log 2>/dev/null || true
+            kill $DC_PID 2>/dev/null || true
+            exit 1
+          fi
+          npm run test:sqlconnect
+          RC=$?
+          kill $DC_PID 2>/dev/null || true
+          exit $RC
+
       - name: Fail loudly if owner credentials are missing
         if: ${{ github.repository == 'LCHEROURI/cook-with-freebuff' && (env.NEXT_PUBLIC_FIREBASE_API_KEY == '' || env.FIREBASE_SERVICE_ACCOUNT == '' || env.APP_OWNER_UID == '') }}
         run: |

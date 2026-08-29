@@ -401,7 +401,11 @@ export default function CookPage() {
     if (voiceInput.listening) {
       voice.setStatus('LISTENING');
     }
-  }, [voiceInput.listening, voice.setStatus]);
+    // voice.setStatus is a stable useCallback; the effect should only react
+    // to the mic toggling, not to the voice object identity changing every
+    // render (same convention as the other narrow effects in this file).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [voiceInput.listening]);
 
   // Live-mode caption: no interim transcripts come from the Live API, so the
   // caption reflects the honest capture/thinking state instead. When the

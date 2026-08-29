@@ -69,6 +69,10 @@ function makeAuth() {
 let listener: ((user: unknown) => void) | null = null;
 let authHolder: ReturnType<typeof makeAuth> | null = null;
 
+afterEach(() => {
+  vi.useRealTimers();
+});
+
 beforeEach(() => {
   listener = null;
   authHolder = makeAuth();
@@ -79,9 +83,46 @@ beforeEach(() => {
       listener = null;
     };
   });
+  mockOnAuthStateChanged.mockClear();
   mockGetIdToken.mockClear();
   mockSignInWithGoogle.mockReset();
   window.sessionStorage.clear();
+});
+
+describe('useAuthSession · initialization timeout', () => {
+  it('surfaces an actionable error when Firebase never settles', async () => {
+    vi.useFakeTimers();
+    const { result, unmount } = renderHook(() => useAuthSession());
+
+    expect(result.current.state).toBe('loading');
+    await act(async () => {
+      vi.advanceTimersByTime(10000);
+    });
+
+    expect(result.current.state).toBe('error');
+    expect(result.current.error).toContain('taking too long');
+    unmount();
+  });
+
+  it('accepts a successful Firebase callback that arrives after the timeout', async () => {
+    vi.useFakeTimers();
+    const { result, unmount } = renderHook(() => useAuthSession());
+
+    await act(async () => {
+      vi.advanceTimersByTime(10000);
+    });
+    expect(result.current.state).toBe('error');
+
+    authHolder!.setUser({ uid: 'late-user' });
+    await act(async () => {
+      listener?.({ uid: 'late-user' });
+    });
+
+    expect(result.current.state).toBe('ready');
+    expect(result.current.user).toEqual({ uid: 'late-user' });
+    expect(result.current.error).toBeNull();
+    unmount();
+  });
 });
 
 describe('useAuthSession · getToken awaits the auth settle', () => {
@@ -123,6 +164,28 @@ describe('useAuthSession · getToken awaits the auth settle', () => {
     });
     expect(token).toBeNull();
     expect(mockGetIdToken).not.toHaveBeenCalled();
+  });
+
+  it('continues tracking sign in and sign out changes after initial auth settles', async () => {
+    const { result } = renderHook(() => useAuthSession());
+    authHolder!.setUser(null);
+    await act(async () => {
+      listener?.(null);
+    });
+    expect(result.current.state).toBe('ready');
+    expect(result.current.user).toBeNull();
+
+    authHolder!.setUser({ uid: 'signed-in' });
+    await act(async () => {
+      listener?.({ uid: 'signed-in' });
+    });
+    expect(result.current.user).toEqual({ uid: 'signed-in' });
+
+    authHolder!.setUser(null);
+    await act(async () => {
+      listener?.(null);
+    });
+    expect(result.current.user).toBeNull();
   });
 
   it('resolves quickly for later calls after the settle already happened', async () => {
