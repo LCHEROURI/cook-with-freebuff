@@ -313,20 +313,39 @@ describe('scripts/guard-spare-drill.mjs · the comparator + its golden', () => {
 describe('scripts/guard-spare-drill.mjs · the live /api/status reason assertion', () => {
   // After the log golden matches, the drill must ALSO prove the recorded
   // reason reached the DEPLOYED endpoint: it mints a real owner token, GETs
-  // /api/status, and asserts verifyLive.reason equals the exported
-  // SPARED_LIVE_REASON constant. These pins keep that assertion deriving
-  // from the constant (never a second literal) and load-bearing (dropping
-  // or weakening it fails the mutation drill).
+  // /api/status, and delegates the reason decision to assessSpareStatusReason
+  // (guard-spare-status.mjs). A pure spare run must carry the exported
+  // SPARED_LIVE_REASON constant; a mixed run (spare + unrelated regression)
+  // must leave reason unset so the spare path cannot mask the regression.
+  // These pins keep the decision deriving from the constant (never a second
+  // literal) and load-bearing (dropping, weakening, or collapsing the mixed
+  // exemption fails the mutation drill).
   const SRC = () => readFileSync(resolve(process.cwd(), SCRIPT), 'utf8');
 
   it('imports SPARED_LIVE_REASON from the classifier module', () => {
-    const src = SRC();
-    expect(src).toContain("from './verify-live-classify.mjs'");
-    expect(src).toContain('  SPARED_LIVE_REASON,');
-    // The assertion must compare against the constant — a page-style literal
-    // would reintroduce a second copy of the reason value.
-    expect(src).toContain('v.reason !== SPARED_LIVE_REASON');
-    expect(src).not.toContain("v.reason !== 'spared-live-session'");
+    const drillSrc = SRC();
+    const statusSrc = readFileSync(
+      resolve(process.cwd(), 'scripts/guard-spare-status.mjs'),
+      'utf8',
+    );
+
+    // The drill delegates the decision to guard-spare-status.mjs instead of
+    // reimplementing the comparison inline.
+    expect(drillSrc).toContain(
+      "import { assessSpareStatusReason } from './guard-spare-status.mjs'",
+    );
+    expect(drillSrc).toContain('assessSpareStatusReason(v.reason, failureMessages)');
+    // No inline reason comparison may appear in the drill itself.
+    expect(drillSrc).not.toContain('v.reason !== SPARED_LIVE_REASON');
+    expect(drillSrc).not.toContain("v.reason !== 'spared-live-session'");
+    expect(drillSrc).not.toContain("reason === 'spared-live-session'");
+
+    // The status module derives the expected reason from the exported
+    // constant — never a second copy of the reason value.
+    expect(statusSrc).toContain("from './verify-live-classify.mjs'");
+    expect(statusSrc).toContain('  SPARED_LIVE_REASON,');
+    expect(statusSrc).toContain('reason === SPARED_LIVE_REASON');
+    expect(statusSrc).not.toContain("reason === 'spared-live-session'");
   });
 
   it('reads the deployed /api/status route with a real owner bearer token', () => {
@@ -360,30 +379,48 @@ describe('scripts/guard-spare-drill.mjs · the live /api/status reason assertion
     expect(cleanupIdx).toBeGreaterThan(assertIdx);
   });
 
-  it('proves the reason-comparison pin catches a literal or a dropped guard (mutation)', () => {
+  it('proves the reason pins catch a literal, a dropped guard, or a lost mixed exemption (mutation)', () => {
     const src = SRC();
+    const statusSrc = readFileSync(
+      resolve(process.cwd(), 'scripts/guard-spare-status.mjs'),
+      'utf8',
+    );
 
-    // Direction 1 — revert the comparison to the raw literal: the
-    // literal-free pin must fail.
-    const inlined = src.replace('v.reason !== SPARED_LIVE_REASON', "v.reason !== 'spared-live-session'");
-    expect(inlined, 'the inline mutation must actually land').not.toBe(src);
-    expect(inlined).toContain("v.reason !== 'spared-live-session'");
-    expect(inlined).not.toContain('v.reason !== SPARED_LIVE_REASON');
+    // Direction 1 — reintroduce a literal reason comparison (revert the
+    // constant-derived check). The literal-free pin must fail.
+    const inlinedStatus = statusSrc.replace(
+      'reason === SPARED_LIVE_REASON',
+      "reason === 'spared-live-session'",
+    );
+    expect(inlinedStatus, 'the status inline mutation must actually land').not.toBe(statusSrc);
+    expect(inlinedStatus).toContain("reason === 'spared-live-session'");
+    expect(inlinedStatus).not.toContain('reason === SPARED_LIVE_REASON');
 
-    // Direction 2 — drop the runUrl cross-check (the concurrent-run guard):
+    // Direction 2 — collapse the mixed exemption back to strict-only, so an
+    // unrelated regression could once again be masked as a spare. The mixed
+    // pin must fail.
+    const collapsedMixed = statusSrc.replace(
+      'reason == null && spareFailures.length > 0',
+      'reason === SPARED_LIVE_REASON && spareFailures.length > 0',
+    );
+    expect(collapsedMixed, 'the mixed-collapse mutation must actually land').not.toBe(statusSrc);
+    expect(collapsedMixed).not.toContain('reason == null');
+
+    // Direction 3 — drop the runUrl cross-check (the concurrent-run guard):
     // the runUrl pin must fail.
     const droppedRunUrl = src.replace('if (typeof v.runUrl !== \'string\' || !v.runUrl.includes(`/runs/${runId}`)) {', 'if (false) {');
     expect(droppedRunUrl, 'the runUrl-drop mutation must actually land').not.toBe(src);
     expect(droppedRunUrl).not.toContain('v.runUrl.includes(`/runs/${runId}`)');
 
-    // Direction 3 — drop the whole assertion call: the ordering pin must fail.
+    // Direction 4 — drop the whole assertion call: the ordering pin must fail.
     const droppedCall = src.replace('await assertLiveStatusReason(runId);', '');
     expect(droppedCall, 'the dropped-call mutation must actually land').not.toBe(src);
     expect(droppedCall).not.toContain('await assertLiveStatusReason(runId);');
 
     // The pins are the guards — same discipline as the dispatch drills.
-    expect(src).toContain('v.reason !== SPARED_LIVE_REASON');
-    expect(src).not.toContain("v.reason !== 'spared-live-session'");
+    expect(statusSrc).toContain('reason === SPARED_LIVE_REASON');
+    expect(statusSrc).not.toContain("reason === 'spared-live-session'");
+    expect(statusSrc).toContain('reason == null');
     expect(src).toContain('v.runUrl.includes(`/runs/${runId}`)');
     expect(src).toContain('await assertLiveStatusReason(runId);');
     expect(SPARED_LIVE_REASON).toBe('spared-live-session');
