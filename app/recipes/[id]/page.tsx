@@ -18,6 +18,8 @@ import styles from './page.module.css';
 import { useAuthSession } from '@/lib/auth/useAuthSession';
 import { appCheckHeaders } from '@/lib/firebase/app-check';
 import { VoiceInputButton } from '@/components/VoiceInputButton';
+import { Button } from '@/components/ui/button';
+import { Badge } from '@/components/ui/badge';
 import RecipeRowMeta from '../../cook/RecipeRowMeta';
 import { scaleRecipe } from '../recipe-scaler';
 import { parseServings } from '../servings-parser';
@@ -165,9 +167,9 @@ export default function RecipeDetailPage() {
         <section className={styles.empty}>
           <h1 className={styles.title}>Could not load this recipe</h1>
           <p className={styles.emptyText}>{auth.error}</p>
-          <Link href="/" className={styles.primaryBtn}>
-            ← Back to start
-          </Link>
+          <Button asChild variant="ghost" className="text-[#7aa2f7] hover:text-[#7aa2f7]">
+            <Link href="/">← Back to start</Link>
+          </Button>
         </section>
       </main>
     );
@@ -191,13 +193,13 @@ export default function RecipeDetailPage() {
             {notFound ? 'This recipe does not exist or is not yours to view.' : state.message}
           </p>
           {notFound ? (
-            <Link href="/recipes" className={styles.primaryBtn}>
-              ← Back to my recipes
-            </Link>
+            <Button asChild className="mt-3 bg-[#2f6f4f] text-white hover:bg-[#3a8a5f] hover:text-white">
+              <Link href="/recipes">← Back to my recipes</Link>
+            </Button>
           ) : (
-            <button type="button" className={styles.primaryBtn} onClick={() => void fetchRecipe()}>
+            <Button type="button" className="mt-3 bg-[#2f6f4f] text-white hover:bg-[#3a8a5f] hover:text-white" onClick={() => void fetchRecipe()}>
               Try again
-            </button>
+            </Button>
           )}
         </section>
       </main>
@@ -225,9 +227,9 @@ export default function RecipeDetailPage() {
   return (
     <main className={styles.main}>
       <header className={styles.header}>
-        <Link href="/recipes" className={styles.backLink} aria-label="Back to my recipes">
-          ←
-        </Link>
+        <Button asChild variant="ghost" size="icon" className="h-9 w-9 text-[#7aa2f7] hover:bg-white/10 hover:text-[#7aa2f7]">
+          <Link href="/recipes" aria-label="Back to my recipes">←</Link>
+        </Button>
         <div className={styles.headerText}>
           <h1 className={styles.title}>{recipe.title}</h1>
           <RecipeRowMeta
@@ -237,27 +239,31 @@ export default function RecipeDetailPage() {
             preferences={preferences}
           />
           <div className={styles.scaler}>
-            <button
+            <Button
               type="button"
-              className={styles.scalerBtn}
+              variant="outline"
+              size="icon"
+              className="h-8 w-8 border-[#333] bg-[#222] text-[#e8e8e8] hover:bg-[#2c2c2c] hover:text-[#e8e8e8]"
               onClick={decrementServings}
               disabled={servings <= 1}
               aria-label="Decrease servings"
             >
               −
-            </button>
+            </Button>
             <span className={styles.servingsLabel}>
               {servings} {servings === 1 ? 'serving' : 'servings'}
             </span>
-            <button
+            <Button
               type="button"
-              className={styles.scalerBtn}
+              variant="outline"
+              size="icon"
+              className="h-8 w-8 border-[#333] bg-[#222] text-[#e8e8e8] hover:bg-[#2c2c2c] hover:text-[#e8e8e8]"
               onClick={incrementServings}
               disabled={servings >= 24}
               aria-label="Increase servings"
             >
               +
-            </button>
+            </Button>
             <VoiceInputButton
               aria-label="Speak servings"
               onTranscript={(text) => {
@@ -283,10 +289,10 @@ export default function RecipeDetailPage() {
       {(recipe.dietaryTags.length > 0 || recipe.allergens.length > 0) && (
         <div className={styles.tags} aria-label="Dietary tags and allergens">
           {recipe.dietaryTags.map((tag) => (
-            <span key={tag} className={styles.badge}>{tag}</span>
+            <Badge key={tag} variant="outline" className="rounded-full border-[#333] bg-[#222] text-[#9ecbff]">{tag}</Badge>
           ))}
           {recipe.allergens.map((a) => (
-            <span key={a} className={styles.allergenBadge}>contains {a}</span>
+            <Badge key={a} variant="outline" className="rounded-full border-[#5a2a2a] bg-[#3a1d1d] text-[#ffb4b4]">contains {a}</Badge>
           ))}
         </div>
       )}
@@ -297,9 +303,14 @@ export default function RecipeDetailPage() {
         </div>
       )}
 
-      <button type="button" className={styles.startBtn} onClick={() => void handleStart()} disabled={starting}>
+      <Button
+        type="button"
+        className="mb-6 w-full min-h-12 bg-[#2f6f4f] text-white hover:bg-[#3a8a5f] hover:text-white"
+        onClick={() => void handleStart()}
+        disabled={starting}
+      >
         {starting ? 'Starting…' : '▶ Start cooking'}
-      </button>
+      </Button>
 
       <section className={styles.section} aria-label="Ingredients">
         <h2 className={styles.sectionTitle}>Ingredients</h2>
@@ -355,15 +366,15 @@ export default function RecipeDetailPage() {
                 <p className={styles.stepText}>{step.instruction}</p>
                 <span className={styles.badges}>
                   {step.estimatedSeconds != null && (
-                    <span className={styles.badge}>{formatSeconds(step.estimatedSeconds)}</span>
+                    <Badge variant="outline" className="rounded-full border-[#333] bg-[#222] text-[#9ecbff]">{formatSeconds(step.estimatedSeconds)}</Badge>
                   )}
                   {step.timerSeconds != null && (
-                    <span className={styles.badge}>⏱ {formatSeconds(step.timerSeconds)}</span>
+                    <Badge variant="outline" className="rounded-full border-[#333] bg-[#222] text-[#9ecbff]">⏱ {formatSeconds(step.timerSeconds)}</Badge>
                   )}
                   {step.temperature != null && (
-                    <span className={styles.badge}>{step.temperature}&deg;{step.temperatureUnit ?? 'C'}</span>
+                    <Badge variant="outline" className="rounded-full border-[#333] bg-[#222] text-[#9ecbff]">{step.temperature}&deg;{step.temperatureUnit ?? 'C'}</Badge>
                   )}
-                  {step.heatLevel && <span className={styles.badge}>{step.heatLevel}</span>}
+                  {step.heatLevel && <Badge variant="outline" className="rounded-full border-[#333] bg-[#222] text-[#9ecbff]">{step.heatLevel}</Badge>}
                 </span>
                 {step.safetyNote && <p className={styles.safetyNote}>⚠ {step.safetyNote}</p>}
                 <RecipeReadAloudButton

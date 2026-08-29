@@ -20,6 +20,9 @@ import { useAuthSession } from '@/lib/auth/useAuthSession';
 import { appCheckHeaders } from '@/lib/firebase/app-check';
 import { VoiceInputButton } from '@/components/VoiceInputButton';
 import { appendTranscript } from '@/lib/domain/fieldUI';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Badge } from '@/components/ui/badge';
 import RecipeRowMeta from '../cook/RecipeRowMeta';
 import {
   availableCategories,
@@ -168,9 +171,9 @@ export default function RecipesPage() {
         <section className={styles.empty}>
           <h1 className={styles.title}>My Recipes</h1>
           <p className={styles.emptyText}>{auth.error}</p>
-          <Link href="/" className={styles.backLink}>
-            ← Back to start
-          </Link>
+          <Button asChild variant="ghost">
+            <Link href="/">← Back to start</Link>
+          </Button>
         </section>
       </main>
     );
@@ -182,9 +185,9 @@ export default function RecipesPage() {
   return (
     <main className={styles.main}>
       <header className={styles.header}>
-        <Link href="/" className={styles.backLink} aria-label="Back to start">
-          ←
-        </Link>
+        <Button asChild variant="ghost" size="icon" className="h-11 w-11">
+          <Link href="/" aria-label="Back to start">←</Link>
+        </Button>
         <div className={styles.headerText}>
           <h1 className={styles.title}>My Recipes</h1>
           <p className={styles.subtitle}>
@@ -208,8 +211,8 @@ export default function RecipesPage() {
       {hasRecipes && (
         <section className={styles.controls} aria-label="Search and filters">
           <div className={styles.controlsRow}>
-            <input
-              className={styles.search}
+            <Input
+              className="flex-1 bg-surface"
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               placeholder="Search recipes, diets or allergens…"
@@ -232,22 +235,26 @@ export default function RecipesPage() {
           </div>
           {categories.length > 0 && (
             <nav className={styles.chips} aria-label="Filter by protein">
-              <button
+              <Button
                 type="button"
-                className={`${styles.chip} ${protein === '' ? styles.chipActive : ''}`}
+                size="sm"
+                variant={protein === '' ? 'default' : 'outline'}
+                className="min-h-9 rounded-full px-4"
                 onClick={() => setProtein('')}
               >
                 All
-              </button>
+              </Button>
               {categories.map((cat) => (
-                <button
+                <Button
                   key={cat}
                   type="button"
-                  className={`${styles.chip} ${protein === cat ? styles.chipActive : ''}`}
+                  size="sm"
+                  variant={protein === cat ? 'default' : 'outline'}
+                  className="min-h-9 rounded-full px-4"
                   onClick={() => setProtein(protein === cat ? '' : cat)}
                 >
                   {cat}
-                </button>
+                </Button>
               ))}
             </nav>
           )}
@@ -267,41 +274,40 @@ export default function RecipesPage() {
       {recipes.status === 'error' && (
         <section className={styles.empty}>
           <p className={styles.emptyText}>Could not load your recipes.</p>
-          <button
+          <Button
             type="button"
-            className={styles.primaryBtn}
             onClick={() => {
               setRecipes({ status: 'loading', items: [] });
               void fetchRecipes();
             }}
           >
             Try again
-          </button>
+          </Button>
         </section>
       )}
 
       {recipes.status === 'ready' && recipes.items.length === 0 && (
         <section className={styles.empty}>
           <p className={styles.emptyText}>You have no saved recipes yet.</p>
-          <Link href="/cook" className={styles.primaryBtn}>
-            Create your first recipe
-          </Link>
+          <Button asChild>
+            <Link href="/cook">Create your first recipe</Link>
+          </Button>
         </section>
       )}
 
       {noMatches && (
         <section className={styles.empty}>
           <p className={styles.emptyText}>No recipes match your search.</p>
-          <button
+          <Button
             type="button"
-            className={styles.secondaryBtn}
+            variant="outline"
             onClick={() => {
               setQuery('');
               setProtein('');
             }}
           >
             Clear filters
-          </button>
+          </Button>
         </section>
       )}
 
@@ -317,9 +323,13 @@ export default function RecipesPage() {
                   {r.proteinCategories.length > 0 && (
                     <span className={styles.badges}>
                       {r.proteinCategories.map((cat) => (
-                        <span key={cat} className={styles.badge}>
+                        <Badge
+                          key={cat}
+                          variant="outline"
+                          className="rounded-full border-[var(--color-mauve-subtle-border)] bg-[var(--color-mauve-subtle)] text-[var(--color-mauve-subtle-text)]"
+                        >
                           {cat}
-                        </span>
+                        </Badge>
                       ))}
                     </span>
                   )}
@@ -332,46 +342,53 @@ export default function RecipesPage() {
                 />
               </div>
               <div className={styles.actions}>
-                <button
+                <Button
                   type="button"
-                  className={styles.startBtn}
+                  size="sm"
+                  className="min-h-10"
                   onClick={() => void handleStart(r.recipeId)}
                   disabled={startingId !== null || deletingId !== null}
                   aria-label={`Start cooking ${r.title}`}
                 >
                   {startingId === r.recipeId ? 'Starting…' : '▶ Start'}
-                </button>
+                </Button>
                 {confirmingId === r.recipeId ? (
                   <>
-                    <button
+                    <Button
                       type="button"
-                      className={styles.cancelBtn}
+                      variant="outline"
+                      size="sm"
+                      className="min-h-10"
                       onClick={() => setConfirmingId(null)}
                       disabled={deletingId !== null}
                       aria-label={`Cancel delete ${r.title}`}
                     >
                       Cancel
-                    </button>
-                    <button
+                    </Button>
+                    <Button
                       type="button"
-                      className={styles.deleteConfirmBtn}
+                      variant="destructive"
+                      size="sm"
+                      className="min-h-10"
                       onClick={() => void handleDelete(r.recipeId)}
                       disabled={deletingId !== null}
                       aria-label={`Confirm delete ${r.title}`}
                     >
                       {deletingId === r.recipeId ? 'Deleting…' : 'Delete'}
-                    </button>
+                    </Button>
                   </>
                 ) : (
-                  <button
+                  <Button
                     type="button"
-                    className={styles.deleteBtn}
+                    variant="outline"
+                    size="sm"
+                    className="min-h-10 border-[var(--color-danger-border)] text-[var(--color-danger)] hover:bg-[var(--color-danger-bg)] hover:text-[var(--color-danger)]"
                     onClick={() => setConfirmingId(r.recipeId)}
                     disabled={startingId !== null || deletingId !== null}
                     aria-label={`Delete ${r.title}`}
                   >
                     Delete
-                  </button>
+                  </Button>
                 )}
               </div>
             </li>
@@ -379,9 +396,9 @@ export default function RecipesPage() {
         </ul>
       )}
 
-      <Link href="/cook" className={styles.newRecipeLink}>
-        ＋ New recipe
-      </Link>
+      <Button asChild variant="ghost" className="mt-2 w-fit text-[var(--color-accent-subtle-text)] hover:text-[var(--color-accent-subtle-text)]">
+        <Link href="/cook">＋ New recipe</Link>
+      </Button>
     </main>
   );
 }

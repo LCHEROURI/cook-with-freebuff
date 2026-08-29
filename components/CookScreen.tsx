@@ -5,6 +5,9 @@ import Link from 'next/link';
 import styles from '@/app/cook/page.module.css';
 import { formatIngredientQuantityPrefix, formatIngredientNameSuffix } from '@/lib/recipe/format';
 import { VoiceIndicator } from './VoiceIndicator';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Badge } from '@/components/ui/badge';
 import { formatPausedAgo, type ActiveTimerInfo, type GuideSnapshot } from '@/lib/domain/guide';
 import type { AgentTurn, VoiceStatus } from '@/lib/agent';
 
@@ -185,21 +188,23 @@ export function CookScreen({
     <main className={styles.main}>
       <header className={styles.header}>
         <div className={styles.headerRow}>
-          <Link href="/" className={styles.backLink} aria-label="Back to start">
-            <svg
-              width="20"
-              height="20"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              aria-hidden="true"
-            >
-              <path d="m15 18-6-6 6-6" />
-            </svg>
-          </Link>
+          <Button asChild variant="ghost" size="icon" className="h-11 w-11">
+            <Link href="/" aria-label="Back to start">
+              <svg
+                width="20"
+                height="20"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                aria-hidden="true"
+              >
+                <path d="m15 18-6-6 6-6" />
+              </svg>
+            </Link>
+          </Button>
           <h1 className={styles.recipeTitle}>{snap.recipeTitle ?? 'Cooking'}</h1>
           <VoiceIndicator status={voiceStatus} />
         </div>
@@ -218,9 +223,9 @@ export function CookScreen({
       {alert && (
         <div className={styles.alert} role="alert" aria-live="assertive">
           <span>{alert}</span>
-          <button className={styles.alertClose} onClick={onDismissAlert} aria-label="Dismiss alert">
+          <Button variant="ghost" size="icon" className="h-8 w-8" onClick={onDismissAlert} aria-label="Dismiss alert">
             ×
-          </button>
+          </Button>
         </div>
       )}
 
@@ -286,46 +291,46 @@ export function CookScreen({
           <p className={styles.safetyGateTitle}>⚠ Safety first</p>
           <p className={styles.safetyGateNote}>{snap.safetyGate.note}</p>
           <p className={styles.safetyGateHint}>The step is not marked done until you confirm you understand.</p>
-          <button
+          <Button
             className={`${styles.control} ${styles.primary} ${styles.safetyGateConfirm}`}
             onClick={onDone}
             aria-label="I understand the safety warning, continue"
           >
             ✓ I understand — continue
-          </button>
+          </Button>
         </section>
       )}
 
       <section className={styles.controls}>
         {isPaused ? (
-          <button className={`${styles.control} ${styles.primary}`} onClick={onResume} aria-label="Resume cooking">
+          <Button className={`${styles.control} ${styles.primary}`} onClick={onResume} aria-label="Resume cooking">
             ▶ Resume
-          </button>
+          </Button>
         ) : snap.safetyGate ? (
           // During the safety gate the only action is the explicit confirmation
           // above — the step is not completed until it is acknowledged.
           <p className={styles.safetyGateWaiting}>Confirm the safety note to continue.</p>
         ) : (
           <>
-            <button className={styles.control} onClick={onBack} aria-label="Previous step" disabled={snap.stepNumber === 1}>
+            <Button className={styles.control} onClick={onBack} aria-label="Previous step" disabled={snap.stepNumber === 1}>
               ◀ Previous
-            </button>
-            <button className={styles.control} onClick={onRepeat} aria-label="Repeat this step">
+            </Button>
+            <Button className={styles.control} onClick={onRepeat} aria-label="Repeat this step">
               🔁 Repeat
-            </button>
-            <button
+            </Button>
+            <Button
               className={`${styles.control} ${styles.primary}`}
               onClick={onDone}
               aria-label="Done with this step"
               disabled={doneDisabled}
             >
               ✅ Done
-            </button>
+            </Button>
           </>
         )}
       </section>
 
-      <button
+      <Button
         className={`${styles.startOver} ${confirmingStartOver ? styles.startOverArmed : ''}`}
         onClick={() => {
           if (!confirmingStartOver) {
@@ -337,9 +342,10 @@ export function CookScreen({
         }}
         onBlur={() => setConfirmingStartOver(false)}
         aria-label="Start over"
+        type="button"
       >
         {confirmingStartOver ? '✓ Confirm — restart from step 1?' : '↺ Start over'}
-      </button>
+      </Button>
 
       <details className={styles.details}>
         <summary>Ingredients</summary>
@@ -410,24 +416,25 @@ export function CookScreen({
             <line x1="12" x2="12" y1="19" y2="22" />
           </svg>
         </button>
-        <input
+        <Input
           className={styles.voiceInput}
           value={input}
           onChange={(e) => setInput(e.target.value)}
           placeholder="Say it: “done”, “repeat”, “go back”…"
           aria-label="Speak or type a command"
         />
-        <button className={styles.sendBtn} type="submit">
+        <Button className={styles.sendBtn} type="submit">
           Send
-        </button>
+        </Button>
       </form>
       {voiceEngine !== 'none' && (
-        <span
+        <Badge
+          variant="outline"
           className={`${styles.voiceEngineBadge} ${voiceEngine === 'gemini-live' ? styles.voiceEngineBadgeLive : styles.voiceEngineBadgeFallback}`}
           data-engine={voiceEngine}
         >
           {voiceEngine === 'gemini-live' ? '⚡ Gemini Live' : '🔄 Web Speech'}
-        </span>
+        </Badge>
       )}
       {micListening && (
         <p
@@ -469,14 +476,16 @@ export function CookScreen({
         </div>
       )}
       {onCopyDiagnostics && (micListening || micError) && (
-        <button
+        <Button
           type="button"
-          className={styles.voiceDiagBtn}
+          variant="ghost"
+          size="sm"
           onClick={() => void copyMicDiagnostics()}
           aria-label="Copy voice session details"
+          className={styles.voiceDiagBtn}
         >
           {copiedDetails ? '✓ copied voice details' : 'ⓘ copy voice details'}
-        </button>
+        </Button>
       )}
     </main>
   );

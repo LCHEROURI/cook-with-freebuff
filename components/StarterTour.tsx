@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import styles from '@/app/cook/page.module.css';
+import { Button } from '@/components/ui/button';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // StarterTour — first-visit guide for the /cook recipe starter.
@@ -92,14 +93,16 @@ export function StarterTour({ onDismiss }: { onDismiss: () => void }) {
     <div className={styles.tourCard} role="region" aria-label={`First-time tour, step ${step + 1} of ${STEPS.length}`}>
       <div className={styles.tourHeader}>
         <span className={styles.tourEyebrow}>First time here? Let’s get you cooking.</span>
-        <button
+        <Button
           type="button"
-          className={styles.tourClose}
+          variant="ghost"
+          size="icon"
+          className="h-8 w-8"
           onClick={finish}
           aria-label="Close the tour"
         >
           ✕
-        </button>
+        </Button>
       </div>
 
       <div className={styles.tourDots} aria-hidden="true">
@@ -114,24 +117,24 @@ export function StarterTour({ onDismiss }: { onDismiss: () => void }) {
 
       <div className={styles.tourActions}>
         {step > 0 && (
-          <button type="button" className={styles.tourBack} onClick={() => setStep((s) => s - 1)} aria-label="Previous step">
+          <Button type="button" variant="outline" size="sm" className={styles.tourBack} onClick={() => setStep((s) => s - 1)} aria-label="Previous step">
             ← Back
-          </button>
+          </Button>
         )}
         {isLast ? (
-          <button type="button" className={styles.tourNext} onClick={finish}>
+          <Button type="button" size="sm" className={styles.tourNext} onClick={finish}>
             Let’s cook
-          </button>
+          </Button>
         ) : (
-          <button type="button" className={styles.tourNext} onClick={() => setStep((s) => s + 1)} aria-label="Next step">
+          <Button type="button" size="sm" className={styles.tourNext} onClick={() => setStep((s) => s + 1)} aria-label="Next step">
             Next →
-          </button>
+          </Button>
         )}
       </div>
 
-      <button type="button" className={styles.tourSkip} onClick={finish}>
+      <Button type="button" className={styles.tourSkip} onClick={finish}>
         Skip tour
-      </button>
+      </Button>
     </div>
   );
 }

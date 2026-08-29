@@ -14,6 +14,9 @@ import { useVoiceInput } from '@/lib/hooks/useVoiceInput';
 import { useGeminiLive, shouldAutoFallbackToWebSpeech } from '@/lib/hooks/useGeminiLive';
 import { useLiveDictation } from '@/lib/hooks/useLiveDictation';
 import { useCookingSession } from '@/lib/hooks/useCookingSession';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Badge } from '@/components/ui/badge';
 import { appCheckHeaders, appCheckLimitedUseHeaders } from '@/lib/firebase/app-check';
 
 export default function CookPage() {
@@ -450,9 +453,9 @@ export default function CookPage() {
         <section className={styles.empty}>
           <h1 className={styles.title}>Cook With Me</h1>
           <p className={styles.emptyText}>{auth.error}</p>
-          <Link href="/" className={styles.primaryBtn}>
-            ← Back to start
-          </Link>
+          <Button asChild className={styles.primaryBtn}>
+            <Link href="/">← Back to start</Link>
+          </Button>
         </section>
       </main>
     );
@@ -484,7 +487,7 @@ export default function CookPage() {
             }}
           >
             <div className={styles.starterMicRow}>
-              <input
+              <Input
                 className={styles.starterInput}
                 value={starter.prompt}
                 onChange={(e) => setStarter((s) => ({ ...s, prompt: e.target.value }))}
@@ -557,13 +560,13 @@ export default function CookPage() {
                 </svg>
               </button>
             </div>
-            <button
+            <Button
               type="submit"
               className={styles.starterBtn}
               disabled={starter.creating || starter.starting || starter.prompt.trim().length === 0}
             >
               {starter.creating ? 'Creating…' : '✨ Create my recipe'}
-            </button>
+            </Button>
             {scan.scanning && (
               <p className={styles.scanStatus} role="status" aria-live="polite">
                 <span className={styles.spinner} aria-hidden="true" /> Scanning your photo…
@@ -584,13 +587,13 @@ export default function CookPage() {
                     </li>
                   ))}
                 </ul>
-                <button
+                <Button
                   type="button"
                   className={styles.primaryBtn}
                   onClick={handleUseScannedIngredients}
                 >
                   Use these ingredients
-                </button>
+                </Button>
               </div>
             )}
             {dictation.listening && (
@@ -624,19 +627,20 @@ export default function CookPage() {
             {dictation.error && (
               <div className={styles.micError} role="alert">
                 <span>{dictation.error}</span>
-                <button className={styles.alertClose} onClick={dictation.clearError} aria-label="Dismiss microphone error">
+                <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0" onClick={dictation.clearError} aria-label="Dismiss microphone error">
                   ×
-                </button>
+                </Button>
               </div>
             )}
           </form>
           {dictation.available && (
-            <span
+            <Badge
+              variant="outline"
               className={`${styles.voiceEngineBadge} ${styles.voiceEngineBadgeLive}`}
               data-engine="gemini-live"
             >
               ⚡ Gemini Live
-            </span>
+            </Badge>
           )}
           {starter.error && (
             <p className={styles.starterError} role="alert">
@@ -659,7 +663,7 @@ export default function CookPage() {
                   : ''}
               </p>
               <ConstraintDetails preferences={starter.ready.preferences} />
-              <button
+              <Button
                 className={styles.primaryBtn}
                 onClick={() => void handleStartCooking()}
                 disabled={starter.starting}
@@ -667,7 +671,7 @@ export default function CookPage() {
                 data-recipe-id={starter.ready.recipeId}
               >
                 {starter.starting ? 'Starting…' : '▶ Start cooking'}
-              </button>
+              </Button>
             </div>
           )}
           {recipes.status === 'ready' && recipes.items.length > 0 && (
@@ -679,22 +683,24 @@ export default function CookPage() {
                 if (allCats.length === 0) return null;
                 return (
                   <nav className={styles.proteinFilters} aria-label="Filter by protein">
-                    <button
+                    <Button
                       type="button"
+                      size="sm"
                       className={`${styles.proteinChip} ${filterProtein === '' ? styles.proteinChipActive : ''}`}
                       onClick={() => setFilterProtein('')}
                     >
                       All
-                    </button>
+                    </Button>
                     {allCats.map((cat) => (
-                      <button
+                      <Button
                         key={cat}
                         type="button"
+                        size="sm"
                         className={`${styles.proteinChip} ${filterProtein === cat ? styles.proteinChipActive : ''}`}
                         onClick={() => setFilterProtein(filterProtein === cat ? '' : cat)}
                       >
                         {cat}
-                      </button>
+                      </Button>
                     ))}
                   </nav>
                 );
@@ -720,23 +726,25 @@ export default function CookPage() {
                         preferences={r.preferences}
                       />
                     </div>
-                    <button
+                    <Button
                       type="button"
+                      variant="outline"
+                      size="sm"
                       className={styles.recipeStart}
                       onClick={() => void handleStartSavedRecipe(r.recipeId)}
                       disabled={startingId !== null}
                       aria-label={`Start cooking ${r.title}`}
                     >
                       {startingId === r.recipeId ? 'Starting…' : '▶ Start cooking'}
-                    </button>
+                    </Button>
                   </li>
                 ))}
               </ul>
             </section>
           )}
-          <Link href="/" className={styles.backLink}>
-            ← Back to start
-          </Link>
+          <Button asChild variant="ghost" className="w-fit text-foreground hover:text-foreground">
+            <Link href="/">← Back to start</Link>
+          </Button>
         </section>
       </main>
     );

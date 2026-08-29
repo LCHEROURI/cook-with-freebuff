@@ -159,7 +159,8 @@ describe('app/status/page.tsx · the glance surface', () => {
     expect(PAGE).toContain('Sign in to see kitchen status');
     expect(PAGE).toContain('Sign in with Google');
     expect(PAGE).toContain('auth.signIn()');
-    expect(PAGE).toContain('signInButton');
+    // The prompt is rendered through the shared shadcn Button on the sign-in card.
+    expect(PAGE).toContain("import { Button } from '@/components/ui/button'");
   });
 
   it('hides the status cards while signed out (no Loading… dead state)', () => {

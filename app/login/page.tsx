@@ -5,6 +5,8 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import styles from './page.module.css';
 import { useAuthSession } from '@/lib/auth/useAuthSession';
+import { Button } from '@/components/ui/button';
+import { Card } from '@/components/ui/card';
 
 export default function LoginPage() {
   const router = useRouter();
@@ -72,7 +74,7 @@ export default function LoginPage() {
 
   return (
     <main className={styles.main}>
-      <section className={styles.card}>
+      <Card className="w-full max-w-[400px] items-center gap-4 rounded-2xl p-10 text-center shadow-sm">
         <h1 className={styles.title}>Cook With Me</h1>
         <p className={styles.subtitle}>Your voice-first cooking companion</p>
 
@@ -80,25 +82,27 @@ export default function LoginPage() {
         {signInError && <p className={styles.error} role="alert">{signInError}</p>}
         {auth.signInHint && <p className={styles.hint} role="status">{auth.signInHint}</p>}
 
-        <button
-          className={styles.googleBtn}
+        <Button
+          variant="outline"
+          size="lg"
           onClick={() => void onSignIn()}
           disabled={busy || auth.state === 'error'}
           aria-label="Sign in with Google"
+          className="w-full min-h-12 border-border-strong text-base font-semibold shadow-sm hover:bg-surface-secondary hover:text-foreground"
         >
           <span className={styles.googleIcon} aria-hidden="true">G</span>
           {busy ? 'Signing in…' : 'Continue with Google'}
-        </button>
+        </Button>
 
         <p className={styles.note}>
           Sign in with the Google account you use for your kitchen. Your
           sessions, pantry and grocery list are private to this account.
         </p>
 
-        <Link href="/" className={styles.backLink}>
-          ← Back to start
-        </Link>
-      </section>
+        <Button asChild variant="ghost" className="text-brand hover:text-brand-hover">
+          <Link href="/">← Back to start</Link>
+        </Button>
+      </Card>
     </main>
   );
 }

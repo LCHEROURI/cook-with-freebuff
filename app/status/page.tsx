@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import styles from './page.module.css';
 import { useAuthSession } from '@/lib/auth/useAuthSession';
+import { Button } from '@/components/ui/button';
 import {
   SPARED_LIVE_REASON,
   VERDICT_EXTERNAL,
@@ -118,9 +119,9 @@ export default function StatusPage() {
     <main className={styles.main}>
       <header className={styles.topbar}>
         <span className={styles.brand}>Cook With Me</span>
-        <Link href="/" className={styles.backLink}>
-          ← Back to start
-        </Link>
+        <Button asChild variant="ghost" className="min-h-11 text-sm font-semibold text-brand hover:text-brand-hover">
+          <Link href="/">← Back to start</Link>
+        </Button>
       </header>
 
       <section className={styles.hero}>
@@ -156,14 +157,14 @@ export default function StatusPage() {
               The status surface is private — sign in with Google to see the
               live commit, build time, and the last verify:live result.
             </p>
-            <button
+            <Button
               type="button"
-              className={styles.signInButton}
+              className="mt-3 min-h-11 w-fit"
               onClick={() => void handleSignIn()}
               disabled={signingIn}
             >
               {signingIn ? 'Signing in…' : 'Sign in with Google'}
-            </button>
+            </Button>
             {signInError && <p className={styles.cardMeta}>{signInError}</p>}
           </article>
         </section>

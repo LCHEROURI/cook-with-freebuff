@@ -1,6 +1,7 @@
 'use client';
 
 import { useVoiceInput } from '@/lib/hooks/useVoiceInput';
+import { Button } from '@/components/ui/button';
 
 interface Props {
   onTranscript: (text: string) => void;
@@ -19,8 +20,10 @@ export function VoiceInputButton({ onTranscript, 'aria-label': ariaLabel }: Prop
 
   return (
     <span className="voice-input-wrap">
-      <button
+      <Button
         type="button"
+        variant="outline"
+        size="icon"
         onClick={toggle}
         disabled={!supported}
         aria-label={label}
@@ -29,7 +32,7 @@ export function VoiceInputButton({ onTranscript, 'aria-label': ariaLabel }: Prop
         className="voice-mic-btn"
       >
         {listening ? '⏹' : '🎤'}
-      </button>
+      </Button>
       {listening && <span className="voice-interim">{interim || 'Listening…'}</span>}
       {error && <span className="voice-error" role="alert">{error}</span>}
     </span>

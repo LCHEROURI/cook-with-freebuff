@@ -19,6 +19,8 @@
 import type { CSSProperties, ChangeEvent } from 'react';
 
 import { appendTranscript, type FieldUIAnnotations } from '@/lib/domain/fieldUI';
+import { Input } from '@/components/ui/input';
+import { Textarea } from '@/components/ui/textarea';
 import { VoiceInputButton } from './VoiceInputButton';
 
 // ── Shared props ─────────────────────────────────────────────────────────────
@@ -65,7 +67,7 @@ export function FormInput({
 
   return (
     <>
-      <input
+      <Input
         className={className}
         style={style}
         type={type}
@@ -119,7 +121,7 @@ export function FormTextarea({
 
   return (
     <>
-      <textarea
+      <Textarea
         className={className}
         style={style}
         value={value}

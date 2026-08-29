@@ -7,6 +7,8 @@ import styles from './kitchen.module.css';
 import { useAuthSession } from '@/lib/auth/useAuthSession';
 import { FormInput, FormTextarea } from '@/components/FormField';
 import { VoiceInputButton } from '@/components/VoiceInputButton';
+import { Button } from '@/components/ui/button';
+import { Badge } from '@/components/ui/badge';
 import { useSpeech } from '@/lib/hooks/useSpeech';
 import { appendTranscript, pantryFieldUI, leftoverFieldUI, profileFieldUI } from '@/lib/domain/fieldUI';
 import type { PantryItemView } from '@/lib/server/pantry-service';
@@ -63,11 +65,11 @@ function quantityLabel(q: number | null | undefined, u: string | null | undefine
 function GrocerySourceBadge({ source }: { source: GroceryItemSource }) {
   const cls =
     source === 'PANTRY_DEPLETION'
-      ? styles.sourceDepleted
+      ? 'bg-[var(--color-info-bg)] text-[var(--color-info)]'
       : source === 'EXPIRATION'
-        ? styles.sourceExpired
-        : styles.sourceManual;
-  return <span className={cls}>{GROCERY_SOURCE_LABEL[source]}</span>;
+        ? 'bg-[var(--color-danger-bg)] text-[var(--color-danger)]'
+        : 'bg-[var(--color-neutral-bg)] text-[var(--color-neutral-text)]';
+  return <Badge variant="outline" className={`rounded-full border-0 ${cls}`}>{GROCERY_SOURCE_LABEL[source]}</Badge>;
 }
 
 export default function KitchenPage() {
@@ -212,9 +214,9 @@ export default function KitchenPage() {
         <section className={styles.empty}>
           <h1 className={styles.title}>My Kitchen</h1>
           <p className={styles.emptyText}>{auth.error}</p>
-          <Link href="/" className={styles.backLink}>
-            ← Back to start
-          </Link>
+          <Button asChild variant="ghost">
+            <Link href="/">← Back to start</Link>
+          </Button>
         </section>
       </main>
     );
@@ -236,21 +238,23 @@ export default function KitchenPage() {
   return (
     <main className={styles.main}>
       <header className={styles.header}>
-        <Link href="/" className={styles.backLink} aria-label="Back to start">
-          <svg
-            width="20"
-            height="20"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            aria-hidden="true"
-          >
-            <path d="m15 18-6-6 6-6" />
-          </svg>
-        </Link>
+        <Button asChild variant="ghost" size="icon" className="h-11 w-11">
+          <Link href="/" aria-label="Back to start">
+            <svg
+              width="20"
+              height="20"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              aria-hidden="true"
+            >
+              <path d="m15 18-6-6 6-6" />
+            </svg>
+          </Link>
+        </Button>
         <h1 className={styles.title}>My Kitchen</h1>
       </header>
       <p className={styles.subtitle}>
@@ -280,32 +284,36 @@ export default function KitchenPage() {
                     <span className={styles.rowMeta}>{quantityLabel(item.quantity, item.unit)}</span>
                   )}
                   <span className={styles.badges}>
-                    {item.expired && <span className={styles.badgeDanger}>Expired</span>}
-                    {!item.expired && item.expiresSoon && <span className={styles.badgeWarn}>Expiring soon</span>}
-                    {item.stale && <span className={styles.badgeNeutral}>Needs confirming</span>}
+                    {item.expired && <Badge variant="outline" className="rounded-full border-0 bg-[var(--color-danger-bg)] text-[var(--color-danger)]">Expired</Badge>}
+                    {!item.expired && item.expiresSoon && <Badge variant="outline" className="rounded-full border-0 bg-[var(--color-warning-bg)] text-[var(--color-warning)]">Expiring soon</Badge>}
+                    {item.stale && <Badge variant="outline" className="rounded-full border-0 bg-[var(--color-neutral-bg)] text-[var(--color-neutral-text)]">Needs confirming</Badge>}
                   </span>
                 </div>
                 <div className={styles.rowActions}>
                   {item.stale && (
-                    <button
+                    <Button
                       type="button"
-                      className={styles.smallBtn}
+                      variant="secondary"
+                      size="sm"
+                      className="min-h-10"
                       onClick={() => void mutate('pantry_confirm', { itemId: item.id })}
                       disabled={pending !== null}
                       aria-label={`Confirm I still have ${item.name}`}
                     >
                       ✓ Have it
-                    </button>
+                    </Button>
                   )}
-                  <button
+                  <Button
                     type="button"
-                    className={`${styles.smallBtn} ${styles.dangerBtn}`}
+                    variant="ghost"
+                    size="icon"
+                    className="h-10 w-10 text-danger hover:text-danger"
                     onClick={() => void mutate('pantry_remove', { itemId: item.id })}
                     disabled={pending !== null}
                     aria-label={`Remove ${item.name} from pantry`}
                   >
                     ✕
-                  </button>
+                  </Button>
                 </div>
               </li>
             ))}
@@ -408,13 +416,13 @@ export default function KitchenPage() {
             disabled={pending !== null}
             rows={2}
           />
-          <button
+          <Button
             type="submit"
-            className={styles.addBtn}
+            className="min-h-11"
             disabled={pending !== null || pantryName.trim().length === 0}
           >
             + Add
-          </button>
+          </Button>
         </form>
       </section>
 
@@ -439,24 +447,28 @@ export default function KitchenPage() {
                   <GrocerySourceBadge source={item.source} />
                 </div>
                 <div className={styles.rowActions}>
-                  <button
+                  <Button
                     type="button"
-                    className={styles.smallBtn}
+                    variant="secondary"
+                    size="sm"
+                    className="min-h-10"
                     onClick={() => void mutate('grocery_bought', { itemId: item.id })}
                     disabled={pending !== null}
                     aria-label={`Mark ${item.name} as bought`}
                   >
                     ✓ Bought
-                  </button>
-                  <button
+                  </Button>
+                  <Button
                     type="button"
-                    className={`${styles.smallBtn} ${styles.dangerBtn}`}
+                    variant="ghost"
+                    size="icon"
+                    className="h-10 w-10 text-danger hover:text-danger"
                     onClick={() => void mutate('grocery_remove', { itemId: item.id })}
                     disabled={pending !== null}
                     aria-label={`Remove ${item.name} from the grocery list`}
                   >
                     ✕
-                  </button>
+                  </Button>
                 </div>
               </li>
             ))}
@@ -538,13 +550,13 @@ export default function KitchenPage() {
               setGroceryVoiceInitiated(true);
             }}
           />
-          <button
+          <Button
             type="submit"
-            className={styles.addBtn}
+            className="min-h-11"
             disabled={pending !== null || groceryName.trim().length === 0}
           >
             + Add
-          </button>
+          </Button>
         </form>
       </section>
 
@@ -568,15 +580,17 @@ export default function KitchenPage() {
                   {item.notes && <span className={styles.rowMeta}>{item.notes}</span>}
                 </div>
                 <div className={styles.rowActions}>
-                  <button
+                  <Button
                     type="button"
-                    className={styles.smallBtn}
+                    variant="secondary"
+                    size="sm"
+                    className="min-h-10"
                     onClick={() => void mutate('leftover_consume', { leftoverId: item.id })}
                     disabled={pending !== null}
                     aria-label={`Mark ${item.title} as eaten`}
                   >
                     ✓ Eaten
-                  </button>
+                  </Button>
                 </div>
               </li>
             ))}
@@ -660,13 +674,13 @@ export default function KitchenPage() {
             disabled={pending !== null}
             rows={2}
           />
-          <button
+          <Button
             type="submit"
-            className={styles.addBtn}
+            className="min-h-11"
             disabled={pending !== null || leftoverTitle.trim().length === 0}
           >
             + Log
-          </button>
+          </Button>
         </form>
       </section>
 
@@ -778,9 +792,9 @@ export default function KitchenPage() {
             />
           </label>
         </div>
-        <button
+        <Button
           type="button"
-          className={styles.saveBtn}
+          className="min-h-11 self-start"
           disabled={pending !== null}
           onClick={() => {
             const wasVoice = profileVoiceInitiated;
@@ -798,12 +812,12 @@ export default function KitchenPage() {
           }}
         >
           Save profile
-        </button>
+        </Button>
       </section>
 
-      <Link href="/" className={styles.backLink}>
-        ← Back to start
-      </Link>
+      <Button asChild variant="ghost" className="w-fit text-foreground hover:text-foreground">
+        <Link href="/">← Back to start</Link>
+      </Button>
     </main>
   );
 }

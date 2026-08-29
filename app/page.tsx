@@ -8,6 +8,10 @@ import { detectVoiceEngine } from '@/lib/voice/self-check';
 import { appCheckHeaders } from '@/lib/firebase/app-check';
 import { playTimerChime, unlockAudioOnGesture } from '@/lib/audio/timer-chime';
 import { formatPausedAgo, type GuideSnapshot } from '@/lib/domain/guide';
+import { cn } from '@/lib/utils';
+import { Button } from '@/components/ui/button';
+import { Card } from '@/components/ui/card';
+import { Badge } from '@/components/ui/badge';
 
 function formatCountdown(ms: number): string {
   const s = Math.max(0, Math.floor(ms / 1000));
@@ -204,12 +208,20 @@ export default function HomePage() {
 
   const cta = auth.state === 'loading' ? null : auth.user ? (
     <div className={styles.ctaRow}>
-      <Link href="/cook" className={styles.primaryBtn}>👨‍🍳 Start cooking</Link>
-      <Link href="/recipes" className={styles.secondaryBtn}>📖 My recipes</Link>
-      <Link href="/kitchen" className={styles.secondaryBtn}>🧺 My kitchen</Link>
+      <Button asChild size="lg" className="min-h-12 px-8 text-base font-semibold shadow-sm">
+        <Link href="/cook">👨‍🍳 Start cooking</Link>
+      </Button>
+      <Button asChild size="lg" variant="outline" className="min-h-12 border-2 px-6 text-base font-semibold text-brand hover:text-brand-hover">
+        <Link href="/recipes">📖 My recipes</Link>
+      </Button>
+      <Button asChild size="lg" variant="outline" className="min-h-12 border-2 px-6 text-base font-semibold text-brand hover:text-brand-hover">
+        <Link href="/kitchen">🧺 My kitchen</Link>
+      </Button>
     </div>
   ) : (
-    <Link href="/login" className={styles.primaryBtn}>Sign in to start</Link>
+    <Button asChild size="lg" className="min-h-12 px-8 text-base font-semibold shadow-sm">
+      <Link href="/login">Sign in to start</Link>
+    </Button>
   );
 
   return (
@@ -217,11 +229,13 @@ export default function HomePage() {
       <header className={styles.topbar}>
         <span className={styles.brand}>Cook With Me</span>
         {auth.user ? (
-          <button className={styles.signOutBtn} onClick={() => void auth.signOut()} aria-label="Sign out">
+          <Button variant="outline" onClick={() => void auth.signOut()} className="min-h-11 text-sm">
             Sign out
-          </button>
+          </Button>
         ) : (
-          <Link href="/login" className={styles.signInLink}>Sign in</Link>
+          <Button asChild variant="ghost" className="min-h-11 text-sm font-semibold text-brand hover:text-brand-hover">
+            <Link href="/login">Sign in</Link>
+          </Button>
         )}
       </header>
 
@@ -240,20 +254,40 @@ export default function HomePage() {
       </section>
 
       {checked && auth.user && snap && (
-        <section className={styles.resume} aria-label="Resume cooking">
+        <Card
+          aria-label="Resume cooking"
+          className="w-full max-w-[640px] gap-2 rounded-l-none border-l-[3px] border-l-accent p-5 shadow-sm"
+        >
           {alert && (
             <div className={styles.resumeAlert} role="status">
               <span>{alert}</span>
-              <button className={styles.resumeAlertDismiss} onClick={() => setAlert(null)} aria-label="Dismiss alert">
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-8 w-8 shrink-0 text-muted-foreground hover:text-foreground"
+                onClick={() => setAlert(null)}
+                aria-label="Dismiss alert"
+              >
                 ✕
-              </button>
+              </Button>
             </div>
           )}
           <div className={styles.resumeHeader}>
-            <span className={styles.resumeEyebrow}>{snap.paused ? 'Paused' : 'In progress'}</span>
-            <span className={styles.resumeVoice} data-engine={voiceEngine}>
-              {voiceEngine === 'gemini-live' ? '⚡ Gemini Live' : voiceEngine === 'web-speech' ? '🔄 Web Speech' : '🎙️ Voice off'}
+            <span className="font-display text-xs font-semibold uppercase tracking-wider text-accent">
+              {snap.paused ? 'Paused' : 'In progress'}
             </span>
+            <Badge
+              variant="outline"
+              className={
+                voiceEngine === 'gemini-live'
+                  ? 'text-brand'
+                  : voiceEngine === 'web-speech'
+                    ? 'text-accent'
+                    : 'text-muted-foreground'
+              }
+            >
+              {voiceEngine === 'gemini-live' ? '⚡ Gemini Live' : voiceEngine === 'web-speech' ? '🔄 Web Speech' : '🎙️ Voice off'}
+            </Badge>
           </div>
           <h2 className={styles.resumeTitle}>{snap.recipeTitle ?? 'Your cooking session'}</h2>
           <p className={styles.resumeStep}>
@@ -270,29 +304,36 @@ export default function HomePage() {
           )}
           <div className={styles.resumeActions}>
             {canPause && (
-              <button
-                className={styles.resumeQuickBtn}
+              <Button
+                variant="secondary"
                 onClick={() => void togglePause()}
                 disabled={toggling}
                 aria-label={snap.paused ? 'Resume the session' : 'Pause the session'}
+                className="min-h-12 text-base font-semibold"
               >
                 {snap.paused ? '▶ Resume' : '⏸ Pause'}
-              </button>
+              </Button>
             )}
-            <Link href="/cook" className={styles.resumeBtn}>
-              {snap.paused ? 'Open session' : 'Resume cooking →'}
-            </Link>
+            <Button asChild className="min-h-12 bg-accent text-accent-foreground text-base font-semibold shadow-sm hover:bg-accent-hover">
+              <Link href="/cook">{snap.paused ? 'Open session' : 'Resume cooking →'}</Link>
+            </Button>
           </div>
-        </section>
+        </Card>
       )}
 
       <section className={styles.features} aria-label="Features">
-        {FEATURES.map((f) => (
-          <article key={f.title} className={styles.featureCard}>
-            <span className={styles.featureIcon} aria-hidden="true">{f.icon}</span>
-            <h2 className={styles.featureTitle}>{f.title}</h2>
-            <p className={styles.featureText}>{f.text}</p>
-          </article>
+        {FEATURES.map((f, i) => (
+          <Card
+            key={f.title}
+            className={cn(
+              'gap-1.5 rounded-l-none border-l-[3px] p-6 shadow-xs hover:border-border-strong hover:shadow-sm',
+              i === 0 ? 'border-l-mauve' : i === 1 ? 'border-l-brand' : 'border-l-accent',
+            )}
+          >
+            <span className="text-[1.6rem]" aria-hidden="true">{f.icon}</span>
+            <h2 className="font-display text-lg font-semibold">{f.title}</h2>
+            <p className="text-sm leading-relaxed text-text-secondary">{f.text}</p>
+          </Card>
         ))}
       </section>
 

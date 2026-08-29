@@ -23,33 +23,6 @@
   letter-spacing: 0.01em;
 }
 
-.signInLink {
-  color: var(--color-brand);
-  text-decoration: none;
-  font-weight: 600;
-  border-radius: var(--radius-sm);
-}
-
-.signInLink:hover {
-  color: var(--color-brand-hover);
-}
-
-.signOutBtn {
-  background: transparent;
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-md);
-  padding: 0.5rem 1rem;
-  font-family: inherit;
-  font-size: 0.95rem;
-  color: var(--color-text-secondary);
-  cursor: pointer;
-}
-
-.signOutBtn:hover {
-  border-color: var(--color-brand);
-  color: var(--color-brand);
-}
-
 /* ── Hero — the signature: Playfair Display title with herb motif ────────── */
 .hero {
   text-align: center;
@@ -124,70 +97,7 @@
   flex-wrap: wrap;
 }
 
-.primaryBtn {
-  display: inline-flex;
-  align-items: center;
-  min-height: 48px;
-  padding: 0.85rem 2rem;
-  background: var(--color-brand);
-  color: var(--color-text-on-brand);
-  border: none;
-  border-radius: var(--radius-md);
-  text-decoration: none;
-  font-size: 1.1rem;
-  font-weight: 600;
-  font-family: inherit;
-  box-shadow: var(--shadow-sm);
-  transition: background 0.15s, box-shadow 0.15s, transform 0.15s;
-}
-
-.primaryBtn:hover {
-  background: var(--color-brand-hover);
-  transform: translateY(-1px);
-  box-shadow: var(--shadow-md);
-}
-
-.primaryBtn:active {
-  background: var(--color-brand-active);
-  transform: translateY(0);
-}
-
-.secondaryBtn {
-  display: inline-flex;
-  align-items: center;
-  min-height: 48px;
-  padding: 0.85rem 1.6rem;
-  background: var(--color-surface);
-  color: var(--color-brand);
-  border: 2px solid var(--color-border);
-  border-radius: var(--radius-md);
-  text-decoration: none;
-  font-size: 1.05rem;
-  font-weight: 600;
-  font-family: inherit;
-  box-shadow: var(--shadow-sm);
-}
-
-.secondaryBtn:hover {
-  border-color: var(--color-border-strong);
-  background: var(--color-surface-secondary);
-}
-
 /* ── Resume card — the active session at a glance ────────────────────────── */
-.resume {
-  display: flex;
-  flex-direction: column;
-  gap: 0.5rem;
-  width: 100%;
-  max-width: 640px;
-  padding: 1.25rem 1.25rem 1.25rem 1rem;
-  background: var(--color-surface);
-  border: 1px solid var(--color-border);
-  border-left: 3px solid var(--color-accent);
-  border-radius: 0 var(--radius-lg) var(--radius-lg) 0;
-  box-shadow: var(--shadow-sm);
-}
-
 .resumeAlert {
   display: flex;
   align-items: center;
@@ -202,49 +112,11 @@
   font-weight: 600;
 }
 
-.resumeAlertDismiss {
-  flex-shrink: 0;
-  background: none;
-  border: none;
-  color: var(--color-text-secondary);
-  font-size: 1rem;
-  line-height: 1;
-  cursor: pointer;
-  padding: 0.25rem;
-}
-
-.resumeAlertDismiss:hover {
-  color: var(--color-text);
-}
-
 .resumeHeader {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 0.75rem;
-}
-
-.resumeEyebrow {
-  font-family: var(--font-display);
-  font-size: 0.8rem;
-  font-weight: 600;
-  letter-spacing: 0.03em;
-  text-transform: uppercase;
-  color: var(--color-accent);
-}
-
-.resumeVoice {
-  font-size: 0.85rem;
-  font-weight: 600;
-  color: var(--color-text-secondary);
-}
-
-.resumeVoice[data-engine='gemini-live'] {
-  color: var(--color-brand);
-}
-
-.resumeVoice[data-engine='web-speech'] {
-  color: var(--color-accent);
 }
 
 .resumeTitle {
@@ -304,58 +176,6 @@
   flex-wrap: wrap;
 }
 
-.resumeQuickBtn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-height: 48px;
-  padding: 0.75rem 1.25rem;
-  background: var(--color-surface-secondary);
-  color: var(--color-text);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-md);
-  font-size: 1.05rem;
-  font-weight: 600;
-  font-family: inherit;
-  cursor: pointer;
-  transition: background 0.15s, border-color 0.15s, transform 0.15s;
-}
-
-.resumeQuickBtn:hover:not(:disabled) {
-  background: var(--color-surface);
-  border-color: var(--color-accent);
-  transform: translateY(-1px);
-}
-
-.resumeQuickBtn:disabled {
-  opacity: 0.6;
-  cursor: default;
-}
-
-.resumeBtn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-height: 48px;
-  padding: 0.75rem 1.5rem;
-  background: var(--color-accent);
-  color: var(--color-text-on-accent);
-  border: none;
-  border-radius: var(--radius-md);
-  text-decoration: none;
-  font-size: 1.05rem;
-  font-weight: 600;
-  font-family: inherit;
-  box-shadow: var(--shadow-sm);
-  transition: background 0.15s, box-shadow 0.15s, transform 0.15s;
-}
-
-.resumeBtn:hover {
-  background: var(--color-accent-hover);
-  transform: translateY(-1px);
-  box-shadow: var(--shadow-md);
-}
-
 /* ── Features — cards with a colored left accent bar ─────────────────────── */
 .features {
   display: grid;
@@ -364,49 +184,6 @@
   width: 100%;
   max-width: 960px;
   padding-top: 0.5rem;
-}
-
-.featureCard {
-  display: flex;
-  flex-direction: column;
-  gap: 0.5rem;
-  padding: 1.5rem 1.5rem 1.5rem 1.25rem;
-  background: var(--color-surface);
-  border: 1px solid var(--color-border);
-  border-left: 3px solid var(--color-mauve);
-  border-radius: 0 var(--radius-lg) var(--radius-lg) 0;
-  box-shadow: var(--shadow-xs);
-  transition: border-color 0.2s, box-shadow 0.2s;
-}
-
-.featureCard:hover {
-  border-color: var(--color-border-strong);
-  box-shadow: var(--shadow-sm);
-}
-
-.featureCard:nth-child(2) {
-  border-left-color: var(--color-brand);
-}
-
-.featureCard:nth-child(3) {
-  border-left-color: var(--color-accent);
-}
-
-.featureIcon {
-  font-size: 1.6rem;
-}
-
-.featureTitle {
-  font-family: var(--font-display);
-  font-size: 1.1rem;
-  font-weight: 600;
-  color: var(--color-text);
-}
-
-.featureText {
-  color: var(--color-text-secondary);
-  font-size: 0.95rem;
-  line-height: 1.55;
 }
 
 .footer {
