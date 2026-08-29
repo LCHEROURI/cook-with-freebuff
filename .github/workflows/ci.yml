@@ -190,6 +190,15 @@ jobs:
       # a connector regression is visible on the main push that caused it.
       - name: Run the SQL Connect emulator suite (store twin)
         run: |
+          # The dataconnect emulator binds port 9399 BEFORE it has imported
+          # and configured the schema (Postgres boot + codegen + install of
+          # the generated SDK can take ~30s on a cold runner), so a bare port
+          # poll lets the suite race a "no schema found for service
+          # \"cook-with-freebuff\"" state (seen on every main push). The
+          # emulator writes its own schema-configured marker to
+          # dataconnect-debug.log (repo cwd, gitignored) — wait on THAT, not
+          # the port, before running the suite.
+          rm -f dataconnect-debug.log
           npx -y firebase-tools@latest emulators:start --only dataconnect \
             --project demo-cook-with-freebuff > /tmp/dc-emulator.log 2>&1 &
           DC_PID=$!
@@ -197,6 +206,20 @@ jobs:
             if (echo > /dev/tcp/127.0.0.1/9399) 2>/dev/null; then break; fi
             sleep 2
           done
+          for i in $(seq 1 90); do
+            if grep -q "ConfigureEmulator successed" dataconnect-debug.log 2>/dev/null; then
+              echo "SQL Connect emulator schema configured (after $((i * 2))s)"
+              break
+            fi
+            sleep 2
+          done
+          if ! grep -q "ConfigureEmulator successed" dataconnect-debug.log 2>/dev/null; then
+            echo "::error::SQL Connect emulator never configured its schema — tailing logs:"
+            tail -30 dataconnect-debug.log 2>/dev/null || true
+            tail -30 /tmp/dc-emulator.log 2>/dev/null || true
+            kill $DC_PID 2>/dev/null || true
+            exit 1
+          fi
           npm run test:sqlconnect
           RC=$?
           kill $DC_PID 2>/dev/null || true
