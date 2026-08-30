@@ -176,6 +176,80 @@
   flex-wrap: wrap;
 }
 
+/* ── Quick start panel ───────────────────────────────────────────────────── */
+.quickStart {
+  display: grid;
+  grid-template-columns: minmax(220px, 0.9fr) minmax(0, 1.4fr);
+  gap: 1rem;
+  width: 100%;
+  max-width: 960px;
+  margin-top: 2.5rem;
+  padding: 1.5rem;
+  border: 1px solid var(--color-brand-subtle-border);
+  border-radius: var(--radius-lg);
+  background: linear-gradient(135deg, var(--color-brand-subtle), var(--color-surface));
+}
+
+.quickStartIntro {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 0.75rem;
+}
+
+.quickStartTitle {
+  font-family: var(--font-display);
+  font-size: 1.35rem;
+  line-height: 1.2;
+}
+
+.quickStartText {
+  color: var(--color-text-secondary);
+  font-size: 0.95rem;
+  line-height: 1.5;
+}
+
+.quickStartGrid {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.quickStartCard {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 0.75rem;
+  height: auto;
+  min-height: 4rem;
+  justify-content: stretch;
+  padding: 0.8rem 1rem;
+  text-align: left;
+  color: var(--color-text);
+}
+
+.quickStartCard:hover {
+  border-color: var(--color-brand);
+  color: var(--color-text);
+  transform: translateY(-1px);
+}
+
+.quickStartCard span:nth-child(2) {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
+.quickStartCard small {
+  color: var(--color-text-muted);
+  font-size: 0.8rem;
+  font-weight: 400;
+}
+
+.quickStartIcon {
+  font-size: 1.4rem;
+}
+
 /* ── Features — cards with a colored left accent bar ─────────────────────── */
 .features {
   display: grid;
@@ -184,6 +258,13 @@
   width: 100%;
   max-width: 960px;
   padding-top: 0.5rem;
+}
+
+@media (max-width: 640px) {
+  .quickStart {
+    grid-template-columns: 1fr;
+    padding: 1rem;
+  }
 }
 
 .footer {

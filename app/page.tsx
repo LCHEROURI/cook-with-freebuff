@@ -321,6 +321,37 @@ export default function HomePage() {
         </Card>
       )}
 
+      <section className={styles.quickStart} aria-labelledby="quick-start-title">
+        <div className={styles.quickStartIntro}>
+          <Badge variant="outline">Your kitchen, at a glance</Badge>
+          <h2 id="quick-start-title" className={styles.quickStartTitle}>Everything you need before the first chop.</h2>
+          <p className={styles.quickStartText}>Start with what you have, revisit a saved recipe, or keep your pantry organized while Cook With Me handles the next step.</p>
+        </div>
+        <div className={styles.quickStartGrid}>
+          <Button asChild variant="outline" className={styles.quickStartCard}>
+            <Link href="/cook">
+              <span className={styles.quickStartIcon} aria-hidden="true">👨‍🍳</span>
+              <span><strong>Cook from ingredients</strong><small>Tell me what you have</small></span>
+              <span aria-hidden="true">→</span>
+            </Link>
+          </Button>
+          <Button asChild variant="outline" className={styles.quickStartCard}>
+            <Link href="/recipes">
+              <span className={styles.quickStartIcon} aria-hidden="true">📖</span>
+              <span><strong>Open your recipes</strong><small>Pick up a saved favorite</small></span>
+              <span aria-hidden="true">→</span>
+            </Link>
+          </Button>
+          <Button asChild variant="outline" className={styles.quickStartCard}>
+            <Link href="/kitchen">
+              <span className={styles.quickStartIcon} aria-hidden="true">🧺</span>
+              <span><strong>Check your kitchen</strong><small>Pantry and grocery list</small></span>
+              <span aria-hidden="true">→</span>
+            </Link>
+          </Button>
+        </div>
+      </section>
+
       <section className={styles.features} aria-label="Features">
         {FEATURES.map((f, i) => (
           <Card
