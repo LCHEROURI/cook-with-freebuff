@@ -23,6 +23,8 @@ name: Codex review gate
 # actually block merges (this workflow only reports the check result).
 
 on:
+  push:
+    branches: [main]
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
   # The bot's inline comments and reviews arrive after the initial checks —
@@ -104,4 +106,13 @@ jobs:
           # strengthen the merge gate, because dispatch checks never enter
           # the PR status rollup (Codex P2, PR #78 review).
           CODEX_GATE_INCLUDE_P2: ${{ vars.CODEX_GATE_INCLUDE_P2 == 'true' }}
-        run: node scripts/codex-review-pr-gate.mjs
+        # A direct push to main has no pull-request thread, so there is
+        # nothing to gate — report the required check as passing so admins-
+        # enforcement does not deadlock direct pushes, while the PR triggers
+        # above still genuinely gate pull_request merges.
+        run: |
+          if [ -z "$PR_NUMBER" ]; then
+            echo "push to main without a PR context — nothing to gate; reporting pass"
+            exit 0
+          fi
+          node scripts/codex-review-pr-gate.mjs
