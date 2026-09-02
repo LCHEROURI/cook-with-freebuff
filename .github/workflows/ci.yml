@@ -271,7 +271,7 @@ jobs:
     # instead of polling the canonical host for a sha that will never arrive
     # and failing after 15 minutes. Preserves the skip-not-fail behavior.
     outputs:
-      deployed: ${{ steps.deploy.outcome == 'success' }}
+      deployed: ${{ steps.deploy.outcome == 'success' || steps['deploy-fallback'].outcome == 'success' }}
 
     env:
       FIREBASE_TOKEN: ${{ secrets.FIREBASE_TOKEN }}
@@ -309,16 +309,45 @@ jobs:
         if: ${{ env.FIREBASE_SERVICE_ACCOUNT != '' }}
         run: npm run authorize:domain
 
-      - name: Fail loudly if FIREBASE_TOKEN is missing (main push)
-        if: ${{ github.event_name == 'push' && github.repository == 'LCHEROURI/cook-with-freebuff' && env.FIREBASE_TOKEN == '' }}
+      - name: Fail loudly if no deploy credential (main push)
+        if: ${{ github.event_name == 'push' && github.repository == 'LCHEROURI/cook-with-freebuff' && env.FIREBASE_TOKEN == '' && env.FIREBASE_SERVICE_ACCOUNT == '' }}
         run: |
-          echo "::error::FIREBASE_TOKEN secret missing — the App Hosting deploy cannot run."
-          echo "Run: npx -y firebase-tools@latest login:ci  then add the token under GitHub -> Settings -> Secrets and variables -> Actions."
+          echo "::error::Neither FIREBASE_SERVICE_ACCOUNT nor FIREBASE_TOKEN is set — the App Hosting deploy cannot run."
+          echo "Preferred: add the FIREBASE_SERVICE_ACCOUNT secret (drives the labeled API deploy). Fallback: npx -y firebase-tools@latest login:ci and add FIREBASE_TOKEN."
           exit 1
 
-      - name: Deploy to Firebase App Hosting
+      # Preferred path: the labeled API deploy (scripts/deploy-cook-app.sh).
+      # It performs the same steps `firebase deploy` does internally but
+      # labels the build and rollout with the commit SHA and run URL, so the
+      # Console rollout history is self-describing and /api/version reports
+      # the same provenance JSON as the car app.
+      - name: Activate service account for the labeled deploy
+        if: ${{ env.FIREBASE_SERVICE_ACCOUNT != '' }}
+        env:
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+        run: |
+          set -euo pipefail
+          printf '%s' "$FIREBASE_SERVICE_ACCOUNT" > /tmp/cook-fb-key.json
+          chmod 600 /tmp/cook-fb-key.json
+          gcloud auth activate-service-account --key-file=/tmp/cook-fb-key.json
+
+      - name: Deploy to Firebase App Hosting (labeled rollout)
         id: deploy
-        if: ${{ env.FIREBASE_TOKEN != '' }}
+        if: ${{ env.FIREBASE_SERVICE_ACCOUNT != '' }}
+        env:
+          GOOGLE_APPLICATION_CREDENTIALS: /tmp/cook-fb-key.json
+          GITHUB_SHA: ${{ github.sha }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          COMMIT_URL: ${{ github.server_url }}/${{ github.repository }}/commit/${{ github.sha }}
+        run: bash scripts/deploy-cook-app.sh
+
+      # Fallback for repos without the service-account secret: the original
+      # owner-token CLI deploy (unlabeled rollouts, no /api/version
+      # provenance). Same behavior as before so forks and legacy setups
+      # still deploy.
+      - name: Deploy to Firebase App Hosting (CLI fallback)
+        id: deploy-fallback
+        if: ${{ env.FIREBASE_SERVICE_ACCOUNT == '' && env.FIREBASE_TOKEN != '' }}
         run: |
           node scripts/write-commit.mjs
 
@@ -355,6 +384,10 @@ jobs:
           done
         env:
           FIREBASE_TOKEN: ${{ secrets.FIREBASE_TOKEN }}
+
+      - name: Remove key file
+        if: always()
+        run: rm -f /tmp/cook-fb-key.json
 
   # Post-deploy verify:live — the deployed-app gate. Runs in the SAME run as
   # the deploy (needs: [deploy-apphosting]) instead of an event-driven
