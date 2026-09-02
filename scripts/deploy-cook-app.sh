@@ -75,7 +75,13 @@ printf '%s\n' "$GITHUB_SHA" > commit-sha.txt
 
 STAMP="$(date -u +%Y%m%d-%H%M%S)"
 ZIP="/tmp/cook-app-src-${STAMP}-${GITHUB_SHA::7}.zip"
-zip -qr "$ZIP" . -x "node_modules/*" -x ".next/*"
+# Zip exactly the TRACKED file list (+ the provenance env) instead of the
+# whole directory: firebase-tools' own packaging honors .gitignore, and the
+# repo root carries ~1.5 GB of ignored state (.freebuff/, node_modules,
+# .next) that must never reach the upload. zip reads the refreshed on-disk
+# commit-sha.txt, so the stamped SHA is what ships.
+git ls-files -z | xargs -0 zip -q "$ZIP"
+zip -q "$ZIP" .env.production
 rm -f .env.production
 if [ "$RESTORE_SHA_TXT" = "1" ]; then mv /tmp/commit-sha.txt.bak commit-sha.txt; fi
 SIZE="$(du -h "$ZIP" | cut -f1 | tr -d ' ')"
