@@ -39,16 +39,30 @@ API="https://firebaseapphosting.googleapis.com/v1beta"
 : "${GITHUB_SHA:?GITHUB_SHA is required}"
 : "${RUN_URL:?RUN_URL is required}"
 
-# ── 0. Auth ─────────────────────────────────────────────────────────────────
+# ── 0. Auth ─────────────────────────────────────────────────────────
 auth() { curl -sfS -m 60 -H "Authorization: Bearer $(gcloud auth print-access-token)" "$@"; }
+
+# List a collection across ALL pages (pageSize=100 caps the default single
+# call; cook has 100+ rollouts, so a page-one scan misses today's newest
+# entries and the derived id collides with ALREADY_EXISTS).
+list_all() { # $1 = collection path relative to $API
+  local url="$API/$1?pageSize=100" resp token
+  while :; do
+    resp="$(auth "$url")"
+    printf '%s\n' "$resp"
+    token="$(printf '%s' "$resp" | jq -r '.nextPageToken // empty')"
+    [ -z "$token" ] && break
+    url="$API/$1?pageSize=100&pageToken=$token"
+  done
+}
 
 # ── 1. Build id — same scheme as the CLI (build-YYYY-MM-DD-NNN). Computed
 # FIRST so it can be baked into the app itself (/api/version reports it).
 # The CLI derives the next suffix from BOTH the rollouts and builds lists;
 # scanning builds alone collides with existing ids (400).
 TODAY="$(date -u +%Y-%m-%d)"
-LAST_ID="$( { auth "$API/projects/$PROJECT/locations/$LOCATION/backends/$BACKEND/builds?pageSize=100"; \
-              auth "$API/projects/$PROJECT/locations/$LOCATION/backends/$BACKEND/rollouts?pageSize=100"; } \
+LAST_ID="$( { list_all "projects/$PROJECT/locations/$LOCATION/backends/$BACKEND/builds"; \
+              list_all "projects/$PROJECT/locations/$LOCATION/backends/$BACKEND/rollouts"; } \
   | jq -s -r --arg t "$TODAY" '[ .[] | (.builds[]?, .rollouts[]?) | select(.name | test("build-" + $t + "-(\\d+)$")) | .name | capture("-(?<n>[0-9]+)$").n | tonumber ] | max // 0')"
 NEXT_N="$(printf '%03d' "$((LAST_ID + 1))")"
 BUILD_ID="build-${TODAY}-${NEXT_N}"
