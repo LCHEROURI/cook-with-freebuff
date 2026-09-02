@@ -137,9 +137,13 @@ describe('.github/workflows/ci.yml · push-time validate contract', () => {
 describe('.github/workflows/ci.yml · deploy-apphosting job', () => {
   // App Hosting is the PRIMARY production host; this job deploys after
   // validate passes, authenticating with a FIREBASE_TOKEN refresh token from
-  // `firebase login:ci` (OWNER auth) — `firebase deploy --only apphosting`
-  // provisions resources that need owner-level IAM, which the restricted
-  // Admin SDK SA must never be widened to.
+  // Preferred deploy path: the labeled service-account API deploy
+  // (scripts/deploy-cook-app.sh) — it performs the same steps `firebase
+  // deploy` does internally but labels the build/rollout with the commit SHA
+  // and run URL, so the Console rollout history is self-describing and
+  // /api/version reports provenance. The plain-API deploy needs NO owner IAM
+  // (unlike `firebase deploy`), so the restricted Admin SDK SA is exactly
+  // right for it; the owner FIREBASE_TOKEN CLI path remains as the fallback.
   const deployStart = CI.indexOf('\n  deploy-apphosting:');
   const deployBlock = CI.slice(deployStart, CI.indexOf('\n  verify-live:'));
 
@@ -156,17 +160,33 @@ describe('.github/workflows/ci.yml · deploy-apphosting job', () => {
     expect(CI).toContain("branches: [main, 'gh-readonly-queue/**']");
   });
 
-  it('authenticates with a FIREBASE_TOKEN (owner login:ci) and stamps the commit', () => {
-    expect(deployBlock).toContain('FIREBASE_TOKEN: ${{ secrets.FIREBASE_TOKEN }}');
+  it('deploys via the labeled service-account path with the owner-token CLI as fallback', () => {
+    // Labeled path: the SA authenticates gcloud, the script does the
+    // builds.create/rollouts.create API calls with commit labels.
+    expect(deployBlock).toContain('name: Deploy to Firebase App Hosting (labeled rollout)');
+    expect(deployBlock).toContain('bash scripts/deploy-cook-app.sh');
+    expect(deployBlock).toContain('GOOGLE_APPLICATION_CREDENTIALS: /tmp/cook-fb-key.json');
+    expect(deployBlock).toContain('gcloud auth activate-service-account');
+    // The labeled deploy step authenticates ONLY via the SA — FIREBASE_TOKEN
+    // must not be its credential.
+    const labeledStart = deployBlock.indexOf('name: Deploy to Firebase App Hosting (labeled rollout)');
+    const labeledBlock = deployBlock.slice(labeledStart, deployBlock.indexOf('name: Deploy to Firebase App Hosting (CLI fallback)'));
+    expect(labeledBlock).not.toContain('FIREBASE_TOKEN');
+    // Fallback path preserved for repos without the SA secret: the original
+    // owner-token CLI deploy (unlabeled rollouts, no provenance).
+    expect(deployBlock).toContain('name: Deploy to Firebase App Hosting (CLI fallback)');
+    expect(deployBlock).toContain("id: deploy-fallback");
+    expect(deployBlock).toContain("if: ${{ env.FIREBASE_SERVICE_ACCOUNT == '' && env.FIREBASE_TOKEN != '' }}");
     expect(deployBlock).toContain('node scripts/write-commit.mjs');
     expect(deployBlock).toContain('npx -y firebase-tools@latest deploy --only apphosting --non-interactive --project portfolio-app-freebuff2');
-    expect(deployBlock).not.toContain('GOOGLE_APPLICATION_CREDENTIALS');
-    // FIREBASE_SERVICE_ACCOUNT is present in the job env now (it drives the
-    // authorize-domain step), but it must never be what AUTHENTICATES the
-    // deploy — the deploy step onward stays FIREBASE_TOKEN only.
-    const deployStepStart = deployBlock.indexOf('name: Deploy to Firebase App Hosting');
-    const deployStepBlock = deployBlock.slice(deployStepStart);
-    expect(deployStepBlock).not.toContain('FIREBASE_SERVICE_ACCOUNT');
+    // The script itself stamps the tracked commit-sha.txt into the upload so
+    // /api/build-info (deployed-hash gate) reports the right SHA, and bakes
+    // the provenance env for /api/version.
+    const script = readFileSync(new URL('../scripts/deploy-cook-app.sh', import.meta.url), 'utf8');
+    expect(script).toContain('commit-sha.txt');
+    expect(script).toContain('.env.production');
+    expect(script).toContain('NEXT_PUBLIC_COMMIT_SHA');
+    expect(script).toContain('labels: {"commit-sha": $sha}');
   });
 
   it('authorizes the canonical host for Firebase Auth (idempotent self-heal) on every deploy', () => {
@@ -238,19 +258,21 @@ describe('.github/workflows/ci.yml · deploy-apphosting job', () => {
     expect(deployBlock).toContain('non-409 error');
   });
 
-  it('gates on FIREBASE_TOKEN with a loud guard on the canonical repo', () => {
-    expect(deployBlock).toContain('name: Fail loudly if FIREBASE_TOKEN is missing (main push)');
-    expect(deployBlock).toContain("env.FIREBASE_TOKEN == ''");
+  it('gates on a deploy credential with a loud guard on the canonical repo', () => {
+    expect(deployBlock).toContain('name: Fail loudly if no deploy credential (main push)');
+    expect(deployBlock).toContain("env.FIREBASE_TOKEN == '' && env.FIREBASE_SERVICE_ACCOUNT == ''");
     expect(deployBlock).toContain('FIREBASE_TOKEN: ${{ secrets.FIREBASE_TOKEN }}');
+    expect(deployBlock).toContain('FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}');
   });
 
   it('reports whether a rollout actually ran so verify-live can skip when it did not', () => {
-    // The deploy STEP is skipped (not failed) when FIREBASE_TOKEN is missing;
-    // the job still succeeds. The `deployed` output lets verify-live skip that
-    // case instead of polling the canonical host for a sha that never arrives.
-    expect(deployBlock).toContain("outputs:\n      deployed: ${{ steps.deploy.outcome == 'success' }}");
+    // The deploy STEPS are skipped (not failed) when no credential matches;
+    // the job still succeeds. The `deployed` output lets verify-live skip
+    // that case instead of polling the canonical host for a sha that never
+    // arrives. Either deploy step (labeled or CLI fallback) counts.
+    expect(deployBlock).toContain("outputs:\n      deployed: ${{ steps.deploy.outcome == 'success' || steps['deploy-fallback'].outcome == 'success' }}");
     expect(deployBlock).toContain('id: deploy');
-    expect(deployBlock).toContain('if: ${{ env.FIREBASE_TOKEN != \'\' }}');
+    expect(deployBlock).toContain("if: ${{ env.FIREBASE_SERVICE_ACCOUNT != '' }}");
   });
 });
 
