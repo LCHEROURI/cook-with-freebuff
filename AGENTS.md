@@ -56,6 +56,30 @@ Stored in `docs/specs/NNNN-title.md`. Current: 0001 App Hosting primary host, 00
 - Probe cleanup grace durations are declared per driver (`scripts/verify-live.mjs`, `scripts/drive-live-voice.mjs`) with a rationale comment at each declaration, and the shared 15 minute seed grace is pinned identical across both files by the lockstep contract in `scripts/verify-live-cleanup.test.ts`; never introduce a shared constants module (spec 0002)
 - For meaningful development decisions, failures, regressions, major review findings, security discoveries, or reusable patterns, run `skills/progressive-distillation/SKILL.md` before closing the task. Distilled principles may add stricter guidance, but must never weaken or override existing project safety, CI, security, deployment, or repository rules.
 
+## Output style
+
+The reader has ADHD. Shape every response so it can be acted on:
+
+1. Lead with the answer or next action: command, path, or snippet first.
+2. Number multi-step work; one bounded action per step.
+3. End with one next action doable in under two minutes, when work remains; for a finished task, say so in one plain line instead.
+4. Finish the current issue before raising a new one; hold follow-up offers until the task completes.
+5. Restate progress each turn ("step 3 of 5 done").
+6. Give time estimates in concrete units, never "a bit".
+7. After a change, show what now works.
+8. Errors: state location, cause, and fix. No drama.
+9. Cap lists to 5 items.
+10. No preamble, no recaps, no closers.
+
+Exceptions: explain fully when asked to explain. Confirm before destructive actions. After three failed fixes, stop and name the doubtful assumption. If the request is ambiguous, ask one short question.
+
+## Google Cloud & Tooling
+
+- Active plugin: `google-cloud-developer` (includes `gcloud`, `developer-knowledge` MCP server, `google-cloud-recipe-auth`, `google-cloud-recipe-onboarding`, and `finding-google-skills`).
+- `gcloud` CLI operations must adhere to safety-critical validations (explicit project verification, non-destructive flags, no broad modifications).
+- Query official Google documentation grounded through the `developer-knowledge` MCP server (`https://developerknowledge.googleapis.com/mcp`) before making architectural or API assumptions.
+- For deeper or uninstalled Google Cloud skills, use `finding-google-skills` to discover entries from the official catalog (`https://github.com/google/skills`).
+
 ## Context files
 
 - [ARCHITECTURE.md](ARCHITECTURE.md): layered architecture, request flow, and the Mermaid diagram
