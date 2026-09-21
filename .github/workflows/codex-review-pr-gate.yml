@@ -21,6 +21,11 @@ name: Codex review gate
 #
 # Add "Codex P1 gate" to the branch's required status checks for the gate to
 # actually block merges (this workflow only reports the check result).
+#
+# Credit policy: the script exits before Codex polling for documentation,
+# repository-policy, and tests-only changes. Application, auth, data,
+# dependency, Firebase, workflow, and infrastructure changes retain the
+# P0/P1 review gate. Nudges are disabled by default; no PAT is provided.
 
 on:
   push:
@@ -59,10 +64,10 @@ jobs:
     timeout-minutes: 10
 
     permissions:
-      # write so the gate can push a nudge commit on a bot-skipped PR head
-      # (scripts/codex-review-pr-gate.mjs pushNudge) and post its bot-style
-      # summary on the PR thread (postRedAlert).
-      contents: write
+      # Read is enough for checkout. The workflow intentionally does not have
+      # permission to push nudge commits; that credit-consuming path is
+      # disabled in Actions.
+      contents: read
       pull-requests: write
       # actions: write so a green gate can re-run its own check after a
       # cancelled run left the merge evaluation stale (Codex, PR #113) — the
@@ -83,16 +88,13 @@ jobs:
         run: npm ci
 
       # gh is preinstalled on ubuntu runners but needs GH_TOKEN set explicitly
-      # inside Actions. The gate only READS the bot's comments via the API; no
-      # secrets required.
-      - name: Fail on open Codex P1 findings
+      # inside Actions. Low-risk PRs exit before reading Codex review data.
+      - name: Run risk-based Codex P1 gate
         env:
           GH_TOKEN: ${{ github.token }}
-          # A PAT (contents: write) for the nudge push on a bot-skipped PR.
-          # GITHUB_TOKEN cannot be used for that push: it would change the
-          # head without re-running the required validate check. Absent, the
-          # nudge is skipped and the WAITING fallback applies.
-          CODEX_NUDGE_TOKEN: ${{ secrets.CODEX_NUDGE_TOKEN }}
+          # Nudges are intentionally disabled. This prevents empty commits,
+          # repeated workflows, and unnecessary Codex credit consumption.
+          CODEX_GATE_NUDGE_MAX: '0'
           PR_NUMBER: ${{ github.event.pull_request.number || github.event.issue.number || github.event.inputs.pr }}
           CODEX_GATE_ALLOW_NO_REVIEW: ${{ github.event.inputs.allow_no_review == 'true' }}
           # Bot-skipped-PR certification: a repo variable (comma-separated PR

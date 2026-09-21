@@ -1,5 +1,24 @@
 # Cook With Freebuff
 
+## Universal repository lock and delivery gates
+
+This project-specific guide is governed by the universal safety constitution in [`WORKFLOW.md`](WORKFLOW.md). Before every substantive task, verify the repository rather than trusting a directory name, preview URL, previous conversation, or similarly named checkout:
+
+```bash
+pwd
+git rev-parse --show-toplevel
+git remote -v
+git branch --show-current
+git log -1 --oneline
+git status --short
+```
+
+The verified `git rev-parse --show-toplevel` directory is the only permitted scope. Do not edit sibling repositories, parent checkouts, nested checkouts, other worktrees, or external projects. Re-check the root, remote owner/name, branch, HEAD, and target environment before GitHub, Firebase, database, or deployment actions. Preserve unrelated working-tree changes; do not reset, clean, stash, overwrite, or stage changes you did not make.
+
+Follow this action-specific sequence: inspect → plan → implement → test → review → report → STOP; then separately authorized commit → STOP → push → STOP → PR → STOP → merge → STOP → deploy. A merge does not authorize deployment. Never expose secrets or weaken auth, App Check, Firestore rules, or production safeguards. Read nested `AGENTS.md` files that apply, and report exact verification evidence. `WORKFLOW.md` is the detailed 43-section policy and may be stricter, never weaker, than this project guide.
+
+---
+
 A voice first cooking companion that guides you step by step from "what do I have?" to a plated dinner.
 
 ## Stack

@@ -25,14 +25,13 @@
 // bot has not looked at this head yet (it posts minutes after open, and the
 // workflow re-runs on review events). The gate polls for a submitted Codex
 // review or inline comment on the current head for up to
-// CODEX_GATE_WAIT_SECONDS (default 360); if none appears it first pushes up
-// to CODEX_GATE_NUDGE_MAX (default 2) empty "nudge" commits to re-trigger the
-// bot's synchronize event, and only then fails with a WAITING message so the
-// PR cannot merge before the bot has reviewed it. The nudge push needs the
-// CODEX_NUDGE_TOKEN PAT (GITHUB_TOKEN would change the head without re-running
-// the required validate check); without that secret the nudge is skipped. The
-// bot occasionally skips a PR entirely; after confirming that is the case,
-// re-run with --allow-no-review to certify the PR as reviewed-by-human.
+// CODEX_GATE_WAIT_SECONDS (default 360); if none appears it fails with a
+// WAITING message so the PR cannot merge before the bot has reviewed it.
+// Automatic nudge commits are disabled by default (CODEX_GATE_NUDGE_MAX=0) to
+// avoid unnecessary workflow runs and credit consumption. A human may opt in
+// explicitly for a high-risk PR when a retry is worth the cost. The bot
+// occasionally skips a PR entirely; after confirming that is the case, re-run
+// with --allow-no-review to certify the PR as reviewed-by-human.
 // (Codex P1, PR #73 review.)
 //
 // A red gate running in Actions (GITHUB_ACTIONS=true and GH_TOKEN set) ALSO
@@ -53,10 +52,9 @@
 //   CODEX_GATE_WAIT_SECONDS=60 node scripts/codex-review-pr-gate.mjs --pr 42
 //   CODEX_GATE_INCLUDE_P2=true node scripts/codex-review-pr-gate.mjs --pr 42
 //     (repo variable: same stricter bar as --include-p2)
-//   CODEX_GATE_NUDGE_MAX=3 node scripts/codex-review-pr-gate.mjs --pr 42
-//     (or --nudge-max 3: cap the nudge commits before the WAITING fallback)
-//   CODEX_GATE_NUDGE_TOKEN=<pat> node scripts/codex-review-pr-gate.mjs --pr 42
-//     (a PAT with contents: write; the nudge is skipped without it)
+//   CODEX_GATE_NUDGE_MAX=2 CODEX_NUDGE_TOKEN=<pat> \
+//     node scripts/codex-review-pr-gate.mjs --pr 42
+//     (explicit emergency override; disabled by default)
 // ============================================================================
 
 import { execSync } from 'node:child_process';
@@ -70,7 +68,10 @@ const DEFAULT_WAIT_SECONDS = 360;
 const POLL_MS = 15_000;
 // How many empty "nudge" commits the gate may push to re-trigger a review
 // before giving up and asking the human to certify via --allow-no-review.
-const DEFAULT_NUDGE_MAX = 2;
+// Credit-conscious default: do not create empty commits to provoke another
+// Codex review. A human can opt in locally with CODEX_GATE_NUDGE_MAX when a
+// high-risk PR genuinely needs a retry.
+const DEFAULT_NUDGE_MAX = 0;
 
 // Blocking severity set: P0 and P1 by default; --include-p2 adds P2 only, so
 // a hypothetical P3+ never blocks (Codex P1, PR #73 review).
@@ -239,6 +240,39 @@ const headRef = prMeta.head.ref;
 // where this workflow's token cannot push).
 const headRepoFullName = prMeta.head.repo?.full_name ?? repo;
 
+// Low-risk changes still run this required check, but do not spend Codex
+// credits. The check reports success so branch protection remains intact.
+// Everything else fails closed into the normal Codex review path.
+const LOW_RISK_PATHS = [
+  /^(?:AGENTS|WORKFLOW)\.md$/i,
+  /^(?:README|CHANGELOG|LICENSE|NOTICE)(?:\..*)?$/i,
+  /^(?:docs|documentation|memory-bank)\//i,
+  /^skills\/.*\.md$/i,
+  /(?:^|\/)(?:AGENTS|README|CHANGELOG|LICENSE|NOTICE)\.md$/i,
+  /(?:^|\/)(?:test|tests|__tests__)\//i,
+  /(?:\.(?:test|spec))\.(?:[cm]?[jt]sx?|py|rb|go|rs)$/i,
+];
+
+function fetchChangedFiles() {
+  return fetchList(gh(`--paginate \"repos/${repo}/pulls/${pr}/files?per_page=100\"`));
+}
+
+function isLowRiskChange(files) {
+  return files.length > 0 && files.every((file) =>
+    LOW_RISK_PATHS.some((pattern) => pattern.test(file.filename ?? '')),
+  );
+}
+
+const changedFiles = fetchChangedFiles();
+const forceReview = process.env.CODEX_GATE_FORCE_REVIEW === 'true';
+if (!forceReview && isLowRiskChange(changedFiles)) {
+  console.log(
+    `✓ Codex review gate: skipped for low-risk changes on PR #${pr} ` +
+      `(${changedFiles.length} documentation/test file(s); no Codex credits used)`,
+  );
+  process.exit(0);
+}
+
 function fetchComments() {
   return fetchList(gh(`--paginate "repos/${repo}/pulls/${pr}/comments?per_page=100"`));
 }
@@ -269,20 +303,10 @@ let comments = fetchComments();
 let reviews = fetchReviews();
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-// ── Nudge (re-trigger a skipped review) ─────────────────────────────────────
-// The bot occasionally misses a PR entirely (no review after the wait window).
-// Rather than fall straight to the human --allow-no-review certification, the
-// gate pushes an empty commit on the PR head — the synchronize event is the
-// universal "please re-review" signal. The push MUST use a dedicated PAT
-// (CODEX_NUDGE_TOKEN), never GITHUB_TOKEN: a GITHUB_TOKEN push changes the
-// head but Actions suppresses the synchronize event for its own token, so the
-// required `validate` check never runs on the nudge head and the PR becomes
-// unmergeable even after the bot reviews (Codex P1, PR #103 review). A PAT
-// push triggers the normal pull_request workflows AND re-fires the bot, so
-// every required check re-runs on the new head. Without the token the nudge is
-// skipped (the head is left untouched) and the WAITING fallback applies.
-// Nudges are capped and only ever fire on real pull_request runs against
-// same-repo heads.
+// ── Optional nudge (disabled by default) ────────────────────────────────────
+// Credit-conscious policy: the default nudge count is zero. This code remains
+// available as an explicit emergency override for a human running the script,
+// but the GitHub workflow does not provide the PAT or enable it.
 const NUDGE_MARKER = 'codex-nudge:';
 const canNudge =
   process.env.GITHUB_ACTIONS === 'true' &&
@@ -354,10 +378,9 @@ if (allowNoReview) {
       postDegradedAlert(headSha);
       process.exit(1);
     }
-    // Before asking for the human --allow-no-review certification, give the
-    // bot another chance: push an empty nudge commit (capped) so its
-    // synchronize event re-fires the review. Only in Actions, only on
-    // pull_request runs, only on same-repo heads.
+    // Nudging is deliberately disabled by default to avoid spending credits
+    // and creating extra workflow runs. An explicit CODEX_GATE_NUDGE_MAX value
+    // can opt in when a human has decided the retry is worth the cost.
     if (canNudge && nudgeMax > 0) {
       const nudgesSoFar = countNudges();
       if (nudgesSoFar < nudgeMax && pushNudge(nudgesSoFar + 1)) {
