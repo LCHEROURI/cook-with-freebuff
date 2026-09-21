@@ -16,7 +16,7 @@ import { describe, expect, it } from 'vitest';
 // That is exactly the bug this file locks: commit ca77468 introduced a
 // client config for a DIFFERENT project (key AIzaSyDwSk…, sender 774744467587)
 // into apphosting.yaml. The real project is portfolio-app-freebuff2
-// (key AIzaSyA9iUv…, sender 952213217375) — the values below, which the CI
+// (replacement browser key, sender 952213217375) — the values below, which the CI
 // drivers mint the owner token with and which the identitytoolkit probe
 // confirms. A future edit that swaps in another project's config fails here.
 // ============================================================================
@@ -28,7 +28,7 @@ const YAML = readFileSync('apphosting.yaml', 'utf8');
 // and confirmed by the identitytoolkit probe that the old apphosting key
 // belonged to projects/809486874543 instead.
 const REAL_PROJECT = {
-  apiKey: 'AIzaSyA9iUv7FVUDEuwO5pdEd8RXJc9qshNMRlE',
+  apiKey: 'AIzaSyCk3fLBBXuDPo_4kCjF8J9yYZ4gX8gP1Ro',
   authDomain: 'portfolio-app-freebuff2.firebaseapp.com',
   projectId: 'portfolio-app-freebuff2',
   storageBucket: 'portfolio-app-freebuff2.firebasestorage.app',

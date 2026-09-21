@@ -10,7 +10,7 @@ runConfig:
 env:
   # Firebase client config (safe to expose, available at build + runtime)
   - variable: NEXT_PUBLIC_FIREBASE_API_KEY
-    value: AIzaSyA9iUv7FVUDEuwO5pdEd8RXJc9qshNMRlE
+    value: AIzaSyCk3fLBBXuDPo_4kCjF8J9yYZ4gX8gP1Ro
     availability:
       - BUILD
       - RUNTIME
