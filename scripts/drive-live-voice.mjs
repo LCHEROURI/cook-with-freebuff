@@ -629,7 +629,10 @@ const { evaluate: evA, networkEvents: netA, screenshot: shotA } = cdp;
 await cdp.send('Page.navigate', { url: `${APP}/cook` });
 await sleep(4000);
 await injectSession(evA);
-await cdp.send('Page.reload', { ignoreCache: true });
+// The first navigation may redirect an unauthenticated profile to /login.
+// After injecting Firebase persistence, navigate explicitly to the protected
+// route instead of reloading the already redirected document.
+await cdp.send('Page.navigate', { url: `${APP}/cook` });
 await sleep(3500);
 
 text = await pageText(evA);
