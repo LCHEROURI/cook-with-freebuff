@@ -87,7 +87,7 @@ Two checks are required before anything merges, plus a push-only smoke:
 | Check | Runs on | Gates |
 |---|---|---|
 | `Typecheck · Lint · Test · Build` | every PR + push | merge (includes the tokenless push + PR stale-head guards) |
-| `Codex P1 gate` | every PR + review events | merge (blocks open P0/P1; P2 too when `CODEX_GATE_INCLUDE_P2=true`) |
+| `Codex P1 gate` | every PR + review events | merge for high-risk changes (blocks open P0/P1; P2 too when `CODEX_GATE_INCLUDE_P2=true`); low-risk docs/policy/tests pass without Codex polling |
 | `Emulator-compare smoke (guided flow vs live)` | main pushes (push-only job) | the App Hosting deploy (`needs: [validate, emulator-compare]`) |
 
 There is **no PR preview deploy check** — App Hosting is the only host and
@@ -104,20 +104,29 @@ PRs #13 and #14 merged with the smoke skipped).
 ### Codex review gate
 
 The `chatgpt-codex-connector[bot]` posts inline review comments shortly after a
-PR opens — often after the first checks complete. The gate re-runs on
-review-comment (created and deleted) and review events, so a late finding
-still reddens the required check. A finding is **open** until a human replies
-on its thread (the resolution-note convention: fix, then reply `Resolved …`);
-a red gate also keeps a bot-style summary on the PR thread — one per head,
-edited in place as the finding set changes, resolved when the gate goes
-green. Exit codes: `0` clean, `1` waiting-for-review or open findings block,
-`2` usage error.
+high-risk PR opens — often after the first checks complete. The gate first
+classifies changed paths. Documentation, repository-policy, README, and
+tests-only changes pass the required check without polling Codex, so they use
+no Codex credits. Application, authentication, data, dependency, Firebase,
+workflow, and infrastructure changes retain Codex review protection.
+
+For high-risk PRs, the gate re-runs on review-comment (created and deleted) and
+review events, so a late finding still reddens the required check. A finding is
+**open** until a human replies on its thread (the resolution-note convention:
+fix, then reply `Resolved …`); a red gate also keeps a bot-style summary on the
+PR thread — one per head, edited in place as the finding set changes, resolved
+when the gate goes green. Automatic nudge commits are disabled by default to
+avoid repeated workflows and credit consumption. Exit codes: `0` clean,
+`1` waiting-for-review or open findings block, `2` usage error.
 
 | Knob | Where | Effect |
 |---|---|---|
-| Wait timeout | `CODEX_GATE_WAIT_SECONDS` env (script-level, default `360`) | how long the gate polls for a Codex review of the current head before failing with a WAITING verdict — an empty comment list is *not* a clean review |
+| Path risk classification | Built into `scripts/codex-review-pr-gate.mjs` | Docs, policy, README, and tests-only changes skip Codex polling; mixed or executable changes are high-risk |
+| Force review | `CODEX_GATE_FORCE_REVIEW=true` | Explicitly run Codex even for a low-risk PR |
+| Wait timeout | `CODEX_GATE_WAIT_SECONDS` env (script-level, default `360`) | how long a high-risk gate polls for a Codex review before failing with WAITING |
 | P2 strict bar | `CODEX_GATE_INCLUDE_P2` repo variable (`true`) | blocks on open P2 findings too (default: P0/P1 only) |
-| Bot-skipped certification | `CODEX_GATE_BOT_SKIPPED_PRS` repo variable (comma-separated PR numbers) | certifies a PR the bot is not going to review; only this path satisfies the required merge gate (a `workflow_dispatch` check never enters the PR status rollup) |
+| Bot-skipped certification | `CODEX_GATE_BOT_SKIPPED_PRS` repo variable (comma-separated PR numbers) | certifies a high-risk PR the bot is not going to review |
+| Nudge retries | `CODEX_GATE_NUDGE_MAX` (workflow sets `0`) | disabled by default; local emergency opt-in only, because nudges consume workflow/Codex credits |
 
 Exact commands:
 

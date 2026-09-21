@@ -101,7 +101,7 @@ describe('scripts/codex-review-pr-gate.mjs', () => {
     expect(WORKFLOW).toContain('CODEX_GATE_BOT_SKIPPED_PRS: ${{ vars.CODEX_GATE_BOT_SKIPPED_PRS }}');
   });
 
-  it('nudges a skipped PR with a capped empty commit before the WAITING fallback', () => {
+  it('keeps the emergency nudge implementation available but disabled in Actions', () => {
     expect(GATE).toContain('CODEX_GATE_NUDGE_MAX');
     expect(GATE).toContain("const NUDGE_MARKER = 'codex-nudge:'");
     expect(GATE).toContain('pulls/${pr}/commits?per_page=100');
@@ -118,24 +118,19 @@ describe('scripts/codex-review-pr-gate.mjs', () => {
     // fork head or a review/dispatch run must fall back to the WAITING message).
     expect(GATE).toContain("process.env.GITHUB_EVENT_NAME === 'pull_request'");
     expect(GATE).toContain('headRepoFullName === repo');
-    // The push needs contents:write on top of the existing comment write perm,
-    // and the workflow must thread the PAT secret into the gate env.
-    expect(WORKFLOW).toContain('contents: write');
+    // The production workflow cannot push nudge commits or receive the PAT.
+    // It keeps only read access for checkout and PR write access for alerts.
+    expect(WORKFLOW).toContain('contents: read');
     expect(WORKFLOW).toContain('pull-requests: write');
-    expect(WORKFLOW).toContain('CODEX_NUDGE_TOKEN: ${{ secrets.CODEX_NUDGE_TOKEN }}');
+    expect(WORKFLOW).toContain("CODEX_GATE_NUDGE_MAX: '0'");
+    expect(WORKFLOW).not.toContain('CODEX_NUDGE_TOKEN: ${{ secrets.CODEX_NUDGE_TOKEN }}');
   });
 
-  it('guards the nudge token scope: an Actions secret (repo or org) satisfies it, never an environment secret', () => {
-    // The nudge token reaches the gate ONLY through the workflow's env
-    // mapping `${{ secrets.CODEX_NUDGE_TOKEN }}`. That expression resolves
-    // from the Actions secret scope (repository or organization), never from
-    // an environment scope — an environment-scoped secret (Preview or
-    // Production) is never in scope for this job and can never satisfy the
-    // nudge, no matter what it is named. If a future edit adds an
-    // `environment:` block to the codex-gate job, this guard goes red with it,
-    // because that is the one edit that would let the expression start
-    // resolving to an environment secret instead.
-    expect(WORKFLOW).toContain('CODEX_NUDGE_TOKEN: ${{ secrets.CODEX_NUDGE_TOKEN }}');
+  it('does not expose a nudge token to the production workflow', () => {
+    // The production job must not receive a PAT or an environment secret that
+    // could enable repeated credit-consuming nudge commits.
+    expect(WORKFLOW).not.toContain('CODEX_NUDGE_TOKEN');
+    expect(WORKFLOW).toContain("CODEX_GATE_NUDGE_MAX: '0'");
     // Scope the negative to the codex-gate JOB only: bound the slice at the
     // next sibling job key (a two-space-indented name followed by a colon), so
     // a future job appended after codex-gate with its own environment block
@@ -149,10 +144,10 @@ describe('scripts/codex-review-pr-gate.mjs', () => {
     const nextJobAt = restOfFile.search(/\n  [a-zA-Z_][a-zA-Z0-9_-]*:/);
     const codexGateJob = nextJobAt === -1 ? restOfFile : restOfFile.slice(0, nextJobAt);
     expect(codexGateJob).not.toContain('environment:');
-    // And the script's only token source is that env var: no file read, no gh
-    // secret lookup, nothing that could reach an environment secret directly.
+    // The script may still support an explicit local emergency override, but
+    // the workflow cannot activate it.
     expect(GATE).toContain("const token = process.env.CODEX_NUDGE_TOKEN ?? '';");
-    expect(GATE).toContain('!!process.env.CODEX_NUDGE_TOKEN');
+    expect(GATE).toContain('const DEFAULT_NUDGE_MAX = 0;');
   });
 
   it('exits 1 with the blocking findings listed when an open P0/P1 exists', () => {
@@ -245,6 +240,7 @@ describe('scripts/codex-review-pr-gate.mjs', () => {
       comments: unknown[],
       opts: {
         reviews?: unknown[];
+        changedFiles?: unknown[];
         reviews404?: boolean;
         commentsFailures?: number;
         extraArgs?: string;
@@ -256,6 +252,7 @@ describe('scripts/codex-review-pr-gate.mjs', () => {
     ) => {
       const {
         reviews = [botReview],
+        changedFiles = [],
         reviews404 = false,
         commentsFailures = 0,
         extraArgs = '',
@@ -277,6 +274,7 @@ const fs = require('node:fs');
 const HEAD = ${JSON.stringify(HEAD)};
 const comments = ${JSON.stringify(comments)};
 const reviews = ${JSON.stringify(reviews)};
+const changedFiles = ${JSON.stringify(changedFiles)};
 const reviews404 = ${JSON.stringify(reviews404)};
 const commentsFailures = ${JSON.stringify(commentsFailures)};
 const commentsFailLog = ${JSON.stringify(commentsFailLog)};
@@ -292,6 +290,8 @@ if (url.includes('issues/42/comments?')) {
   const i = process.argv.indexOf('--input');
   fs.appendFileSync(postsLog, fs.readFileSync(process.argv[i + 1], 'utf8') + '<<<POST>>>');
   process.stdout.write('{}');
+} else if (url.includes('pulls/42/files?')) {
+  process.stdout.write(JSON.stringify([changedFiles]));
 } else if (url.includes('/42/comments?')) {
   const n = parseInt(fs.existsSync(commentsFailLog) ? fs.readFileSync(commentsFailLog, 'utf8') : '0', 10) || 0;
   if (n < commentsFailures) {
@@ -403,6 +403,16 @@ fs.appendFileSync(${JSON.stringify(gitLog)}, process.argv.join(' ') + '<<<GIT>>>
     // A bot review with no comments is a clean review — the gate passes.
     expect(run([], { reviews: [botReview] }).status).toBe(0);
 
+    // Policy-only changes pass without polling for Codex or spending credits.
+    const policyOnly = run([], {
+      changedFiles: [{ filename: 'AGENTS.md' }, { filename: 'docs/DEPLOYMENT.md' }],
+      reviews: [],
+      extraEnv: { CODEX_GATE_WAIT_SECONDS: '1' },
+    });
+    expect(policyOnly.status).toBe(0);
+    expect(policyOnly.out).toContain('low-risk changes');
+    expect(policyOnly.out).toContain('no Codex credits used');
+
     // NO review at all is not clean: the gate waits, then fails with the
     // WAITING message instead of passing (Codex P1, PR #73 review).
     const waiting = run([], {
@@ -456,15 +466,16 @@ fs.appendFileSync(${JSON.stringify(gitLog)}, process.argv.join(' ') + '<<<GIT>>>
     expect(exhausted.out).toContain('FAIL');
 
     // ── Nudge (re-trigger a skipped review) ────────────────────────────────
-    // In a pull_request Actions run, a skipped review pushes a capped empty
-    // nudge commit (re-firing the bot's synchronize event) before the WAITING
-    // fallback.
+    // An explicitly opted-in pull_request Actions run may still push a capped
+    // empty nudge commit. The GitHub workflow does not opt in; this test keeps
+    // the emergency CLI override covered.
     const nudgeEnv = {
       GH_TOKEN: 'stub-token',
       GITHUB_ACTIONS: 'true',
       GITHUB_EVENT_NAME: 'pull_request',
       CODEX_GATE_WAIT_SECONDS: '1',
       CODEX_NUDGE_TOKEN: 'pat-stub',
+      CODEX_GATE_NUDGE_MAX: '2',
     };
     const nudged = run([], { reviews: [], extraEnv: nudgeEnv });
     expect(nudged.status).toBe(1);
@@ -498,8 +509,18 @@ fs.appendFileSync(${JSON.stringify(gitLog)}, process.argv.join(' ') + '<<<GIT>>>
     expect(noNudge.out).toContain('no Codex review observed on head');
     expect(noNudge.gitLog.length).toBe(0);
 
-    // A nudge max of 0 disables the retry entirely.
-    const disabled = run([], { reviews: [], extraEnv: { ...nudgeEnv, CODEX_GATE_NUDGE_MAX: '0' } });
+    // The default disables the retry entirely, even when the Actions/PAT
+    // environment is present. This is the credit-saving production behavior.
+    const disabled = run([], {
+      reviews: [],
+      extraEnv: {
+        GH_TOKEN: 'stub-token',
+        GITHUB_ACTIONS: 'true',
+        GITHUB_EVENT_NAME: 'pull_request',
+        CODEX_GATE_WAIT_SECONDS: '1',
+        CODEX_NUDGE_TOKEN: 'pat-stub',
+      },
+    });
     expect(disabled.status).toBe(1);
     expect(disabled.out).not.toContain('pushed a nudge commit');
     expect(disabled.gitLog.length).toBe(0);
