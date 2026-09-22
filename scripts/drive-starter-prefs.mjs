@@ -211,7 +211,10 @@ await evaluate(`(async () => {
   localStorage.setItem(key, JSON.stringify(record.value));
   return 'injected';
 })()`);
-await send('Page.reload', { ignoreCache: true });
+// The first navigation may redirect an unauthenticated profile to /login.
+// After injecting Firebase persistence, navigate explicitly to the protected
+// route instead of reloading the already redirected document.
+await send('Page.navigate', { url: `${APP}/cook` });
 await sleep(3500);
 
 let text = await pageText();
