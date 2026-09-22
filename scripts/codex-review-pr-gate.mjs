@@ -27,6 +27,14 @@
 // review or inline comment on the current head for up to
 // CODEX_GATE_WAIT_SECONDS (default 360); if none appears it fails with a
 // WAITING message so the PR cannot merge before the bot has reviewed it.
+// Same-head rescue: a WAITING expiry does NOT fail a head that is already
+// certified. At expiry the script re-reads CODEX_GATE_BOT_SKIPPED_PRS live
+// (a run's env snapshot can never see a certification set mid-run) and looks
+// for a sibling gate run on the SAME head that already completed green.
+// Either probe lifts only the wait — execution still falls through to the
+// finding scan, so open findings block exactly as before. (The PR #206 race:
+// a late review-event run's red WAITING shadowed the green pull_request run
+// in the merge rollup and blocked a merge the gate itself had certified.)
 // Automatic nudge commits are disabled by default (CODEX_GATE_NUDGE_MAX=0) to
 // avoid unnecessary workflow runs and credit consumption. A human may opt in
 // explicitly for a high-risk PR when a retry is worth the cost. The bot
@@ -348,6 +356,57 @@ function pushNudge(attempt) {
   return true;
 }
 
+// ── Same-head rescue ───────────────────────────────────────────────────────
+// Two read-only probes decide whether the wait can be lifted without a
+// verdict of our own. Both are failure-tolerant: an error means no rescue
+// and the normal WAITING failure runs. A rescue lifts ONLY the wait — the
+// caller falls through to the inline-finding scan, so every open finding on
+// the head still blocks. This is the durable fix for the PR #206 race:
+// the pull_request_review run and the pull_request run started seconds
+// apart on the same head; the review-event run's wait expired BEFORE the
+// human set the certification variable (its env snapshot rode the run,
+// taken at creation), so it failed WAITING; the pull_request run evaluated
+// the by-then-set variable, passed, and GitHub kept the latest-created
+// run's red verdict — blocking a merge the gate itself had certified.
+async function rescueWaitForReview() {
+  // Leg 1 — live re-read of the bot-skip certification: the variable may
+  // have been set while this run polled, which its env snapshot misses.
+  try {
+    const parsed = JSON.parse(runQuiet(gh(`"repos/${repo}/actions/variables"`)));
+    const certified = (parsed.variables ?? []).find((v) => v.name === 'CODEX_GATE_BOT_SKIPPED_PRS')?.value ?? '';
+    if (certified.split(',').map((s) => s.trim()).filter(Boolean).includes(String(pr))) {
+      return (
+        `wait-for-review rescue: CODEX_GATE_BOT_SKIPPED_PRS now certifies PR #${pr} — ` +
+        'the variable was set after this run started, so its env snapshot missed it'
+      );
+    }
+  } catch {
+    // The probe never fails the gate — it only fails to rescue.
+  }
+  // Leg 2 — a sibling gate run on the SAME head already completed green.
+  // Canonical PR events only: a workflow_dispatch check never enters the PR
+  // status rollup, so it cannot certify the head (repo doctrine, PR #78).
+  try {
+    const runs = JSON.parse(
+      runQuiet(gh(`--paginate "repos/${repo}/actions/runs?head_sha=${headSha}&per_page=100" --slurp`)),
+    ).flatMap((page) => page.workflow_runs ?? []);
+    const canonical = new Set(['pull_request', 'pull_request_review', 'pull_request_review_comment']);
+    const sibling = runs
+      .filter((r) => r.name === 'Codex review gate' && r.conclusion === 'success' && canonical.has(r.event ?? ''))
+      .filter((r) => String(r.id) !== String(process.env.GITHUB_RUN_ID ?? ''))
+      .sort((a, b) => (a.created_at > b.created_at ? -1 : 1))[0];
+    if (sibling) {
+      return (
+        `wait-for-review rescue: gate run ${sibling.id} already completed green on head ${headSha} — ` +
+        'a late WAITING failure here would shadow that green in the merge rollup'
+      );
+    }
+  } catch {
+    // The probe never fails the gate — it only fails to rescue.
+  }
+  return null;
+}
+
 // ── Wait-for-review: empty is NOT clean (Codex P1, PR #73 review) ───────────
 if (allowNoReview) {
   // Human-confirmed certification: the bot is not going to review this PR, so
@@ -364,7 +423,15 @@ if (allowNoReview) {
     reviews = fetchReviews();
   }
   if (!botObservedOnHead(comments, reviews)) {
-    if (githubDegraded === true) {
+    // Same-head rescue BEFORE the degraded/nudge/FAIL paths: a late WAITING
+    // failure must never shadow a head that is already certified green.
+    const rescue = await rescueWaitForReview();
+    if (rescue) {
+      console.warn(`  - ${rescue}`);
+      console.warn(
+        '  - falling through to the inline-finding scan: the rescue lifts the wait, never the verdict',
+      );
+    } else if (githubDegraded === true) {
       // Distinct state (Codex P1, PR #125/#126 review): the review has not
       // arrived because GitHub's platform is degraded — not because the bot
       // skipped the PR and not because of a code finding. A human must retry
@@ -377,29 +444,30 @@ if (allowNoReview) {
       );
       postDegradedAlert(headSha);
       process.exit(1);
-    }
-    // Nudging is deliberately disabled by default to avoid spending credits
-    // and creating extra workflow runs. An explicit CODEX_GATE_NUDGE_MAX value
-    // can opt in when a human has decided the retry is worth the cost.
-    if (canNudge && nudgeMax > 0) {
-      const nudgesSoFar = countNudges();
-      if (nudgesSoFar < nudgeMax && pushNudge(nudgesSoFar + 1)) {
-        console.error(
-          `✗ FAIL: no Codex review observed on head ${headSha} — pushed a nudge commit ` +
-            `(attempt ${nudgesSoFar + 1} of ${nudgeMax}) to re-trigger the bot; its review ` +
-            `will re-run this check. If the bot still does not review after the nudges, ` +
-            `re-run with --allow-no-review.`,
-        );
-        process.exit(1);
+    } else {
+      // Nudging is deliberately disabled by default to avoid spending credits
+      // and creating extra workflow runs. An explicit CODEX_GATE_NUDGE_MAX value
+      // can opt in when a human has decided the retry is worth the cost.
+      if (canNudge && nudgeMax > 0) {
+        const nudgesSoFar = countNudges();
+        if (nudgesSoFar < nudgeMax && pushNudge(nudgesSoFar + 1)) {
+          console.error(
+            `✗ FAIL: no Codex review observed on head ${headSha} — pushed a nudge commit ` +
+              `(attempt ${nudgesSoFar + 1} of ${nudgeMax}) to re-trigger the bot; its review ` +
+              `will re-run this check. If the bot still does not review after the nudges, ` +
+              `re-run with --allow-no-review.`,
+          );
+          process.exit(1);
+        }
       }
+      console.error(
+        `✗ FAIL: no Codex review observed on head ${headSha} — a clean review cannot be ` +
+          `distinguished from no review yet, so the PR stays blocked until the bot reviews ` +
+          `(the review events re-run this check). If the bot is genuinely not going to review ` +
+          `this PR, re-run with --allow-no-review.`,
+      );
+      process.exit(1);
     }
-    console.error(
-      `✗ FAIL: no Codex review observed on head ${headSha} — a clean review cannot be ` +
-        `distinguished from no review yet, so the PR stays blocked until the bot reviews ` +
-        `(the review events re-run this check). If the bot is genuinely not going to review ` +
-        `this PR, re-run with --allow-no-review.`,
-    );
-    process.exit(1);
   }
 }
 

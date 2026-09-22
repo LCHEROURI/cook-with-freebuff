@@ -17,7 +17,12 @@ name: Codex review gate
 # rollup). Same required check, stronger gate (see
 # scripts/codex-review-pr-gate.mjs --include-p2). The gate also waits for a
 # real Codex review of the current head before passing — an empty comment
-# list is not a clean review (see the script header).
+# list is not a clean review (see the script header). At wait expiry, a
+# same-head rescue re-reads CODEX_GATE_BOT_SKIPPED_PRS live and accepts a
+# sibling gate run on the same head that already completed green, so a late
+# WAITING failure cannot shadow an already-certified green check run in the
+# merge rollup (the PR #206 race). The rescue lifts only the wait; the
+# inline-finding scan still decides the verdict.
 #
 # Add "Codex P1 gate" to the branch's required status checks for the gate to
 # actually block merges (this workflow only reports the check result).
