@@ -84,6 +84,19 @@ Why this closes the loop:
   jobs** (GitHub API anomaly; head `cd79cb6d`, the credits-classification
   follow-up). Sits in the same batch; the next run (18:41) went green.
 
+## Same-head gate race (Sept 21–22)
+
+- **PR #206, head `0d215a3`** — two `Codex P1 gate` runs started for the same
+  head. The review-event run waited six minutes for a Codex review and failed
+  with `no Codex review observed`, while a later pull-request run passed after
+  the human bot-skip certification was set. GitHub's merge rollup retained the
+  late red result and reported `BLOCKED` even though a green gate existed.
+  The gate now performs a read-only same-head rescue at wait expiry: it
+  re-reads `CODEX_GATE_BOT_SKIPPED_PRS` live and checks for a canonical sibling
+  gate run already completed green. The rescue lifts only the wait; the
+  current-head finding scan still blocks open P0/P1 findings. Covered by the
+  stubbed end-to-end gate test.
+
 ## Current state
 
 - verify:live voice stages: **77 clean / 82** since the drain-stuck fix (5 reds

@@ -302,6 +302,29 @@ Yes / No
 
 If automation is appropriate, describe how the rule could eventually be enforced automatically.
 
+## Principle PD-001
+
+**Situation:**
+Two same-head CI gate runs raced: one completed green after bot-skip certification, while a later-created wait-for-review run expired red and shadowed the green result in the merge rollup.
+
+**Principle:**
+When a required check has multiple same-head runs, a late failure must reconcile against current certification and canonical sibling results before publishing a blocking verdict; any rescue may lift only the wait, never the underlying finding scan.
+
+**Evidence:**
+PR #206 reached `BLOCKED` with both a green and red `Codex P1 gate` run on head `0d215a3`; the red run failed because its environment snapshot missed a certification set during the run, while the green run observed it. The gate now re-reads the certification variable and checks same-head canonical sibling runs at wait expiry, with end-to-end tests covering certified, sibling-green, finding-blocked, and workflow-dispatch cases.
+
+**Confidence:**
+Medium
+
+**Scope:**
+Universal
+
+**Experiment:**
+At wait expiry, run failure-tolerant read-only reconciliation probes before failing; verify that stale-run rescue cannot bypass current-head P0/P1 findings and cannot trust workflow-dispatch checks as PR status evidence.
+
+**Status:**
+Automated
+
 ## Primary Objective
 
 Do not allow valuable lessons from development work to disappear after the immediate problem is solved.

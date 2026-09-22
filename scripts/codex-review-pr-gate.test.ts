@@ -101,6 +101,26 @@ describe('scripts/codex-review-pr-gate.mjs', () => {
     expect(WORKFLOW).toContain('CODEX_GATE_BOT_SKIPPED_PRS: ${{ vars.CODEX_GATE_BOT_SKIPPED_PRS }}');
   });
 
+  it('a late wait-for-review failure cannot shadow a same-head green run (the PR #206 race)', () => {
+    // Two read-only probes run at wait expiry, BEFORE the WAITING failure:
+    // (1) a live re-read of CODEX_GATE_BOT_SKIPPED_PRS — the env snapshot is
+    // taken at run creation, so a certification set mid-run is invisible to
+    // it; (2) a sibling gate run on the SAME head that already completed
+    // green, canonical PR events only (a workflow_dispatch check never
+    // enters the PR status rollup, so it cannot certify the head).
+    expect(GATE).toContain('async function rescueWaitForReview()');
+    expect(GATE).toContain('repos/${repo}/actions/variables');
+    expect(GATE).toContain("find((v) => v.name === 'CODEX_GATE_BOT_SKIPPED_PRS')");
+    expect(GATE).toContain('actions/runs?head_sha=${headSha}&per_page=100');
+    expect(GATE).toContain("r.conclusion === 'success' && canonical.has(r.event ?? '')");
+    expect(GATE).toContain('String(r.id) !== String(process.env.GITHUB_RUN_ID');
+    expect(GATE).toContain('a late WAITING failure here would shadow that green');
+    // The rescue lifts only the wait — the scan still decides the verdict.
+    expect(GATE).toContain('the rescue lifts the wait, never the verdict');
+    // Degraded platform still fails closed when no rescue applies.
+    expect(GATE).toContain('do NOT certify this as a bot skip');
+  });
+
   it('keeps the emergency nudge implementation available but disabled in Actions', () => {
     expect(GATE).toContain('CODEX_GATE_NUDGE_MAX');
     expect(GATE).toContain("const NUDGE_MARKER = 'codex-nudge:'");
@@ -248,6 +268,7 @@ describe('scripts/codex-review-pr-gate.mjs', () => {
         gateComments?: unknown[];
         nudgeCommits?: unknown[];
         gateRuns?: unknown[];
+        repoVariables?: Array<{ name: string; value: string }>;
       } = {},
     ) => {
       const {
@@ -260,6 +281,7 @@ describe('scripts/codex-review-pr-gate.mjs', () => {
         gateComments = [],
         nudgeCommits = [],
         gateRuns = [],
+        repoVariables = [],
       } = opts;
       const stubDir = mkdtempSync(join(tmpdir(), 'codex-gate-stub-'));
       const stubPath = join(stubDir, 'gh');
@@ -281,6 +303,7 @@ const commentsFailLog = ${JSON.stringify(commentsFailLog)};
 const gateComments = ${JSON.stringify(gateComments)};
 const nudgeCommits = ${JSON.stringify(nudgeCommits)};
 const gateRuns = ${JSON.stringify(gateRuns)};
+const repoVariables = ${JSON.stringify(repoVariables)};
 const postsLog = ${JSON.stringify(postsLog)};
 const rerunLog = ${JSON.stringify(rerunLog)};
 const url = process.argv.join(' ');
@@ -310,6 +333,8 @@ if (url.includes('issues/42/comments?')) {
 } else if (url.includes('/actions/runs/') && url.includes('/rerun')) {
   fs.appendFileSync(rerunLog, process.argv.join(' ') + '<<<RERUN>>>');
   process.stdout.write('{}');
+} else if (url.includes('/actions/variables')) {
+  process.stdout.write(JSON.stringify({ total_count: repoVariables.length, variables: repoVariables }));
 } else if (url.includes('pulls/42')) {
   process.stdout.write(JSON.stringify({ head: { sha: HEAD, ref: 'feature/branch', repo: { full_name: 'fake/repo' } } }));
 } else {
@@ -435,6 +460,58 @@ fs.appendFileSync(${JSON.stringify(gitLog)}, process.argv.join(' ') + '<<<GIT>>>
         extraEnv: { CODEX_GATE_WAIT_SECONDS: '1', CODEX_GATE_BOT_SKIPPED_PRS: '41, 42' },
       }).status,
     ).toBe(0);
+
+    // ── Same-head rescue (the PR #206 race) ────────────────────────────────
+    // Leg 1: a certification variable set AFTER this run started is invisible
+    // to the env snapshot; the live API re-read sees it and lifts the wait.
+    const rescuedByVar = run([], {
+      reviews: [],
+      extraEnv: { CODEX_GATE_WAIT_SECONDS: '1' },
+      repoVariables: [{ name: 'CODEX_GATE_BOT_SKIPPED_PRS', value: '41, 42' }],
+    });
+    expect(rescuedByVar.status).toBe(0);
+    // The rescue is logged as a warning on stderr; success-path stdout stays
+    // the stable green verdict, so the static contract test above plus this
+    // status assertion cover the branch without conflating output streams.
+    // Leg 2: a sibling gate run on the SAME head already completed green.
+    const rescuedBySibling = run([], {
+      reviews: [],
+      extraEnv: { CODEX_GATE_WAIT_SECONDS: '1' },
+      gateRuns: [
+        { id: 611, name: 'Codex review gate', conclusion: 'success', event: 'pull_request', created_at: '2026-09-22T00:00:00Z' },
+      ],
+    });
+    expect(rescuedBySibling.status).toBe(0);
+    // A rescue lifts only the wait: an open P1 on the head still blocks a
+    // rescued run.
+    const rescuedStillBlocks = run([P(97, 'P1')], {
+      reviews: [],
+      extraEnv: { CODEX_GATE_WAIT_SECONDS: '1' },
+      gateRuns: [
+        { id: 612, name: 'Codex review gate', conclusion: 'success', event: 'pull_request', created_at: '2026-09-22T00:00:00Z' },
+      ],
+    });
+    expect(rescuedStillBlocks.status).toBe(1);
+    expect(rescuedStillBlocks.out).toContain('[P1] lib/a.ts:3');
+    // A workflow_dispatch sibling never rescues: dispatch checks do not enter
+    // the PR status rollup, so the head is not certified green by one.
+    expect(
+      run([], {
+        reviews: [],
+        extraEnv: { CODEX_GATE_WAIT_SECONDS: '1' },
+        gateRuns: [
+          { id: 613, name: 'Codex review gate', conclusion: 'success', event: 'workflow_dispatch', created_at: '2026-09-22T00:00:00Z' },
+        ],
+      }).status,
+    ).toBe(1);
+    // A variable listing other PRs does not rescue this one.
+    expect(
+      run([], {
+        reviews: [],
+        extraEnv: { CODEX_GATE_WAIT_SECONDS: '1' },
+        repoVariables: [{ name: 'CODEX_GATE_BOT_SKIPPED_PRS', value: '41' }],
+      }).status,
+    ).toBe(1);
 
     // ── Transient reviews-list 404 (Codex P1, PR #125 review) ─────────────
     // A list endpoint can transiently 404 in Actions even for a PR the meta
