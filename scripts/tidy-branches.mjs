@@ -26,7 +26,8 @@
 //      branch is kept with a visible note, never force-deleted.
 //
 // --report mode: the weekly maintenance workflow (branch-tidy-weekly.yml)
-// runs this read-only so it can OPEN A PR instead of mutating the repo. It
+// runs this read-only so it can publish a report artifact instead of mutating
+// the repo. It
 // runs the same detections (dry-run prune, --merged list, merged-PR squash
 // check) PLUS a remote scan: because delete_branch_on_merge is OFF in this
 // repo, merged PR head branches accumulate ON ORIGIN, and a fresh CI checkout
