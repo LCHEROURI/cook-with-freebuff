@@ -1031,7 +1031,8 @@ describe('.github/workflows/mic-trend-weekly.yml · regenerable trend report', (
   });
 
   it('opens a PR only when the diff changed, deduped against an open PR and a leftover remote branch', () => {
-    expect(MIC_TREND).toContain('git diff --exit-code --quiet docs/mic-regression-trend.md');
+    expect(MIC_TREND).toContain('git diff --exit-code --quiet -- docs/mic-regression-trend.md docs/mic-regression-trend.json');
+    expect(MIC_TREND).toContain('git add docs/mic-regression-trend.md docs/mic-regression-trend.json');
     expect(MIC_TREND).toContain('report unchanged — no PR needed');
     expect(MIC_TREND).toContain('gh pr create');
     expect(MIC_TREND).toContain('trend PR already open on $branch — skipping (dedupe)');
