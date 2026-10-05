@@ -31,13 +31,13 @@ A voice first cooking companion that guides you step by step from "what do I hav
 
 ## Build approach
 
-Contract-locked CI changes: every meaningful change lands through the branch + PR path under the required checks (validate, Codex P1 gate, emulator-compare smoke on pushes). Specs in `docs/specs/` record decisions; plans in `docs/plans/` track implementation; AGENTS.md files record conventions. No `docs/scope/` directory — status is advanced by the engineer/architect, not a scope reconciler.
+Contract-locked CI changes: every meaningful change lands through the branch + PR path. PR-required checks include validate and the Codex P1 gate; push workflows may add smoke checks such as emulator-compare. Specs in `docs/specs/` record decisions; plans in `docs/plans/` track implementation; AGENTS.md files record conventions. No `docs/scope/` directory — status is advanced by the engineer/architect, not a scope reconciler.
 
 ## Commands
 
 ```bash
-# Install
-npm install
+# Install (reproducible dependency install)
+npm ci
 
 # Dev server
 npm run dev
@@ -74,6 +74,7 @@ Stored in `docs/specs/NNNN-title.md`. Current: 0001 App Hosting primary host, 00
 - Tests use `// @vitest-environment jsdom` pragma on component files; default environment is `node`
 - Probe cleanup grace durations are declared per driver (`scripts/verify-live.mjs`, `scripts/drive-live-voice.mjs`) with a rationale comment at each declaration, and the shared 15 minute seed grace is pinned identical across both files by the lockstep contract in `scripts/verify-live-cleanup.test.ts`; never introduce a shared constants module (spec 0002)
 - For meaningful development decisions, failures, regressions, major review findings, security discoveries, or reusable patterns, run `skills/progressive-distillation/SKILL.md` before closing the task. Distilled principles may add stricter guidance, but must never weaken or override existing project safety, CI, security, deployment, or repository rules.
+- Scheduled maintenance workflows should default to read-only reporting and least-privilege permissions. Avoid PATs, repository writes, branch pushes, or automatic PR creation unless the task genuinely requires them and the additional authority is explicitly justified.
 
 ## Output style
 
@@ -94,7 +95,7 @@ Exceptions: explain fully when asked to explain. Confirm before destructive acti
 
 ## Google Cloud & Tooling
 
-- Active plugin: `google-cloud-developer` (includes `gcloud`, `developer-knowledge` MCP server, `google-cloud-recipe-auth`, `google-cloud-recipe-onboarding`, and `finding-google-skills`).
+- When available, use the `google-cloud-developer` plugin and its `gcloud`, `developer-knowledge`, authentication/onboarding, and Google-skill discovery capabilities.
 - `gcloud` CLI operations must adhere to safety-critical validations (explicit project verification, non-destructive flags, no broad modifications).
 - Query official Google documentation grounded through the `developer-knowledge` MCP server (`https://developerknowledge.googleapis.com/mcp`) before making architectural or API assumptions.
 - For deeper or uninstalled Google Cloud skills, use `finding-google-skills` to discover entries from the official catalog (`https://github.com/google/skills`).
@@ -116,4 +117,3 @@ Exceptions: explain fully when asked to explain. Confirm before destructive acti
 - [TESTING.md](TESTING.md): test conventions, jsdom pragma, and the verify driver pattern
 - [SECURITY.md](SECURITY.md): auth architecture, token flow, and tool call logging
 
-_Drafted by /audit from the repo, worth a quick human pass. Edit freely: once a line stops matching this draft, later runs treat it as curated and will flag rather than overwrite it._
