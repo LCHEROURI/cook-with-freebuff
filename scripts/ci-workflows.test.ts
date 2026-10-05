@@ -946,6 +946,7 @@ describe('.github/workflows/branch-tidy-weekly.yml · weekly branch tidy', () =>
     expect(BRANCH_TIDY).not.toContain('gh pr create');
     expect(BRANCH_TIDY).not.toContain('git push');
     expect(BRANCH_TIDY).toContain('contents: read');
+    expect(BRANCH_TIDY).toContain('pull-requests: read');
     expect(BRANCH_TIDY).not.toContain('contents: write');
     expect(BRANCH_TIDY).not.toContain('pull-requests: write');
   });
