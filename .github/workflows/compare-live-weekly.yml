@@ -51,6 +51,7 @@ jobs:
 
     env:
       NEXT_PUBLIC_FIREBASE_API_KEY: ${{ secrets.NEXT_PUBLIC_FIREBASE_API_KEY }}
+      NEXT_PUBLIC_FIREBASE_APP_ID: ${{ secrets.NEXT_PUBLIC_FIREBASE_APP_ID }}
       FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
       APP_OWNER_UID: ${{ secrets.APP_OWNER_UID }}
       # The deployed leg defaults to the canonical URL; pin it explicitly so a
@@ -80,15 +81,15 @@ jobs:
         run: npm ci
 
       - name: Fail loudly if owner credentials are missing
-        if: ${{ github.repository == 'LCHEROURI/cook-with-freebuff' && (env.NEXT_PUBLIC_FIREBASE_API_KEY == '' || env.FIREBASE_SERVICE_ACCOUNT == '' || env.APP_OWNER_UID == '') }}
+        if: ${{ github.repository == 'LCHEROURI/cook-with-freebuff' && (env.NEXT_PUBLIC_FIREBASE_API_KEY == '' || env.NEXT_PUBLIC_FIREBASE_APP_ID == '' || env.FIREBASE_SERVICE_ACCOUNT == '' || env.APP_OWNER_UID == '') }}
         run: |
           echo "::error::Owner-credential secrets missing — the weekly stack-divergence compare cannot run its deployed leg."
-          echo "Add NEXT_PUBLIC_FIREBASE_API_KEY, FIREBASE_SERVICE_ACCOUNT and APP_OWNER_UID under GitHub -> Settings -> Secrets and variables -> Actions, then re-run."
+          echo "Add NEXT_PUBLIC_FIREBASE_API_KEY, NEXT_PUBLIC_FIREBASE_APP_ID, FIREBASE_SERVICE_ACCOUNT and APP_OWNER_UID under GitHub -> Settings -> Secrets and variables -> Actions, then re-run."
           exit 1
 
       # Credential-gated so forks stay green; the loud guard above already
       # failed the job on the canonical repo when the secrets are missing
       # (same skip-not-fail discipline as mic-regression.yml).
       - name: Run the deployed-vs-emulator compare
-        if: ${{ env.NEXT_PUBLIC_FIREBASE_API_KEY != '' && env.FIREBASE_SERVICE_ACCOUNT != '' && env.APP_OWNER_UID != '' }}
+        if: ${{ env.NEXT_PUBLIC_FIREBASE_API_KEY != '' && env.NEXT_PUBLIC_FIREBASE_APP_ID != '' && env.FIREBASE_SERVICE_ACCOUNT != '' && env.APP_OWNER_UID != '' }}
         run: npm run verify:live:compare:emulator
