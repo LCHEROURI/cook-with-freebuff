@@ -371,7 +371,7 @@ export default function HomePage() {
       <footer className={styles.footer}>
         <p>Cook With Me · sign in with Google to start</p>
         <p className={styles.footerLink}>
-          <Link href="/status">Kitchen status</Link>
+          <Link href="/status">Kitchen status</Link> · <Link href="/version">Build version</Link>
         </p>
       </footer>
     </main>
