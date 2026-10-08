@@ -105,7 +105,7 @@ jobs:
           GH_TOKEN: ${{ secrets.WEEKLY_TIDY_TOKEN }}
           WEEKLY_TIDY_TOKEN: ${{ secrets.WEEKLY_TIDY_TOKEN }}
         run: |
-          if git diff --exit-code --quiet docs/mic-regression-trend.md; then
+          if git diff --exit-code --quiet -- docs/mic-regression-trend.md docs/mic-regression-trend.json; then
             echo "report unchanged — no PR needed"
             exit 0
           fi
@@ -125,7 +125,7 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git checkout -b "$branch"
-          git add docs/mic-regression-trend.md
+          git add docs/mic-regression-trend.md docs/mic-regression-trend.json
           git commit -m "chore: refresh the mic regression trend report — $stamp"
           git push -u origin "$branch"
           gh pr create \
