@@ -51,6 +51,7 @@ jobs:
 
     env:
       NEXT_PUBLIC_FIREBASE_API_KEY: ${{ secrets.NEXT_PUBLIC_FIREBASE_API_KEY }}
+      NEXT_PUBLIC_FIREBASE_APP_ID: ${{ secrets.NEXT_PUBLIC_FIREBASE_APP_ID }}
       FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
       APP_OWNER_UID: ${{ secrets.APP_OWNER_UID }}
       # The deployed leg defaults to the canonical URL; pin it explicitly so a
