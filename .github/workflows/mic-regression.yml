@@ -112,6 +112,7 @@ jobs:
       NEXT_PUBLIC_FIREBASE_API_KEY: ${{ secrets.NEXT_PUBLIC_FIREBASE_API_KEY }}
       FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
       APP_OWNER_UID: ${{ secrets.APP_OWNER_UID }}
+      NEXT_PUBLIC_FIREBASE_APP_ID: ${{ secrets.NEXT_PUBLIC_FIREBASE_APP_ID }}
       # The driver defaults to the canonical URL; pin it explicitly so a
       # future move of the default can never silently re-target the monitor.
       VERIFY_BASE_URL: https://cook-with-freebuff--portfolio-app-freebuff2.us-central1.hosted.app
@@ -144,10 +145,10 @@ jobs:
       # missing credential must fail loudly — a silent skip would look like a
       # green weekly pass.
       - name: Fail loudly if owner credentials are missing
-        if: ${{ github.repository == 'LCHEROURI/cook-with-freebuff' && (env.NEXT_PUBLIC_FIREBASE_API_KEY == '' || env.FIREBASE_SERVICE_ACCOUNT == '' || env.APP_OWNER_UID == '') }}
+        if: ${{ github.repository == 'LCHEROURI/cook-with-freebuff' && (env.NEXT_PUBLIC_FIREBASE_API_KEY == '' || env.FIREBASE_SERVICE_ACCOUNT == '' || env.APP_OWNER_UID == '' || env.NEXT_PUBLIC_FIREBASE_APP_ID == '') }}
         run: |
           echo "::error::Owner-credential secrets missing — the weekly phase-C monitor cannot mint its owner session."
-          echo "Add NEXT_PUBLIC_FIREBASE_API_KEY, FIREBASE_SERVICE_ACCOUNT and APP_OWNER_UID under GitHub -> Settings -> Secrets and variables -> Actions, then re-run."
+          echo "Add NEXT_PUBLIC_FIREBASE_API_KEY, FIREBASE_SERVICE_ACCOUNT, APP_OWNER_UID and NEXT_PUBLIC_FIREBASE_APP_ID under GitHub -> Settings -> Secrets and variables -> Actions, then re-run."
           exit 1
 
       # Gated on the credentials so forks / unconfigured repos stay green; on
@@ -155,7 +156,7 @@ jobs:
       # into a hard failure instead.
       - name: Run the phase-C batch (6 runs)
         id: batch
-        if: ${{ env.NEXT_PUBLIC_FIREBASE_API_KEY != '' && env.FIREBASE_SERVICE_ACCOUNT != '' && env.APP_OWNER_UID != '' }}
+        if: ${{ env.NEXT_PUBLIC_FIREBASE_API_KEY != '' && env.FIREBASE_SERVICE_ACCOUNT != '' && env.APP_OWNER_UID != '' && env.NEXT_PUBLIC_FIREBASE_APP_ID != '' }}
         env:
           CHROME_PATH: ${{ steps.chrome.outputs.chrome-path }}
           # Configurable flake budget (workflow_dispatch input; empty on
@@ -184,6 +185,22 @@ jobs:
             echo "::error::could not derive hard signatures from scripts/refresh-mic-trend.mjs — refusing to classify"
             exit 1
           fi
+          # App Check: production enforcement 403s every API call that
+          # carries no token ("App Check token missing") — the driver's own
+          # launch AND the page's calls. verify:live's wrapper mints this
+          # token for the post-deploy stage; this batch invokes the driver
+          # directly, so it mints its own. One admin token (1h TTL) covers
+          # the whole batch (30-min job timeout), and the driver re-mints
+          # per request on replay-protected routes from
+          # NEXT_PUBLIC_FIREBASE_APP_ID. Without this the monitor is blind:
+          # every run dies at the sign-in door and the week reddens with
+          # zero mic signal (the Aug-Oct 2026 red streak).
+          VERIFY_APP_CHECK_TOKEN="$(node --input-type=module -e 'import { initializeApp, cert } from "firebase-admin/app"; import { getAppCheck } from "firebase-admin/app-check"; const sa = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT); const app = initializeApp({ credential: cert({ projectId: sa.project_id, clientEmail: sa.client_email, privateKey: sa.private_key.replace(/\\n/g, "\n") }) }); const { token } = await getAppCheck(app).createToken(process.env.NEXT_PUBLIC_FIREBASE_APP_ID); process.stdout.write(token);')"
+          if [ -z "$VERIFY_APP_CHECK_TOKEN" ]; then
+            echo "::error::could not mint an App Check token for the batch — refusing to run blind (check NEXT_PUBLIC_FIREBASE_APP_ID and the service account's App Check Admin role)"
+            exit 1
+          fi
+          export VERIFY_APP_CHECK_TOKEN
           passes=0
           hard_failed=""
           flake_failed=""
