@@ -471,4 +471,21 @@ describe('scripts/verify-live.mjs · live-voice gate [3e] (dictation + active-sc
     expect(DRIVER).toContain('INJECT_API_KEYS');
     expect(DRIVER).toContain('APPHOSTING_API_KEY !== API_KEY');
   });
+
+  it('falls back to apphosting.yaml key for signInWithCustomToken if NEXT_PUBLIC_FIREBASE_API_KEY is disabled during rotation', () => {
+    // If the stale CI secret has already been disabled during a key rotation,
+    // signInWithCustomToken fails with the secret's key. The driver must
+    // retry the exchange with the apphosting.yaml key before giving up, log
+    // which key succeeded, and use the authenticated key for AUTH_USER / AUTH_USER_KEY.
+    expect(DRIVER).toContain('async function exchangeCustomToken(key)');
+    expect(DRIVER).toContain('let exchangeKey = API_KEY;');
+    expect(DRIVER).toContain('let exchangeRes = await exchangeCustomToken(API_KEY);');
+    expect(DRIVER).toContain('if (!exchangeRes.ok && APPHOSTING_API_KEY && APPHOSTING_API_KEY !== API_KEY)');
+    expect(DRIVER).toContain('const fallbackRes = await exchangeCustomToken(APPHOSTING_API_KEY);');
+    expect(DRIVER).toContain('exchangeKey = APPHOSTING_API_KEY;');
+    expect(DRIVER).toContain("exchangeKey === API_KEY ? 'NEXT_PUBLIC_FIREBASE_API_KEY' : 'apphosting.yaml key'");
+    expect(DRIVER).toContain('apiKey: exchangeKey');
+    expect(DRIVER).toContain('const AUTH_USER_KEY = `firebase:authUser:${exchangeKey}:[DEFAULT]`;');
+  });
 });
+
