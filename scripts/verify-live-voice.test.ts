@@ -486,6 +486,11 @@ describe('scripts/verify-live.mjs · live-voice gate [3e] (dictation + active-sc
     expect(DRIVER).toContain("exchangeKey === API_KEY ? 'NEXT_PUBLIC_FIREBASE_API_KEY' : 'apphosting.yaml key'");
     expect(DRIVER).toContain('apiKey: exchangeKey');
     expect(DRIVER).toContain('const AUTH_USER_KEY = `firebase:authUser:${exchangeKey}:[DEFAULT]`;');
+    // Restricted browser keys enforce HTTP referrer restrictions. The driver
+    // must send Referer and Origin matching APP so Google Cloud does not reject
+    // the server-side fetch with "Requests from referer <empty> are blocked."
+    expect(DRIVER).toContain("Referer: `${APP}/`");
+    expect(DRIVER).toContain('Origin: APP');
   });
 });
 
