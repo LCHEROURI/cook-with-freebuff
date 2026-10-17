@@ -563,6 +563,27 @@ async function captureVoiceDetailsBlob(cdp, evaluate) {
 }
 
 // ── Session injection (same IndexedDB/localStorage recipe as the other drivers) ──
+// Candidate browser API keys for session injection: the env/secret key plus
+// the key declared in apphosting.yaml (if present on disk). If a key rotation
+// occurred in apphosting.yaml but the CI secret has not yet been rotated,
+// injecting under both candidate keys ensures the deployed client bundle
+// (which expects the apphosting.yaml key) still finds its auth session in
+// IndexedDB/localStorage.
+function readAppHostingApiKey() {
+  try {
+    const text = readFileSync(resolvePath(process.cwd(), 'apphosting.yaml'), 'utf8');
+    const m = text.match(/variable:\s*NEXT_PUBLIC_FIREBASE_API_KEY[\s\S]*?value:\s*([^\s]+)/);
+    return m ? m[1].trim() : null;
+  } catch {
+    return null;
+  }
+}
+const APPHOSTING_API_KEY = readAppHostingApiKey();
+const INJECT_API_KEYS = Array.from(new Set([API_KEY, APPHOSTING_API_KEY].filter(Boolean)));
+if (APPHOSTING_API_KEY && APPHOSTING_API_KEY !== API_KEY) {
+  note(`WARNING: NEXT_PUBLIC_FIREBASE_API_KEY (${API_KEY.slice(0, 8)}…) differs from apphosting.yaml (${APPHOSTING_API_KEY.slice(0, 8)}…) — injecting session for both keys`);
+}
+
 const AUTH_USER = {
   uid: tokenPayload.sub,
   email: tokenPayload.email ?? 'cherouri@gmail.com',
@@ -583,9 +604,8 @@ const AUTH_USER = {
 const AUTH_USER_KEY = `firebase:authUser:${API_KEY}:[DEFAULT]`;
 async function injectSession(evaluate) {
   await evaluate(`(async () => {
-    const key = ${JSON.stringify(AUTH_USER_KEY)};
-    const record = { fbase_key: key, value: ${JSON.stringify(JSON.stringify(AUTH_USER))} };
-    record.value = JSON.parse(record.value);
+    const keys = ${JSON.stringify(INJECT_API_KEYS)};
+    const baseAuthUser = ${JSON.stringify(JSON.stringify(AUTH_USER))};
     await new Promise((resolvePromise, reject) => {
       const req = indexedDB.open('firebaseLocalStorageDb', 1);
       req.onupgradeneeded = () => { req.result.createObjectStore('firebaseLocalStorage', { keyPath: 'fbase_key' }); };
@@ -593,13 +613,23 @@ async function injectSession(evaluate) {
         const db = req.result;
         const tx = db.transaction('firebaseLocalStorage', 'readwrite');
         const store = tx.objectStore('firebaseLocalStorage');
-        store.put(record);
+        for (const k of keys) {
+          const storageKey = 'firebase:authUser:' + k + ':[DEFAULT]';
+          const record = { fbase_key: storageKey, value: JSON.parse(baseAuthUser) };
+          record.value.apiKey = k;
+          store.put(record);
+        }
         tx.oncomplete = () => { db.close(); resolvePromise('ok'); };
         tx.onerror = () => reject(tx.error);
       };
       req.onerror = () => reject(req.error);
     });
-    localStorage.setItem(key, JSON.stringify(record.value));
+    for (const k of keys) {
+      const storageKey = 'firebase:authUser:' + k + ':[DEFAULT]';
+      const val = JSON.parse(baseAuthUser);
+      val.apiKey = k;
+      localStorage.setItem(storageKey, JSON.stringify(val));
+    }
     return 'injected';
   })()`);
 }
@@ -727,7 +757,10 @@ const { evaluate: evB, networkEvents: netB, screenshot: shotB } = cdpB;
 await cdpB.send('Page.navigate', { url: `${APP}/cook` });
 await sleep(4000);
 await injectSession(evB);
-await cdpB.send('Page.reload', { ignoreCache: true });
+// The first navigation may redirect an unauthenticated profile to /login.
+// After injecting Firebase persistence, navigate explicitly to the protected
+// route instead of reloading the already redirected document.
+await cdpB.send('Page.navigate', { url: `${APP}/cook` });
 await sleep(3500);
 
 text = await pageText(evB);
@@ -964,7 +997,10 @@ const { evaluate: evC, networkEvents: netC } = cdpC;
 await cdpC.send('Page.navigate', { url: `${APP}/cook` });
 await sleep(4000);
 await injectSession(evC);
-await cdpC.send('Page.reload', { ignoreCache: true });
+// The first navigation may redirect an unauthenticated profile to /login.
+// After injecting Firebase persistence, navigate explicitly to the protected
+// route instead of reloading the already redirected document.
+await cdpC.send('Page.navigate', { url: `${APP}/cook` });
 await sleep(3500);
 
 text = await pageText(evC);

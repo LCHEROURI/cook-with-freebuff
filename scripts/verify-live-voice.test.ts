@@ -439,4 +439,36 @@ describe('scripts/verify-live.mjs · live-voice gate [3e] (dictation + active-sc
     expect(LIVE).toContain("spawnSync('node', ['scripts/drive-live-voice.mjs', '--app', APP, '--probe-prefix', `${PROBE_PREFIX}voice-`, '--out', `/tmp/verify-live-voice-${t}-${attempt}`], {");
     expect(LIVE).toContain("env: { ...process.env, VERIFY_APP_CHECK_TOKEN: appCheckToken ?? '' },");
   });
+
+  it('navigates explicitly to /cook after session injection in Phase B and Phase C (protects against /login redirect)', () => {
+    // Phase A was fixed in commit 0d215a3: the unauthenticated first navigation
+    // may redirect to /login before session injection runs, so reloading with
+    // Page.reload reloads /login instead of landing on /cook. Phase B and Phase C
+    // must also navigate explicitly to /cook after injectSession instead of reloading.
+    const phaseB = DRIVER.indexOf('// ── PHASE B:');
+    const phaseC = DRIVER.indexOf('// ── PHASE C:');
+    expect(phaseB).toBeGreaterThan(-1);
+    expect(phaseC).toBeGreaterThan(phaseB);
+    const bSection = DRIVER.slice(phaseB, phaseC);
+    const cSection = DRIVER.slice(phaseC);
+
+    expect(bSection).toContain('await injectSession(evB);');
+    expect(bSection).toContain("await cdpB.send('Page.navigate', { url: `${APP}/cook` });");
+    expect(bSection).not.toContain("await injectSession(evB);\nawait cdpB.send('Page.reload'");
+
+    expect(cSection).toContain('await injectSession(evC);');
+    expect(cSection).toContain("await cdpC.send('Page.navigate', { url: `${APP}/cook` });");
+    expect(cSection).not.toContain("await injectSession(evC);\nawait cdpC.send('Page.reload'");
+  });
+
+  it('injects candidate keys (secret key + apphosting.yaml key) so key rotations do not drop the session', () => {
+    // If the browser API key is rotated in apphosting.yaml but the CI secret
+    // NEXT_PUBLIC_FIREBASE_API_KEY has not yet been updated, the deployed app
+    // expects the new key while the test driver holds the old key. Injecting
+    // under both candidate keys ensures the session lands in IndexedDB and
+    // localStorage regardless of secret rotation timing.
+    expect(DRIVER).toContain('readAppHostingApiKey');
+    expect(DRIVER).toContain('INJECT_API_KEYS');
+    expect(DRIVER).toContain('APPHOSTING_API_KEY !== API_KEY');
+  });
 });
