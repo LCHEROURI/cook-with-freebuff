@@ -439,4 +439,53 @@ describe('scripts/verify-live.mjs · live-voice gate [3e] (dictation + active-sc
     expect(LIVE).toContain("spawnSync('node', ['scripts/drive-live-voice.mjs', '--app', APP, '--probe-prefix', `${PROBE_PREFIX}voice-`, '--out', `/tmp/verify-live-voice-${t}-${attempt}`], {");
     expect(LIVE).toContain("env: { ...process.env, VERIFY_APP_CHECK_TOKEN: appCheckToken ?? '' },");
   });
+
+  it('navigates explicitly to /cook after session injection in Phase B and Phase C (protects against /login redirect)', () => {
+    // Phase A was fixed in commit 0d215a3: the unauthenticated first navigation
+    // may redirect to /login before session injection runs, so reloading with
+    // Page.reload reloads /login instead of landing on /cook. Phase B and Phase C
+    // must also navigate explicitly to /cook after injectSession instead of reloading.
+    const phaseB = DRIVER.indexOf('// ── PHASE B:');
+    const phaseC = DRIVER.indexOf('// ── PHASE C:');
+    expect(phaseB).toBeGreaterThan(-1);
+    expect(phaseC).toBeGreaterThan(phaseB);
+    const bSection = DRIVER.slice(phaseB, phaseC);
+    const cSection = DRIVER.slice(phaseC);
+
+    expect(bSection).toContain('await injectSession(evB);');
+    expect(bSection).toContain("await cdpB.send('Page.navigate', { url: `${APP}/cook` });");
+    expect(bSection).not.toContain("await injectSession(evB);\nawait cdpB.send('Page.reload'");
+
+    expect(cSection).toContain('await injectSession(evC);');
+    expect(cSection).toContain("await cdpC.send('Page.navigate', { url: `${APP}/cook` });");
+    expect(cSection).not.toContain("await injectSession(evC);\nawait cdpC.send('Page.reload'");
+  });
+
+  it('injects candidate keys (secret key + apphosting.yaml key) so key rotations do not drop the session', () => {
+    // If the browser API key is rotated in apphosting.yaml but the CI secret
+    // NEXT_PUBLIC_FIREBASE_API_KEY has not yet been updated, the deployed app
+    // expects the new key while the test driver holds the old key. Injecting
+    // under both candidate keys ensures the session lands in IndexedDB and
+    // localStorage regardless of secret rotation timing.
+    expect(DRIVER).toContain('readAppHostingApiKey');
+    expect(DRIVER).toContain('INJECT_API_KEYS');
+    expect(DRIVER).toContain('APPHOSTING_API_KEY !== API_KEY');
+  });
+
+  it('falls back to apphosting.yaml key for signInWithCustomToken if NEXT_PUBLIC_FIREBASE_API_KEY is disabled during rotation', () => {
+    // If the stale CI secret has already been disabled during a key rotation,
+    // signInWithCustomToken fails with the secret's key. The driver must
+    // retry the exchange with the apphosting.yaml key before giving up, log
+    // which key succeeded, and use the authenticated key for AUTH_USER / AUTH_USER_KEY.
+    expect(DRIVER).toContain('async function exchangeCustomToken(key)');
+    expect(DRIVER).toContain('let exchangeKey = API_KEY;');
+    expect(DRIVER).toContain('let exchangeRes = await exchangeCustomToken(API_KEY);');
+    expect(DRIVER).toContain('if (!exchangeRes.ok && APPHOSTING_API_KEY && APPHOSTING_API_KEY !== API_KEY)');
+    expect(DRIVER).toContain('const fallbackRes = await exchangeCustomToken(APPHOSTING_API_KEY);');
+    expect(DRIVER).toContain('exchangeKey = APPHOSTING_API_KEY;');
+    expect(DRIVER).toContain("exchangeKey === API_KEY ? 'NEXT_PUBLIC_FIREBASE_API_KEY' : 'apphosting.yaml key'");
+    expect(DRIVER).toContain('apiKey: exchangeKey');
+    expect(DRIVER).toContain('const AUTH_USER_KEY = `firebase:authUser:${exchangeKey}:[DEFAULT]`;');
+  });
 });
+

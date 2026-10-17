@@ -146,6 +146,24 @@ const API_KEY = process.env.NEXT_PUBLIC_FIREBASE_API_KEY;
 const OWNER_UID = process.env.APP_OWNER_UID;
 const SA_JSON = process.env.FIREBASE_SERVICE_ACCOUNT;
 
+// Candidate browser API keys: the env/secret key plus the key declared in
+// apphosting.yaml (if present on disk). If a key rotation occurred in
+// apphosting.yaml but the CI secret has not yet been rotated, or if the stale
+// secret was already disabled during rotation, discovering both keys lets the
+// driver fall back for both the signInWithCustomToken exchange and the
+// session injection so the monitor is never blinded.
+function readAppHostingApiKey() {
+  try {
+    const text = readFileSync(resolvePath(process.cwd(), 'apphosting.yaml'), 'utf8');
+    const m = text.match(/variable:\s*NEXT_PUBLIC_FIREBASE_API_KEY[\s\S]*?value:\s*([^\s]+)/);
+    return m ? m[1].trim() : null;
+  } catch {
+    return null;
+  }
+}
+const APPHOSTING_API_KEY = readAppHostingApiKey();
+const INJECT_API_KEYS = Array.from(new Set([API_KEY, APPHOSTING_API_KEY].filter(Boolean)));
+
 let failures = 0;
 const ok = (m) => console.log(`  ✓ ${m}`);
 const fail = (m) => { failures += 1; console.log(`  ✗ FAIL: ${m}`); };
@@ -181,17 +199,45 @@ const claims = b64url(JSON.stringify({
 }));
 const sig = createSign('RSA-SHA256').update(`${header}.${claims}`).sign(sa.private_key, 'base64url');
 const customToken = `${header}.${claims}.${sig}`;
-const exchange = await fetch(
-  `https://identitytoolkit.googleapis.com/v1/accounts:signInWithCustomToken?key=${API_KEY}`,
-  { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ token: customToken, returnSecureToken: true }) },
-).then((r) => r.json());
-if (!exchange.idToken || !exchange.refreshToken) {
-  console.error(`✗ FAIL: signInWithCustomToken failed (${JSON.stringify(exchange).slice(0, 200)})`);
+
+async function exchangeCustomToken(key) {
+  try {
+    const r = await fetch(
+      `https://identitytoolkit.googleapis.com/v1/accounts:signInWithCustomToken?key=${key}`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ token: customToken, returnSecureToken: true }),
+      },
+    );
+    const data = await r.json().catch(() => null);
+    if (r.ok && data?.idToken && data?.refreshToken) {
+      return { ok: true, data };
+    }
+    return { ok: false, error: data?.error?.message || JSON.stringify(data) };
+  } catch (err) {
+    return { ok: false, error: err.message };
+  }
+}
+
+let exchangeKey = API_KEY;
+let exchangeRes = await exchangeCustomToken(API_KEY);
+if (!exchangeRes.ok && APPHOSTING_API_KEY && APPHOSTING_API_KEY !== API_KEY) {
+  note(`signInWithCustomToken failed with NEXT_PUBLIC_FIREBASE_API_KEY (${exchangeRes.error}) — retrying with apphosting.yaml key (${APPHOSTING_API_KEY.slice(0, 8)}…)`);
+  const fallbackRes = await exchangeCustomToken(APPHOSTING_API_KEY);
+  if (fallbackRes.ok) {
+    exchangeKey = APPHOSTING_API_KEY;
+    exchangeRes = fallbackRes;
+  }
+}
+if (!exchangeRes.ok || !exchangeRes.data?.idToken || !exchangeRes.data?.refreshToken) {
+  console.error(`✗ FAIL: signInWithCustomToken failed (${exchangeRes.error ?? 'unknown error'})`);
   process.exit(1);
 }
+const exchange = exchangeRes.data;
 const tokenPayload = JSON.parse(Buffer.from(exchange.idToken.split('.')[1], 'base64url').toString());
 const expiresAt = Date.now() + parseInt(exchange.expiresIn, 10) * 1000;
-ok(`owner idToken minted for ${tokenPayload.sub} (${tokenPayload.email ?? 'owner'})`);
+ok(`owner idToken minted for ${tokenPayload.sub} (${tokenPayload.email ?? 'owner'}) via ${exchangeKey === API_KEY ? 'NEXT_PUBLIC_FIREBASE_API_KEY' : 'apphosting.yaml key'} (${exchangeKey.slice(0, 8)}…)`);
 // The driver's OWN /api/cook calls (seed launch in Phase B/C) are gated by
 // App Check enforcement just like the page's — measured live: a bare AUTH
 // got 403 "App Check token missing" and the active screen never rendered.
@@ -563,6 +609,10 @@ async function captureVoiceDetailsBlob(cdp, evaluate) {
 }
 
 // ── Session injection (same IndexedDB/localStorage recipe as the other drivers) ──
+if (APPHOSTING_API_KEY && APPHOSTING_API_KEY !== API_KEY) {
+  note(`WARNING: NEXT_PUBLIC_FIREBASE_API_KEY (${API_KEY.slice(0, 8)}…) differs from apphosting.yaml (${APPHOSTING_API_KEY.slice(0, 8)}…) — injecting session for both keys`);
+}
+
 const AUTH_USER = {
   uid: tokenPayload.sub,
   email: tokenPayload.email ?? 'cherouri@gmail.com',
@@ -577,15 +627,14 @@ const AUTH_USER = {
   stsTokenManager: { refreshToken: exchange.refreshToken, accessToken: exchange.idToken, expirationTime: expiresAt },
   createdAt: String(Date.now() - 86400000),
   lastLoginAt: String(Date.now()),
-  apiKey: API_KEY,
+  apiKey: exchangeKey,
   appName: '[DEFAULT]',
 };
-const AUTH_USER_KEY = `firebase:authUser:${API_KEY}:[DEFAULT]`;
+const AUTH_USER_KEY = `firebase:authUser:${exchangeKey}:[DEFAULT]`;
 async function injectSession(evaluate) {
   await evaluate(`(async () => {
-    const key = ${JSON.stringify(AUTH_USER_KEY)};
-    const record = { fbase_key: key, value: ${JSON.stringify(JSON.stringify(AUTH_USER))} };
-    record.value = JSON.parse(record.value);
+    const keys = ${JSON.stringify(INJECT_API_KEYS)};
+    const baseAuthUser = ${JSON.stringify(JSON.stringify(AUTH_USER))};
     await new Promise((resolvePromise, reject) => {
       const req = indexedDB.open('firebaseLocalStorageDb', 1);
       req.onupgradeneeded = () => { req.result.createObjectStore('firebaseLocalStorage', { keyPath: 'fbase_key' }); };
@@ -593,13 +642,23 @@ async function injectSession(evaluate) {
         const db = req.result;
         const tx = db.transaction('firebaseLocalStorage', 'readwrite');
         const store = tx.objectStore('firebaseLocalStorage');
-        store.put(record);
+        for (const k of keys) {
+          const storageKey = 'firebase:authUser:' + k + ':[DEFAULT]';
+          const record = { fbase_key: storageKey, value: JSON.parse(baseAuthUser) };
+          record.value.apiKey = k;
+          store.put(record);
+        }
         tx.oncomplete = () => { db.close(); resolvePromise('ok'); };
         tx.onerror = () => reject(tx.error);
       };
       req.onerror = () => reject(req.error);
     });
-    localStorage.setItem(key, JSON.stringify(record.value));
+    for (const k of keys) {
+      const storageKey = 'firebase:authUser:' + k + ':[DEFAULT]';
+      const val = JSON.parse(baseAuthUser);
+      val.apiKey = k;
+      localStorage.setItem(storageKey, JSON.stringify(val));
+    }
     return 'injected';
   })()`);
 }
@@ -727,7 +786,10 @@ const { evaluate: evB, networkEvents: netB, screenshot: shotB } = cdpB;
 await cdpB.send('Page.navigate', { url: `${APP}/cook` });
 await sleep(4000);
 await injectSession(evB);
-await cdpB.send('Page.reload', { ignoreCache: true });
+// The first navigation may redirect an unauthenticated profile to /login.
+// After injecting Firebase persistence, navigate explicitly to the protected
+// route instead of reloading the already redirected document.
+await cdpB.send('Page.navigate', { url: `${APP}/cook` });
 await sleep(3500);
 
 text = await pageText(evB);
@@ -964,7 +1026,10 @@ const { evaluate: evC, networkEvents: netC } = cdpC;
 await cdpC.send('Page.navigate', { url: `${APP}/cook` });
 await sleep(4000);
 await injectSession(evC);
-await cdpC.send('Page.reload', { ignoreCache: true });
+// The first navigation may redirect an unauthenticated profile to /login.
+// After injecting Firebase persistence, navigate explicitly to the protected
+// route instead of reloading the already redirected document.
+await cdpC.send('Page.navigate', { url: `${APP}/cook` });
 await sleep(3500);
 
 text = await pageText(evC);
