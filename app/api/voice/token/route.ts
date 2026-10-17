@@ -14,6 +14,7 @@ import { resolveUserId } from '@/lib/server/admin';
 import { gateAppCheck } from '@/lib/server/app-check';
 import { resolveGeminiModel } from '@/lib/server/model-config';
 import { MODEL_ROLE_CONFIG } from '@/lib/ai/model-roles';
+import { entitlementsService } from '@/lib/server/entitlements-service';
 
 const MINT_URL = 'https://generativelanguage.googleapis.com/v1alpha/auth_tokens';
 const SESSION_TTL_MS = 30 * 60 * 1000; // messages allowed for 30 minutes
@@ -31,6 +32,22 @@ export async function POST(req: Request) {
     return NextResponse.json(
       { success: false, error: { code: 'UNAUTHENTICATED', message: 'Authentication required', recoverable: false } },
       { status: 401 },
+    );
+  }
+
+  const quota = await entitlementsService.checkVoiceQuota(userId, 60);
+  if (!quota.allowed) {
+    return NextResponse.json(
+      {
+        success: false,
+        error: {
+          code: 'QUOTA_EXCEEDED',
+          message: 'Voice cooking minutes limit reached for this cycle. Upgrade to Chef Pro for unlimited hands-free voice assistance.',
+          tier: quota.tier,
+          recoverable: false,
+        },
+      },
+      { status: 402 },
     );
   }
 
@@ -78,6 +95,8 @@ export async function POST(req: Request) {
       // client connects with what we return.
       model: (await resolveGeminiModel('live-voice')) ?? process.env[MODEL_ROLE_CONFIG['live-voice'].envVar] ?? MODEL_ROLE_CONFIG['live-voice'].defaultModel,
       expiresAt: typeof minted.expireTime === 'string' ? minted.expireTime : null,
+      tier: quota.tier,
+      remainingSeconds: quota.remaining ?? null,
     },
   });
 }

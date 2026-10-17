@@ -22,14 +22,30 @@ const playfair = Playfair_Display({
 });
 
 export const metadata: Metadata = {
-  title: 'Kitchen Agent',
-  description: 'Voice-first intelligent cooking companion',
+  title: 'Cook With Me — Kitchen Agent',
+  description: 'Voice-first intelligent cooking companion — hands-free guided cooking step by step',
   manifest: '/manifest.json',
+  icons: {
+    icon: [
+      { url: '/icon-192.png', sizes: '192x192', type: 'image/png' },
+      { url: '/icon-512.png', sizes: '512x512', type: 'image/png' },
+      { url: '/icon.svg', type: 'image/svg+xml' },
+    ],
+    apple: [
+      { url: '/icon-192.png', sizes: '192x192' },
+    ],
+  },
+  appleWebApp: {
+    capable: true,
+    statusBarStyle: 'default',
+    title: 'Cook With Me',
+  },
 };
 
 export const viewport: Viewport = {
   width: 'device-width',
   initialScale: 1,
+  viewportFit: 'cover',
   themeColor: '#6B9FD4',
 };
 

@@ -15,9 +15,16 @@ vi.mock('@/lib/server/model-config', () => ({
   resolveGeminiModel: vi.fn(async () => undefined),
 }));
 
+vi.mock('@/lib/server/entitlements-service', () => ({
+  entitlementsService: {
+    checkVoiceQuota: vi.fn(async () => ({ allowed: true, tier: 'free', remaining: 900 })),
+  },
+}));
+
 import { resolveUserId } from '@/lib/server/admin';
 import { gateAppCheck } from '@/lib/server/app-check';
 import { resolveGeminiModel } from '@/lib/server/model-config';
+import { entitlementsService } from '@/lib/server/entitlements-service';
 
 const API_KEY = 'AIzaSy-fake-test-key-00000000000000000';
 
@@ -88,6 +95,22 @@ describe('POST /api/voice/token', () => {
     const body = (await res.json()) as { success: boolean; error: { code: string } };
     expect(body.success).toBe(false);
     expect(body.error.code).toBe('UNAUTHENTICATED');
+  });
+
+  it('returns 402 when user voice quota is exceeded', async () => {
+    mockResolve('uid-1');
+    vi.mocked(entitlementsService.checkVoiceQuota).mockResolvedValueOnce({
+      allowed: false,
+      tier: 'free',
+      limit: 900,
+      remaining: 0,
+      reason: 'VOICE_QUOTA_EXCEEDED',
+    });
+    const res = await POST(authReq());
+    expect(res.status).toBe(402);
+    const body = (await res.json()) as { error: { code: string; tier: string } };
+    expect(body.error.code).toBe('QUOTA_EXCEEDED');
+    expect(body.error.tier).toBe('free');
   });
 
   it('returns 503 when GOOGLE_AI_API_KEY is not configured', async () => {

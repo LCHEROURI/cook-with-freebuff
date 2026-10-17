@@ -15,6 +15,7 @@ import { gateAppCheck } from '@/lib/server/app-check';
 import { createGeminiVisionScanner } from '@/lib/ai/gemini-vision';
 import { resolveGeminiModel } from '@/lib/server/model-config';
 import { logError } from '@/lib/server/logger';
+import { entitlementsService } from '@/lib/server/entitlements-service';
 
 // Vision model resolves from Remote Config first, then VISION_MODEL, then the
 // hardcoded default — so a vision model change needs no redeploy.
@@ -31,6 +32,22 @@ export async function POST(req: Request) {
     return NextResponse.json(
       { success: false, error: { code: 'UNAUTHENTICATED', message: 'Authentication required', recoverable: false } },
       { status: 401 },
+    );
+  }
+
+  const quota = await entitlementsService.checkVisionQuota(userId);
+  if (!quota.allowed) {
+    return NextResponse.json(
+      {
+        success: false,
+        error: {
+          code: 'QUOTA_EXCEEDED',
+          message: 'Fridge photo scan limit reached for this cycle. Upgrade to Chef Pro for unlimited scans.',
+          tier: quota.tier,
+          recoverable: false,
+        },
+      },
+      { status: 402 },
     );
   }
 
@@ -61,6 +78,7 @@ export async function POST(req: Request) {
 
   try {
     const results = await scanner.detectIngredients(body.image);
+    await entitlementsService.recordVisionScan(userId);
     return NextResponse.json({ success: true, data: { ingredients: results } });
   } catch (e) {
     const message = e instanceof Error ? e.message : 'Could not scan the image';

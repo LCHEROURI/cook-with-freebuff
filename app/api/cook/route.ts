@@ -22,6 +22,7 @@ import { extractIngredients, extractRecipePreferences } from '@/lib/agent/extrac
 import { validateRecipe } from '@/lib/recipe/validate';
 import type { Recipe } from '@/lib/domain/types';
 import { logError, logInfo } from '@/lib/server/logger';
+import { entitlementsService } from '@/lib/server/entitlements-service';
 import {
   generateCorrelationId,
   runWithContext,
@@ -281,6 +282,22 @@ async function handle(userId: string, body: unknown): Promise<NextResponse> {
           { status: 400 },
         );
       }
+
+      const quota = await entitlementsService.checkRecipeQuota(userId);
+      if (!quota.allowed) {
+        return NextResponse.json(
+          {
+            success: false,
+            error: {
+              code: 'QUOTA_EXCEEDED',
+              message: 'Monthly recipe generation limit reached. Upgrade to Chef Pro for unlimited recipes.',
+              tier: quota.tier,
+              recoverable: false,
+            },
+          },
+          { status: 402 },
+        );
+      }
       // Parse servings / allergies / dietary restrictions out of the prompt
       // FIRST ("for 4 people, no peanuts, vegetarian"), then strip the exact
       // spans they consumed before ingredient extraction — otherwise "rice
@@ -359,6 +376,7 @@ async function handle(userId: string, body: unknown): Promise<NextResponse> {
         );
       }
       const recipe = generated.recipe;
+      await entitlementsService.recordRecipeGeneration(userId);
       // Validate before offering "Start cooking" — the user never hears a
       // recipe as approved until validation succeeds. Unavailable items are
       // surfaced as confirmations ("you'll also need salt"), not hard errors.

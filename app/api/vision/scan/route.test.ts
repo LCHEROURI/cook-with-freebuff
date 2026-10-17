@@ -26,10 +26,18 @@ vi.mock('@/lib/server/logger', () => ({
   logError: vi.fn(),
 }));
 
+vi.mock('@/lib/server/entitlements-service', () => ({
+  entitlementsService: {
+    checkVisionQuota: vi.fn(async () => ({ allowed: true, tier: 'free', remaining: 3 })),
+    recordVisionScan: vi.fn(async () => {}),
+  },
+}));
+
 import { POST } from './route';
 import { resolveUserId } from '@/lib/server/admin';
 import { gateAppCheck } from '@/lib/server/app-check';
 import { resolveGeminiModel } from '@/lib/server/model-config';
+import { entitlementsService } from '@/lib/server/entitlements-service';
 
 function scanRequest(): Request {
   return new Request('http://localhost/api/vision/scan', {
@@ -68,5 +76,21 @@ describe('POST /api/vision/scan', () => {
     expect(detectIngredients).toHaveBeenCalledTimes(1);
     expect(vi.mocked(gateAppCheck).mock.invocationCallOrder[0])
       .toBeLessThan(detectIngredients.mock.invocationCallOrder[0]);
+    expect(entitlementsService.recordVisionScan).toHaveBeenCalledWith('user-1');
+  });
+
+  it('rejects with 402 QUOTA_EXCEEDED when quota is exhausted', async () => {
+    vi.mocked(entitlementsService.checkVisionQuota).mockResolvedValueOnce({
+      allowed: false,
+      tier: 'free',
+      remaining: 0,
+    });
+
+    const res = await POST(scanRequest());
+    expect(res.status).toBe(402);
+    const body = await res.json();
+    expect(body.error.code).toBe('QUOTA_EXCEEDED');
+    expect(detectIngredients).not.toHaveBeenCalled();
+    expect(entitlementsService.recordVisionScan).not.toHaveBeenCalled();
   });
 });

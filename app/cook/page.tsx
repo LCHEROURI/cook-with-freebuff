@@ -14,16 +14,21 @@ import { useVoiceInput } from '@/lib/hooks/useVoiceInput';
 import { useGeminiLive, shouldAutoFallbackToWebSpeech } from '@/lib/hooks/useGeminiLive';
 import { useLiveDictation } from '@/lib/hooks/useLiveDictation';
 import { useCookingSession } from '@/lib/hooks/useCookingSession';
+import { useScreenWakeLock } from '@/lib/hooks/useScreenWakeLock';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { appCheckHeaders, appCheckLimitedUseHeaders } from '@/lib/firebase/app-check';
+import { usePlayBilling } from '@/lib/hooks/usePlayBilling';
+import { UpgradeModal } from '@/components/UpgradeModal';
 
 export default function CookPage() {
   const router = useRouter();
   // The API routes require a Bearer Firebase ID token. Real sign-in happens
   // on /login; /cook is protected — signed-out visitors are sent there.
   const auth = useAuthSession();
+  const billing = usePlayBilling({ getToken: auth.getToken });
+  const [upgradeModal, setUpgradeModal] = useState<{ open: boolean; reason?: string }>({ open: false });
   const cook = useCookingSession({ getToken: auth.getToken });
   const voice = useVoiceSession({ getToken: auth.getToken });
   // Real microphone → speech-to-text at the edge; the final transcript flows
@@ -60,6 +65,10 @@ export default function CookPage() {
   });
   const [input, setInput] = useState('');
   const snap = cook.snapshot;
+  const isCookingActive = Boolean(
+    snap && snap.found && !snap.paused && snap.phase !== 'COMPLETED' && snap.phase !== 'IDLE'
+  );
+  useScreenWakeLock({ enabled: isCookingActive });
   // Prefer Gemini Live, but fall through to Web Speech when it errors out
   // (e.g. token endpoint unavailable) instead of leaving the mic dead.
   const useLiveMic = live.available && live.status !== 'ERROR';
@@ -196,6 +205,12 @@ export default function CookPage() {
         data?: { ingredients: { name: string; quantity?: number; unit?: string; confidence: number }[] };
         error?: { message?: string };
       };
+      if (res.status === 402) {
+        setUpgradeModal({
+          open: true,
+          reason: body.error?.message ?? 'Fridge photo scan limit reached for this cycle. Upgrade to Chef Pro for unlimited scans.',
+        });
+      }
       if (!res.ok || !body.success || !body.data) {
         setScan({ scanning: false, error: body.error?.message ?? 'Could not scan the image', items: [] });
         return;
@@ -307,6 +322,12 @@ export default function CookPage() {
         };
         error?: { message?: string };
       };
+      if (res.status === 402) {
+        setUpgradeModal({
+          open: true,
+          reason: body.error?.message ?? 'Monthly recipe generation limit reached. Upgrade to Chef Pro for unlimited recipes.',
+        });
+      }
       if (!res.ok || !body.success || !body.data) {
         setStarter({ prompt: trimmed, creating: false, error: body.error?.message ?? `Could not create the recipe (${res.status})`, ready: null, starting: false });
         return;
@@ -474,6 +495,22 @@ export default function CookPage() {
       <main className={styles.main}>
         <section className={styles.empty}>
           {tourVisible && !tourDismissed && <StarterTour onDismiss={() => setTourDismissed(true)} />}
+          <div className="flex items-center justify-end w-full max-w-xl mx-auto mb-2">
+            {billing.isPro ? (
+              <Badge variant="outline" className="border-amber-400 text-amber-300 bg-amber-950/40 px-2 py-0.5 text-xs font-semibold">
+                ✨ Chef Pro
+              </Badge>
+            ) : (
+              <button
+                type="button"
+                onClick={() => setUpgradeModal({ open: true })}
+                className="text-xs text-amber-400/90 hover:text-amber-300 bg-amber-950/40 border border-amber-500/30 rounded-full px-2.5 py-0.5 flex items-center gap-1 transition-colors"
+                aria-label="Upgrade to Chef Pro"
+              >
+                ✨ Upgrade to Chef Pro
+              </button>
+            )}
+          </div>
           <h1 className={styles.title}>Cook With Me</h1>
           <p className={styles.emptyText}>
             {cook.error ??
@@ -746,61 +783,81 @@ export default function CookPage() {
             <Link href="/">← Back to start</Link>
           </Button>
         </section>
+        <UpgradeModal
+          isOpen={upgradeModal.open}
+          reason={upgradeModal.reason}
+          onClose={() => setUpgradeModal({ open: false })}
+          getToken={auth.getToken}
+          onUpgraded={() => {
+            void billing.refreshEntitlements();
+          }}
+        />
       </main>
     );
   }
 
   return (
-    <CookScreen
-      snapshot={snap}
-      error={cook.error}
-      alert={cook.alert}
-      // The turn transcript, surfaced on screen — without this the user only
-      // HEARS responses and the screen can look stuck at "One moment…" even
-      // though the agent answered. The last reply is shown large; older turns
-      // are re-readable in the scrollable transcript.
-      turns={[...voice.transcript, ...live.turns]}
-      voiceStatus={liveVoiceStatus}
-      micSupported={useLiveMic ? true : voiceInput.supported}
-      micListening={useLiveMic ? live.mode !== 'off' : voiceInput.listening}
-      micInterim={useLiveMic ? liveCaption : voiceInput.interim}
-      micHearing={useLiveMic ? live.hearing : false}
-      micReplying={useLiveMic ? live.micReplying : false}
-      voiceEngine={voiceEngine}
-      micError={useLiveMic ? live.error : (fallbackNotice ?? voiceInput.error)}
-      onMicToggle={
-        useLiveMic
-          ? () => {
-              // A fresh manual tap re-arms the one-shot auto-fallback.
-              geminiTapRef.current = true;
-              fellBackRef.current = false;
-              setFallbackNotice(null);
-              void live.toggle();
-            }
-          : voiceInput.toggle
-      }
-      onMicErrorClear={
-        useLiveMic
-          ? live.clearError
-          : () => {
-              voiceInput.clearError();
-              setFallbackNotice(null);
-            }
-      }
-      onCopyDiagnostics={copyMicDiagnostics}
-      onDone={() => void cook.done()}
-      onRepeat={() => void cook.repeat()}
-      onBack={() => void cook.back()}
-      onResume={() => void cook.resume()}
-      onStartOver={() => void cook.startOver()}
-      onDismissAlert={cook.dismissAlert}
-      onSend={(text) => {
-        // While a Live session is open, typed input flows into the SAME
-        // realtime conversation; otherwise it uses the /api/agent path.
-        if (live.mode === 'live') live.sendText(text);
-        else void voice.send(text);
-        setInput('');
-      }}
-    />
+    <>
+      <CookScreen
+        snapshot={snap}
+        error={cook.error}
+        alert={cook.alert}
+        // The turn transcript, surfaced on screen — without this the user only
+        // HEARS responses and the screen can look stuck at "One moment…" even
+        // though the agent answered. The last reply is shown large; older turns
+        // are re-readable in the scrollable transcript.
+        turns={[...voice.transcript, ...live.turns]}
+        voiceStatus={liveVoiceStatus}
+        micSupported={useLiveMic ? true : voiceInput.supported}
+        micListening={useLiveMic ? live.mode !== 'off' : voiceInput.listening}
+        micInterim={useLiveMic ? liveCaption : voiceInput.interim}
+        micHearing={useLiveMic ? live.hearing : false}
+        micReplying={useLiveMic ? live.micReplying : false}
+        voiceEngine={voiceEngine}
+        micError={useLiveMic ? live.error : (fallbackNotice ?? voiceInput.error)}
+        onMicToggle={
+          useLiveMic
+            ? () => {
+                // A fresh manual tap re-arms the one-shot auto-fallback.
+                geminiTapRef.current = true;
+                fellBackRef.current = false;
+                setFallbackNotice(null);
+                void live.toggle();
+              }
+            : voiceInput.toggle
+        }
+        onMicErrorClear={
+          useLiveMic
+            ? live.clearError
+            : () => {
+                voiceInput.clearError();
+                setFallbackNotice(null);
+              }
+        }
+        onCopyDiagnostics={copyMicDiagnostics}
+        onDone={() => void cook.done()}
+        onRepeat={() => void cook.repeat()}
+        onBack={() => void cook.back()}
+        onResume={() => void cook.resume()}
+        onStartOver={() => void cook.startOver()}
+        onDismissAlert={cook.dismissAlert}
+        onSend={(text) => {
+          // While a Live session is open, typed input flows into the SAME
+          // realtime conversation; otherwise it uses the /api/agent path.
+          if (live.mode === 'live') live.sendText(text);
+          else void voice.send(text);
+          setInput('');
+        }}
+      />
+      <UpgradeModal
+        isOpen={upgradeModal.open}
+        reason={upgradeModal.reason}
+        onClose={() => setUpgradeModal({ open: false })}
+        getToken={auth.getToken}
+        onUpgraded={() => {
+          void billing.refreshEntitlements();
+        }}
+      />
+    </>
   );
 }
