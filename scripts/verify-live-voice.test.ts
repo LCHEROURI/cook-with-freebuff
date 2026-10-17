@@ -279,6 +279,15 @@ describe('scripts/verify-live.mjs · live-voice gate [3e] (dictation + active-sc
     expect(DRIVER).toContain('${seen[1]}');
   });
 
+  it('Phase C — settle loop waits for active replies (THINKING/SPEAKING) without premature idle exit', () => {
+    // The second reply can take several seconds to generate (e.g. tool execution)
+    // while the client status is THINKING or SPEAKING. The settle loop must treat
+    // active status as turn progress (resetting stableIdle) rather than premature
+    // idle after 10s, which would cause false-positive network stall verdicts.
+    expect(DRIVER).toContain("st === 'THINKING' || st === 'SPEAKING'");
+    expect(DRIVER).toContain('turnCompletes > initialTurnCompletes');
+  });
+
   it('Phase C — bounds the two bursts end-to-end latency so degradation reddens before the drop', () => {
     // The two-burst proof asserts the bursts HAPPEN; the latency bounds
     // assert they happen FAST ENOUGH. A slow-but-eventual burst would pass

@@ -1164,8 +1164,10 @@ if (got2) {
   // and drained, so a blob captured then reads stuckQueueSince=0 even though
   // the queue could still stall right after (Codex P1, PR #12). Settle until
   // there is EVIDENCE the second reply's playback completed — either we
-  // observed it playing (playing=true) and then drain, or the queue stayed
-  // idle long enough that a reply would have queued (stable idle). A single
+  // observed it playing (playing=true) and then drain, or a second turn
+  // completed, or the queue stayed idle long enough that a reply would have
+  // queued (stable idle). While the agent is actively working on the reply
+  // (status THINKING or SPEAKING), the turn is in progress, not idle. A single
   // clean pre-reply blob must never be accepted, and a bounded settle that
   // never drains must FAIL the run, not fall through as clean.
   let drained = true;
@@ -1173,15 +1175,28 @@ if (got2) {
     drained = false;
     let sawPlaying = false;
     let stableIdle = 0;
+    let initialTurnCompletes = 0;
+    try {
+      const initP = JSON.parse(blob);
+      if (typeof initP?.gemini?.client?.turnCompletes === 'number') {
+        initialTurnCompletes = initP.gemini.client.turnCompletes;
+      }
+    } catch { /* non-JSON blob */ }
+
     for (let i = 0; i < 30 && !drained; i++) {
       let playing = false;
       let queued = 0;
+      let active = false;
+      let turnCompletes = initialTurnCompletes;
       let ok = true;
       try {
         const p = JSON.parse(blob);
+        const st = p?.gemini?.status;
+        if (st === 'THINKING' || st === 'SPEAKING') active = true;
         const c = p?.gemini?.client;
         if (typeof c?.playing === 'boolean') playing = c.playing;
         if (typeof c?.playbackQueueLength === 'number') queued = c.playbackQueueLength;
+        if (typeof c?.turnCompletes === 'number') turnCompletes = c.turnCompletes;
       } catch {
         ok = false; // non-JSON blob — fall through to the verdict
       }
@@ -1189,9 +1204,9 @@ if (got2) {
       if (playing) {
         sawPlaying = true;
         stableIdle = 0;
-      } else if (queued > 0) {
+      } else if (queued > 0 || active) {
         stableIdle = 0;
-      } else if (sawPlaying || ++stableIdle >= 10) {
+      } else if (sawPlaying || turnCompletes > initialTurnCompletes || ++stableIdle >= 10) {
         drained = true;
       }
       if (!drained) {
