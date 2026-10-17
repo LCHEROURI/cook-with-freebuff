@@ -614,14 +614,29 @@ describe('.github/workflows/mic-regression.yml · weekly two-burst pass-rate mon
     expect(MIC_REGRESSION).toContain('CHROME_PATH: ${{ steps.chrome.outputs.chrome-path }}');
   });
 
-  it('wires the three owner credentials and keeps the run fork-safe', () => {
-    for (const name of ['NEXT_PUBLIC_FIREBASE_API_KEY', 'FIREBASE_SERVICE_ACCOUNT', 'APP_OWNER_UID']) {
+  it('wires the four owner credentials and keeps the run fork-safe', () => {
+    for (const name of ['NEXT_PUBLIC_FIREBASE_API_KEY', 'FIREBASE_SERVICE_ACCOUNT', 'APP_OWNER_UID', 'NEXT_PUBLIC_FIREBASE_APP_ID']) {
       expect(MIC_REGRESSION.match(new RegExp(SECRET_WIRING(name).replace(/[$\\{\\}]/g, '\\$&'), 'g'))).toHaveLength(1);
     }
-    expect(MIC_REGRESSION).toContain('if: ${{ env.NEXT_PUBLIC_FIREBASE_API_KEY != \'\' && env.FIREBASE_SERVICE_ACCOUNT != \'\' && env.APP_OWNER_UID != \'\' }}');
+    expect(MIC_REGRESSION).toContain('if: ${{ env.NEXT_PUBLIC_FIREBASE_API_KEY != \'\' && env.FIREBASE_SERVICE_ACCOUNT != \'\' && env.APP_OWNER_UID != \'\' && env.NEXT_PUBLIC_FIREBASE_APP_ID != \'\' }}');
     expect(MIC_REGRESSION).toContain("github.repository == 'LCHEROURI/cook-with-freebuff'");
     expect(MIC_REGRESSION).toContain('::error::Owner-credential secrets missing');
     expect(MIC_REGRESSION).toContain('exit 1');
+  });
+
+  it('mints an App Check token for the batch so enforcement cannot blind the monitor', () => {
+    // The batch invokes drive-live-voice.mjs directly (no verify-live.mjs
+    // wrapper to mint for it), so the workflow itself must supply the
+    // shared token the driver reads from VERIFY_APP_CHECK_TOKEN — and
+    // refuse loudly when the mint fails instead of reddening blind.
+    expect(MIC_REGRESSION).toContain('createToken(process.env.NEXT_PUBLIC_FIREBASE_APP_ID)');
+    expect(MIC_REGRESSION).toContain('export VERIFY_APP_CHECK_TOKEN');
+    expect(MIC_REGRESSION).toContain('refusing to run blind');
+    // The mint must be armed before the first driver invocation.
+    const mintAt = MIC_REGRESSION.indexOf('export VERIFY_APP_CHECK_TOKEN');
+    const invocationAt = MIC_REGRESSION.indexOf('node scripts/drive-live-voice.mjs --phase-c-only');
+    expect(mintAt).toBeGreaterThanOrEqual(0);
+    expect(invocationAt).toBeGreaterThan(mintAt);
   });
 
   it('fails the job loudly when any run drops a burst, and uploads the artifacts', () => {
