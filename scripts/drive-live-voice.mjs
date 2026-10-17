@@ -206,7 +206,11 @@ async function exchangeCustomToken(key) {
       `https://identitytoolkit.googleapis.com/v1/accounts:signInWithCustomToken?key=${key}`,
       {
         method: 'POST',
-        headers: { 'content-type': 'application/json' },
+        headers: {
+          'content-type': 'application/json',
+          Referer: `${APP}/`,
+          Origin: APP,
+        },
         body: JSON.stringify({ token: customToken, returnSecureToken: true }),
       },
     );

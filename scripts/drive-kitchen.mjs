@@ -75,7 +75,11 @@ const sig = createSign('RSA-SHA256').update(`${header}.${claims}`).sign(sa.priva
 const customToken = `${header}.${claims}.${sig}`;
 const exchange = await fetch(
   `https://identitytoolkit.googleapis.com/v1/accounts:signInWithCustomToken?key=${API_KEY}`,
-  { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ token: customToken, returnSecureToken: true }) },
+  {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', Referer: `${APP}/`, Origin: APP },
+    body: JSON.stringify({ token: customToken, returnSecureToken: true }),
+  },
 ).then((r) => r.json());
 if (!exchange.idToken || !exchange.refreshToken) {
   console.error(`✗ FAIL: signInWithCustomToken failed (${JSON.stringify(exchange).slice(0, 200)})`);

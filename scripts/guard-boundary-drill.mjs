@@ -261,17 +261,17 @@ async function assertLiveStatusVerdict(runId, failureCount) {
     }),
   });
   const customToken = await getAuth(app).createCustomToken(OWNER_UID);
+  const APP = (process.env.VERIFY_BASE_URL ?? 'https://cook-with-freebuff--portfolio-app-freebuff2.us-central1.hosted.app').replace(/\/$/, '');
   const exchange = await fetch(
     `https://identitytoolkit.googleapis.com/v1/accounts:signInWithCustomToken?key=${API_KEY}`,
     {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', Referer: `${APP}/`, Origin: APP },
       body: JSON.stringify({ token: customToken, returnSecureToken: true }),
     },
   );
   const idToken = (await exchange.json().catch(() => ({})))?.idToken;
   if (!idToken) throw new Error(`owner token exchange failed (HTTP ${exchange.status})`);
-  const APP = (process.env.VERIFY_BASE_URL ?? 'https://cook-with-freebuff--portfolio-app-freebuff2.us-central1.hosted.app').replace(/\/$/, '');
   const res = await fetch(`${APP}/api/status`, {
     headers: { authorization: `Bearer ${idToken}` },
   });
