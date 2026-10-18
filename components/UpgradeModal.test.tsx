@@ -20,8 +20,7 @@ describe('UpgradeModal', () => {
       tier: 'free',
       entitlement: null,
       error: null,
-      purchaseSubscription: vi.fn(),
-      devUpgradeToPro: vi.fn().mockResolvedValue({ success: true }),
+      purchaseSubscription: vi.fn().mockResolvedValue({ success: true }),
     });
   });
 
@@ -46,7 +45,7 @@ describe('UpgradeModal', () => {
     const onUpgraded = vi.fn();
     render(<UpgradeModal isOpen={true} onClose={vi.fn()} onUpgraded={onUpgraded} />);
 
-    const button = screen.getByRole('button', { name: /Upgrade to Chef Pro/i });
+    const button = screen.getByRole('button', { name: /Subscribe with Google Play/i });
     fireEvent.click(button);
 
     await waitFor(() => {
@@ -63,13 +62,12 @@ describe('UpgradeModal', () => {
       tier: 'free',
       entitlement: null,
       error: null,
-      purchaseSubscription: vi.fn(),
-      devUpgradeToPro: vi.fn().mockResolvedValue({ success: false, error: 'Payment network timeout' }),
+      purchaseSubscription: vi.fn().mockResolvedValue({ success: false, error: 'Payment network timeout' }),
     });
 
     render(<UpgradeModal isOpen={true} onClose={vi.fn()} />);
 
-    const button = screen.getByRole('button', { name: /Upgrade to Chef Pro/i });
+    const button = screen.getByRole('button', { name: /Subscribe with Google Play/i });
     fireEvent.click(button);
 
     await waitFor(() => {

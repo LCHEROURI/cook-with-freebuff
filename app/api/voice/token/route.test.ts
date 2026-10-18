@@ -18,6 +18,7 @@ vi.mock('@/lib/server/model-config', () => ({
 vi.mock('@/lib/server/entitlements-service', () => ({
   entitlementsService: {
     checkVoiceQuota: vi.fn(async () => ({ allowed: true, tier: 'free', remaining: 900 })),
+    reserveVoiceQuota: vi.fn(async () => ({ allowed: true, tier: 'free', remaining: 600, issuedSeconds: 300, rollback: vi.fn() })),
   },
 }));
 
@@ -99,18 +100,36 @@ describe('POST /api/voice/token', () => {
 
   it('returns 402 when user voice quota is exceeded', async () => {
     mockResolve('uid-1');
-    vi.mocked(entitlementsService.checkVoiceQuota).mockResolvedValueOnce({
+    vi.mocked(entitlementsService.reserveVoiceQuota).mockResolvedValueOnce({
       allowed: false,
       tier: 'free',
       limit: 900,
       remaining: 0,
       reason: 'VOICE_QUOTA_EXCEEDED',
+      issuedSeconds: 0,
+      rollback: vi.fn(),
     });
     const res = await POST(authReq());
     expect(res.status).toBe(402);
     const body = (await res.json()) as { error: { code: string; tier: string } };
     expect(body.error.code).toBe('QUOTA_EXCEEDED');
     expect(body.error.tier).toBe('free');
+  });
+
+  it('rolls back quota reservation when mint fails', async () => {
+    mockResolve('uid-1');
+    const rollback = vi.fn();
+    vi.mocked(entitlementsService.reserveVoiceQuota).mockResolvedValueOnce({
+      allowed: true,
+      tier: 'free',
+      remaining: 600,
+      issuedSeconds: 300,
+      rollback,
+    });
+    mockMint(400, { error: { message: 'bad key' } });
+    const res = await POST(authReq());
+    expect(res.status).toBe(502);
+    expect(rollback).toHaveBeenCalled();
   });
 
   it('returns 503 when GOOGLE_AI_API_KEY is not configured', async () => {
@@ -126,6 +145,13 @@ describe('POST /api/voice/token', () => {
   it('mints a single-use token and NEVER exposes the API key', async () => {
     mockResolve('uid-1');
     mockMint(200, mintResponse());
+    vi.mocked(entitlementsService.reserveVoiceQuota).mockResolvedValueOnce({
+      allowed: true,
+      tier: 'pro',
+      remaining: undefined,
+      issuedSeconds: undefined,
+      rollback: vi.fn(),
+    });
 
     const res = await POST(authReq());
     expect(res.status).toBe(200);
@@ -140,7 +166,7 @@ describe('POST /api/voice/token', () => {
     expect(raw).not.toContain('AIzaSy-fake-test-key');
 
     // Upstream contract: v1alpha/auth_tokens, api-key header, uses: 1,
-    // 30-minute expireTime / 2-minute newSessionExpireTime window.
+    // 30-minute expireTime / 2-minute newSessionExpireTime window for Pro users.
     const [url, init] = vi.mocked(fetch).mock.calls[0] as unknown as [string, RequestInit];
     expect(url).toBe('https://generativelanguage.googleapis.com/v1alpha/auth_tokens');
     expect((init.headers as Record<string, string>)['x-goog-api-key']).toBe(API_KEY);
@@ -153,6 +179,31 @@ describe('POST /api/voice/token', () => {
     const expireMs = new Date(sent.expireTime).getTime();
     const startMs = new Date(sent.newSessionExpireTime).getTime();
     expect(expireMs - startMs).toBeGreaterThan(20 * 60 * 1000);
+  });
+
+  it('bounds session TTL to granted quota for free tier users', async () => {
+    mockResolve('uid-1');
+    mockMint(200, mintResponse());
+    vi.mocked(entitlementsService.reserveVoiceQuota).mockResolvedValueOnce({
+      allowed: true,
+      tier: 'free',
+      remaining: 300,
+      issuedSeconds: 300,
+      rollback: vi.fn(),
+    });
+
+    const res = await POST(authReq());
+    expect(res.status).toBe(200);
+
+    const [, init] = vi.mocked(fetch).mock.calls[0] as unknown as [string, RequestInit];
+    const sent = JSON.parse(String(init.body)) as {
+      expireTime: string;
+      newSessionExpireTime: string;
+    };
+    const expireMs = new Date(sent.expireTime).getTime();
+    const startMs = new Date(sent.newSessionExpireTime).getTime();
+    expect(expireMs).toBeGreaterThan(startMs);
+    expect(expireMs - startMs).toBeLessThanOrEqual(5 * 60 * 1000);
   });
 
   it('returns a recoverable 502 when the upstream mint fails', async () => {

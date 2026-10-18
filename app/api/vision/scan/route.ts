@@ -35,15 +35,15 @@ export async function POST(req: Request) {
     );
   }
 
-  const quota = await entitlementsService.checkVisionQuota(userId);
-  if (!quota.allowed) {
+  const reservation = await entitlementsService.reserveVisionQuota(userId);
+  if (!reservation.allowed) {
     return NextResponse.json(
       {
         success: false,
         error: {
           code: 'QUOTA_EXCEEDED',
           message: 'Fridge photo scan limit reached for this cycle. Upgrade to Chef Pro for unlimited scans.',
-          tier: quota.tier,
+          tier: reservation.tier,
           recoverable: false,
         },
       },
@@ -55,6 +55,7 @@ export async function POST(req: Request) {
   try {
     body = await req.json();
   } catch {
+    await reservation.rollback();
     return NextResponse.json(
       { success: false, error: { code: 'INVALID_BODY', message: 'Request body must be JSON', recoverable: false } },
       { status: 400 },
@@ -62,6 +63,7 @@ export async function POST(req: Request) {
   }
 
   if (typeof body.image !== 'string' || !body.image.trim()) {
+    await reservation.rollback();
     return NextResponse.json(
       { success: false, error: { code: 'MISSING_IMAGE', message: 'Provide an image as a base64 data URI in the "image" field', recoverable: true } },
       { status: 400 },
@@ -70,6 +72,7 @@ export async function POST(req: Request) {
 
   // Reject oversized images (6 MiB base64 ≈ 4.5 MiB raw).
   if (body.image.length > 8_000_000) {
+    await reservation.rollback();
     return NextResponse.json(
       { success: false, error: { code: 'IMAGE_TOO_LARGE', message: 'Image is too large. Use a photo under 6 MB.', recoverable: true } },
       { status: 400 },
@@ -78,9 +81,9 @@ export async function POST(req: Request) {
 
   try {
     const results = await scanner.detectIngredients(body.image);
-    await entitlementsService.recordVisionScan(userId);
     return NextResponse.json({ success: true, data: { ingredients: results } });
   } catch (e) {
+    await reservation.rollback();
     const message = e instanceof Error ? e.message : 'Could not scan the image';
     logError('api.vision.scan', { userId, error: message.slice(0, 300) });
     return NextResponse.json(

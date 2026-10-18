@@ -10,6 +10,7 @@ import { NextResponse } from 'next/server';
 import { resolveUserId } from '@/lib/server/admin';
 import { gateAppCheck } from '@/lib/server/app-check';
 import { entitlementsService } from '@/lib/server/entitlements-service';
+import { verifyPlayPurchase } from '@/lib/server/play-billing-verifier';
 import { logError, logInfo } from '@/lib/server/logger';
 
 export async function GET(req: Request) {
@@ -44,7 +45,7 @@ export async function POST(req: Request) {
     );
   }
 
-  let body: { action?: unknown; purchaseToken?: unknown; orderId?: unknown; platform?: unknown };
+  let body: { action?: unknown; purchaseToken?: unknown; orderId?: unknown; platform?: unknown; subscriptionId?: unknown };
   try {
     body = await req.json();
   } catch {
@@ -67,11 +68,32 @@ export async function POST(req: Request) {
       );
     }
 
+    const verification = await verifyPlayPurchase({
+      purchaseToken,
+      subscriptionId: typeof body.subscriptionId === 'string' ? body.subscriptionId : undefined,
+    });
+
+    if (!verification.valid) {
+      logError('api.billing.verification_rejected', { userId, reason: verification.error });
+      return NextResponse.json(
+        {
+          success: false,
+          error: {
+            code: 'INVALID_PURCHASE',
+            message: 'Google Play purchase verification failed. Ensure the subscription was active on Google Play.',
+            recoverable: false,
+          },
+        },
+        { status: 400 },
+      );
+    }
+
     try {
       const updated = await entitlementsService.upgradeToPro(userId, {
         platform: 'google_play',
         purchaseToken,
-        orderId,
+        orderId: verification.orderId || orderId,
+        expiresAtMs: verification.expiresAtMs,
       });
       logInfo('api.billing.upgrade', { userId, platform: 'google_play' });
       return NextResponse.json({ success: true, data: updated });

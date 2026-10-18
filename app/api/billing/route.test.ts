@@ -24,10 +24,19 @@ vi.mock('@/lib/server/logger', () => ({
   logError: vi.fn(),
 }));
 
+vi.mock('@/lib/server/play-billing-verifier', () => ({
+  verifyPlayPurchase: vi.fn(async () => ({
+    valid: true,
+    orderId: 'GPA.1234-5678',
+    expiresAtMs: 2000,
+  })),
+}));
+
 import { GET, POST } from './route';
 import { resolveUserId } from '@/lib/server/admin';
 import { gateAppCheck } from '@/lib/server/app-check';
 import { entitlementsService } from '@/lib/server/entitlements-service';
+import { verifyPlayPurchase } from '@/lib/server/play-billing-verifier';
 
 function createRequest(method: 'GET' | 'POST', body?: unknown): Request {
   const init: RequestInit = {
@@ -154,7 +163,26 @@ describe('/api/billing', () => {
         platform: 'google_play',
         purchaseToken: 'play_token_abc',
         orderId: 'GPA.1234-5678',
+        expiresAtMs: 2000,
       });
+    });
+
+    it('returns 400 when Google Play purchase verification is rejected', async () => {
+      vi.mocked(verifyPlayPurchase).mockResolvedValueOnce({
+        valid: false,
+        error: 'SUBSCRIPTION_EXPIRED',
+      });
+
+      const res = await POST(
+        createRequest('POST', {
+          purchaseToken: 'play_token_expired',
+        }),
+      );
+
+      expect(res.status).toBe(400);
+      const body = await res.json();
+      expect(body.error.code).toBe('INVALID_PURCHASE');
+      expect(entitlementsService.upgradeToPro).not.toHaveBeenCalled();
     });
 
     it('returns 500 when upgradeToPro throws', async () => {

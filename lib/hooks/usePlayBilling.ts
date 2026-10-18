@@ -42,7 +42,6 @@ export interface UsePlayBillingReturn {
   error: string | null;
   refreshEntitlements: () => Promise<UserEntitlement | null>;
   purchaseSubscription: (sku?: string) => Promise<{ success: boolean; error?: string }>;
-  devUpgradeToPro: () => Promise<{ success: boolean; error?: string }>;
 }
 
 export function usePlayBilling(options: UsePlayBillingOptions = {}): UsePlayBillingReturn {
@@ -200,56 +199,6 @@ export function usePlayBilling(options: UsePlayBillingOptions = {}): UsePlayBill
     [getToken, isPlayBillingAvailable],
   );
 
-  const devUpgradeToPro = useCallback(async (): Promise<{ success: boolean; error?: string }> => {
-    if (!getToken) {
-      return { success: false, error: 'Not authenticated' };
-    }
-
-    setIsLoading(true);
-    setError(null);
-
-    try {
-      const idToken = await getToken();
-      if (!idToken) {
-        setIsLoading(false);
-        return { success: false, error: 'Not authenticated' };
-      }
-
-      const headers = {
-        'content-type': 'application/json',
-        authorization: `Bearer ${idToken}`,
-        ...(await appCheckLimitedUseHeaders()),
-      };
-
-      const res = await fetch('/api/billing', {
-        method: 'POST',
-        headers,
-        body: JSON.stringify({
-          action: 'verify_play_purchase',
-          purchaseToken: `dev_token_${Date.now()}`,
-          orderId: `DEV-PRO-${Date.now()}`,
-        }),
-      });
-
-      const body = await res.json();
-      if (res.ok && body.success) {
-        setEntitlement(body.data);
-        setIsLoading(false);
-        return { success: true };
-      } else {
-        const msg = body.error?.message ?? 'Upgrade failed';
-        setError(msg);
-        setIsLoading(false);
-        return { success: false, error: msg };
-      }
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : 'Network error';
-      setError(msg);
-      setIsLoading(false);
-      return { success: false, error: msg };
-    }
-  }, [getToken]);
-
   const isPro = entitlement?.tier === 'pro';
   const tier: SubscriptionTier = entitlement?.tier ?? 'free';
 
@@ -262,6 +211,5 @@ export function usePlayBilling(options: UsePlayBillingOptions = {}): UsePlayBill
     error,
     refreshEntitlements,
     purchaseSubscription,
-    devUpgradeToPro,
   };
 }

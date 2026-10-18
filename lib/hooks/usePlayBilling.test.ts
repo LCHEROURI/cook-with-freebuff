@@ -80,36 +80,6 @@ describe('usePlayBilling', () => {
     delete (window as unknown as { getDigitalGoodsService?: unknown }).getDigitalGoodsService;
   });
 
-  it('handles dev upgrade to pro successfully', async () => {
-    const proEntitlement = {
-      userId: 'user-1',
-      tier: 'pro' as const,
-      status: 'active' as const,
-      usage: { voiceSecondsUsed: 0, recipesGeneratedCount: 0, visionScansCount: 0, cycleStartMs: 100 },
-      updatedAtMs: 200,
-    };
-
-    globalThis.fetch = vi.fn().mockResolvedValue({
-      ok: true,
-      json: async () => ({ success: true, data: proEntitlement }),
-    });
-
-    const { result } = renderHook(() =>
-      usePlayBilling({
-        getToken: () => 'mock-token',
-        autoFetch: false,
-      }),
-    );
-
-    let upgradeResult: { success: boolean; error?: string } | undefined;
-    await act(async () => {
-      upgradeResult = await result.current.devUpgradeToPro();
-    });
-
-    expect(upgradeResult?.success).toBe(true);
-    expect(result.current.isPro).toBe(true);
-    expect(result.current.entitlement).toEqual(proEntitlement);
-  });
 
   it('fails gracefully when purchaseSubscription is called without Digital Goods API', async () => {
     const { result } = renderHook(() =>

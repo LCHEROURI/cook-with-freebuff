@@ -34,7 +34,6 @@ export function UpgradeModal({
     isLoading,
     isPro,
     purchaseSubscription,
-    devUpgradeToPro,
     error: billingError,
   } = usePlayBilling({ getToken, autoFetch: false });
 
@@ -43,23 +42,12 @@ export function UpgradeModal({
 
   const handlePurchase = async () => {
     setLocalError(null);
-    if (isPlayBillingAvailable) {
-      const res = await purchaseSubscription();
-      if (res.success) {
-        setSuccess(true);
-        onUpgraded?.();
-      } else if (res.error) {
-        setLocalError(res.error);
-      }
-    } else {
-      // In web browser / dev testing fallback:
-      const res = await devUpgradeToPro();
-      if (res.success) {
-        setSuccess(true);
-        onUpgraded?.();
-      } else if (res.error) {
-        setLocalError(res.error);
-      }
+    const res = await purchaseSubscription();
+    if (res.success) {
+      setSuccess(true);
+      onUpgraded?.();
+    } else if (res.error) {
+      setLocalError(res.error);
     }
   };
 
@@ -160,7 +148,7 @@ export function UpgradeModal({
                 ) : isPlayBillingAvailable ? (
                   'Subscribe with Google Play'
                 ) : (
-                  'Upgrade to Chef Pro'
+                  'Subscribe with Google Play'
                 )}
               </Button>
               <Button

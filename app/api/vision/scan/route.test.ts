@@ -29,6 +29,7 @@ vi.mock('@/lib/server/logger', () => ({
 vi.mock('@/lib/server/entitlements-service', () => ({
   entitlementsService: {
     checkVisionQuota: vi.fn(async () => ({ allowed: true, tier: 'free', remaining: 3 })),
+    reserveVisionQuota: vi.fn(async () => ({ allowed: true, tier: 'free', remaining: 2, rollback: vi.fn() })),
     recordVisionScan: vi.fn(async () => {}),
   },
 }));
@@ -76,14 +77,15 @@ describe('POST /api/vision/scan', () => {
     expect(detectIngredients).toHaveBeenCalledTimes(1);
     expect(vi.mocked(gateAppCheck).mock.invocationCallOrder[0])
       .toBeLessThan(detectIngredients.mock.invocationCallOrder[0]);
-    expect(entitlementsService.recordVisionScan).toHaveBeenCalledWith('user-1');
+    expect(entitlementsService.reserveVisionQuota).toHaveBeenCalledWith('user-1');
   });
 
   it('rejects with 402 QUOTA_EXCEEDED when quota is exhausted', async () => {
-    vi.mocked(entitlementsService.checkVisionQuota).mockResolvedValueOnce({
+    vi.mocked(entitlementsService.reserveVisionQuota).mockResolvedValueOnce({
       allowed: false,
       tier: 'free',
       remaining: 0,
+      rollback: vi.fn(),
     });
 
     const res = await POST(scanRequest());
@@ -91,6 +93,20 @@ describe('POST /api/vision/scan', () => {
     const body = await res.json();
     expect(body.error.code).toBe('QUOTA_EXCEEDED');
     expect(detectIngredients).not.toHaveBeenCalled();
-    expect(entitlementsService.recordVisionScan).not.toHaveBeenCalled();
+  });
+
+  it('rolls back quota reservation when detection throws', async () => {
+    const rollback = vi.fn();
+    vi.mocked(entitlementsService.reserveVisionQuota).mockResolvedValueOnce({
+      allowed: true,
+      tier: 'free',
+      remaining: 2,
+      rollback,
+    });
+    detectIngredients.mockRejectedValueOnce(new Error('vision model timeout'));
+
+    const res = await POST(scanRequest());
+    expect(res.status).toBe(400);
+    expect(rollback).toHaveBeenCalled();
   });
 });

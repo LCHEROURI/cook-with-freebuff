@@ -283,15 +283,15 @@ async function handle(userId: string, body: unknown): Promise<NextResponse> {
         );
       }
 
-      const quota = await entitlementsService.checkRecipeQuota(userId);
-      if (!quota.allowed) {
+      const reservation = await entitlementsService.reserveRecipeQuota(userId);
+      if (!reservation.allowed) {
         return NextResponse.json(
           {
             success: false,
             error: {
               code: 'QUOTA_EXCEEDED',
               message: 'Monthly recipe generation limit reached. Upgrade to Chef Pro for unlimited recipes.',
-              tier: quota.tier,
+              tier: reservation.tier,
               recoverable: false,
             },
           },
@@ -325,6 +325,7 @@ async function handle(userId: string, body: unknown): Promise<NextResponse> {
       let ingredients = extractIngredients(ingredientsPrompt);
       if (ingredients.length === 0) ingredients = extractIngredients(`I have ${ingredientsPrompt.trim()}`);
       if (ingredients.length === 0) {
+        await reservation.rollback();
         return NextResponse.json(
           {
             success: false,
@@ -352,6 +353,7 @@ async function handle(userId: string, body: unknown): Promise<NextResponse> {
         },
       });
       if (!parsedInput.success) {
+        await reservation.rollback();
         return NextResponse.json(
           {
             success: false,
@@ -364,9 +366,16 @@ async function handle(userId: string, body: unknown): Promise<NextResponse> {
           { status: 400 },
         );
       }
-      const result = await generateRecipeTool.handler(ctx, parsedInput.data);
+      let result;
+      try {
+        result = await generateRecipeTool.handler(ctx, parsedInput.data);
+      } catch (err) {
+        await reservation.rollback();
+        throw err;
+      }
       const generated = (result.data ?? {}) as { recipe?: Recipe };
       if (!result.success || !generated.recipe) {
+        await reservation.rollback();
         return NextResponse.json(
           {
             success: false,
@@ -376,7 +385,6 @@ async function handle(userId: string, body: unknown): Promise<NextResponse> {
         );
       }
       const recipe = generated.recipe;
-      await entitlementsService.recordRecipeGeneration(userId);
       // Validate before offering "Start cooking" — the user never hears a
       // recipe as approved until validation succeeds. Unavailable items are
       // surfaced as confirmations ("you'll also need salt"), not hard errors.

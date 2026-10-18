@@ -36,6 +36,13 @@ describe('EntitlementsService', () => {
           update: mockUpdate,
         }),
       }),
+      runTransaction: vi.fn().mockImplementation(async (cb) => {
+        return cb({
+          get: mockGet,
+          set: mockSet,
+          update: mockUpdate,
+        });
+      }),
     };
 
     service = new EntitlementsService(() => mockDb);
@@ -126,21 +133,89 @@ describe('EntitlementsService', () => {
     expect(result.reason).toBe('RECIPE_QUOTA_EXCEEDED');
   });
 
-  it('upgrades user to Pro upon purchase', async () => {
-    const upgraded = await service.upgradeToPro('user-123', {
+  it('atomically reserves recipe quota and rolls back on failure', async () => {
+    mockDocData = {
+      userId: 'user-123',
+      tier: 'free',
+      status: 'active',
+      usage: {
+        voiceSecondsUsed: 0,
+        recipesGeneratedCount: 2,
+        visionScansCount: 0,
+        cycleStartMs: Date.now(),
+      },
+      updatedAtMs: Date.now(),
+    };
+
+    const reservation = await service.reserveRecipeQuota('user-123');
+    expect(reservation.allowed).toBe(true);
+    expect(mockUpdate).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        'usage.recipesGeneratedCount': 3,
+      }),
+    );
+
+    // Rollback decrements
+    await reservation.rollback();
+    expect(mockUpdate).toHaveBeenCalledTimes(2);
+  });
+
+  it('atomically reserves voice duration and rolls back on failure', async () => {
+    mockDocData = {
+      userId: 'user-123',
+      tier: 'free',
+      status: 'active',
+      usage: {
+        voiceSecondsUsed: 600,
+        recipesGeneratedCount: 0,
+        visionScansCount: 0,
+        cycleStartMs: Date.now(),
+      },
+      updatedAtMs: Date.now(),
+    };
+
+    const reservation = await service.reserveVoiceQuota('user-123', 300);
+    expect(reservation.allowed).toBe(true);
+    expect(reservation.issuedSeconds).toBe(300);
+    expect(mockUpdate).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        'usage.voiceSecondsUsed': 900,
+      }),
+    );
+
+    await reservation.rollback();
+    expect(mockUpdate).toHaveBeenCalledTimes(2);
+  });
+
+  it('upgrades user to Pro upon purchase using update', async () => {
+    mockDocData = {
+      userId: 'user-123',
+      tier: 'free',
+      status: 'active',
+      usage: {
+        voiceSecondsUsed: 0,
+        recipesGeneratedCount: 0,
+        visionScansCount: 0,
+        cycleStartMs: Date.now(),
+      },
+      updatedAtMs: Date.now(),
+    };
+
+    await service.upgradeToPro('user-123', {
       platform: 'google_play',
       purchaseToken: 'tok_play_123',
       orderId: 'GPA.1234-5678',
     });
 
-    expect(mockSet).toHaveBeenCalledWith(
+    expect(mockUpdate).toHaveBeenCalledWith(
       expect.objectContaining({
         tier: 'pro',
         status: 'active',
         platform: 'google_play',
         purchaseToken: 'tok_play_123',
       }),
-      { merge: true },
     );
   });
 });
