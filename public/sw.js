@@ -2,14 +2,18 @@
 // opens instantly on repeat visits and shows a meaningful offline page
 // instead of the browser's "no internet" dinosaur.
 
-const CACHE = 'cook-v1';
+const CACHE = 'cook-v2';
 const SHELL = [
   '/',
   '/cook',
   '/kitchen',
   '/login',
+  '/recipes',
   '/manifest.json',
   '/icon.svg',
+  '/icon-192.png',
+  '/icon-512.png',
+  '/icon-maskable-512.png',
 ];
 
 self.addEventListener('install', (event) => {

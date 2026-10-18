@@ -112,6 +112,10 @@ service cloud.firestore {
     match /dietary_profiles/{userId} {
       allow read, write: if isOwner(userId);
     }
+    match /entitlements/{userId} {
+      allow read: if isOwner(userId);
+      allow write: if false;
+    }
 
     // Kitchen Agent collections (userId field isolation).
     match /recipes/{recipeId} {

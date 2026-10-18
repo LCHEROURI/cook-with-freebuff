@@ -15,6 +15,7 @@ import { gateAppCheck } from '@/lib/server/app-check';
 import { createGeminiVisionScanner } from '@/lib/ai/gemini-vision';
 import { resolveGeminiModel } from '@/lib/server/model-config';
 import { logError } from '@/lib/server/logger';
+import { entitlementsService } from '@/lib/server/entitlements-service';
 
 // Vision model resolves from Remote Config first, then VISION_MODEL, then the
 // hardcoded default — so a vision model change needs no redeploy.
@@ -34,10 +35,27 @@ export async function POST(req: Request) {
     );
   }
 
+  const reservation = await entitlementsService.reserveVisionQuota(userId);
+  if (!reservation.allowed) {
+    return NextResponse.json(
+      {
+        success: false,
+        error: {
+          code: 'QUOTA_EXCEEDED',
+          message: 'Fridge photo scan limit reached for this cycle. Upgrade to Chef Pro for unlimited scans.',
+          tier: reservation.tier,
+          recoverable: false,
+        },
+      },
+      { status: 402 },
+    );
+  }
+
   let body: { image?: unknown };
   try {
     body = await req.json();
   } catch {
+    await reservation.rollback();
     return NextResponse.json(
       { success: false, error: { code: 'INVALID_BODY', message: 'Request body must be JSON', recoverable: false } },
       { status: 400 },
@@ -45,6 +63,7 @@ export async function POST(req: Request) {
   }
 
   if (typeof body.image !== 'string' || !body.image.trim()) {
+    await reservation.rollback();
     return NextResponse.json(
       { success: false, error: { code: 'MISSING_IMAGE', message: 'Provide an image as a base64 data URI in the "image" field', recoverable: true } },
       { status: 400 },
@@ -53,6 +72,7 @@ export async function POST(req: Request) {
 
   // Reject oversized images (6 MiB base64 ≈ 4.5 MiB raw).
   if (body.image.length > 8_000_000) {
+    await reservation.rollback();
     return NextResponse.json(
       { success: false, error: { code: 'IMAGE_TOO_LARGE', message: 'Image is too large. Use a photo under 6 MB.', recoverable: true } },
       { status: 400 },
@@ -63,6 +83,7 @@ export async function POST(req: Request) {
     const results = await scanner.detectIngredients(body.image);
     return NextResponse.json({ success: true, data: { ingredients: results } });
   } catch (e) {
+    await reservation.rollback();
     const message = e instanceof Error ? e.message : 'Could not scan the image';
     logError('api.vision.scan', { userId, error: message.slice(0, 300) });
     return NextResponse.json(

@@ -14,6 +14,7 @@ import { resolveUserId } from '@/lib/server/admin';
 import { gateAppCheck } from '@/lib/server/app-check';
 import { resolveGeminiModel } from '@/lib/server/model-config';
 import { MODEL_ROLE_CONFIG } from '@/lib/ai/model-roles';
+import { entitlementsService } from '@/lib/server/entitlements-service';
 
 const MINT_URL = 'https://generativelanguage.googleapis.com/v1alpha/auth_tokens';
 const SESSION_TTL_MS = 30 * 60 * 1000; // messages allowed for 30 minutes
@@ -34,13 +35,35 @@ export async function POST(req: Request) {
     );
   }
 
+  const reservation = await entitlementsService.reserveVoiceQuota(userId, 300);
+  if (!reservation.allowed) {
+    return NextResponse.json(
+      {
+        success: false,
+        error: {
+          code: 'QUOTA_EXCEEDED',
+          message: 'Voice cooking minutes limit reached for this cycle. Upgrade to Chef Pro for unlimited hands-free voice assistance.',
+          tier: reservation.tier,
+          recoverable: false,
+        },
+      },
+      { status: 402 },
+    );
+  }
+
   const apiKey = process.env.GOOGLE_AI_API_KEY;
   if (!apiKey) {
+    await reservation.rollback();
     return NextResponse.json(
       { success: false, error: { code: 'VOICE_UNAVAILABLE', message: 'Voice is not configured on the server right now.', recoverable: true } },
       { status: 503 },
     );
   }
+
+  const sessionTtlMs =
+    reservation.tier === 'pro'
+      ? SESSION_TTL_MS
+      : (reservation.issuedSeconds ?? 300) * 1000;
 
   let minted: { name?: unknown; expireTime?: unknown };
   try {
@@ -49,18 +72,20 @@ export async function POST(req: Request) {
       headers: { 'content-type': 'application/json', 'x-goog-api-key': apiKey },
       body: JSON.stringify({
         uses: 1,
-        expireTime: new Date(Date.now() + SESSION_TTL_MS).toISOString(),
+        expireTime: new Date(Date.now() + sessionTtlMs).toISOString(),
         newSessionExpireTime: new Date(Date.now() + START_TTL_MS).toISOString(),
       }),
     });
     minted = (await res.json()) as { name?: unknown; expireTime?: unknown };
     if (!res.ok || typeof minted.name !== 'string' || minted.name.length === 0) {
+      await reservation.rollback();
       return NextResponse.json(
         { success: false, error: { code: 'UPSTREAM', message: 'Could not start a voice session right now.', recoverable: true } },
         { status: 502 },
       );
     }
   } catch {
+    await reservation.rollback();
     return NextResponse.json(
       { success: false, error: { code: 'UPSTREAM', message: 'Could not reach the voice service.', recoverable: true } },
       { status: 502 },
@@ -78,6 +103,8 @@ export async function POST(req: Request) {
       // client connects with what we return.
       model: (await resolveGeminiModel('live-voice')) ?? process.env[MODEL_ROLE_CONFIG['live-voice'].envVar] ?? MODEL_ROLE_CONFIG['live-voice'].defaultModel,
       expiresAt: typeof minted.expireTime === 'string' ? minted.expireTime : null,
+      tier: reservation.tier,
+      remainingSeconds: reservation.remaining ?? null,
     },
   });
 }

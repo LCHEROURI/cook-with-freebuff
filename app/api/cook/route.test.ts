@@ -1,19 +1,27 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { NextResponse } from 'next/server';
+vi.mock('server-only', () => ({}));
+vi.mock('@/lib/server/admin', () => ({ resolveUserId: vi.fn() }));
+vi.mock('@/lib/server/stores', () => ({ buildProductionContext: vi.fn() }));
+vi.mock('@/lib/server/app-check', () => ({ gateAppCheck: vi.fn(async () => null) }));
+vi.mock('@/lib/server/entitlements-service', () => ({
+  entitlementsService: {
+    checkRecipeQuota: vi.fn(async () => ({ allowed: true, tier: 'free', remaining: 5 })),
+    reserveRecipeQuota: vi.fn(async () => ({ allowed: true, tier: 'free', remaining: 4, rollback: vi.fn() })),
+    recordRecipeGeneration: vi.fn(async () => {}),
+  },
+}));
+
 import { POST, GET } from './route';
 import { SessionService, InMemorySessionStore } from '@/lib/server/session-service';
 import { InMemoryTimerStore, InMemoryLogStore, InMemoryRecipeStore } from '@/lib/server/tools';
 import type { ToolContext } from '@/lib/server/tools/types';
 import type { Recipe } from '@/lib/domain/types';
-
-vi.mock('@/lib/server/admin', () => ({ resolveUserId: vi.fn() }));
-vi.mock('@/lib/server/stores', () => ({ buildProductionContext: vi.fn() }));
-vi.mock('@/lib/server/app-check', () => ({ gateAppCheck: vi.fn(async () => null) }));
-
 import { resolveUserId } from '@/lib/server/admin';
 import { buildProductionContext } from '@/lib/server/stores';
 import { gateAppCheck } from '@/lib/server/app-check';
 import { registerRecipeGenerator, resetProviders } from '@/lib/ai/provider';
+import { entitlementsService } from '@/lib/server/entitlements-service';
 
 const mockResolve = resolveUserId as ReturnType<typeof vi.fn>;
 const mockBuild = buildProductionContext as ReturnType<typeof vi.fn>;
@@ -615,6 +623,38 @@ describe('/api/cook', () => {
       expect(Array.isArray(req?.availableEquipment)).toBe(true);
       expect(req?.servings).toBe(2);
       expect((req as { ingredientsAvailable?: unknown[] })?.ingredientsAvailable).toHaveLength(2);
+      expect(entitlementsService.reserveRecipeQuota).toHaveBeenCalledWith('user-1');
+    });
+
+    it('returns 402 QUOTA_EXCEEDED when recipe generation quota is exhausted', async () => {
+      vi.mocked(entitlementsService.reserveRecipeQuota).mockResolvedValueOnce({
+        allowed: false,
+        tier: 'free',
+        remaining: 0,
+        rollback: vi.fn(),
+      });
+
+      const res = await post({ action: 'create_recipe', prompt: 'I have chicken and rice' });
+      expect(res.status).toBe(402);
+      const body = await res.json();
+      expect(body.success).toBe(false);
+      expect(body.error.code).toBe('QUOTA_EXCEEDED');
+    });
+
+    it('rolls back quota reservation when recipe generation fails', async () => {
+      const rollback = vi.fn();
+      vi.mocked(entitlementsService.reserveRecipeQuota).mockResolvedValueOnce({
+        allowed: true,
+        tier: 'free',
+        remaining: 4,
+        rollback,
+      });
+      // Reset providers so no recipe generator is configured
+      resetProviders();
+
+      const res = await post({ action: 'create_recipe', prompt: 'I have chicken and rice' });
+      expect(res.status).toBe(400);
+      expect(rollback).toHaveBeenCalled();
     });
   });
 });
