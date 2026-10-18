@@ -1,11 +1,7 @@
-import { createRequire } from 'node:module';
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { homedir } from 'node:os';
-
-const require = createRequire(import.meta.url);
-const core = require('/Users/laredjchehrouri/.npm/_npx/881cef4662d2c421/node_modules/@bubblewrap/core');
-const { TwaManifest, TwaGenerator, Config, JdkHelper, KeyTool, ConsoleLog } = core;
+import { TwaManifest, TwaGenerator, Config, JdkHelper, KeyTool, ConsoleLog } from '@bubblewrap/core';
 
 const targetDirectory = resolve(process.cwd(), 'twa');
 mkdirSync(targetDirectory, { recursive: true });
