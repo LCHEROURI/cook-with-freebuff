@@ -118,4 +118,20 @@ describe('UpgradeModal', () => {
     expect(screen.getByText('Chef Pro Member Active')).toBeInTheDocument();
     expect(screen.getByText('All kitchen quotas are completely unlimited.')).toBeInTheDocument();
   });
+
+  it('uses parent billing prop when provided instead of fetching independently', () => {
+    const parentRefresh = vi.fn();
+    const parentBilling = {
+      isPro: true,
+      isLoading: false,
+      isPlayBillingAvailable: true,
+      entitlement: null,
+      refreshEntitlements: parentRefresh,
+    };
+
+    render(<UpgradeModal isOpen={true} onClose={vi.fn()} billing={parentBilling} />);
+
+    expect(screen.getByText('Chef Pro Member Active')).toBeInTheDocument();
+    expect(parentRefresh).toHaveBeenCalledTimes(1);
+  });
 });

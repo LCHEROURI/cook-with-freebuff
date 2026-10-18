@@ -24,6 +24,8 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { HeaderQuotaBadge } from '@/components/HeaderQuotaBadge';
+import { UpgradeModal } from '@/components/UpgradeModal';
+import { usePlayBilling } from '@/lib/hooks/usePlayBilling';
 import RecipeRowMeta from '../cook/RecipeRowMeta';
 import {
   availableCategories,
@@ -35,6 +37,8 @@ import {
 export default function RecipesPage() {
   const router = useRouter();
   const auth = useAuthSession();
+  const billing = usePlayBilling({ getToken: auth.getToken });
+  const [upgradeModalOpen, setUpgradeModalOpen] = useState(false);
 
   const [recipes, setRecipes] = useState<{ status: 'loading' | 'ready' | 'error'; items: RecipeSummary[] }>({
     status: 'loading',
@@ -197,7 +201,12 @@ export default function RecipesPage() {
             </p>
           </div>
         </div>
-        <HeaderQuotaBadge getToken={auth.getToken} className="shrink-0" />
+        <HeaderQuotaBadge
+          isPro={billing.isPro}
+          entitlement={billing.entitlement}
+          onClick={() => setUpgradeModalOpen(true)}
+          className="shrink-0"
+        />
       </header>
 
       {startError && (
@@ -403,6 +412,16 @@ export default function RecipesPage() {
       <Button asChild variant="ghost" className="mt-2 w-fit text-[var(--color-accent-subtle-text)] hover:text-[var(--color-accent-subtle-text)]">
         <Link href="/cook">＋ New recipe</Link>
       </Button>
+
+      <UpgradeModal
+        isOpen={upgradeModalOpen}
+        onClose={() => setUpgradeModalOpen(false)}
+        getToken={auth.getToken}
+        onUpgraded={() => {
+          void billing.refreshEntitlements();
+        }}
+        billing={billing}
+      />
     </main>
   );
 }

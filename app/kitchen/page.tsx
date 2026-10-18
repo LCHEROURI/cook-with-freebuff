@@ -10,6 +10,8 @@ import { VoiceInputButton } from '@/components/VoiceInputButton';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { HeaderQuotaBadge } from '@/components/HeaderQuotaBadge';
+import { UpgradeModal } from '@/components/UpgradeModal';
+import { usePlayBilling } from '@/lib/hooks/usePlayBilling';
 import { useSpeech } from '@/lib/hooks/useSpeech';
 import { appendTranscript, pantryFieldUI, leftoverFieldUI, profileFieldUI } from '@/lib/domain/fieldUI';
 import type { PantryItemView } from '@/lib/server/pantry-service';
@@ -76,6 +78,8 @@ function GrocerySourceBadge({ source }: { source: GroceryItemSource }) {
 export default function KitchenPage() {
   const router = useRouter();
   const auth = useAuthSession();
+  const billing = usePlayBilling({ getToken: auth.getToken });
+  const [upgradeModalOpen, setUpgradeModalOpen] = useState(false);
 
   const [data, setData] = useState<KitchenSnapshot | null>(null);
   const [loading, setLoading] = useState(true);
@@ -259,7 +263,11 @@ export default function KitchenPage() {
           </Button>
           <h1 className={styles.title}>My Kitchen</h1>
         </div>
-        <HeaderQuotaBadge getToken={auth.getToken} />
+        <HeaderQuotaBadge
+          isPro={billing.isPro}
+          entitlement={billing.entitlement}
+          onClick={() => setUpgradeModalOpen(true)}
+        />
       </header>
       <p className={styles.subtitle}>
         Everything I remember about your kitchen — you can read it and change it here, no need to ask.
@@ -822,6 +830,16 @@ export default function KitchenPage() {
       <Button asChild variant="ghost" className="w-fit text-foreground hover:text-foreground">
         <Link href="/">← Back to start</Link>
       </Button>
+
+      <UpgradeModal
+        isOpen={upgradeModalOpen}
+        onClose={() => setUpgradeModalOpen(false)}
+        getToken={auth.getToken}
+        onUpgraded={() => {
+          void billing.refreshEntitlements();
+        }}
+        billing={billing}
+      />
     </main>
   );
 }
