@@ -134,4 +134,22 @@ describe('UpgradeModal', () => {
     expect(screen.getByText('Chef Pro Member Active')).toBeInTheDocument();
     expect(parentRefresh).toHaveBeenCalledTimes(1);
   });
+
+  it('does not re-invoke refreshEntitlements on subsequent re-renders while modal remains open', () => {
+    const parentRefresh = vi.fn();
+    const parentBilling = {
+      isPro: false,
+      isLoading: false,
+      isPlayBillingAvailable: true,
+      entitlement: null,
+      refreshEntitlements: parentRefresh,
+    };
+
+    const { rerender } = render(<UpgradeModal isOpen={true} onClose={vi.fn()} billing={{ ...parentBilling }} />);
+    expect(parentRefresh).toHaveBeenCalledTimes(1);
+
+    // Re-render with new billing object reference (simulating parent state updates)
+    rerender(<UpgradeModal isOpen={true} onClose={vi.fn()} billing={{ ...parentBilling }} />);
+    expect(parentRefresh).toHaveBeenCalledTimes(1);
+  });
 });

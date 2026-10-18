@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import {
   Dialog,
   DialogContent,
@@ -54,16 +54,18 @@ export function UpgradeModal({
 
   const [localError, setLocalError] = useState<string | null>(null);
   const [success, setSuccess] = useState<boolean>(false);
+  const hasRefreshedRef = useRef(false);
 
   useEffect(() => {
     if (isOpen) {
-      if (parentBilling?.refreshEntitlements) {
-        void parentBilling.refreshEntitlements();
-      } else if (getToken) {
-        void fallbackBilling.refreshEntitlements();
+      if (!hasRefreshedRef.current) {
+        hasRefreshedRef.current = true;
+        void refreshEntitlements?.();
       }
+    } else {
+      hasRefreshedRef.current = false;
     }
-  }, [isOpen, getToken, fallbackBilling, parentBilling]);
+  }, [isOpen, refreshEntitlements]);
 
   const handlePurchase = async () => {
     setLocalError(null);
