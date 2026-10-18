@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import styles from '@/app/cook/page.module.css';
 import { formatIngredientQuantityPrefix, formatIngredientNameSuffix } from '@/lib/recipe/format';
@@ -10,6 +10,7 @@ import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { formatPausedAgo, type ActiveTimerInfo, type GuideSnapshot } from '@/lib/domain/guide';
 import type { AgentTurn, VoiceStatus } from '@/lib/agent';
+import { triggerTimerAlarm } from '@/lib/sound/timer-alarm';
 
 function formatCountdown(seconds: number): string {
   const s = Math.max(0, Math.floor(seconds));
@@ -23,6 +24,9 @@ function TimerDisplay({ timer, paused, pausedAt }: { timer: ActiveTimerInfo; pau
   // Ticks the "paused 2m ago" caption while paused (the frozen remainder itself
   // must NOT tick — that comes from the server).
   const [nowMs, setNowMs] = useState(Date.now());
+  const [dismissed, setDismissed] = useState(false);
+  const alarmedRef = useRef(false);
+
   useEffect(() => {
     // While paused the server freezes the countdown at the at-pause remainder
     // (derived from pausedAt) — /cook must agree with the card and NOT tick
@@ -35,22 +39,52 @@ function TimerDisplay({ timer, paused, pausedAt }: { timer: ActiveTimerInfo; pau
     }
     setRemaining(timer.remainingSeconds);
     const id = window.setInterval(() => {
-      setRemaining((prev) => Math.max(0, prev - 1));
+      setRemaining((prev) => {
+        const next = Math.max(0, prev - 1);
+        if (next === 0 && !alarmedRef.current) {
+          alarmedRef.current = true;
+          void triggerTimerAlarm();
+        }
+        return next;
+      });
     }, 1000);
     return () => window.clearInterval(id);
   }, [timer.endsAt, timer.remainingSeconds, paused]);
+
+  useEffect(() => {
+    if (timer.remainingSeconds <= 0 && !paused && !alarmedRef.current) {
+      alarmedRef.current = true;
+      void triggerTimerAlarm();
+    }
+  }, [timer.remainingSeconds, paused]);
+
+  const isElapsed = remaining <= 0 && !paused;
+
   return (
     <div
-      className={paused ? `${styles.timer} ${styles.timerPaused}` : styles.timer}
+      className={
+        paused
+          ? `${styles.timer} ${styles.timerPaused}`
+          : isElapsed
+            ? `${styles.timer} ${styles.timerElapsed}`
+            : styles.timer
+      }
       role="timer"
       aria-label={
         paused
           ? `${timer.label}, paused at ${formatCountdown(timer.remainingSeconds)}, ${formatPausedAgo(pausedAt ?? nowMs, nowMs)}`
-          : `${timer.label}, ${formatCountdown(remaining)} remaining`
+          : isElapsed
+            ? `${timer.label}, timer finished!`
+            : `${timer.label}, ${formatCountdown(remaining)} remaining`
       }
     >
-      <span className={styles.timerLabel}>{timer.label}</span>
-      <span className={styles.timerRight}>
+      <div className={styles.timerLeft}>
+        <span className={styles.timerLabel}>{timer.label}</span>
+        {isElapsed && !dismissed && (
+          <span className={styles.timerDoneBadge}>Ready! 🔔</span>
+        )}
+      </div>
+      <div className={styles.timerRight}>
         <span className={styles.timerCount}>
           {paused ? '⏸ ' : ''}
           {formatCountdown(paused ? timer.remainingSeconds : remaining)}
@@ -58,7 +92,17 @@ function TimerDisplay({ timer, paused, pausedAt }: { timer: ActiveTimerInfo; pau
         {paused && pausedAt ? (
           <span className={styles.timerPausedAgo}>{formatPausedAgo(pausedAt, nowMs)}</span>
         ) : null}
-      </span>
+        {isElapsed && !dismissed ? (
+          <button
+            type="button"
+            className={styles.timerDismissBtn}
+            onClick={() => setDismissed(true)}
+            aria-label={`Dismiss ${timer.label} timer`}
+          >
+            Dismiss
+          </button>
+        ) : null}
+      </div>
     </div>
   );
 }

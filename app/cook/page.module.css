@@ -689,6 +689,12 @@
   gap: 0.25rem;
 }
 
+.timerLeft {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
 .timerLabel {
   font-size: 1rem;
   font-weight: 600;
@@ -701,6 +707,57 @@
   font-family: var(--font-mono);
   font-variant-numeric: tabular-nums;
   color: var(--color-accent);
+}
+
+.timerElapsed {
+  background: rgba(239, 68, 68, 0.12);
+  border-color: rgba(239, 68, 68, 0.5);
+  animation: timerPulse 2s ease-in-out infinite;
+}
+
+.timerElapsed .timerLabel,
+.timerElapsed .timerCount {
+  color: #ef4444;
+}
+
+@keyframes timerPulse {
+  0%, 100% {
+    box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.3);
+  }
+  50% {
+    box-shadow: 0 0 12px 2px rgba(239, 68, 68, 0.2);
+  }
+}
+
+.timerDoneBadge {
+  display: inline-flex;
+  align-items: center;
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: #ef4444;
+  background: rgba(239, 68, 68, 0.15);
+  padding: 0.15rem 0.45rem;
+  border-radius: var(--radius-sm);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.timerDismissBtn {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: #ef4444;
+  background: transparent;
+  border: 1px solid rgba(239, 68, 68, 0.4);
+  border-radius: var(--radius-sm);
+  padding: 0.2rem 0.5rem;
+  cursor: pointer;
+  transition: all var(--duration-fast) var(--ease-standard);
+  margin-top: 0.25rem;
+}
+
+.timerDismissBtn:hover {
+  background: rgba(239, 68, 68, 0.2);
+  border-color: #ef4444;
 }
 
 /* ── Completed ───────────────────────────────────────────────────────────── */
