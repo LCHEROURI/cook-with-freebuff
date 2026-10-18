@@ -285,6 +285,60 @@ describe('EntitlementsService', () => {
       expect(reservation.tier).toBe('pro');
       expect(reservation.remaining).toBe(Infinity);
     });
+
+    it('recognizes owner from isOwner: true flag in document even when APP_OWNER_UID env is unset', async () => {
+      delete process.env.APP_OWNER_UID;
+      mockDocData = {
+        userId: 'deployed-owner-user',
+        tier: 'pro',
+        status: 'active',
+        isOwner: true,
+        usage: {
+          voiceSecondsUsed: 1500,
+          recipesGeneratedCount: 10,
+          visionScansCount: 5,
+          cycleStartMs: Date.now(),
+        },
+        updatedAtMs: Date.now(),
+      };
+
+      const entitlement = await service.getEntitlement('deployed-owner-user');
+      expect(entitlement.tier).toBe('pro');
+      expect(entitlement.isOwner).toBe(true);
+
+      const reservation = await service.reserveVoiceQuota('deployed-owner-user', 300);
+      expect(reservation.allowed).toBe(true);
+      expect(reservation.tier).toBe('pro');
+      expect(reservation.remaining).toBe(Infinity);
+    });
+
+    it('never demotes an owner with an expired expiresAtMs, removing expiration and maintaining Pro', async () => {
+      mockDocData = {
+        userId: 'owner-uid-123',
+        tier: 'pro',
+        status: 'active',
+        expiresAtMs: Date.now() - 100000, // expired timestamp
+        usage: {
+          voiceSecondsUsed: 0,
+          recipesGeneratedCount: 0,
+          visionScansCount: 0,
+          cycleStartMs: Date.now(),
+        },
+        updatedAtMs: Date.now(),
+      };
+
+      const entitlement = await service.getEntitlement('owner-uid-123');
+      expect(entitlement.tier).toBe('pro');
+      expect(entitlement.status).toBe('active');
+      expect(entitlement.expiresAtMs).toBeUndefined();
+      expect(mockUpdate).toHaveBeenCalledWith(
+        expect.objectContaining({
+          tier: 'pro',
+          status: 'active',
+          isOwner: true,
+        }),
+      );
+    });
   });
 });
 

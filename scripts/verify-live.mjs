@@ -230,6 +230,8 @@ let seededRecipeId = null;
 // the session launched from it — both must be removed on EVERY exit path.
 let starterRecipeId = null;
 let starterSid = null;
+let originalOwnerEntitlement = null;
+let ownerEntitlementPrimed = false;
 let cleanupRan = false;
 
 async function cleanup() {
@@ -259,9 +261,16 @@ async function cleanup() {
     events.forEach((d) => deletes.push(d.ref.delete()));
     timers.forEach((d) => deletes.push(d.ref.delete()));
   }
+  if (ownerEntitlementPrimed) {
+    if (originalOwnerEntitlement) {
+      deletes.push(db.collection('entitlements').doc(OWNER_UID).set(originalOwnerEntitlement));
+    } else {
+      deletes.push(db.collection('entitlements').doc(OWNER_UID).delete());
+    }
+  }
   try {
     await Promise.allSettled(deletes);
-    console.log('  ↳ seeded recipe, starter probe (recipe + session), events, timers, pantry probe, and grocery probe removed');
+    console.log('  ↳ seeded recipe, starter probe (recipe + session), events, timers, pantry probe, and grocery probe removed; owner entitlement restored');
   } catch {
     console.log('  ↳ cleanup best-effort (some docs may remain)');
   }
@@ -486,12 +495,21 @@ try {
   // The app owner / verification probe runner requires Chef Pro tier so live
   // integration flows (voice tokens, starter generation, and vision scans) are
   // never blocked by free-tier rate limits or quota depletion from prior runs.
+  // Snapshot existing entitlement first so cleanup restores exact state.
   console.log(`\n[1b] Priming owner entitlement (tier: pro)`);
-  await db.collection('entitlements').doc(OWNER_UID).set({
+  const entRef = db.collection('entitlements').doc(OWNER_UID);
+  const existingEntSnap = await entRef.get();
+  originalOwnerEntitlement = existingEntSnap.exists ? existingEntSnap.data() : null;
+  ownerEntitlementPrimed = true;
+
+  await entRef.set({
     userId: OWNER_UID,
     tier: 'pro',
     status: 'active',
-    platform: 'web',
+    isOwner: true,
+    platform: originalOwnerEntitlement?.platform ?? 'web',
+    ...(originalOwnerEntitlement?.orderId ? { orderId: originalOwnerEntitlement.orderId } : {}),
+    ...(originalOwnerEntitlement?.purchaseToken ? { purchaseToken: originalOwnerEntitlement.purchaseToken } : {}),
     usage: {
       voiceSecondsUsed: 0,
       recipesGeneratedCount: 0,
@@ -499,8 +517,8 @@ try {
       cycleStartMs: Date.now(),
     },
     updatedAtMs: Date.now(),
-  }, { merge: true });
-  ok(`owner ${OWNER_UID} entitlement primed as Chef Pro`);
+  });
+  ok(`owner ${OWNER_UID} entitlement primed as Chef Pro (snapshot saved for cleanup)`);
 
   // ── 2. Mint a real owner ID token ───────────────────────────────────────
   let idToken;

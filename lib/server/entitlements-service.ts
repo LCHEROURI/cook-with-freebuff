@@ -22,7 +22,8 @@ export class EntitlementsService {
 
   constructor(private readonly getDb: () => Firestore | null = getAdminDb) {}
 
-  private isAppOwner(userId: string): boolean {
+  private isAppOwner(userId: string, data?: UserEntitlement): boolean {
+    if (data?.isOwner === true) return true;
     const ownerUid = process.env.APP_OWNER_UID?.trim();
     return Boolean(ownerUid && userId === ownerUid);
   }
@@ -34,12 +35,13 @@ export class EntitlementsService {
   async getEntitlement(userId: string): Promise<UserEntitlement> {
     const db = this.getDb();
     const now = Date.now();
-    const isOwner = this.isAppOwner(userId);
+    const isOwnerEnv = this.isAppOwner(userId);
 
     const defaultEntitlement: UserEntitlement = {
       userId,
-      tier: isOwner ? 'pro' : 'free',
+      tier: isOwnerEnv ? 'pro' : 'free',
       status: 'active',
+      isOwner: isOwnerEnv || undefined,
       usage: {
         voiceSecondsUsed: 0,
         recipesGeneratedCount: 0,
@@ -55,9 +57,11 @@ export class EntitlementsService {
         this.inMemoryFallback.set(userId, defaultEntitlement);
         return { ...defaultEntitlement, usage: { ...defaultEntitlement.usage } };
       }
-      if (isOwner && (existing.tier !== 'pro' || existing.status !== 'active')) {
+      if (this.isAppOwner(userId, existing)) {
         existing.tier = 'pro';
         existing.status = 'active';
+        existing.isOwner = true;
+        delete existing.expiresAtMs;
       }
       return { ...existing, usage: { ...existing.usage } };
     }
@@ -71,16 +75,23 @@ export class EntitlementsService {
     }
 
     const data = snap.data() as UserEntitlement;
+    const isOwner = this.isAppOwner(userId, data);
 
-    // App owner always retains Chef Pro access
-    if (isOwner && (data.tier !== 'pro' || data.status !== 'active')) {
-      data.tier = 'pro';
-      data.status = 'active';
-      await ref.update({
-        tier: 'pro',
-        status: 'active',
-        updatedAtMs: now,
-      });
+    // App owner always retains Chef Pro access and is never subject to expiration
+    if (isOwner) {
+      if (data.tier !== 'pro' || data.status !== 'active' || data.expiresAtMs !== undefined || !data.isOwner) {
+        data.tier = 'pro';
+        data.status = 'active';
+        data.isOwner = true;
+        delete data.expiresAtMs;
+        await ref.update({
+          tier: 'pro',
+          status: 'active',
+          isOwner: true,
+          expiresAtMs: FieldValue.delete(),
+          updatedAtMs: now,
+        });
+      }
     } else if (data.tier === 'pro' && data.expiresAtMs && data.expiresAtMs < now) {
       // Check if non-owner subscription has expired
       data.tier = 'free';
@@ -121,7 +132,7 @@ export class EntitlementsService {
 
     if (!db) {
       const ent = await this.getEntitlement(userId);
-      if (this.isAppOwner(userId) || ent.tier === 'pro') {
+      if (this.isAppOwner(userId, ent) || ent.tier === 'pro') {
         return { allowed: true, tier: 'pro', remaining: Infinity, issuedSeconds: requestedSeconds, rollback: async () => {} };
       }
       const limit = TIER_LIMITS.free.voiceSecondsPerCycle;
@@ -151,13 +162,14 @@ export class EntitlementsService {
     const reservation = await db.runTransaction(async (t) => {
       const snap = await t.get(ref);
       let data: UserEntitlement;
-      const isOwner = this.isAppOwner(userId);
 
       if (!snap.exists) {
+        const isOwnerEnv = this.isAppOwner(userId);
         data = {
           userId,
-          tier: isOwner ? 'pro' : 'free',
+          tier: isOwnerEnv ? 'pro' : 'free',
           status: 'active',
+          isOwner: isOwnerEnv || undefined,
           usage: { voiceSecondsUsed: 0, recipesGeneratedCount: 0, visionScansCount: 0, cycleStartMs: now },
           updatedAtMs: now,
         };
@@ -165,6 +177,8 @@ export class EntitlementsService {
       } else {
         data = snap.data() as UserEntitlement;
       }
+
+      const isOwner = this.isAppOwner(userId, data);
 
       // Check rollover
       if (now - (data.usage?.cycleStartMs || 0) > CYCLE_DURATION_MS) {
@@ -217,7 +231,7 @@ export class EntitlementsService {
 
     if (!db) {
       const ent = await this.getEntitlement(userId);
-      if (this.isAppOwner(userId) || ent.tier === 'pro') {
+      if (this.isAppOwner(userId, ent) || ent.tier === 'pro') {
         return { allowed: true, tier: 'pro', remaining: Infinity, rollback: async () => {} };
       }
       const limit = TIER_LIMITS.free.recipeGenerationsPerCycle;
@@ -245,13 +259,14 @@ export class EntitlementsService {
     const reservation = await db.runTransaction(async (t) => {
       const snap = await t.get(ref);
       let data: UserEntitlement;
-      const isOwner = this.isAppOwner(userId);
 
       if (!snap.exists) {
+        const isOwnerEnv = this.isAppOwner(userId);
         data = {
           userId,
-          tier: isOwner ? 'pro' : 'free',
+          tier: isOwnerEnv ? 'pro' : 'free',
           status: 'active',
+          isOwner: isOwnerEnv || undefined,
           usage: { voiceSecondsUsed: 0, recipesGeneratedCount: 0, visionScansCount: 0, cycleStartMs: now },
           updatedAtMs: now,
         };
@@ -259,6 +274,8 @@ export class EntitlementsService {
       } else {
         data = snap.data() as UserEntitlement;
       }
+
+      const isOwner = this.isAppOwner(userId, data);
 
       if (now - (data.usage?.cycleStartMs || 0) > CYCLE_DURATION_MS) {
         data.usage = { voiceSecondsUsed: 0, recipesGeneratedCount: 0, visionScansCount: 0, cycleStartMs: now };
@@ -307,7 +324,7 @@ export class EntitlementsService {
 
     if (!db) {
       const ent = await this.getEntitlement(userId);
-      if (this.isAppOwner(userId) || ent.tier === 'pro') {
+      if (this.isAppOwner(userId, ent) || ent.tier === 'pro') {
         return { allowed: true, tier: 'pro', remaining: Infinity, rollback: async () => {} };
       }
       const limit = TIER_LIMITS.free.visionScansPerCycle;
@@ -335,13 +352,14 @@ export class EntitlementsService {
     const reservation = await db.runTransaction(async (t) => {
       const snap = await t.get(ref);
       let data: UserEntitlement;
-      const isOwner = this.isAppOwner(userId);
 
       if (!snap.exists) {
+        const isOwnerEnv = this.isAppOwner(userId);
         data = {
           userId,
-          tier: isOwner ? 'pro' : 'free',
+          tier: isOwnerEnv ? 'pro' : 'free',
           status: 'active',
+          isOwner: isOwnerEnv || undefined,
           usage: { voiceSecondsUsed: 0, recipesGeneratedCount: 0, visionScansCount: 0, cycleStartMs: now },
           updatedAtMs: now,
         };
@@ -349,6 +367,8 @@ export class EntitlementsService {
       } else {
         data = snap.data() as UserEntitlement;
       }
+
+      const isOwner = this.isAppOwner(userId, data);
 
       if (now - (data.usage?.cycleStartMs || 0) > CYCLE_DURATION_MS) {
         data.usage = { voiceSecondsUsed: 0, recipesGeneratedCount: 0, visionScansCount: 0, cycleStartMs: now };
