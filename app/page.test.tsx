@@ -48,6 +48,10 @@ vi.mock('@/lib/audio/timer-chime', () => ({
   playTimerChime: vi.fn(),
 }));
 
+vi.mock('@/components/HeaderQuotaBadge', () => ({
+  HeaderQuotaBadge: () => null,
+}));
+
 import { useAuthSession, type UseAuthSessionResult } from '@/lib/auth/useAuthSession';
 import { unlockAudioOnGesture, playTimerChime } from '@/lib/audio/timer-chime';
 import HomePage from './page';

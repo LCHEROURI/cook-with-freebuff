@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import {
   Dialog,
   DialogContent,
@@ -13,6 +13,7 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Sparkles, Mic, ChefHat, Camera, Timer, Check, AlertCircle, Loader2 } from 'lucide-react';
 import { usePlayBilling } from '@/lib/hooks/usePlayBilling';
+import { TIER_LIMITS } from '@/lib/domain/entitlements';
 
 export interface UpgradeModalProps {
   isOpen: boolean;
@@ -33,12 +34,20 @@ export function UpgradeModal({
     isPlayBillingAvailable,
     isLoading,
     isPro,
+    entitlement,
+    refreshEntitlements,
     purchaseSubscription,
     error: billingError,
   } = usePlayBilling({ getToken, autoFetch: false });
 
   const [localError, setLocalError] = useState<string | null>(null);
   const [success, setSuccess] = useState<boolean>(false);
+
+  useEffect(() => {
+    if (isOpen && getToken) {
+      void refreshEntitlements();
+    }
+  }, [isOpen, getToken, refreshEntitlements]);
 
   const handlePurchase = async () => {
     setLocalError(null);
@@ -52,6 +61,20 @@ export function UpgradeModal({
   };
 
   const displayError = localError || billingError;
+
+  // Calculate usage and percentages
+  const voiceLimitSec = TIER_LIMITS.free.voiceSecondsPerCycle; // 900s
+  const voiceUsedSec = entitlement?.usage?.voiceSecondsUsed ?? 0;
+  const voiceMinsUsed = Math.floor(voiceUsedSec / 60);
+  const voicePercent = Math.min(100, Math.round((voiceUsedSec / voiceLimitSec) * 100));
+
+  const recipeLimit = TIER_LIMITS.free.recipeGenerationsPerCycle; // 5
+  const recipesUsed = entitlement?.usage?.recipesGeneratedCount ?? 0;
+  const recipePercent = Math.min(100, Math.round((recipesUsed / recipeLimit) * 100));
+
+  const scanLimit = TIER_LIMITS.free.visionScansPerCycle; // 3
+  const scansUsed = entitlement?.usage?.visionScansCount ?? 0;
+  const scanPercent = Math.min(100, Math.round((scansUsed / scanLimit) * 100));
 
   return (
     <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
@@ -82,8 +105,82 @@ export function UpgradeModal({
               Start Cooking
             </Button>
           </div>
+        ) : isPro ? (
+          <div className="py-4 space-y-4">
+            <div className="rounded-lg bg-emerald-950/40 border border-emerald-500/30 p-4 text-center space-y-2">
+              <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-500/20 text-emerald-300 text-xs font-semibold">
+                <Check className="w-4 h-4 text-emerald-400" /> Chef Pro Member Active
+              </div>
+              <p className="text-sm text-slate-200 font-medium">All kitchen quotas are completely unlimited.</p>
+              <p className="text-xs text-slate-400">Enjoy limitless Gemini Live voice cooking, smart recipe creation, and fridge camera scanning.</p>
+            </div>
+            <Button className="w-full bg-slate-800 hover:bg-slate-700 text-slate-200" onClick={onClose}>
+              Close
+            </Button>
+          </div>
         ) : (
           <div className="space-y-4 py-2">
+            {/* Live Quota Progress when available */}
+            {entitlement && (
+              <div className="rounded-lg bg-slate-950/60 border border-slate-800 p-3 space-y-2.5">
+                <div className="flex items-center justify-between text-xs font-semibold text-slate-300">
+                  <span>Current Free Tier Quotas</span>
+                  <span className="text-[10px] text-slate-400 font-normal">Monthly cycle</span>
+                </div>
+
+                <div className="space-y-1">
+                  <div className="flex justify-between text-xs">
+                    <span className="text-slate-300 flex items-center gap-1.5">
+                      <Mic className="w-3.5 h-3.5 text-amber-400" /> Live Voice
+                    </span>
+                    <span className="text-slate-400 font-mono text-[11px]">
+                      {voiceMinsUsed} / 15 mins
+                    </span>
+                  </div>
+                  <div className="h-1.5 w-full bg-slate-800 rounded-full overflow-hidden">
+                    <div
+                      className={`h-full rounded-full transition-all duration-300 ${voicePercent >= 90 ? 'bg-rose-500' : voicePercent >= 70 ? 'bg-amber-500' : 'bg-emerald-500'}`}
+                      style={{ width: `${voicePercent}%` }}
+                    />
+                  </div>
+                </div>
+
+                <div className="space-y-1">
+                  <div className="flex justify-between text-xs">
+                    <span className="text-slate-300 flex items-center gap-1.5">
+                      <ChefHat className="w-3.5 h-3.5 text-amber-400" /> Recipes Generated
+                    </span>
+                    <span className="text-slate-400 font-mono text-[11px]">
+                      {recipesUsed} / 5
+                    </span>
+                  </div>
+                  <div className="h-1.5 w-full bg-slate-800 rounded-full overflow-hidden">
+                    <div
+                      className={`h-full rounded-full transition-all duration-300 ${recipePercent >= 90 ? 'bg-rose-500' : recipePercent >= 70 ? 'bg-amber-500' : 'bg-emerald-500'}`}
+                      style={{ width: `${recipePercent}%` }}
+                    />
+                  </div>
+                </div>
+
+                <div className="space-y-1">
+                  <div className="flex justify-between text-xs">
+                    <span className="text-slate-300 flex items-center gap-1.5">
+                      <Camera className="w-3.5 h-3.5 text-amber-400" /> Fridge Photo Scans
+                    </span>
+                    <span className="text-slate-400 font-mono text-[11px]">
+                      {scansUsed} / 3
+                    </span>
+                  </div>
+                  <div className="h-1.5 w-full bg-slate-800 rounded-full overflow-hidden">
+                    <div
+                      className={`h-full rounded-full transition-all duration-300 ${scanPercent >= 90 ? 'bg-rose-500' : scanPercent >= 70 ? 'bg-amber-500' : 'bg-emerald-500'}`}
+                      style={{ width: `${scanPercent}%` }}
+                    />
+                  </div>
+                </div>
+              </div>
+            )}
+
             <div className="space-y-2.5">
               <div className="flex items-start gap-3 p-2.5 rounded-lg bg-slate-800/60 border border-slate-700/50">
                 <div className="p-2 rounded-md bg-amber-500/10 text-amber-400 mt-0.5">
@@ -145,8 +242,6 @@ export function UpgradeModal({
                   </>
                 ) : isPro ? (
                   'You are already Chef Pro'
-                ) : isPlayBillingAvailable ? (
-                  'Subscribe with Google Play'
                 ) : (
                   'Subscribe with Google Play'
                 )}

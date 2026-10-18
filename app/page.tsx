@@ -12,6 +12,7 @@ import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
+import { HeaderQuotaBadge } from '@/components/HeaderQuotaBadge';
 
 function formatCountdown(ms: number): string {
   const s = Math.max(0, Math.floor(ms / 1000));
@@ -228,15 +229,18 @@ export default function HomePage() {
     <main className={styles.main}>
       <header className={styles.topbar}>
         <span className={styles.brand}>Cook With Me</span>
-        {auth.user ? (
-          <Button variant="outline" onClick={() => void auth.signOut()} className="min-h-11 text-sm">
-            Sign out
-          </Button>
-        ) : (
-          <Button asChild variant="ghost" className="min-h-11 text-sm font-semibold text-brand hover:text-brand-hover">
-            <Link href="/login">Sign in</Link>
-          </Button>
-        )}
+        <div className="flex items-center gap-2">
+          {auth.user && <HeaderQuotaBadge getToken={auth.getToken} />}
+          {auth.user ? (
+            <Button variant="outline" onClick={() => void auth.signOut()} className="min-h-11 text-sm">
+              Sign out
+            </Button>
+          ) : (
+            <Button asChild variant="ghost" className="min-h-11 text-sm font-semibold text-brand hover:text-brand-hover">
+              <Link href="/login">Sign in</Link>
+            </Button>
+          )}
+        </div>
       </header>
 
       <section className={styles.hero}>

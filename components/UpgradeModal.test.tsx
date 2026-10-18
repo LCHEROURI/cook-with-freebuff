@@ -74,4 +74,48 @@ describe('UpgradeModal', () => {
       expect(screen.getByText('Payment network timeout')).toBeInTheDocument();
     });
   });
+
+  it('renders live quota progress bars when free entitlement is provided', () => {
+    mockUsePlayBilling.mockReturnValue({
+      isPlayBillingAvailable: true,
+      isLoading: false,
+      isPro: false,
+      tier: 'free',
+      entitlement: {
+        usage: {
+          voiceSecondsUsed: 300, // 5 mins used
+          recipesGeneratedCount: 3,
+          visionScansCount: 2,
+        },
+      },
+      error: null,
+      refreshEntitlements: vi.fn(),
+      purchaseSubscription: vi.fn(),
+    });
+
+    render(<UpgradeModal isOpen={true} onClose={vi.fn()} />);
+
+    expect(screen.getByText('Current Free Tier Quotas')).toBeInTheDocument();
+    expect(screen.getByText('5 / 15 mins')).toBeInTheDocument();
+    expect(screen.getByText('3 / 5')).toBeInTheDocument();
+    expect(screen.getByText('2 / 3')).toBeInTheDocument();
+  });
+
+  it('renders active member view when isPro is true', () => {
+    mockUsePlayBilling.mockReturnValue({
+      isPlayBillingAvailable: true,
+      isLoading: false,
+      isPro: true,
+      tier: 'pro',
+      entitlement: null,
+      error: null,
+      refreshEntitlements: vi.fn(),
+      purchaseSubscription: vi.fn(),
+    });
+
+    render(<UpgradeModal isOpen={true} onClose={vi.fn()} />);
+
+    expect(screen.getByText('Chef Pro Member Active')).toBeInTheDocument();
+    expect(screen.getByText('All kitchen quotas are completely unlimited.')).toBeInTheDocument();
+  });
 });
