@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { GuideSnapshot } from '@/lib/domain/guide';
 import { appCheckHeaders } from '@/lib/firebase/app-check';
+import { triggerTimerAlarm, unlockAudioContext } from '@/lib/sound/timer-alarm';
 
 export interface CookApiResponse {
   success: boolean;
@@ -72,8 +73,9 @@ export function useCookingSession(opts: UseCookingSessionOptions = {}) {
   const checkTimers = useCallback(async () => {
     try {
       const data = (await call('timers')) as unknown as { alerts: { message: string }[]; snapshot: GuideSnapshot };
-      if (data.alerts.length > 0) {
+      if (data.alerts && data.alerts.length > 0) {
         setAlert(data.alerts.map((a) => a.message).join(' '));
+        void triggerTimerAlarm();
       }
       setSnapshot(data.snapshot);
       setError(null);
@@ -84,6 +86,7 @@ export function useCookingSession(opts: UseCookingSessionOptions = {}) {
 
   const launch = useCallback(
     async (recipeId: string) => {
+      unlockAudioContext();
       setLoading(true);
       try {
         const snap = await call('launch', { recipeId });
@@ -100,6 +103,7 @@ export function useCookingSession(opts: UseCookingSessionOptions = {}) {
 
   const act = useCallback(
     async (action: 'done' | 'repeat' | 'back' | 'pause' | 'resume') => {
+      unlockAudioContext();
       try {
         const snap = await call(action);
         setSnapshot(snap);

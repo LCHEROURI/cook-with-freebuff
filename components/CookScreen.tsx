@@ -10,7 +10,7 @@ import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { formatPausedAgo, type ActiveTimerInfo, type GuideSnapshot } from '@/lib/domain/guide';
 import type { AgentTurn, VoiceStatus } from '@/lib/agent';
-import { triggerTimerAlarm } from '@/lib/sound/timer-alarm';
+import { triggerTimerAlarm, unlockAudioContext } from '@/lib/sound/timer-alarm';
 
 function formatCountdown(seconds: number): string {
   const s = Math.max(0, Math.floor(seconds));
@@ -181,6 +181,89 @@ export function CookScreen({
   const [confirmingStartOver, setConfirmingStartOver] = useState(false);
   const [copiedDetails, setCopiedDetails] = useState(false);
 
+  // Register user gesture listener to unlock Web Audio on initial user interaction (required by iOS Safari & mobile Chrome)
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const unlock = () => {
+      unlockAudioContext();
+    };
+    window.addEventListener('pointerdown', unlock, { once: true, passive: true });
+    window.addEventListener('keydown', unlock, { once: true, passive: true });
+    return () => {
+      window.removeEventListener('pointerdown', unlock);
+      window.removeEventListener('keydown', unlock);
+    };
+  }, []);
+
+  // Schedule timer alarms against endsAt independently of the removable TimerDisplay component
+  const scheduledTimersRef = useRef<Set<string>>(new Set());
+
+  const isPaused = snap.paused || snap.phase === 'PAUSED';
+
+  useEffect(() => {
+    if (isPaused) return;
+    const now = Date.now();
+    const timeouts: ReturnType<typeof setTimeout>[] = [];
+
+    for (const timer of snap.activeTimers) {
+      if (scheduledTimersRef.current.has(timer.timerId)) continue;
+      const delay = Math.max(0, timer.endsAt - now);
+      if (delay === 0) {
+        scheduledTimersRef.current.add(timer.timerId);
+        void triggerTimerAlarm();
+      } else {
+        const id = setTimeout(() => {
+          if (!scheduledTimersRef.current.has(timer.timerId)) {
+            scheduledTimersRef.current.add(timer.timerId);
+            void triggerTimerAlarm();
+          }
+        }, delay);
+        timeouts.push(id);
+      }
+    }
+
+    return () => {
+      timeouts.forEach((id) => clearTimeout(id));
+    };
+  }, [snap.activeTimers, isPaused]);
+
+  // Trigger alarm when server reports timer completion via alert banner
+  const lastAlertRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (alert && alert !== lastAlertRef.current) {
+      lastAlertRef.current = alert;
+      if (/finished|timer/i.test(alert)) {
+        void triggerTimerAlarm();
+      }
+    }
+  }, [alert]);
+
+  const handleDone = () => {
+    unlockAudioContext();
+    onDone();
+  };
+  const handleRepeat = () => {
+    unlockAudioContext();
+    onRepeat();
+  };
+  const handleBack = () => {
+    unlockAudioContext();
+    onBack();
+  };
+  const handleResume = () => {
+    unlockAudioContext();
+    onResume();
+  };
+  const handleStartOver = () => {
+    unlockAudioContext();
+    onStartOver();
+  };
+  const handleMicToggle = () => {
+    unlockAudioContext();
+    onMicToggle();
+  };
+
   const copyMicDiagnostics = async () => {
     if (!onCopyDiagnostics) return;
     const text = onCopyDiagnostics();
@@ -224,7 +307,6 @@ export function CookScreen({
               ? 'Safety'
               : snap.phase;
 
-  const isPaused = snap.paused || snap.phase === 'PAUSED';
   const doneDisabled =
     snap.phase === 'PLATING' || snap.phase === 'COMPLETED' || snap.phase === 'WAITING_FOR_TIMER' || isPaused;
 
@@ -337,7 +419,7 @@ export function CookScreen({
           <p className={styles.safetyGateHint}>The step is not marked done until you confirm you understand.</p>
           <Button
             className={`${styles.control} ${styles.primary} ${styles.safetyGateConfirm}`}
-            onClick={onDone}
+            onClick={handleDone}
             aria-label="I understand the safety warning, continue"
           >
             ✓ I understand — continue
@@ -347,7 +429,7 @@ export function CookScreen({
 
       <section className={styles.controls}>
         {isPaused ? (
-          <Button className={`${styles.control} ${styles.primary}`} onClick={onResume} aria-label="Resume cooking">
+          <Button className={`${styles.control} ${styles.primary}`} onClick={handleResume} aria-label="Resume cooking">
             ▶ Resume
           </Button>
         ) : snap.safetyGate ? (
@@ -356,15 +438,15 @@ export function CookScreen({
           <p className={styles.safetyGateWaiting}>Confirm the safety note to continue.</p>
         ) : (
           <>
-            <Button className={styles.control} onClick={onBack} aria-label="Previous step" disabled={snap.stepNumber === 1}>
+            <Button className={styles.control} onClick={handleBack} aria-label="Previous step" disabled={snap.stepNumber === 1}>
               ◀ Previous
             </Button>
-            <Button className={styles.control} onClick={onRepeat} aria-label="Repeat this step">
+            <Button className={styles.control} onClick={handleRepeat} aria-label="Repeat this step">
               🔁 Repeat
             </Button>
             <Button
               className={`${styles.control} ${styles.primary}`}
-              onClick={onDone}
+              onClick={handleDone}
               aria-label="Done with this step"
               disabled={doneDisabled}
             >
@@ -382,7 +464,7 @@ export function CookScreen({
             return;
           }
           setConfirmingStartOver(false);
-          onStartOver();
+          handleStartOver();
         }}
         onBlur={() => setConfirmingStartOver(false)}
         aria-label="Start over"
@@ -425,6 +507,7 @@ export function CookScreen({
         className={styles.voiceForm}
         onSubmit={(e) => {
           e.preventDefault();
+          unlockAudioContext();
           onSend(input);
           setInput('');
         }}
@@ -432,7 +515,7 @@ export function CookScreen({
         <button
           type="button"
           className={`${styles.micBtn} ${micListening ? styles.micListening : ''}`}
-          onClick={onMicToggle}
+          onClick={handleMicToggle}
           disabled={!micSupported}
           aria-label={micListening ? 'Stop listening' : 'Speak a command'}
           aria-pressed={micListening}

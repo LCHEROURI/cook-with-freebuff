@@ -7,6 +7,8 @@
 
 // Global AudioContext singleton to reuse across timer alerts
 let audioCtx: AudioContext | null = null;
+let lastAlarmAt = 0;
+const ALARM_COOLDOWN_MS = 1500;
 
 function getAudioContext(): AudioContext | null {
   if (typeof window === 'undefined') return null;
@@ -28,6 +30,38 @@ function getAudioContext(): AudioContext | null {
 
 export function resetAudioContext(): void {
   audioCtx = null;
+  lastAlarmAt = 0;
+}
+
+/**
+ * Unlocks the Web Audio context during an explicit user gesture (e.g. tap, click, keydown,
+ * starting a timer, or navigation).
+ *
+ * Mobile Safari / WebKit and Blink enforce autoplay restrictions that reject resume()
+ * unless invoked synchronously during a user interaction. Playing a 1-sample silent
+ * buffer during the gesture transitions the AudioContext to 'running' so subsequent
+ * timer alarms can play when expired.
+ */
+export function unlockAudioContext(): AudioContext | null {
+  if (typeof window === 'undefined') return null;
+  const ctx = getAudioContext();
+  if (!ctx) return null;
+
+  try {
+    if (ctx.state === 'suspended') {
+      void ctx.resume();
+    }
+    // Synchronously create and start a 1-sample silent buffer to unlock audio playback in WebKit
+    const buffer = ctx.createBuffer(1, 1, 22050);
+    const source = ctx.createBufferSource();
+    source.buffer = buffer;
+    source.connect(ctx.destination);
+    source.start(0);
+  } catch {
+    // Graceful fallback if unsupported
+  }
+
+  return ctx;
 }
 
 /**
@@ -93,10 +127,24 @@ export function triggerTimerHaptics(): boolean {
   return false;
 }
 
+export interface TriggerTimerAlarmOptions {
+  force?: boolean;
+}
+
 /**
  * Triggers full kitchen timer alarm: Web Audio chime + Mobile haptics.
+ * Suppresses redundant calls within 1.5s to prevent double-firing across
+ * client countdowns, timer alerts, and polling cycles.
  */
-export async function triggerTimerAlarm(): Promise<{ audioPlayed: boolean; hapticsTriggered: boolean }> {
+export async function triggerTimerAlarm(
+  options: TriggerTimerAlarmOptions = {},
+): Promise<{ audioPlayed: boolean; hapticsTriggered: boolean }> {
+  const now = Date.now();
+  if (!options.force && now - lastAlarmAt < ALARM_COOLDOWN_MS) {
+    return { audioPlayed: false, hapticsTriggered: false };
+  }
+  lastAlarmAt = now;
+
   const hapticsTriggered = triggerTimerHaptics();
   const audioPlayed = await playTimerChime();
   return { audioPlayed, hapticsTriggered };

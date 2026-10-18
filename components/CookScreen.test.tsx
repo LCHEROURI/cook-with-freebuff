@@ -6,6 +6,7 @@ import type { GuideSnapshot } from '@/lib/domain/guide';
 
 vi.mock('@/lib/sound/timer-alarm', () => ({
   triggerTimerAlarm: vi.fn(async () => ({ audioPlayed: true, hapticsTriggered: true })),
+  unlockAudioContext: vi.fn(),
 }));
 
 function snapshot(overrides: Partial<GuideSnapshot> = {}): GuideSnapshot {

@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { playTimerChime, triggerTimerHaptics, triggerTimerAlarm, resetAudioContext } from './timer-alarm';
+import { playTimerChime, triggerTimerHaptics, triggerTimerAlarm, resetAudioContext, unlockAudioContext } from './timer-alarm';
 
 describe('timer-alarm', () => {
   const originalAudioContext = window.AudioContext;
@@ -126,6 +126,40 @@ describe('timer-alarm', () => {
     });
   });
 
+  describe('unlockAudioContext', () => {
+    it('resumes suspended context and plays a 1-sample silent buffer during user gesture', () => {
+      const mockBufferSource = {
+        buffer: null,
+        connect: vi.fn(),
+        start: vi.fn(),
+      };
+      const mockAudioCtx = {
+        state: 'suspended',
+        currentTime: 0,
+        destination: {},
+        createBuffer: vi.fn(() => ({})),
+        createBufferSource: vi.fn(() => mockBufferSource),
+        resume: vi.fn().mockResolvedValue(undefined),
+      };
+
+      window.AudioContext = vi.fn(() => mockAudioCtx) as unknown as typeof AudioContext;
+
+      const ctx = unlockAudioContext();
+      expect(ctx).toBe(mockAudioCtx);
+      expect(mockAudioCtx.resume).toHaveBeenCalled();
+      expect(mockAudioCtx.createBuffer).toHaveBeenCalledWith(1, 1, 22050);
+      expect(mockBufferSource.start).toHaveBeenCalledWith(0);
+    });
+
+    it('returns null gracefully when AudioContext is unsupported', () => {
+      delete (window as unknown as { AudioContext?: unknown }).AudioContext;
+      delete (window as unknown as { webkitAudioContext?: unknown }).webkitAudioContext;
+
+      const ctx = unlockAudioContext();
+      expect(ctx).toBeNull();
+    });
+  });
+
   describe('triggerTimerAlarm', () => {
     it('triggers both audio chime and haptics', async () => {
       const mockVibrate = vi.fn().mockReturnValue(true);
@@ -161,6 +195,51 @@ describe('timer-alarm', () => {
       const result = await triggerTimerAlarm();
       expect(result.hapticsTriggered).toBe(true);
       expect(result.audioPlayed).toBe(true);
+    });
+
+    it('suppresses redundant alarm triggers within the cooldown period unless forced', async () => {
+      const mockVibrate = vi.fn().mockReturnValue(true);
+      navigator.vibrate = mockVibrate;
+
+      const mockGainNode = {
+        gain: {
+          setValueAtTime: vi.fn(),
+          exponentialRampToValueAtTime: vi.fn(),
+        },
+        connect: vi.fn(),
+      };
+
+      const mockOscillator = {
+        type: 'sine',
+        frequency: { setValueAtTime: vi.fn() },
+        connect: vi.fn(),
+        start: vi.fn(),
+        stop: vi.fn(),
+      };
+
+      const mockAudioCtx = {
+        state: 'running',
+        currentTime: 0,
+        destination: {},
+        createGain: vi.fn(() => mockGainNode),
+        createOscillator: vi.fn(() => mockOscillator),
+        resume: vi.fn().mockResolvedValue(undefined),
+      };
+
+      window.AudioContext = vi.fn(() => mockAudioCtx) as unknown as typeof AudioContext;
+
+      const first = await triggerTimerAlarm();
+      expect(first.audioPlayed).toBe(true);
+
+      // Immediately triggering again within 1.5s is suppressed
+      const second = await triggerTimerAlarm();
+      expect(second.audioPlayed).toBe(false);
+      expect(second.hapticsTriggered).toBe(false);
+
+      // Force bypasses the cooldown
+      const third = await triggerTimerAlarm({ force: true });
+      expect(third.audioPlayed).toBe(true);
+      expect(third.hapticsTriggered).toBe(true);
     });
   });
 });
