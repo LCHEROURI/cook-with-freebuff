@@ -28,6 +28,7 @@ import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { resolve as resolvePath } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { initializeApp, cert, getApps } from 'firebase-admin/app';
+import { getAppCheck } from 'firebase-admin/app-check';
 import { getFirestore } from 'firebase-admin/firestore';
 import { installAppCheckInjection } from './drive-cdp-app-check.mjs';
 
@@ -112,12 +113,26 @@ const tokenPayload = JSON.parse(Buffer.from(exchange.idToken.split('.')[1], 'bas
 const expiresAt = Date.now() + parseInt(exchange.expiresIn, 10) * 1000;
 ok(`owner idToken minted for ${tokenPayload.sub}`);
 
-const getAdminDb = () => {
+const APP_ID = process.env.NEXT_PUBLIC_FIREBASE_APP_ID ?? '';
+
+const getAdminApp = () => {
   const apps = getApps();
-  const adminApp = apps[0] ?? initializeApp({
+  return apps[0] ?? initializeApp({
     credential: cert({ projectId: sa.project_id, clientEmail: sa.client_email, privateKey: sa.private_key.replace(/\\n/g, '\n') }),
   });
-  return getFirestore(adminApp);
+};
+
+const getAdminDb = () => getFirestore(getAdminApp());
+
+const mintAppCheckToken = async () => {
+  if (!APP_ID) return VERIFY_APP_CHECK_TOKEN;
+  try {
+    const adminApp = getAdminApp();
+    const { token: fresh } = await getAppCheck(adminApp).createToken(APP_ID);
+    return fresh;
+  } catch {
+    return VERIFY_APP_CHECK_TOKEN;
+  }
 };
 
 // ── 2. Launch headless Chrome + CDP ─────────────────────────────────────────
@@ -170,7 +185,7 @@ const screenshot = async (name) => {
 };
 // Arm App Check header injection BEFORE the page loads, so the page's own
 // gated requests are attested from the very first navigation.
-installAppCheckInjection({ ws, send, app: APP, token: VERIFY_APP_CHECK_TOKEN, note });
+installAppCheckInjection({ ws, send, app: APP, token: VERIFY_APP_CHECK_TOKEN, mintToken: mintAppCheckToken, note });
 
 // ── 3. Inject the owner session, load /cook, confirm the starter ────────────
 console.log(`\n[3] Injecting owner session → loading ${APP}/cook`);

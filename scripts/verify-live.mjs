@@ -230,6 +230,9 @@ let seededRecipeId = null;
 // the session launched from it — both must be removed on EVERY exit path.
 let starterRecipeId = null;
 let starterSid = null;
+let originalOwnerEntitlement = null;
+let ownerEntitlementPrimed = false;
+let probeEntitlementRunId = null;
 let cleanupRan = false;
 
 async function cleanup() {
@@ -258,6 +261,40 @@ async function cleanup() {
     ]);
     events.forEach((d) => deletes.push(d.ref.delete()));
     timers.forEach((d) => deletes.push(d.ref.delete()));
+  }
+  if (ownerEntitlementPrimed && probeEntitlementRunId) {
+    let restored = false;
+    let restoreError = null;
+    const entRef = db.collection('entitlements').doc(OWNER_UID);
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      try {
+        await db.runTransaction(async (t) => {
+          const snap = await t.get(entRef);
+          if (!snap.exists) return;
+          const current = snap.data();
+          // Versioned restore: only restore if THIS run's lease is still active on the document
+          if (current?.activeProbeRunId === probeEntitlementRunId) {
+            if (originalOwnerEntitlement) {
+              t.set(entRef, originalOwnerEntitlement);
+            } else {
+              t.delete(entRef);
+            }
+          }
+        });
+        restored = true;
+        break;
+      } catch (err) {
+        restoreError = err;
+        await sleep(1000 * attempt);
+      }
+    }
+    if (!restored && restoreError) {
+      const msg = `Failed to restore owner entitlement: ${restoreError?.message || restoreError}`;
+      console.error(`✗ FAIL: ${msg}`);
+      runExit = 1;
+    } else {
+      console.log('  ↳ owner entitlement lease released/restored');
+    }
   }
   try {
     await Promise.allSettled(deletes);
@@ -481,6 +518,49 @@ try {
   console.log(`\n[1] Seeding owner recipe → ${APP}`);
   await db.collection('recipes').doc(seededRecipeId).set(recipe);
   ok(`recipe ${seededRecipeId} seeded (owner ${OWNER_UID})`);
+
+  // ── 1b. Prime owner entitlement (conditional probe-session lease) ──────────
+  // The app owner / verification probe runner requires Chef Pro tier so live
+  // integration flows (voice tokens, starter generation, and vision scans) are
+  // never blocked by free-tier rate limits or quota depletion from prior runs.
+  // If the owner is already active Pro with infinite quota, no mutation is needed.
+  console.log(`\n[1b] Verifying owner entitlement status`);
+  const entRef = db.collection('entitlements').doc(OWNER_UID);
+  await db.runTransaction(async (t) => {
+    const snap = await t.get(entRef);
+    if (snap.exists) {
+      const data = snap.data();
+      if (data.tier === 'pro' && data.status === 'active' && (!data.expiresAtMs || data.expiresAtMs > Date.now())) {
+        ok(`owner ${OWNER_UID} already has active Chef Pro entitlement — no mutation needed`);
+        return;
+      }
+      originalOwnerEntitlement = data;
+    } else {
+      originalOwnerEntitlement = null;
+    }
+
+    probeEntitlementRunId = `${PROBE_PREFIX}${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    ownerEntitlementPrimed = true;
+
+    t.set(entRef, {
+      userId: OWNER_UID,
+      tier: 'pro',
+      status: 'active',
+      isOwner: true,
+      platform: originalOwnerEntitlement?.platform ?? 'web',
+      ...(originalOwnerEntitlement?.orderId ? { orderId: originalOwnerEntitlement.orderId } : {}),
+      ...(originalOwnerEntitlement?.purchaseToken ? { purchaseToken: originalOwnerEntitlement.purchaseToken } : {}),
+      usage: originalOwnerEntitlement?.usage ?? {
+        voiceSecondsUsed: 0,
+        recipesGeneratedCount: 0,
+        visionScansCount: 0,
+        cycleStartMs: Date.now(),
+      },
+      activeProbeRunId: probeEntitlementRunId,
+      updatedAtMs: Date.now(),
+    });
+    ok(`owner ${OWNER_UID} entitlement primed as Chef Pro (lease ${probeEntitlementRunId})`);
+  });
 
   // ── 2. Mint a real owner ID token ───────────────────────────────────────
   let idToken;
@@ -1300,11 +1380,23 @@ try {
     // message updates one constant, never this literal.
     fail(SIMULATED_REGRESSION_SIGNATURE);
   }
+  if (!EMULATOR && APP_ID) {
+    try {
+      const minted = await getAppCheck(app).createToken(APP_ID);
+      appCheckToken = minted.token;
+    } catch { /* best-effort */ }
+  }
   let driver = runDriver(1);
   let driverLog = `${driver.stdout ?? ''}\n${driver.stderr ?? ''}`;
   if (!(driver.status === 0 && /RESULT: PASS/.test(driverLog))) {
     note('first driver attempt did not pass — waiting 30s and retrying once (transient backoff)');
     await sleep(30_000);
+    if (!EMULATOR && APP_ID) {
+      try {
+        const minted = await getAppCheck(app).createToken(APP_ID);
+        appCheckToken = minted.token;
+      } catch { /* best-effort */ }
+    }
     driver = runDriver(2);
     driverLog = `${driver.stdout ?? ''}\n${driver.stderr ?? ''}`;
   }
@@ -1353,11 +1445,23 @@ try {
       // page's OWN requests (headless Chrome cannot complete reCAPTCHA v3).
       env: { ...process.env, VERIFY_APP_CHECK_TOKEN: appCheckToken ?? '' },
     });
+  if (!EMULATOR && APP_ID) {
+    try {
+      const minted = await getAppCheck(app).createToken(APP_ID);
+      appCheckToken = minted.token;
+    } catch { /* best-effort */ }
+  }
   let voiceDriver = runVoiceDriver(1);
   let voiceLog = `${voiceDriver.stdout ?? ''}\n${voiceDriver.stderr ?? ''}`;
   if (!(voiceDriver.status === 0 && /RESULT: PASS/.test(voiceLog))) {
     note('voice driver first attempt did not pass — waiting 30s and retrying once (transient backoff)');
     await sleep(30_000);
+    if (!EMULATOR && APP_ID) {
+      try {
+        const minted = await getAppCheck(app).createToken(APP_ID);
+        appCheckToken = minted.token;
+      } catch { /* best-effort */ }
+    }
     voiceDriver = runVoiceDriver(2);
     voiceLog = `${voiceDriver.stdout ?? ''}\n${voiceDriver.stderr ?? ''}`;
   }

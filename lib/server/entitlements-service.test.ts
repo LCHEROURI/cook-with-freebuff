@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 vi.mock('server-only', () => ({}));
 
@@ -218,4 +218,127 @@ describe('EntitlementsService', () => {
       }),
     );
   });
+
+  describe('APP_OWNER_UID recognition', () => {
+    const originalOwnerUid = process.env.APP_OWNER_UID;
+
+    beforeEach(() => {
+      process.env.APP_OWNER_UID = 'owner-uid-123';
+    });
+
+    afterEach(() => {
+      process.env.APP_OWNER_UID = originalOwnerUid;
+    });
+
+    it('initializes default Pro tier for APP_OWNER_UID when no document exists', async () => {
+      const entitlement = await service.getEntitlement('owner-uid-123');
+      expect(entitlement.tier).toBe('pro');
+      expect(entitlement.status).toBe('active');
+      expect(mockSet).toHaveBeenCalledWith(
+        expect.objectContaining({
+          tier: 'pro',
+          status: 'active',
+        }),
+      );
+    });
+
+    it('promotes APP_OWNER_UID to Pro if an existing document was recorded as free', async () => {
+      mockDocData = {
+        userId: 'owner-uid-123',
+        tier: 'free',
+        status: 'active',
+        usage: {
+          voiceSecondsUsed: 1200,
+          recipesGeneratedCount: 10,
+          visionScansCount: 5,
+          cycleStartMs: Date.now(),
+        },
+        updatedAtMs: Date.now(),
+      };
+
+      const entitlement = await service.getEntitlement('owner-uid-123');
+      expect(entitlement.tier).toBe('pro');
+      expect(mockUpdate).toHaveBeenCalledWith(
+        expect.objectContaining({
+          tier: 'pro',
+          status: 'active',
+        }),
+      );
+    });
+
+    it('allows voice quota reservation for APP_OWNER_UID even when usage exceeds free limit', async () => {
+      mockDocData = {
+        userId: 'owner-uid-123',
+        tier: 'free',
+        status: 'active',
+        usage: {
+          voiceSecondsUsed: 1500,
+          recipesGeneratedCount: 10,
+          visionScansCount: 5,
+          cycleStartMs: Date.now(),
+        },
+        updatedAtMs: Date.now(),
+      };
+
+      const reservation = await service.reserveVoiceQuota('owner-uid-123', 300);
+      expect(reservation.allowed).toBe(true);
+      expect(reservation.tier).toBe('pro');
+      expect(reservation.remaining).toBe(Infinity);
+    });
+
+    it('recognizes owner from isOwner: true flag in document even when APP_OWNER_UID env is unset', async () => {
+      delete process.env.APP_OWNER_UID;
+      mockDocData = {
+        userId: 'deployed-owner-user',
+        tier: 'pro',
+        status: 'active',
+        isOwner: true,
+        usage: {
+          voiceSecondsUsed: 1500,
+          recipesGeneratedCount: 10,
+          visionScansCount: 5,
+          cycleStartMs: Date.now(),
+        },
+        updatedAtMs: Date.now(),
+      };
+
+      const entitlement = await service.getEntitlement('deployed-owner-user');
+      expect(entitlement.tier).toBe('pro');
+      expect(entitlement.isOwner).toBe(true);
+
+      const reservation = await service.reserveVoiceQuota('deployed-owner-user', 300);
+      expect(reservation.allowed).toBe(true);
+      expect(reservation.tier).toBe('pro');
+      expect(reservation.remaining).toBe(Infinity);
+    });
+
+    it('never demotes an owner with an expired expiresAtMs, removing expiration and maintaining Pro', async () => {
+      mockDocData = {
+        userId: 'owner-uid-123',
+        tier: 'pro',
+        status: 'active',
+        expiresAtMs: Date.now() - 100000, // expired timestamp
+        usage: {
+          voiceSecondsUsed: 0,
+          recipesGeneratedCount: 0,
+          visionScansCount: 0,
+          cycleStartMs: Date.now(),
+        },
+        updatedAtMs: Date.now(),
+      };
+
+      const entitlement = await service.getEntitlement('owner-uid-123');
+      expect(entitlement.tier).toBe('pro');
+      expect(entitlement.status).toBe('active');
+      expect(entitlement.expiresAtMs).toBeUndefined();
+      expect(mockUpdate).toHaveBeenCalledWith(
+        expect.objectContaining({
+          tier: 'pro',
+          status: 'active',
+          isOwner: true,
+        }),
+      );
+    });
+  });
 });
+

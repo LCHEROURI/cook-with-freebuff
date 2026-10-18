@@ -41,10 +41,12 @@ export interface UserEntitlement {
   userId: string;
   tier: SubscriptionTier;
   status: SubscriptionStatus;
+  isOwner?: boolean;
   platform?: 'google_play' | 'web';
   purchaseToken?: string;
   orderId?: string;
   expiresAtMs?: number;
+  activeProbeRunId?: string;
   usage: UserUsage;
   updatedAtMs: number;
 }
