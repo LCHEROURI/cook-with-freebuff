@@ -14,7 +14,7 @@ describe('GET /.well-known/assetlinks.json', () => {
     process.env = originalEnv;
   });
 
-  it('returns default package and placeholder fingerprint when env is unset', async () => {
+  it('returns default package and default fingerprints (Play app-signing and upload) when env is unset', async () => {
     const res = await GET();
     expect(res.status).toBe(200);
     expect(res.headers.get('content-type')).toContain('application/json');
@@ -25,7 +25,13 @@ describe('GET /.well-known/assetlinks.json', () => {
     expect(body[0].relation).toEqual(['delegate_permission/common.handle_all_urls']);
     expect(body[0].target.namespace).toBe('android_app');
     expect(body[0].target.package_name).toBe('com.freebuff.cookwithme');
-    expect(body[0].target.sha256_cert_fingerprints).toHaveLength(1);
+    expect(body[0].target.sha256_cert_fingerprints).toHaveLength(2);
+    expect(body[0].target.sha256_cert_fingerprints).toContain(
+      'FA:C6:17:45:DC:09:03:78:6F:B9:ED:E6:2A:96:2B:39:9F:73:48:F0:BB:6F:89:9B:83:32:66:75:91:03:3B:9C'
+    );
+    expect(body[0].target.sha256_cert_fingerprints).toContain(
+      '39:40:AB:7C:41:E4:41:E7:80:2D:D0:D7:6A:A2:45:1B:40:14:6C:9F:19:9C:EC:B9:19:E4:FF:73:12:46:82:71'
+    );
   });
 
   it('uses configured package name and comma-separated fingerprints', async () => {

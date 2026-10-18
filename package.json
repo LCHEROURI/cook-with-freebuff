@@ -37,6 +37,8 @@
     "admin:list": "node scripts/admin-list-data.mjs",
     "emulators": "npx -y firebase-tools@latest emulators:start --only firestore,auth,ui --project demo-cook-with-freebuff --import emulator-data --export-on-exit emulator-data",
     "emulators:export": "npx -y firebase-tools@latest emulators:export --force --only firestore,auth --project demo-cook-with-freebuff emulator-data",
+    "generate:twa": "node scripts/generate-twa-project.mjs",
+    "build:twa": "node scripts/build-twa-bundle.mjs",
     "land:pr": "node scripts/land-pr.mjs"
   },
   "dependencies": {
@@ -57,6 +59,7 @@
     "zod": "^3.24.0"
   },
   "devDependencies": {
+    "@bubblewrap/core": "^1.27.0",
     "@firebase/rules-unit-testing": "^4.0.1",
     "@tailwindcss/postcss": "^4.3.3",
     "@testing-library/jest-dom": "^6.9.1",

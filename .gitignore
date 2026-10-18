@@ -55,3 +55,14 @@ dataconnect/.dataconnect/
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# Android / TWA artifacts & keys
+*.keystore
+*.jks
+*.aab
+*.apk
+twa/build/
+twa/.gradle/
+twa/app/build/
+twa/local.properties
+

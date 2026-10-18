@@ -1,0 +1,47 @@
+{
+  "packageId": "com.freebuff.cookwithme",
+  "host": "cook-with-freebuff--portfolio-app-freebuff2.us-central1.hosted.app",
+  "name": "Cook With Me — Kitchen Agent",
+  "launcherName": "Cook With Me",
+  "display": "standalone",
+  "themeColor": "#6B9FD4",
+  "themeColorDark": "#000000",
+  "navigationColor": "#FCF8EC",
+  "navigationColorDark": "#000000",
+  "navigationDividerColor": "#000000",
+  "navigationDividerColorDark": "#000000",
+  "backgroundColor": "#FCF8EC",
+  "enableNotifications": true,
+  "startUrl": "/cook",
+  "iconUrl": "https://cook-with-freebuff--portfolio-app-freebuff2.us-central1.hosted.app/icon-512.png",
+  "maskableIconUrl": "https://cook-with-freebuff--portfolio-app-freebuff2.us-central1.hosted.app/icon-maskable-512.png",
+  "splashScreenFadeOutDuration": 300,
+  "signingKey": {
+    "path": "./android.keystore",
+    "alias": "cookwithme"
+  },
+  "appVersionName": "1.0.0",
+  "appVersionCode": 1,
+  "shortcuts": [],
+  "generatorApp": "bubblewrap-cli",
+  "webManifestUrl": "https://cook-with-freebuff--portfolio-app-freebuff2.us-central1.hosted.app/manifest.json",
+  "fallbackType": "customtabs",
+  "features": {
+    "playBilling": {
+      "enabled": true
+    }
+  },
+  "alphaDependencies": {
+    "enabled": false
+  },
+  "enableSiteSettingsShortcut": true,
+  "isChromeOSOnly": false,
+  "isMetaQuest": false,
+  "minSdkVersion": 24,
+  "orientation": "default",
+  "fingerprints": [],
+  "additionalTrustedOrigins": [],
+  "retainedBundles": [],
+  "displayOverride": [],
+  "appVersion": "1.0.0"
+}
