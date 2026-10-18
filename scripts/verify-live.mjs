@@ -482,6 +482,26 @@ try {
   await db.collection('recipes').doc(seededRecipeId).set(recipe);
   ok(`recipe ${seededRecipeId} seeded (owner ${OWNER_UID})`);
 
+  // ── 1b. Prime owner entitlement ──────────────────────────────────────────
+  // The app owner / verification probe runner requires Chef Pro tier so live
+  // integration flows (voice tokens, starter generation, and vision scans) are
+  // never blocked by free-tier rate limits or quota depletion from prior runs.
+  console.log(`\n[1b] Priming owner entitlement (tier: pro)`);
+  await db.collection('entitlements').doc(OWNER_UID).set({
+    userId: OWNER_UID,
+    tier: 'pro',
+    status: 'active',
+    platform: 'web',
+    usage: {
+      voiceSecondsUsed: 0,
+      recipesGeneratedCount: 0,
+      visionScansCount: 0,
+      cycleStartMs: Date.now(),
+    },
+    updatedAtMs: Date.now(),
+  }, { merge: true });
+  ok(`owner ${OWNER_UID} entitlement primed as Chef Pro`);
+
   // ── 2. Mint a real owner ID token ───────────────────────────────────────
   let idToken;
   let exchange;
@@ -1300,11 +1320,23 @@ try {
     // message updates one constant, never this literal.
     fail(SIMULATED_REGRESSION_SIGNATURE);
   }
+  if (!EMULATOR && APP_ID) {
+    try {
+      const minted = await getAppCheck(app).createToken(APP_ID);
+      appCheckToken = minted.token;
+    } catch { /* best-effort */ }
+  }
   let driver = runDriver(1);
   let driverLog = `${driver.stdout ?? ''}\n${driver.stderr ?? ''}`;
   if (!(driver.status === 0 && /RESULT: PASS/.test(driverLog))) {
     note('first driver attempt did not pass — waiting 30s and retrying once (transient backoff)');
     await sleep(30_000);
+    if (!EMULATOR && APP_ID) {
+      try {
+        const minted = await getAppCheck(app).createToken(APP_ID);
+        appCheckToken = minted.token;
+      } catch { /* best-effort */ }
+    }
     driver = runDriver(2);
     driverLog = `${driver.stdout ?? ''}\n${driver.stderr ?? ''}`;
   }
@@ -1353,11 +1385,23 @@ try {
       // page's OWN requests (headless Chrome cannot complete reCAPTCHA v3).
       env: { ...process.env, VERIFY_APP_CHECK_TOKEN: appCheckToken ?? '' },
     });
+  if (!EMULATOR && APP_ID) {
+    try {
+      const minted = await getAppCheck(app).createToken(APP_ID);
+      appCheckToken = minted.token;
+    } catch { /* best-effort */ }
+  }
   let voiceDriver = runVoiceDriver(1);
   let voiceLog = `${voiceDriver.stdout ?? ''}\n${voiceDriver.stderr ?? ''}`;
   if (!(voiceDriver.status === 0 && /RESULT: PASS/.test(voiceLog))) {
     note('voice driver first attempt did not pass — waiting 30s and retrying once (transient backoff)');
     await sleep(30_000);
+    if (!EMULATOR && APP_ID) {
+      try {
+        const minted = await getAppCheck(app).createToken(APP_ID);
+        appCheckToken = minted.token;
+      } catch { /* best-effort */ }
+    }
     voiceDriver = runVoiceDriver(2);
     voiceLog = `${voiceDriver.stdout ?? ''}\n${voiceDriver.stderr ?? ''}`;
   }

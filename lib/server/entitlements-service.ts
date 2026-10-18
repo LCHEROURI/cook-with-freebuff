@@ -22,6 +22,11 @@ export class EntitlementsService {
 
   constructor(private readonly getDb: () => Firestore | null = getAdminDb) {}
 
+  private isAppOwner(userId: string): boolean {
+    const ownerUid = process.env.APP_OWNER_UID?.trim();
+    return Boolean(ownerUid && userId === ownerUid);
+  }
+
   /**
    * Fetch or initialize user entitlements. If the 30-day billing cycle has
    * rolled over, reset usage counters automatically.
@@ -29,10 +34,11 @@ export class EntitlementsService {
   async getEntitlement(userId: string): Promise<UserEntitlement> {
     const db = this.getDb();
     const now = Date.now();
+    const isOwner = this.isAppOwner(userId);
 
     const defaultEntitlement: UserEntitlement = {
       userId,
-      tier: 'free',
+      tier: isOwner ? 'pro' : 'free',
       status: 'active',
       usage: {
         voiceSecondsUsed: 0,
@@ -49,6 +55,10 @@ export class EntitlementsService {
         this.inMemoryFallback.set(userId, defaultEntitlement);
         return { ...defaultEntitlement, usage: { ...defaultEntitlement.usage } };
       }
+      if (isOwner && (existing.tier !== 'pro' || existing.status !== 'active')) {
+        existing.tier = 'pro';
+        existing.status = 'active';
+      }
       return { ...existing, usage: { ...existing.usage } };
     }
 
@@ -62,8 +72,17 @@ export class EntitlementsService {
 
     const data = snap.data() as UserEntitlement;
 
-    // Check if subscription has expired
-    if (data.tier === 'pro' && data.expiresAtMs && data.expiresAtMs < now) {
+    // App owner always retains Chef Pro access
+    if (isOwner && (data.tier !== 'pro' || data.status !== 'active')) {
+      data.tier = 'pro';
+      data.status = 'active';
+      await ref.update({
+        tier: 'pro',
+        status: 'active',
+        updatedAtMs: now,
+      });
+    } else if (data.tier === 'pro' && data.expiresAtMs && data.expiresAtMs < now) {
+      // Check if non-owner subscription has expired
       data.tier = 'free';
       data.status = 'past_due';
       await ref.update({
@@ -102,7 +121,7 @@ export class EntitlementsService {
 
     if (!db) {
       const ent = await this.getEntitlement(userId);
-      if (ent.tier === 'pro') {
+      if (this.isAppOwner(userId) || ent.tier === 'pro') {
         return { allowed: true, tier: 'pro', remaining: Infinity, issuedSeconds: requestedSeconds, rollback: async () => {} };
       }
       const limit = TIER_LIMITS.free.voiceSecondsPerCycle;
@@ -132,11 +151,12 @@ export class EntitlementsService {
     const reservation = await db.runTransaction(async (t) => {
       const snap = await t.get(ref);
       let data: UserEntitlement;
+      const isOwner = this.isAppOwner(userId);
 
       if (!snap.exists) {
         data = {
           userId,
-          tier: 'free',
+          tier: isOwner ? 'pro' : 'free',
           status: 'active',
           usage: { voiceSecondsUsed: 0, recipesGeneratedCount: 0, visionScansCount: 0, cycleStartMs: now },
           updatedAtMs: now,
@@ -151,7 +171,7 @@ export class EntitlementsService {
         data.usage = { voiceSecondsUsed: 0, recipesGeneratedCount: 0, visionScansCount: 0, cycleStartMs: now };
       }
 
-      if (data.tier === 'pro' && (!data.expiresAtMs || data.expiresAtMs > now)) {
+      if (isOwner || (data.tier === 'pro' && (!data.expiresAtMs || data.expiresAtMs > now))) {
         return { allowed: true, tier: 'pro' as const, remaining: Infinity, issuedSeconds: requestedSeconds };
       }
 
@@ -197,7 +217,7 @@ export class EntitlementsService {
 
     if (!db) {
       const ent = await this.getEntitlement(userId);
-      if (ent.tier === 'pro') {
+      if (this.isAppOwner(userId) || ent.tier === 'pro') {
         return { allowed: true, tier: 'pro', remaining: Infinity, rollback: async () => {} };
       }
       const limit = TIER_LIMITS.free.recipeGenerationsPerCycle;
@@ -225,11 +245,12 @@ export class EntitlementsService {
     const reservation = await db.runTransaction(async (t) => {
       const snap = await t.get(ref);
       let data: UserEntitlement;
+      const isOwner = this.isAppOwner(userId);
 
       if (!snap.exists) {
         data = {
           userId,
-          tier: 'free',
+          tier: isOwner ? 'pro' : 'free',
           status: 'active',
           usage: { voiceSecondsUsed: 0, recipesGeneratedCount: 0, visionScansCount: 0, cycleStartMs: now },
           updatedAtMs: now,
@@ -243,7 +264,7 @@ export class EntitlementsService {
         data.usage = { voiceSecondsUsed: 0, recipesGeneratedCount: 0, visionScansCount: 0, cycleStartMs: now };
       }
 
-      if (data.tier === 'pro' && (!data.expiresAtMs || data.expiresAtMs > now)) {
+      if (isOwner || (data.tier === 'pro' && (!data.expiresAtMs || data.expiresAtMs > now))) {
         return { allowed: true, tier: 'pro' as const, remaining: Infinity };
       }
 
@@ -286,7 +307,7 @@ export class EntitlementsService {
 
     if (!db) {
       const ent = await this.getEntitlement(userId);
-      if (ent.tier === 'pro') {
+      if (this.isAppOwner(userId) || ent.tier === 'pro') {
         return { allowed: true, tier: 'pro', remaining: Infinity, rollback: async () => {} };
       }
       const limit = TIER_LIMITS.free.visionScansPerCycle;
@@ -314,11 +335,12 @@ export class EntitlementsService {
     const reservation = await db.runTransaction(async (t) => {
       const snap = await t.get(ref);
       let data: UserEntitlement;
+      const isOwner = this.isAppOwner(userId);
 
       if (!snap.exists) {
         data = {
           userId,
-          tier: 'free',
+          tier: isOwner ? 'pro' : 'free',
           status: 'active',
           usage: { voiceSecondsUsed: 0, recipesGeneratedCount: 0, visionScansCount: 0, cycleStartMs: now },
           updatedAtMs: now,
@@ -332,7 +354,7 @@ export class EntitlementsService {
         data.usage = { voiceSecondsUsed: 0, recipesGeneratedCount: 0, visionScansCount: 0, cycleStartMs: now };
       }
 
-      if (data.tier === 'pro' && (!data.expiresAtMs || data.expiresAtMs > now)) {
+      if (isOwner || (data.tier === 'pro' && (!data.expiresAtMs || data.expiresAtMs > now))) {
         return { allowed: true, tier: 'pro' as const, remaining: Infinity };
       }
 

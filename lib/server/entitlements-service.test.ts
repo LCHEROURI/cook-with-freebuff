@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 vi.mock('server-only', () => ({}));
 
@@ -218,4 +218,73 @@ describe('EntitlementsService', () => {
       }),
     );
   });
+
+  describe('APP_OWNER_UID recognition', () => {
+    const originalOwnerUid = process.env.APP_OWNER_UID;
+
+    beforeEach(() => {
+      process.env.APP_OWNER_UID = 'owner-uid-123';
+    });
+
+    afterEach(() => {
+      process.env.APP_OWNER_UID = originalOwnerUid;
+    });
+
+    it('initializes default Pro tier for APP_OWNER_UID when no document exists', async () => {
+      const entitlement = await service.getEntitlement('owner-uid-123');
+      expect(entitlement.tier).toBe('pro');
+      expect(entitlement.status).toBe('active');
+      expect(mockSet).toHaveBeenCalledWith(
+        expect.objectContaining({
+          tier: 'pro',
+          status: 'active',
+        }),
+      );
+    });
+
+    it('promotes APP_OWNER_UID to Pro if an existing document was recorded as free', async () => {
+      mockDocData = {
+        userId: 'owner-uid-123',
+        tier: 'free',
+        status: 'active',
+        usage: {
+          voiceSecondsUsed: 1200,
+          recipesGeneratedCount: 10,
+          visionScansCount: 5,
+          cycleStartMs: Date.now(),
+        },
+        updatedAtMs: Date.now(),
+      };
+
+      const entitlement = await service.getEntitlement('owner-uid-123');
+      expect(entitlement.tier).toBe('pro');
+      expect(mockUpdate).toHaveBeenCalledWith(
+        expect.objectContaining({
+          tier: 'pro',
+          status: 'active',
+        }),
+      );
+    });
+
+    it('allows voice quota reservation for APP_OWNER_UID even when usage exceeds free limit', async () => {
+      mockDocData = {
+        userId: 'owner-uid-123',
+        tier: 'free',
+        status: 'active',
+        usage: {
+          voiceSecondsUsed: 1500,
+          recipesGeneratedCount: 10,
+          visionScansCount: 5,
+          cycleStartMs: Date.now(),
+        },
+        updatedAtMs: Date.now(),
+      };
+
+      const reservation = await service.reserveVoiceQuota('owner-uid-123', 300);
+      expect(reservation.allowed).toBe(true);
+      expect(reservation.tier).toBe('pro');
+      expect(reservation.remaining).toBe(Infinity);
+    });
+  });
 });
+
