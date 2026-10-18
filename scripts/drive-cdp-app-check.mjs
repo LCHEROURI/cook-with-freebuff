@@ -61,11 +61,20 @@ export function installAppCheckInjection({ ws, send, app, token, mintToken, note
     const { requestId, request } = m.params ?? {};
     if (!requestId) return;
     const url = request?.url ?? '';
-    if (url.startsWith(`${app}/api/`)) {
+    let isSameOriginApi = false;
+    try {
+      const parsed = new URL(url);
+      isSameOriginApi = parsed.host === host && parsed.pathname.startsWith('/api/');
+    } catch {
+      isSameOriginApi = url.startsWith(`${app}/api/`);
+    }
+
+    if (isSameOriginApi) {
       // continueRequest replaces the ENTIRE header set — re-send every
-      // existing header (minus any stale appcheck) plus the token.
+      // existing header (minus any stale appcheck and HTTP/2 pseudo-headers
+      // starting with ':' which Chromium forbids in Fetch.continueRequest) plus the token.
       const headers = Object.entries(request.headers ?? {})
-        .filter(([name]) => name.toLowerCase() !== 'x-firebase-appcheck')
+        .filter(([name]) => !name.startsWith(':') && name.toLowerCase() !== 'x-firebase-appcheck')
         .map(([name, value]) => ({ name, value }));
       // Replay-protected routes get a FRESH token per request; everything
       // else reuses the long-lived shared token. A mint failure falls back to
@@ -81,7 +90,9 @@ export function installAppCheckInjection({ ws, send, app, token, mintToken, note
         value = token;
       }
       headers.push({ name: 'X-Firebase-AppCheck', value });
-      send('Fetch.continueRequest', { requestId, headers }).catch(() => {});
+      send('Fetch.continueRequest', { requestId, headers }).catch((err) => {
+        note(`CDP Fetch.continueRequest failed: ${err?.message ?? String(err)}`);
+      });
     } else {
       send('Fetch.continueRequest', { requestId }).catch(() => {});
     }

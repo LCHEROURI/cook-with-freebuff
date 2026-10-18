@@ -60,7 +60,13 @@ describe('scripts/drive-cdp-app-check.mjs — headless App Check header injectio
           requestId: 'r1',
           request: {
             url: 'https://cook.example.com/api/cook',
-            headers: { authorization: 'Bearer owner-token', 'x-firebase-appcheck': 'stale-sdk-token' },
+            headers: {
+              ':authority': 'cook.example.com',
+              ':method': 'POST',
+              ':path': '/api/cook',
+              authorization: 'Bearer owner-token',
+              'x-firebase-appcheck': 'stale-sdk-token',
+            },
           },
         },
       }),
@@ -74,6 +80,8 @@ describe('scripts/drive-cdp-app-check.mjs — headless App Check header injectio
     expect(headers).toContainEqual(['authorization', 'Bearer owner-token']);
     expect(headers).not.toContainEqual(['x-firebase-appcheck', 'stale-sdk-token']);
     expect(headers).toContainEqual(['x-firebase-appcheck', 'ac-token']);
+    // HTTP/2 pseudo-headers starting with ':' are forbidden in Chromium Fetch.continueRequest
+    expect(headers.some(([name]) => name.startsWith(':'))).toBe(false);
   });
 
   it('continues a paused third-party request untouched (Google/Gemini/reCAPTCHA/Auth)', () => {

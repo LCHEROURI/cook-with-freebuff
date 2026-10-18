@@ -4,6 +4,11 @@ import { createElement } from 'react';
 import { CookScreen } from './CookScreen';
 import type { GuideSnapshot } from '@/lib/domain/guide';
 
+vi.mock('@/lib/sound/timer-alarm', () => ({
+  triggerTimerAlarm: vi.fn(async () => ({ audioPlayed: true, hapticsTriggered: true })),
+  unlockAudioContext: vi.fn(),
+}));
+
 function snapshot(overrides: Partial<GuideSnapshot> = {}): GuideSnapshot {
   return {
     found: true,
@@ -84,6 +89,18 @@ describe('CookScreen', () => {
     // Done is disabled: aria-disabled is not rendered by static markup, but the
     // disabled attribute is.
     expect(html).toContain('disabled=""');
+  });
+
+  it('renders elapsed timer with Ready badge and dismiss button', () => {
+    const html = render(
+      snapshot({
+        phase: 'WAITING_FOR_TIMER',
+        activeTimers: [{ timerId: 't1', label: 'four-minute timer', durationSeconds: 240, endsAt: Date.now() - 1000, remainingSeconds: 0 }],
+      }),
+    );
+    expect(html).toContain('Ready! 🔔');
+    expect(html).toContain('Dismiss');
+    expect(html).toContain('timer finished!');
   });
 
   it('shows a completed state with an enjoy message', () => {

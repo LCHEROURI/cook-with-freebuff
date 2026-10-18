@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import styles from '@/app/cook/page.module.css';
 import { formatIngredientQuantityPrefix, formatIngredientNameSuffix } from '@/lib/recipe/format';
@@ -10,6 +10,7 @@ import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { formatPausedAgo, type ActiveTimerInfo, type GuideSnapshot } from '@/lib/domain/guide';
 import type { AgentTurn, VoiceStatus } from '@/lib/agent';
+import { triggerTimerAlarm, unlockAudioContext } from '@/lib/sound/timer-alarm';
 
 function formatCountdown(seconds: number): string {
   const s = Math.max(0, Math.floor(seconds));
@@ -23,6 +24,9 @@ function TimerDisplay({ timer, paused, pausedAt }: { timer: ActiveTimerInfo; pau
   // Ticks the "paused 2m ago" caption while paused (the frozen remainder itself
   // must NOT tick — that comes from the server).
   const [nowMs, setNowMs] = useState(Date.now());
+  const [dismissed, setDismissed] = useState(false);
+  const alarmedRef = useRef(false);
+
   useEffect(() => {
     // While paused the server freezes the countdown at the at-pause remainder
     // (derived from pausedAt) — /cook must agree with the card and NOT tick
@@ -35,22 +39,52 @@ function TimerDisplay({ timer, paused, pausedAt }: { timer: ActiveTimerInfo; pau
     }
     setRemaining(timer.remainingSeconds);
     const id = window.setInterval(() => {
-      setRemaining((prev) => Math.max(0, prev - 1));
+      setRemaining((prev) => {
+        const next = Math.max(0, prev - 1);
+        if (next === 0 && !alarmedRef.current) {
+          alarmedRef.current = true;
+          void triggerTimerAlarm();
+        }
+        return next;
+      });
     }, 1000);
     return () => window.clearInterval(id);
   }, [timer.endsAt, timer.remainingSeconds, paused]);
+
+  useEffect(() => {
+    if (timer.remainingSeconds <= 0 && !paused && !alarmedRef.current) {
+      alarmedRef.current = true;
+      void triggerTimerAlarm();
+    }
+  }, [timer.remainingSeconds, paused]);
+
+  const isElapsed = remaining <= 0 && !paused;
+
   return (
     <div
-      className={paused ? `${styles.timer} ${styles.timerPaused}` : styles.timer}
+      className={
+        paused
+          ? `${styles.timer} ${styles.timerPaused}`
+          : isElapsed
+            ? `${styles.timer} ${styles.timerElapsed}`
+            : styles.timer
+      }
       role="timer"
       aria-label={
         paused
           ? `${timer.label}, paused at ${formatCountdown(timer.remainingSeconds)}, ${formatPausedAgo(pausedAt ?? nowMs, nowMs)}`
-          : `${timer.label}, ${formatCountdown(remaining)} remaining`
+          : isElapsed
+            ? `${timer.label}, timer finished!`
+            : `${timer.label}, ${formatCountdown(remaining)} remaining`
       }
     >
-      <span className={styles.timerLabel}>{timer.label}</span>
-      <span className={styles.timerRight}>
+      <div className={styles.timerLeft}>
+        <span className={styles.timerLabel}>{timer.label}</span>
+        {isElapsed && !dismissed && (
+          <span className={styles.timerDoneBadge}>Ready! 🔔</span>
+        )}
+      </div>
+      <div className={styles.timerRight}>
         <span className={styles.timerCount}>
           {paused ? '⏸ ' : ''}
           {formatCountdown(paused ? timer.remainingSeconds : remaining)}
@@ -58,7 +92,17 @@ function TimerDisplay({ timer, paused, pausedAt }: { timer: ActiveTimerInfo; pau
         {paused && pausedAt ? (
           <span className={styles.timerPausedAgo}>{formatPausedAgo(pausedAt, nowMs)}</span>
         ) : null}
-      </span>
+        {isElapsed && !dismissed ? (
+          <button
+            type="button"
+            className={styles.timerDismissBtn}
+            onClick={() => setDismissed(true)}
+            aria-label={`Dismiss ${timer.label} timer`}
+          >
+            Dismiss
+          </button>
+        ) : null}
+      </div>
     </div>
   );
 }
@@ -137,6 +181,89 @@ export function CookScreen({
   const [confirmingStartOver, setConfirmingStartOver] = useState(false);
   const [copiedDetails, setCopiedDetails] = useState(false);
 
+  // Register user gesture listener to unlock Web Audio on initial user interaction (required by iOS Safari & mobile Chrome)
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const unlock = () => {
+      unlockAudioContext();
+    };
+    window.addEventListener('pointerdown', unlock, { once: true, passive: true });
+    window.addEventListener('keydown', unlock, { once: true, passive: true });
+    return () => {
+      window.removeEventListener('pointerdown', unlock);
+      window.removeEventListener('keydown', unlock);
+    };
+  }, []);
+
+  // Schedule timer alarms against endsAt independently of the removable TimerDisplay component
+  const scheduledTimersRef = useRef<Set<string>>(new Set());
+
+  const isPaused = snap.paused || snap.phase === 'PAUSED';
+
+  useEffect(() => {
+    if (isPaused) return;
+    const now = Date.now();
+    const timeouts: ReturnType<typeof setTimeout>[] = [];
+
+    for (const timer of snap.activeTimers) {
+      if (scheduledTimersRef.current.has(timer.timerId)) continue;
+      const delay = Math.max(0, timer.endsAt - now);
+      if (delay === 0) {
+        scheduledTimersRef.current.add(timer.timerId);
+        void triggerTimerAlarm();
+      } else {
+        const id = setTimeout(() => {
+          if (!scheduledTimersRef.current.has(timer.timerId)) {
+            scheduledTimersRef.current.add(timer.timerId);
+            void triggerTimerAlarm();
+          }
+        }, delay);
+        timeouts.push(id);
+      }
+    }
+
+    return () => {
+      timeouts.forEach((id) => clearTimeout(id));
+    };
+  }, [snap.activeTimers, isPaused]);
+
+  // Trigger alarm when server reports timer completion via alert banner
+  const lastAlertRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (alert && alert !== lastAlertRef.current) {
+      lastAlertRef.current = alert;
+      if (/finished|timer/i.test(alert)) {
+        void triggerTimerAlarm();
+      }
+    }
+  }, [alert]);
+
+  const handleDone = () => {
+    unlockAudioContext();
+    onDone();
+  };
+  const handleRepeat = () => {
+    unlockAudioContext();
+    onRepeat();
+  };
+  const handleBack = () => {
+    unlockAudioContext();
+    onBack();
+  };
+  const handleResume = () => {
+    unlockAudioContext();
+    onResume();
+  };
+  const handleStartOver = () => {
+    unlockAudioContext();
+    onStartOver();
+  };
+  const handleMicToggle = () => {
+    unlockAudioContext();
+    onMicToggle();
+  };
+
   const copyMicDiagnostics = async () => {
     if (!onCopyDiagnostics) return;
     const text = onCopyDiagnostics();
@@ -180,7 +307,6 @@ export function CookScreen({
               ? 'Safety'
               : snap.phase;
 
-  const isPaused = snap.paused || snap.phase === 'PAUSED';
   const doneDisabled =
     snap.phase === 'PLATING' || snap.phase === 'COMPLETED' || snap.phase === 'WAITING_FOR_TIMER' || isPaused;
 
@@ -293,7 +419,7 @@ export function CookScreen({
           <p className={styles.safetyGateHint}>The step is not marked done until you confirm you understand.</p>
           <Button
             className={`${styles.control} ${styles.primary} ${styles.safetyGateConfirm}`}
-            onClick={onDone}
+            onClick={handleDone}
             aria-label="I understand the safety warning, continue"
           >
             ✓ I understand — continue
@@ -303,7 +429,7 @@ export function CookScreen({
 
       <section className={styles.controls}>
         {isPaused ? (
-          <Button className={`${styles.control} ${styles.primary}`} onClick={onResume} aria-label="Resume cooking">
+          <Button className={`${styles.control} ${styles.primary}`} onClick={handleResume} aria-label="Resume cooking">
             ▶ Resume
           </Button>
         ) : snap.safetyGate ? (
@@ -312,15 +438,15 @@ export function CookScreen({
           <p className={styles.safetyGateWaiting}>Confirm the safety note to continue.</p>
         ) : (
           <>
-            <Button className={styles.control} onClick={onBack} aria-label="Previous step" disabled={snap.stepNumber === 1}>
+            <Button className={styles.control} onClick={handleBack} aria-label="Previous step" disabled={snap.stepNumber === 1}>
               ◀ Previous
             </Button>
-            <Button className={styles.control} onClick={onRepeat} aria-label="Repeat this step">
+            <Button className={styles.control} onClick={handleRepeat} aria-label="Repeat this step">
               🔁 Repeat
             </Button>
             <Button
               className={`${styles.control} ${styles.primary}`}
-              onClick={onDone}
+              onClick={handleDone}
               aria-label="Done with this step"
               disabled={doneDisabled}
             >
@@ -338,7 +464,7 @@ export function CookScreen({
             return;
           }
           setConfirmingStartOver(false);
-          onStartOver();
+          handleStartOver();
         }}
         onBlur={() => setConfirmingStartOver(false)}
         aria-label="Start over"
@@ -381,6 +507,7 @@ export function CookScreen({
         className={styles.voiceForm}
         onSubmit={(e) => {
           e.preventDefault();
+          unlockAudioContext();
           onSend(input);
           setInput('');
         }}
@@ -388,7 +515,7 @@ export function CookScreen({
         <button
           type="button"
           className={`${styles.micBtn} ${micListening ? styles.micListening : ''}`}
-          onClick={onMicToggle}
+          onClick={handleMicToggle}
           disabled={!micSupported}
           aria-label={micListening ? 'Stop listening' : 'Speak a command'}
           aria-pressed={micListening}
