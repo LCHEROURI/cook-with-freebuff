@@ -20,12 +20,6 @@ export function HeaderQuotaBadge({
 }: HeaderQuotaBadgeProps) {
   const handleClick = onOpenUpgrade || onClick;
 
-  // Derive remaining voice minutes for free tier
-  const voiceLimitSec = TIER_LIMITS.free.voiceSecondsPerCycle; // 900s = 15m
-  const voiceUsedSec = entitlement?.usage?.voiceSecondsUsed ?? 0;
-  const voiceRemainingSec = Math.max(0, voiceLimitSec - voiceUsedSec);
-  const voiceRemainingMins = Math.ceil(voiceRemainingSec / 60);
-
   if (isPro) {
     return (
       <button
@@ -39,6 +33,27 @@ export function HeaderQuotaBadge({
       </button>
     );
   }
+
+  // When entitlement data is not yet loaded, render a neutral trigger rather than assuming 0 usage
+  if (!entitlement) {
+    return (
+      <button
+        type="button"
+        onClick={handleClick}
+        className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium bg-slate-900/90 hover:bg-slate-800 border border-slate-700/80 hover:border-amber-500/60 text-slate-300 transition-all shadow-sm group cursor-pointer ${className}`}
+        aria-label="View monthly cooking quotas and upgrade options"
+      >
+        <Sparkles className="w-3.5 h-3.5 text-amber-400" />
+        <span className="group-hover:text-amber-300 transition-colors">Quotas & Pro</span>
+      </button>
+    );
+  }
+
+  // Derive remaining voice minutes for free tier
+  const voiceLimitSec = TIER_LIMITS.free.voiceSecondsPerCycle; // 900s = 15m
+  const voiceUsedSec = entitlement.usage?.voiceSecondsUsed ?? 0;
+  const voiceRemainingSec = Math.max(0, voiceLimitSec - voiceUsedSec);
+  const voiceRemainingMins = Math.ceil(voiceRemainingSec / 60);
 
   return (
     <button

@@ -51,4 +51,22 @@ describe('HeaderQuotaBadge', () => {
     fireEvent.click(button);
     expect(handleClick).toHaveBeenCalledTimes(1);
   });
+
+  it('renders neutral Quotas & Pro trigger when entitlement is not yet loaded', () => {
+    const handleClick = vi.fn();
+    render(
+      <HeaderQuotaBadge
+        isPro={false}
+        entitlement={null}
+        onClick={handleClick}
+      />,
+    );
+
+    expect(screen.getByText('Quotas & Pro')).toBeInTheDocument();
+    expect(screen.queryByText(/voice left/i)).not.toBeInTheDocument();
+
+    const button = screen.getByRole('button', { name: /View monthly cooking quotas and upgrade options/i });
+    fireEvent.click(button);
+    expect(handleClick).toHaveBeenCalledTimes(1);
+  });
 });

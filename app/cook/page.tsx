@@ -791,6 +791,7 @@ export default function CookPage() {
           onUpgraded={() => {
             void billing.refreshEntitlements();
           }}
+          billing={billing}
         />
       </main>
     );
@@ -857,6 +858,7 @@ export default function CookPage() {
         onUpgraded={() => {
           void billing.refreshEntitlements();
         }}
+        billing={billing}
       />
     </>
   );
