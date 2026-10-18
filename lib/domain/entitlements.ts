@@ -46,6 +46,7 @@ export interface UserEntitlement {
   purchaseToken?: string;
   orderId?: string;
   expiresAtMs?: number;
+  activeProbeRunId?: string;
   usage: UserUsage;
   updatedAtMs: number;
 }
