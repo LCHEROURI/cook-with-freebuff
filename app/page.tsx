@@ -12,6 +12,9 @@ import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
+import { HeaderQuotaBadge } from '@/components/HeaderQuotaBadge';
+import { UpgradeModal } from '@/components/UpgradeModal';
+import { usePlayBilling } from '@/lib/hooks/usePlayBilling';
 
 function formatCountdown(ms: number): string {
   const s = Math.max(0, Math.floor(ms / 1000));
@@ -101,6 +104,8 @@ const FEATURES = [
 
 export default function HomePage() {
   const auth = useAuthSession();
+  const billing = usePlayBilling({ getToken: auth.getToken, autoFetch: !!auth.user });
+  const [upgradeModalOpen, setUpgradeModalOpen] = useState(false);
   const [snap, setSnap] = useState<GuideSnapshot | null>(null);
   const [alert, setAlert] = useState<string | null>(null);
   const [checked, setChecked] = useState(false);
@@ -228,15 +233,24 @@ export default function HomePage() {
     <main className={styles.main}>
       <header className={styles.topbar}>
         <span className={styles.brand}>Cook With Me</span>
-        {auth.user ? (
-          <Button variant="outline" onClick={() => void auth.signOut()} className="min-h-11 text-sm">
-            Sign out
-          </Button>
-        ) : (
-          <Button asChild variant="ghost" className="min-h-11 text-sm font-semibold text-brand hover:text-brand-hover">
-            <Link href="/login">Sign in</Link>
-          </Button>
-        )}
+        <div className="flex items-center gap-2">
+          {auth.user && (
+            <HeaderQuotaBadge
+              isPro={billing.isPro}
+              entitlement={billing.entitlement}
+              onClick={() => setUpgradeModalOpen(true)}
+            />
+          )}
+          {auth.user ? (
+            <Button variant="outline" onClick={() => void auth.signOut()} className="min-h-11 text-sm">
+              Sign out
+            </Button>
+          ) : (
+            <Button asChild variant="ghost" className="min-h-11 text-sm font-semibold text-brand hover:text-brand-hover">
+              <Link href="/login">Sign in</Link>
+            </Button>
+          )}
+        </div>
       </header>
 
       <section className={styles.hero}>
@@ -374,6 +388,16 @@ export default function HomePage() {
           <Link href="/status">Kitchen status</Link>
         </p>
       </footer>
+
+      <UpgradeModal
+        isOpen={upgradeModalOpen}
+        onClose={() => setUpgradeModalOpen(false)}
+        getToken={auth.getToken}
+        onUpgraded={() => {
+          void billing.refreshEntitlements();
+        }}
+        billing={billing}
+      />
     </main>
   );
 }

@@ -48,6 +48,27 @@ vi.mock('@/lib/audio/timer-chime', () => ({
   playTimerChime: vi.fn(),
 }));
 
+vi.mock('@/components/HeaderQuotaBadge', () => ({
+  HeaderQuotaBadge: () => null,
+}));
+
+vi.mock('@/components/UpgradeModal', () => ({
+  UpgradeModal: () => null,
+}));
+
+vi.mock('@/lib/hooks/usePlayBilling', () => ({
+  usePlayBilling: () => ({
+    isPlayBillingAvailable: false,
+    isLoading: false,
+    isPro: false,
+    tier: 'free',
+    entitlement: null,
+    error: null,
+    refreshEntitlements: vi.fn(),
+    purchaseSubscription: vi.fn(),
+  }),
+}));
+
 import { useAuthSession, type UseAuthSessionResult } from '@/lib/auth/useAuthSession';
 import { unlockAudioOnGesture, playTimerChime } from '@/lib/audio/timer-chime';
 import HomePage from './page';

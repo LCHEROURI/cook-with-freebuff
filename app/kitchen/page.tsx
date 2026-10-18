@@ -9,6 +9,9 @@ import { FormInput, FormTextarea } from '@/components/FormField';
 import { VoiceInputButton } from '@/components/VoiceInputButton';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
+import { HeaderQuotaBadge } from '@/components/HeaderQuotaBadge';
+import { UpgradeModal } from '@/components/UpgradeModal';
+import { usePlayBilling } from '@/lib/hooks/usePlayBilling';
 import { useSpeech } from '@/lib/hooks/useSpeech';
 import { appendTranscript, pantryFieldUI, leftoverFieldUI, profileFieldUI } from '@/lib/domain/fieldUI';
 import type { PantryItemView } from '@/lib/server/pantry-service';
@@ -75,6 +78,8 @@ function GrocerySourceBadge({ source }: { source: GroceryItemSource }) {
 export default function KitchenPage() {
   const router = useRouter();
   const auth = useAuthSession();
+  const billing = usePlayBilling({ getToken: auth.getToken });
+  const [upgradeModalOpen, setUpgradeModalOpen] = useState(false);
 
   const [data, setData] = useState<KitchenSnapshot | null>(null);
   const [loading, setLoading] = useState(true);
@@ -237,25 +242,32 @@ export default function KitchenPage() {
 
   return (
     <main className={styles.main}>
-      <header className={styles.header}>
-        <Button asChild variant="ghost" size="icon" className="h-11 w-11">
-          <Link href="/" aria-label="Back to start">
-            <svg
-              width="20"
-              height="20"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              aria-hidden="true"
-            >
-              <path d="m15 18-6-6 6-6" />
-            </svg>
-          </Link>
-        </Button>
-        <h1 className={styles.title}>My Kitchen</h1>
+      <header className={`${styles.header} flex items-center justify-between`}>
+        <div className="flex items-center gap-3">
+          <Button asChild variant="ghost" size="icon" className="h-11 w-11">
+            <Link href="/" aria-label="Back to start">
+              <svg
+                width="20"
+                height="20"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                aria-hidden="true"
+              >
+                <path d="m15 18-6-6 6-6" />
+              </svg>
+            </Link>
+          </Button>
+          <h1 className={styles.title}>My Kitchen</h1>
+        </div>
+        <HeaderQuotaBadge
+          isPro={billing.isPro}
+          entitlement={billing.entitlement}
+          onClick={() => setUpgradeModalOpen(true)}
+        />
       </header>
       <p className={styles.subtitle}>
         Everything I remember about your kitchen — you can read it and change it here, no need to ask.
@@ -818,6 +830,16 @@ export default function KitchenPage() {
       <Button asChild variant="ghost" className="w-fit text-foreground hover:text-foreground">
         <Link href="/">← Back to start</Link>
       </Button>
+
+      <UpgradeModal
+        isOpen={upgradeModalOpen}
+        onClose={() => setUpgradeModalOpen(false)}
+        getToken={auth.getToken}
+        onUpgraded={() => {
+          void billing.refreshEntitlements();
+        }}
+        billing={billing}
+      />
     </main>
   );
 }

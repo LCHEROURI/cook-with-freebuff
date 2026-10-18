@@ -23,6 +23,9 @@ import { appendTranscript } from '@/lib/domain/fieldUI';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
+import { HeaderQuotaBadge } from '@/components/HeaderQuotaBadge';
+import { UpgradeModal } from '@/components/UpgradeModal';
+import { usePlayBilling } from '@/lib/hooks/usePlayBilling';
 import RecipeRowMeta from '../cook/RecipeRowMeta';
 import {
   availableCategories,
@@ -34,6 +37,8 @@ import {
 export default function RecipesPage() {
   const router = useRouter();
   const auth = useAuthSession();
+  const billing = usePlayBilling({ getToken: auth.getToken });
+  const [upgradeModalOpen, setUpgradeModalOpen] = useState(false);
 
   const [recipes, setRecipes] = useState<{ status: 'loading' | 'ready' | 'error'; items: RecipeSummary[] }>({
     status: 'loading',
@@ -184,16 +189,24 @@ export default function RecipesPage() {
 
   return (
     <main className={styles.main}>
-      <header className={styles.header}>
-        <Button asChild variant="ghost" size="icon" className="h-11 w-11">
-          <Link href="/" aria-label="Back to start">←</Link>
-        </Button>
-        <div className={styles.headerText}>
-          <h1 className={styles.title}>My Recipes</h1>
-          <p className={styles.subtitle}>
-            Your saved recipes — search, filter by protein, and start cooking in one tap.
-          </p>
+      <header className={`${styles.header} flex items-start justify-between`}>
+        <div className="flex items-start gap-2">
+          <Button asChild variant="ghost" size="icon" className="h-11 w-11 shrink-0">
+            <Link href="/" aria-label="Back to start">←</Link>
+          </Button>
+          <div className={styles.headerText}>
+            <h1 className={styles.title}>My Recipes</h1>
+            <p className={styles.subtitle}>
+              Your saved recipes — search, filter by protein, and start cooking in one tap.
+            </p>
+          </div>
         </div>
+        <HeaderQuotaBadge
+          isPro={billing.isPro}
+          entitlement={billing.entitlement}
+          onClick={() => setUpgradeModalOpen(true)}
+          className="shrink-0"
+        />
       </header>
 
       {startError && (
@@ -399,6 +412,16 @@ export default function RecipesPage() {
       <Button asChild variant="ghost" className="mt-2 w-fit text-[var(--color-accent-subtle-text)] hover:text-[var(--color-accent-subtle-text)]">
         <Link href="/cook">＋ New recipe</Link>
       </Button>
+
+      <UpgradeModal
+        isOpen={upgradeModalOpen}
+        onClose={() => setUpgradeModalOpen(false)}
+        getToken={auth.getToken}
+        onUpgraded={() => {
+          void billing.refreshEntitlements();
+        }}
+        billing={billing}
+      />
     </main>
   );
 }
