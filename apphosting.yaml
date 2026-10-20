@@ -71,3 +71,10 @@ env:
   # Firebase Admin service account — secret reference
   - variable: FIREBASE_SERVICE_ACCOUNT
     secret: FIREBASE_SERVICE_ACCOUNT
+
+  # App owner UID (unlimited voice quota & Chef Pro access for the app owner)
+  - variable: APP_OWNER_UID
+    value: eeGWqr4svCbowC3C1pUKPa2IP9c2
+    availability:
+      - RUNTIME
+
