@@ -386,6 +386,8 @@ export default function HomePage() {
         <p>Cook With Me · sign in with Google to start</p>
         <p className={styles.footerLink}>
           <Link href="/status">Kitchen status</Link>
+          {' · '}
+          <Link href="/privacy">Privacy Policy</Link>
         </p>
       </footer>
 
