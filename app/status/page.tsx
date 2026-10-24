@@ -29,6 +29,16 @@ interface FlakeStreak {
   runUrl: string;
 }
 
+// Same JSON the public /version page renders — fetched here so the signed-in
+// ops view can cross-check deploy provenance against the build-info commit.
+interface VersionInfo {
+  service: string;
+  commit: string | null;
+  commitFull: string | null;
+  rolloutId: string | null;
+  deployedAt: string | null;
+}
+
 interface Status {
   commitSha: string;
   builtAt: string;
@@ -45,6 +55,7 @@ const formatTime = (iso: string) =>
 
 export default function StatusPage() {
   const [status, setStatus] = useState<Status | null>(null);
+  const [version, setVersion] = useState<VersionInfo | null>(null);
   const [denied, setDenied] = useState(false);
   const [signingIn, setSigningIn] = useState(false);
   const [signInError, setSignInError] = useState<string | null>(null);
@@ -76,6 +87,23 @@ export default function StatusPage() {
       cancelled = true;
     };
   }, [auth.state, auth.user, getToken]);
+
+  // Deploy provenance comes from the public /api/version route — no token
+  // needed, safe to fetch on mount regardless of auth state.
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      const res = await fetch('/api/version');
+      if (!res.ok) return;
+      const body = (await res.json()) as VersionInfo;
+      if (!cancelled) setVersion(body);
+    })().catch(() => {
+      // Leave version null on failure — the card shows its loading-honest state.
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const handleSignIn = async () => {
     setSigningIn(true);
@@ -195,6 +223,38 @@ export default function StatusPage() {
               </p>
               <p className={styles.cardMeta}>Built {formatTime(status.builtAt)}</p>
             </>
+          ) : (
+            <p className={styles.cardMeta}>Loading…</p>
+          )}
+        </article>
+
+        <article className={styles.card}>
+          <h2 className={styles.cardTitle}>Deploy provenance</h2>
+          {version ? (
+            version.commit ? (
+              <>
+                <p className={styles.mono}>
+                  <a href={commitUrl(version.commitFull ?? version.commit)} className={styles.link}>
+                    {version.commit}
+                  </a>
+                </p>
+                <p className={styles.cardMeta}>
+                  Rollout {version.rolloutId ?? 'unknown'} · deployed {formatTime(version.deployedAt ?? '')}
+                </p>
+                {status && (
+                  <p className={styles.cardMeta}>
+                    {version.commit === status.commitSha.slice(0, 7)
+                      ? 'Agrees with the build info above ✓'
+                      : '⚠ Differs from the build info above'}
+                  </p>
+                )}
+                <p className={styles.cardMeta}>
+                  Same facts as the public <Link href="/version" className={styles.link}>/version</Link> page.
+                </p>
+              </>
+            ) : (
+              <p className={styles.cardMeta}>Not baked — local dev build without the deploy script.</p>
+            )
           ) : (
             <p className={styles.cardMeta}>Loading…</p>
           )}
